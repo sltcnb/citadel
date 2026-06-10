@@ -1,0 +1,25 @@
+id: timestamped_log
+name: Timestamped Application Log
+description: >
+  Generic per-line parser for application logs that begin with a timestamp but
+  are neither syslog nor JSON — ClickHouse, database engines, app servers,
+  build/tooling output. Extracts timestamp + severity per line; folds
+  continuation lines (stack traces, SQL bodies) into the preceding event.
+  Reads .gz transparently. Runs below dedicated parsers and above the generic
+  file/strings fallbacks.
+supported_extensions:
+  - .log
+  - .txt
+  - .out
+  - .err
+supported_mime_types:
+  - text/plain
+  - text/x-log
+artifact_type: log_file
+author: Citadel
+version: "1.0.0"
+tags:
+  - log
+  - application
+  - clickhouse
+  - generic

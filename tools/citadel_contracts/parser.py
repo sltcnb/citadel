@@ -110,6 +110,7 @@ ARTIFACT_OS: dict[str, str] = {
     "login_event": "linux",
     "open_file": "linux",
     "shell_script": "linux",
+    "package_event": "linux",
     # ── macOS ─────────────────────────────────────────────────────────────────
     "plist": "macos",
     "macos_uls": "macos",

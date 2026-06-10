@@ -1,0 +1,22 @@
+id: apt_history
+name: APT History Log
+description: >
+  Parses Debian/Ubuntu APT history logs (/var/log/apt/history.log and rotated
+  .N / .gz variants). Each block becomes one package-management event with the
+  Start-Date, invoking command line, requesting user and affected packages —
+  surfacing installs, upgrades, removals and downgrades on the timeline.
+supported_extensions:
+  - .log
+supported_mime_types:
+  - text/plain
+handled_filenames:
+  - history.log
+artifact_type: package_event
+author: Citadel
+version: "1.0.0"
+tags:
+  - linux
+  - apt
+  - package
+  - dpkg
+  - software
