@@ -16,6 +16,7 @@ import Docs           from './pages/Docs'
 import Settings       from './pages/Settings'
 import Login          from './pages/Login'
 import Performance    from './pages/Performance'
+import Logs           from './pages/Logs'
 import UserManagement from './pages/UserManagement'
 import ThreatIntel    from './pages/ThreatIntel'
 import MalwareAnalysis from './pages/MalwareAnalysis'
@@ -97,6 +98,7 @@ export default function App() {
             <Route path="studio"                    element={<Studio />} />
             <Route path="docs"                      element={<Docs />} />
             <Route path="performance"               element={<Performance />} />
+            <Route path="logs"                      element={<Logs />} />
             <Route path="users"                     element={<UserManagement />} />
             <Route path="cti"                       element={<ThreatIntel />} />
             <Route path="malware"                   element={<MalwareAnalysis />} />

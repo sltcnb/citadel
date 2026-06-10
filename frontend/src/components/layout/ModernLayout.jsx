@@ -4,7 +4,7 @@ import {
   LayoutDashboard, FolderOpen, Bell, FileCode, Shield, FlaskConical,
   Cpu, Code2, PackageOpen, Puzzle, BookOpen, Activity, Users, Settings2,
   LogOut, UserCircle, Sun, Moon, ChevronDown, Loader2,
-  X, Menu, Plus, Search, ListChecks,
+  X, Menu, Plus, Search, ListChecks, ScrollText,
 } from 'lucide-react'
 import { api } from '../../api/client'
 import { useKeyboardShortcuts } from '../../hooks/useKeyboardShortcuts'
@@ -35,7 +35,7 @@ const DROPDOWN_GROUPS = [
   {
     label: 'Analyze',
     items: [
-      { to: '/cross-search', icon: Search,      label: 'Cross-case search' },
+      { to: '/cross-search', icon: Search,      label: 'Cross-Case Search' },
       { to: '/malware',      icon: FlaskConical, label: 'Malware' },
       { to: '/modules',      icon: Cpu,          label: 'Modules' },
       { to: '/collector',    icon: PackageOpen,  label: 'Collector' },
@@ -63,8 +63,9 @@ const DROPDOWN_GROUPS = [
     label: 'Admin',
     adminOnly: true,
     items: [
-      { to: '/performance', icon: Activity, label: 'Performance' },
-      { to: '/users',       icon: Users,    label: 'Users' },
+      { to: '/performance', icon: Activity,    label: 'Performance' },
+      { to: '/logs',        icon: ScrollText,  label: 'Tool Logs' },
+      { to: '/users',       icon: Users,       label: 'Users' },
     ],
   },
 ]
@@ -196,7 +197,7 @@ export default function ModernLayout({ user, onLogout }) {
       <header className="bg-white/85 backdrop-blur-md border-b border-gray-200 h-14 flex items-center gap-2 px-3 sm:px-4 md:px-6 flex-shrink-0 z-40 relative">
 
         <NavLink to="/" className="flex items-center mr-2 md:mr-4 flex-shrink-0">
-          <img src="/logo.svg" alt="Citadel" style={{ height: '22px', filter: logoFilter }} className="object-contain" />
+          <img src="/logo.svg" alt="Citadel" style={{ height: '34px', filter: logoFilter }} className="object-contain" />
         </NavLink>
 
         {/* ── Desktop nav ────────────────────────────────────────────────── */}
