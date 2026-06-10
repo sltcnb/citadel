@@ -1,0 +1,19 @@
+# Scribe — report engine (case -> shareable artifact)
+name: Scribe
+kind: report
+version: "0.7.0"
+repository: citadel-report
+status: partial
+consumes:
+  content_types:
+    - application/json        # a Citadel case
+  schema:
+    - https://citadel.dfir/contracts/forensic_event/v1.json
+produces:
+  schema: []
+  artifact_types:
+    - report                  # HTML / PDF / STIX / MISP / JSON
+dependencies:
+  - elasticsearch
+health:
+  command: "scribe --version"

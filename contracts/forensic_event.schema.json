@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://citadel.dfir/contracts/forensic_event/v1.json",
+  "title": "ForensicEvent",
+  "description": "The canonical event a Babel parser yields. Required: timestamp + message. Structured artifact types must carry their raw record. Rosetta maps this to full ECS v8 + OSSEM (see ecs_extension.md).",
+  "type": "object",
+  "required": ["timestamp", "message"],
+  "properties": {
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Event time, ISO 8601 with Z (UTC)."
+    },
+    "message": {
+      "type": "string",
+      "description": "Human-readable summary of the event."
+    },
+    "artifact_type": {
+      "type": "string",
+      "description": "Routing key from the ~90-entry artifact-type taxonomy (e.g. windows_event, prefetch, syslog, docker_event)."
+    },
+    "timestamp_desc": {
+      "type": "string",
+      "description": "What the timestamp means (e.g. 'creation', 'last_run', 'logon')."
+    },
+    "raw": {
+      "description": "Original parsed record. REQUIRED for structured artifact types; preserves fidelity for re-mapping.",
+      "type": ["object", "string"]
+    },
+    "os": {
+      "type": "string",
+      "enum": ["windows", "linux", "macos", "mobile", "cross", "cloud", "network"],
+      "description": "OS classification of the source artifact."
+    },
+    "source_path": {
+      "type": "string",
+      "description": "Path/name of the artifact this event was parsed from."
+    },
+    "parser": {
+      "type": "string",
+      "description": "Babel parser id that produced this event."
+    }
+  },
+  "additionalProperties": true
+}

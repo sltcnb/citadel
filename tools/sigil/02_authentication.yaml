@@ -1,0 +1,57 @@
+category: Authentication
+rules:
+  - name: Brute Force — Multiple Failed Logons
+    description: >-
+      More than 10 failed authentication attempts (EID 4625). Indicates a
+      password spray or brute-force attack against local or network accounts.
+    artifact_type: evtx
+    query: "evtx.event_id:4625"
+    threshold: 10
+
+  - name: Explicit Credential Use (Pass-the-Hash / RunAs)
+    description: >-
+      A process authenticated using explicitly supplied credentials (EID 4648).
+      Common during lateral movement, pass-the-hash, or RunAs abuse.
+    artifact_type: evtx
+    query: "evtx.event_id:4648"
+    threshold: 1
+
+  - name: Account Locked Out
+    description: >-
+      A user account was locked out (EID 4740). Repeated lockouts may signal
+      an automated brute-force or password spray attack.
+    artifact_type: evtx
+    query: "evtx.event_id:4740"
+    threshold: 1
+
+  - name: Kerberos Pre-Authentication Failure
+    description: >-
+      Kerberos authentication failed (EID 4771). Frequent failures across multiple
+      accounts indicate password spraying against Kerberos.
+    artifact_type: evtx
+    query: "evtx.event_id:4771"
+    threshold: 5
+
+  - name: Interactive RDP Logon (Type 10)
+    description: >-
+      A Type-10 remote interactive logon was recorded (EID 4624).
+      Indicates an RDP session was opened — check for unexpected source hosts.
+    artifact_type: evtx
+    query: "evtx.event_id:4624 AND message:*LogonType\\:10*"
+    threshold: 1
+
+  - name: NTLM Network Logon (Type 3) — Lateral Movement Candidate
+    description: >-
+      NTLM-authenticated network logon (EID 4624 type 3). Common in pass-the-hash
+      attacks and SMB lateral movement chains.
+    artifact_type: evtx
+    query: "evtx.event_id:4624 AND message:*LogonType\\:3* AND message:*NTLM*"
+    threshold: 1
+
+  - name: Service Account Interactive Logon
+    description: >-
+      A service account logged on interactively (EID 4624 type 2 or 10). Service
+      accounts should never have interactive logons — this is a high-risk indicator.
+    artifact_type: evtx
+    query: "evtx.event_id:4624 AND message:*svc* AND (message:*LogonType\\:2* OR message:*LogonType\\:10*)"
+    threshold: 1

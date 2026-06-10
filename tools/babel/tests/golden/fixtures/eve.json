@@ -1,0 +1,2 @@
+{"timestamp":"2023-09-15T12:34:56.000000+0000","event_type":"alert","src_ip":"10.0.0.5","dest_ip":"93.184.216.34","proto":"TCP","flow_id":1001,"alert":{"signature":"ET MALWARE Suspicious User-Agent","category":"A Network Trojan was detected"}}
+{"timestamp":"2023-09-15T12:35:01.000000+0000","event_type":"dns","src_ip":"10.0.0.5","dest_ip":"8.8.8.8","proto":"UDP","flow_id":1002,"dns":{"type":"query","rrname":"evil.example.com","rrtype":"A","rcode":"NOERROR"}}

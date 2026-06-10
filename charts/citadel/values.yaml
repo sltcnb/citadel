@@ -1,0 +1,158 @@
+# Default values for the Citadel DFIR platform umbrella chart.
+# Values are grouped per component (api, processor, frontend) plus a `global`
+# image block and substrate toggles.
+
+global:
+  image:
+    # Registry prefix applied to every component image (leave empty for local
+    # images / no registry). Include the trailing slash if set, or rely on the
+    # helper which inserts it.
+    registry: ""
+    # Default tag applied when a component does not override `image.tag`.
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+  # Optional list of imagePullSecrets applied to every pod.
+  imagePullSecrets: []
+
+# ── API (FastAPI, HTTP) ───────────────────────────────────────────────────────
+api:
+  replicaCount: 2
+  image:
+    repository: citadel-api
+    # tag: ""              # falls back to global.image.tag when empty
+    pullPolicy: ""         # falls back to global.image.pullPolicy when empty
+  service:
+    type: ClusterIP
+    port: 8000
+    targetPort: 8000
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "512Mi"
+    limits:
+      cpu: "1"
+      memory: "2Gi"
+  livenessProbe:
+    httpGet:
+      path: /api/v1/health
+      port: 8000
+    initialDelaySeconds: 15
+    periodSeconds: 20
+  readinessProbe:
+    httpGet:
+      path: /api/v1/health/ready
+      port: 8000
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    failureThreshold: 2
+
+# ── Processor (Celery worker, no HTTP) ─────────────────────────────────────────
+processor:
+  replicaCount: 2
+  image:
+    repository: citadel-processor
+    # tag: ""
+    pullPolicy: ""
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+    limits:
+      cpu: "2"
+      memory: "4Gi"
+  # No HTTP port; use a lightweight exec liveness probe (toggle off if not
+  # desired). The default checks the Celery worker process is present.
+  livenessProbe:
+    enabled: true
+    exec:
+      command:
+        - sh
+        - -c
+        - "pgrep -f celery >/dev/null"
+    initialDelaySeconds: 30
+    periodSeconds: 30
+
+# ── Frontend (nginx-served React) ──────────────────────────────────────────────
+frontend:
+  replicaCount: 2
+  image:
+    repository: citadel-frontend
+    # tag: ""
+    pullPolicy: ""
+  service:
+    type: ClusterIP
+    port: 80
+    targetPort: 80
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "64Mi"
+    limits:
+      cpu: "250m"
+      memory: "256Mi"
+  livenessProbe:
+    httpGet:
+      path: /
+      port: 80
+    initialDelaySeconds: 5
+    periodSeconds: 20
+
+# ── Ingress (single FQDN: frontend at "/", API at "/api") ──────────────────────
+# Mirrors the original traefik layout. Set fqdn to your hostname and enable.
+ingress:
+  enabled: false
+  className: traefik
+  fqdn: citadel.local            # <-- your FQDN, e.g. citadel.csirt.example.com
+  entrypoint: websecure          # traefik TLS entrypoint
+  redirectHttp: true             # also create an http→https redirect ingress
+  annotations: {}
+  paths:
+    frontend: /
+    api: /api
+  tls:
+    enabled: true
+    secretName: citadel-tls
+
+# ── Secrets (JWT + MinIO creds) ────────────────────────────────────────────────
+# Rendered into a Secret and injected (envFrom) into api + processor. To reuse
+# an existing substrate (e.g. another namespace's MinIO), set these to match it.
+secret:
+  create: true
+  existingSecret: ""        # set to use your own Secret instead of creating one
+  jwtSecret: ""             # REQUIRED for stable sessions; auto-generated if empty (changes each upgrade!)
+  authEnabled: "true"
+  minioAccessKey: "minioadmin"
+  minioSecretKey: "minioadmin"
+  extra: {}                 # any additional secret env (e.g. license keys)
+
+# ── Substrate wiring (ConfigMap env) ───────────────────────────────────────────
+# These URLs are injected into every component via the chart ConfigMap. When a
+# substrate subchart is disabled (the default) point these at your external
+# services. When enabled, set them to the in-cluster subchart service names.
+config:
+  elasticsearchUrl: "http://elasticsearch-service:9200"
+  redisUrl: "redis://redis-service:6379/0"
+  minioEndpoint: "minio-service:9000"
+  minioBucket: "forensics-cases"
+  pluginsDir: "/app/babel"
+  modulesDir: "/app/anvil"
+  defaultPageSize: "100"
+  maxPageSize: "1000"
+  extraEnv: {}
+
+# ── Substrate subchart toggles (all OFF by default) ─────────────────────────────
+# Disabled so `helm template` works offline. Enable to let Helm deploy the
+# Bitnami substrate chart in-cluster; configure under the matching key.
+elasticsearch:
+  enabled: false
+  # externalUrl is used purely as documentation/reference when disabled; the
+  # active value consumed by the app is config.elasticsearchUrl above.
+  externalUrl: "http://elasticsearch-service:9200"
+
+redis:
+  enabled: false
+  externalUrl: "redis://redis-service:6379/0"
+
+minio:
+  enabled: false
+  externalEndpoint: "minio-service:9000"

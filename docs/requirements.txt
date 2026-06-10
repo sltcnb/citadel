@@ -1,0 +1,3 @@
+# Docs site build dependencies — `pip install -r docs/requirements.txt && mkdocs build --strict`
+mkdocs-material>=9.5
+pymdown-extensions>=10.7

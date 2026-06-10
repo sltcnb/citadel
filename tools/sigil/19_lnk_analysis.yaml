@@ -1,0 +1,41 @@
+category: LNK File Analysis
+rules:
+  - name: LNK File in Unusual Location
+    description: >-
+      A shortcut file was found in a non-standard directory.
+      LNK files in temp or user directories may indicate malware.
+    artifact_type: lnk
+    query: "lnk.path:*\\\\Temp\\\\* OR lnk.path:*\\\\AppData\\\\* OR lnk.path:*\\\\Public\\\\*"
+    threshold: 1
+
+  - name: LNK Targeting Script File
+    description: >-
+      A shortcut points to a script file (PS1, VBS, BAT, CMD).
+      Common technique for executing malicious scripts.
+    artifact_type: lnk
+    query: "lnk.target:*\\\\*.ps1* OR lnk.target:*\\\\*.vbs* OR lnk.target:*\\\\*.bat* OR lnk.target:*\\\\*.cmd*"
+    threshold: 1
+
+  - name: LNK with Hidden Window
+    description: >-
+      A shortcut was configured to run with a hidden window.
+      Used to execute malware without user awareness.
+    artifact_type: lnk
+    query: "lnk.show_command:SW_SHOWMINNOACTIVE OR lnk.show_command:SW_HIDE"
+    threshold: 1
+
+  - name: LNK Targeting Remote Path
+    description: >-
+      A shortcut points to a UNC path or remote location.
+      May indicate lateral movement or payload staging.
+    artifact_type: lnk
+    query: 'lnk.target:*\\\\*\\* OR lnk.target:*\\\\*\$*'
+    threshold: 1
+
+  - name: Multiple LNK Files Created Rapidly
+    description: >-
+      Multiple shortcut files were created in a short time.
+      Could indicate worm propagation or mass infection.
+    artifact_type: lnk
+    query: "lnk.created:*"
+    threshold: 10

@@ -1,0 +1,18 @@
+id: hindsight
+name: Hindsight
+description: >-
+  Chrome, Firefox and Edge browser forensics — history, downloads, cookies,
+  form data, cache, and login data extracted from browser profile databases.
+input_extensions: [".db", ".sqlite"]
+input_filenames:
+  - History
+  - places.sqlite
+  - Cookies
+  - Web Data
+  - Login Data
+  - Favicons
+  - Shortcuts
+  - Top Sites
+available: true
+category: Browser Forensics
+tags: [browser, chrome, firefox, edge, history, cookies]

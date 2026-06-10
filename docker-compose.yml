@@ -1,0 +1,216 @@
+version: "3.9"
+
+# ── Tuneable defaults (override via .env or environment) ──────────────────────
+# ES_HEAP_SIZE        — Elasticsearch JVM heap (default 1g, raise for big servers)
+# API_WORKERS         — Uvicorn worker processes (default 4)
+# INGEST_CONCURRENCY  — Celery ingest-worker concurrency (default 4, I/O-bound)
+# MODULE_CONCURRENCY  — Celery module-worker concurrency (default 2, CPU-bound)
+# WORKER_MAX_TASKS    — Tasks per child before process recycle (default 50)
+# BULK_SIZE           — ES bulk indexing batch size (default 1000)
+# JWT_SECRET          — REQUIRED: set a strong random secret for JWT signing
+
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.0
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms${ES_HEAP_SIZE:-1g} -Xmx${ES_HEAP_SIZE:-1g}
+      # Performance: disable unused features
+      - xpack.ml.enabled=false
+      - xpack.watcher.enabled=false
+      - indices.memory.index_buffer_size=20%
+      - thread_pool.write.queue_size=1000
+    ports:
+      - "9200:9200"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+      memlock:
+        soft: -1
+        hard: -1
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health | grep -q '\"status\":\"yellow\\|green\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.13.0
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - XPACK_SECURITY_ENABLED=false
+    ports:
+      - "5601:5601"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.2-alpine
+    command: >
+      redis-server
+      --save 60 1
+      --appendonly yes
+      --appendfsync everysec
+      --maxmemory ${REDIS_MAXMEM:-2gb}
+      --maxmemory-policy allkeys-lru
+      --tcp-backlog 511
+      --tcp-keepalive 300
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:RELEASE.2024-04-18T19-09-19Z
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY:-minioadmin}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .          # repo root so the Dockerfile can COPY collector/collect.py
+      dockerfile: api/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+      - REDIS_URL=redis://redis:6379/0
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-minioadmin}
+      - MINIO_BUCKET=forensics-cases
+      - PLUGINS_DIR=/app/babel
+      - INGESTER_DIR=/app/sluice
+      - MODULES_DIR=/app/anvil
+      # Auth — set JWT_SECRET to a strong random string in production
+      - JWT_SECRET=${JWT_SECRET:-CHANGE_ME_IN_PRODUCTION}
+      - JWT_EXPIRE_HOURS=${JWT_EXPIRE_HOURS:-8}
+      - AUTH_ENABLED=${AUTH_ENABLED:-true}
+      # Set FO_PUBLIC_URL to your machine's LAN IP for the Collector page.
+      # Example: FO_PUBLIC_URL=http://192.168.1.100:8000
+      - FO_PUBLIC_URL=${FO_PUBLIC_URL:-}
+    volumes:
+      - ./tools/babel:/app/babel:ro
+      - ./tools/sluice:/app/sluice
+      - ./tools/anvil:/app/anvil
+      - ./api:/app
+      - ./tools/talon:/app/collector:ro
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    # Production: multiple Uvicorn workers for parallel request handling
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --workers ${API_WORKERS:-4} --no-access-log
+    restart: unless-stopped
+
+  # ── Ingest worker ──────────────────────────────────────────────────────────
+  # Handles file parsing (EVTX, MFT, registry, LNK…) and ES bulk indexing.
+  # I/O-bound: benefits from higher concurrency (MinIO download + ES writes).
+  worker-ingest:
+    build:
+      context: .
+      dockerfile: tools/sluice-worker/Dockerfile
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-minioadmin}
+      - MINIO_BUCKET=forensics-cases
+      - BULK_SIZE=${BULK_SIZE:-1000}
+      - INGESTER_DIR=/app/sluice
+      - MODULES_DIR=/app/anvil
+      - WORKER_MAX_TASKS=${WORKER_MAX_TASKS:-50}
+    volumes:
+      - ./tools/babel:/app/babel
+      - ./tools/sluice:/app/sluice
+      - ./tools/anvil:/app/anvil
+      - ./tools/sluice-worker:/app
+    depends_on:
+      - redis
+      - elasticsearch
+      - minio
+    # Dedicated to the ingest queue; higher concurrency for I/O parallelism
+    command: >
+      celery -A celery_app worker
+      --loglevel=info
+      --queues=ingest
+      --concurrency=${INGEST_CONCURRENCY:-4}
+      --hostname=ingest@%h
+      --max-tasks-per-child=${WORKER_MAX_TASKS:-50}
+    restart: unless-stopped
+
+  # ── Module worker ──────────────────────────────────────────────────────────
+  # Handles analysis modules: Hayabusa, YARA, Hindsight, RegRipper, Wintriage.
+  # CPU/memory-bound: lower concurrency to avoid OOM when running heavy binaries.
+  worker-modules:
+    build:
+      context: .
+      dockerfile: tools/sluice-worker/Dockerfile
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-minioadmin}
+      - MINIO_BUCKET=forensics-cases
+      - BULK_SIZE=${BULK_SIZE:-1000}
+      - INGESTER_DIR=/app/sluice
+      - MODULES_DIR=/app/anvil
+      - WORKER_MAX_TASKS=${WORKER_MAX_TASKS:-50}
+    volumes:
+      - ./tools/babel:/app/babel
+      - ./tools/sluice:/app/sluice
+      - ./tools/anvil:/app/anvil
+      - ./tools/sluice-worker:/app
+    depends_on:
+      - redis
+      - elasticsearch
+      - minio
+    # Dedicated to the modules queue; lower concurrency for CPU-bound binaries
+    command: >
+      celery -A celery_app worker
+      --loglevel=info
+      --queues=modules
+      --concurrency=${MODULE_CONCURRENCY:-2}
+      --hostname=modules@%h
+      --max-tasks-per-child=${WORKER_MAX_TASKS:-50}
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: builder
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    command: npm run dev -- --host 0.0.0.0
+    environment:
+      - VITE_API_URL=http://localhost:8000
+      # API_TARGET is read by vite.config.js (server-side) to set the proxy target.
+      # Inside Docker the API service is "api:8000", NOT "localhost:8000".
+      - API_TARGET=http://api:8000
+
+volumes:
+  es_data:
+  redis_data:
+  minio_data:

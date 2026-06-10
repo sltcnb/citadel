@@ -1,0 +1,10 @@
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: no-buffering
+  namespace: citadel-dev
+spec:
+  buffering:
+    maxRequestBodyBytes: 0
+    memRequestBodyBytes: 0
+    retryExpression: "IsNetworkError() && Attempts() <= 2"

@@ -1,0 +1,49 @@
+category: Initial Access
+rules:
+  - name: Macro-Enabled Document Opened
+    description: >-
+      A Word/Excel/PowerPoint file with macros was opened.
+      Common initial access vector for malware delivery.
+    artifact_type: evtx
+    query: "evtx.event_id:4688 AND (message:*winword* OR message:*excel* OR message:*powerpnt*) AND (message:*.docm* OR message:*.xlsm* OR message:*.pptm*)"
+    threshold: 1
+
+  - name: Outlook Attachment Downloaded
+    description: >-
+      A file was downloaded from an Outlook email attachment.
+      Review sender and attachment type for phishing indicators.
+    artifact_type: evtx
+    query: "evtx.event_id:4688 AND message:*outlook* AND (message:*TempOLK* OR message:*Content.Outlook*)"
+    threshold: 1
+
+  - name: Browser Downloaded Executable
+    description: >-
+      A web browser downloaded an executable file.
+      May indicate drive-by download or malicious payload delivery.
+    artifact_type: evtx
+    query: "evtx.event_id:4688 AND (message:*chrome* OR message:*firefox* OR message:*msedge*) AND (message:*.exe* OR message:*.bat* OR message:*.ps1*)"
+    threshold: 1
+
+  - name: OneNote Attachment Executed
+    description: >-
+      OneNote was used to open an attachment, a newer phishing technique.
+      Attackers use OneNote to bypass email security filters.
+    artifact_type: evtx
+    query: "evtx.event_id:4688 AND message:*onenote* AND message:*embed*"
+    threshold: 1
+
+  - name: CHM File Executed
+    description: >-
+      A Compiled HTML Help file was executed.
+      CHM files are used to deliver malware and execute scripts.
+    artifact_type: evtx
+    query: "evtx.event_id:4688 AND message:*.chm*"
+    threshold: 1
+
+  - name: ISO/VHD File Mounted
+    description: >-
+      A disk image file was mounted.
+      Attackers use ISO/VHD files to bypass Mark of the Web security.
+    artifact_type: evtx
+    query: "evtx.event_id:4688 AND (message:*mountvol* OR message:*DiskMount*) AND (message:*.iso* OR message:*.vhd* OR message:*.vhdx*)"
+    threshold: 1

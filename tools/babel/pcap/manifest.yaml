@@ -1,0 +1,14 @@
+id: pcap
+name: Network Traffic Analysis
+description: >-
+  Parses PCAP and PCAPNG packet capture files. Extracts per-packet events with
+  full network metadata: IP addresses, ports, protocol flags, payload previews.
+  Includes protocol-aware dissection for DNS queries/responses, HTTP requests
+  (method, host, path, user-agent), and TLS SNI extraction. Supports IPv4 and
+  IPv6. Large captures (>500k packets) are automatically sampled.
+supported_extensions: [".pcap", ".pcapng", ".cap"]
+supported_mime_types: ["application/vnd.tcpdump.pcap", "application/octet-stream"]
+artifact_type: network
+author: ForensicsOperator
+version: "1.0.0"
+tags: [network, pcap, pcapng, traffic, dns, http, tls, packets]

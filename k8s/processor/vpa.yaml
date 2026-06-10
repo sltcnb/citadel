@@ -1,0 +1,23 @@
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: processor-vpa
+  namespace: __FO_NAMESPACE__
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: processor
+  updatePolicy:
+    updateMode: "Auto"
+    minReplicas: 1
+  resourcePolicy:
+    containerPolicies:
+      - containerName: processor
+        # Only control memory — CPU is handled by HPA (avoid VPA/HPA conflict on CPU)
+        controlledResources: ["memory"]
+        minAllowed:
+          memory: "512Mi"
+        maxAllowed:
+          memory: "16Gi"     # forensic plugins (plaso, EVTX bulk) are very memory-hungry
+        controlledValues: RequestsAndLimits

@@ -1,0 +1,14 @@
+id: {{cookiecutter.parser_name}}
+name: {{cookiecutter.parser_name}} parser
+description: >
+  TODO: describe what artifact this parser handles and what events it yields.
+supported_extensions:
+  - {{cookiecutter.extension}}
+supported_mime_types:
+  - {{cookiecutter.mime_type}}
+artifact_type: {{cookiecutter.artifact_type}}
+handled_filenames: []
+author: {{cookiecutter.author}}
+version: "0.1.0"
+tags:
+  - {{cookiecutter.artifact_type}}

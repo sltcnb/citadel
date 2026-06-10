@@ -1,0 +1,44 @@
+id: k3s
+name: K3s / Kubernetes Structured Logs
+description: >
+  Parses structured log output from k3s, kubelet, kube-apiserver,
+  kube-controller-manager, kube-scheduler, and other Kubernetes control-plane
+  components.  Handles three common formats: Go logfmt (time= level= msg=),
+  JSON structured lines (zap/klog v2), and klog v1 text format (I0428 10:57:36
+  file.go:42 message).  Syslog-wrapped logfmt (from journald export) is
+  transparently stripped.  Each log line is emitted as a k8s_event with
+  kubernetes.level, namespace, pod, node, component, and error fields.
+supported_extensions:
+  - .log
+supported_mime_types:
+  - text/plain
+artifact_type: k8s_event
+handled_filenames:
+  - k3s.log
+  - k3s-server.log
+  - k3s-agent.log
+  - kubelet.log
+  - kube-apiserver.log
+  - kube-controller-manager.log
+  - kube-scheduler.log
+  - kube-proxy.log
+  - k8s.log
+  - kubernetes.log
+  - etcd.log
+  - containerd.log
+  - crio.log
+  - flannel.log
+  - calico.log
+  - coredns.log
+  - traefik.log
+  - rancher.log
+  - rke2.log
+author: Citadel
+version: "1.0.0"
+tags:
+  - kubernetes
+  - k3s
+  - k8s
+  - containers
+  - cloud
+  - linux

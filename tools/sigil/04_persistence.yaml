@@ -1,0 +1,57 @@
+category: Persistence
+rules:
+  - name: New Service Installed
+    description: >-
+      A new Windows service was installed (EID 7045). Malware frequently installs
+      services for persistence (e.g. malicious drivers, RAT service wrappers).
+    artifact_type: evtx
+    query: "evtx.event_id:7045"
+    threshold: 1
+
+  - name: Scheduled Task Created
+    description: >-
+      A scheduled task was registered (EID 4698). Review the task action —
+      one of the most common and durable persistence mechanisms.
+    artifact_type: evtx
+    query: "evtx.event_id:4698"
+    threshold: 1
+
+  - name: Scheduled Task Modified or Deleted
+    description: >-
+      An existing scheduled task was updated (4702) or deleted (4699).
+      Attackers may modify tasks to change their payload or clean up after themselves.
+    artifact_type: evtx
+    query: "evtx.event_id:4702 OR evtx.event_id:4699"
+    threshold: 1
+
+  - name: WMI Permanent Event Subscription Created
+    description: >-
+      A WMI event subscription was registered (EID 5861). WMI subscriptions are
+      a stealthy persistence mechanism that survives reboots.
+    artifact_type: evtx
+    query: "evtx.event_id:5861"
+    threshold: 1
+
+  - name: BITS Transfer Job Created
+    description: >-
+      Background Intelligent Transfer Service created a job (EID 59/60).
+      BITS jobs persist across reboots and are used for delayed payload download.
+    artifact_type: evtx
+    query: "evtx.event_id:59 OR evtx.event_id:60"
+    threshold: 1
+
+  - name: Registry Run Key Modified
+    description: >-
+      A common autorun registry key was modified (HKLM/HKCU Run, RunOnce).
+      One of the oldest and most reliable Windows persistence techniques.
+    artifact_type: evtx
+    query: "evtx.event_id:4657 AND (message:*\\\\Run* OR message:*\\\\RunOnce*) AND (message:*HKLM* OR message:*HKCU* OR message:*Software\\\\Microsoft\\\\Windows*)"
+    threshold: 1
+
+  - name: Startup Folder File Created
+    description: >-
+      A file was written to a Windows Startup folder. Executables and LNK shortcuts
+      placed here run at every user logon — a reliable persistence location.
+    artifact_type: evtx
+    query: "evtx.event_id:4663 AND (message:*\\\\Start Menu\\\\Programs\\\\Startup* OR message:*\\\\AppData\\\\Roaming\\\\Microsoft\\\\Windows\\\\Start Menu*)"
+    threshold: 1

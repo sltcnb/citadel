@@ -1,0 +1,13 @@
+id: ndjson
+name: NDJSON / JSONL
+description: >-
+  Generic NDJSON (newline-delimited JSON) ingester. Accepts any log source that
+  produces one JSON object per line. Auto-detects timestamp fields and maps
+  common fields (host, user, message, src_ip, dest_ip) to the ForensicsOperator
+  event schema.
+supported_extensions: [".ndjson", ".jsonl"]
+supported_mime_types: ["application/x-ndjson"]
+artifact_type: ndjson
+author: ForensicsOperator
+version: "1.0.0"
+tags: [ndjson, jsonl, generic, flexible]

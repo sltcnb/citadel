@@ -1,0 +1,49 @@
+category: Registry Forensics
+rules:
+  - name: Shim Database Created
+    description: >-
+      A shim database was registered.
+      Attackers use application shimming for persistence and privilege escalation.
+    artifact_type: registry
+    query: "registry.key:*\\\\AppPatch\\\\Custom*"
+    threshold: 1
+
+  - name: Sticky Keys Backdoor
+    description: >-
+      Sticky Keys or other accessibility executables were modified.
+      Common backdoor technique for persistence.
+    artifact_type: registry
+    query: "registry.key:*\\\\Image File Execution Options* AND (registry.value:*sethc* OR registry.value:*utilman* OR registry.value:*osk* OR registry.value:*magnify*)"
+    threshold: 1
+
+  - name: Winlogon Helper Modified
+    description: >-
+      Winlogon notification packages were changed.
+      Used for persistence and credential theft.
+    artifact_type: registry
+    query: "registry.key:*\\\\Winlogon* AND (registry.value:*GPExtensions* OR registry.value:*Task* OR registry.value:*System*)"
+    threshold: 1
+
+  - name: LSA Security Package Modified
+    description: >-
+      LSA security packages were changed.
+      Attackers add custom packages for credential theft.
+    artifact_type: registry
+    query: "registry.key:*\\\\LSA* AND (registry.value:*Security Packages* OR registry.value:*Authentication Packages*)"
+    threshold: 1
+
+  - name: COM Hijacking
+    description: >-
+      COM object handlers were modified.
+      Used for privilege escalation and persistence.
+    artifact_type: registry
+    query: "registry.key:*\\\\CLSID*\\\\InProcServer32* AND NOT registry.value:*System32*"
+    threshold: 1
+
+  - name: Silent Process Exit Monitoring
+    description: >-
+      Silent Process Exit monitoring was configured.
+      Used for persistence and process surveillance.
+    artifact_type: registry
+    query: "registry.key:*\\\\SilentProcessExit*"
+    threshold: 1

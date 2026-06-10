@@ -1,0 +1,73 @@
+category: Execution
+rules:
+  - name: PowerShell Script Block Logged
+    description: >-
+      PowerShell script block logging captured executed code (EID 4104).
+      Review for encoded commands, download cradles, and Invoke-Expression.
+    artifact_type: evtx
+    query: "evtx.event_id:4104"
+    threshold: 1
+
+  - name: Encoded PowerShell Command
+    description: >-
+      PowerShell was launched with -EncodedCommand or -enc.
+      Base64-encoded commands are a common obfuscation technique.
+    artifact_type: evtx
+    query: "evtx.event_id:4688 AND message:*powershell* AND (message:*-EncodedCommand* OR message:*-enc* OR message:*-e *)"
+    threshold: 1
+
+  - name: Process Spawned by Office Application
+    description: >-
+      A child process was spawned (EID 4688) by a Microsoft Office application.
+      The classic macro-based initial access indicator.
+    artifact_type: evtx
+    query: "evtx.event_id:4688 AND (message:*winword* OR message:*excel* OR message:*powerpnt* OR message:*outlook*)"
+    threshold: 1
+
+  - name: WMIC Remote Process Creation
+    description: >-
+      WMIC was used to create a remote process. Commonly used for lateral movement
+      and fileless execution (living off the land).
+    artifact_type: evtx
+    query: "evtx.event_id:4688 AND message:*wmic* AND (message:*process* OR message:*call* OR message:*create*)"
+    threshold: 1
+
+  - name: Regsvr32 Executing Script (Squiblydoo)
+    description: >-
+      Regsvr32 executed a script or remote COM object.
+      Used to bypass application whitelisting (squiblydoo technique).
+    artifact_type: evtx
+    query: "evtx.event_id:4688 AND message:*regsvr32* AND (message:*scrobj* OR message:*http*)"
+    threshold: 1
+
+  - name: Mshta Executing Remote Script
+    description: >-
+      Mshta.exe ran a remote HTA or VBScript (EID 4688).
+      Frequently used as a malicious dropper or C2 download stage.
+    artifact_type: evtx
+    query: "evtx.event_id:4688 AND message:*mshta* AND (message:*http* OR message:*vbscript* OR message:*javascript*)"
+    threshold: 1
+
+  - name: CertUtil File Download (LOLBIN)
+    description: >-
+      CertUtil used -urlcache or -decode to download or decode a file.
+      A classic living-off-the-land binary technique for fetching malware.
+    artifact_type: evtx
+    query: "evtx.event_id:4688 AND message:*certutil* AND (message:*-urlcache* OR message:*-decode* OR message:*http*)"
+    threshold: 1
+
+  - name: Process Running from Temp / AppData
+    description: >-
+      A process started from a user-writable temp or AppData directory (EID 4688).
+      Malware commonly drops and executes from these paths.
+    artifact_type: evtx
+    query: "evtx.event_id:4688 AND (message:*\\\\Temp\\\\* OR message:*\\\\AppData\\\\Local\\\\Temp\\\\*)"
+    threshold: 1
+
+  - name: Rundll32 Executing Non-DLL / Remote Path
+    description: >-
+      Rundll32 was used to execute code from a URL, .txt, or .dat file.
+      A well-known LOLBIN technique used to run arbitrary code.
+    artifact_type: evtx
+    query: "evtx.event_id:4688 AND message:*rundll32* AND (message:*http* OR message:*.txt* OR message:*.dat*)"
+    threshold: 1

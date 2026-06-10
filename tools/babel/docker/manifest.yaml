@@ -1,0 +1,35 @@
+id: docker
+name: Docker Containers & Daemon Logs
+description: >
+  Parses Docker container listing output (docker ps / docker ps --format json)
+  and Docker daemon logfmt log files (dockerd, containerd).  Container listing
+  produces docker_container events; daemon log lines produce docker_event events
+  with level, container ID/name, image, and error fields extracted.
+  Handles both plain logfmt and syslog-wrapped daemon logs.
+supported_extensions:
+  - .log
+  - .txt
+supported_mime_types:
+  - text/plain
+artifact_type: docker_event
+handled_filenames:
+  - docker.log
+  - docker_containers.log
+  - docker_ps.log
+  - containers.log
+  - docker_images.log
+  - docker_networks.log
+  - docker_volumes.log
+  - docker_inspect.log
+  - docker_stats.log
+  - docker_events.log
+  - containerd.log
+  - dockerd.log
+  - moby.log
+author: Citadel
+version: "1.0.0"
+tags:
+  - docker
+  - containers
+  - linux
+  - cloud

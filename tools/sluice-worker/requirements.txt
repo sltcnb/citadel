@@ -1,0 +1,32 @@
+celery==5.3.6
+redis==5.0.4
+requests>=2.31.0
+minio==7.2.7
+python-evtx==0.7.4
+python-registry==1.3.1
+LnkParse3==1.4.0
+mft==0.7.0
+python-magic==0.4.27
+pyhindsight>=3.4.0
+# ccl_chromium_reader is a pyhindsight dep not on PyPI — installed via git+https in Dockerfile:
+# pip install git+https://github.com/cclgroupltd/ccl_chromium_reader.git
+pefile>=2023.2.7
+oletools>=0.60
+dpkt>=1.9.8
+# YARA — pattern-based malware detection (used by the yara module)
+yara-python>=4.3.1
+# Volatility 3 — memory forensics (used by the volatility3 module)
+volatility3>=2.5.0
+# pyscca (libscca-python) — install manually if MAM-compressed prefetch support needed
+# pip install libscca-python
+# malwoverview — multi-source threat intelligence CLI (github.com/alexandreborges/malwoverview)
+# The malwoverview module works without this (direct VT API fallback), but installing
+# adds the CLI for enriched output.
+malwoverview
+# Disk image filesystem browsing (The Sleuth Kit Python bindings)
+# Requires libtsk-dev + libewf-dev system packages in the container (see Dockerfile)
+# pyewf has no PyPI package — E01/EWF support requires the libyal C build; optional.
+pytsk3>=20211111
+# Sigma HQ integration - comment out if build fails, use manual install instead
+# pysigma>=0.11.0
+# pysigma-backend-elasticsearch>=1.0.0

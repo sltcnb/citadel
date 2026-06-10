@@ -1,0 +1,41 @@
+category: Discovery
+rules:
+  - name: Local User / Group Enumeration
+    description: >-
+      Local user or group membership was enumerated (EID 4798/4799).
+      Common pre-lateral-movement account reconnaissance.
+    artifact_type: evtx
+    query: "evtx.event_id:4798 OR evtx.event_id:4799"
+    threshold: 3
+
+  - name: Network Share Enumeration
+    description: >-
+      Network shares were accessed or enumerated (EID 5140).
+      Frequent access from a single host may indicate internal reconnaissance.
+    artifact_type: evtx
+    query: "evtx.event_id:5140"
+    threshold: 5
+
+  - name: System Information Commands
+    description: >-
+      systeminfo, ipconfig, or whoami was executed (EID 4688).
+      Attackers run these commands early in the kill chain to map the environment.
+    artifact_type: evtx
+    query: "evtx.event_id:4688 AND (message:*systeminfo* OR message:*whoami* OR message:*ipconfig*)"
+    threshold: 1
+
+  - name: Network Scanning — Port / Host Discovery
+    description: >-
+      nmap, masscan, or ping sweep commands detected (EID 4688).
+      Active network scanning to identify live hosts and open services.
+    artifact_type: evtx
+    query: "evtx.event_id:4688 AND (message:*nmap* OR message:*masscan* OR message:*portscan*)"
+    threshold: 1
+
+  - name: Active Directory Enumeration (LDAP)
+    description: >-
+      LDAP directory queries executed via net.exe or PowerShell (EID 4688).
+      Attackers query AD for user, computer, and group objects before moving laterally.
+    artifact_type: evtx
+    query: "evtx.event_id:4688 AND (message:*ldap* OR message:*\"net group\"* OR message:*\"net user\"* OR message:*Get-ADUser*)"
+    threshold: 1

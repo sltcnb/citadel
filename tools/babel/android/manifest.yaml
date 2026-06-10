@@ -1,0 +1,20 @@
+id: android
+name: Android Forensics
+description: >-
+  Parses Android forensic artifacts including SMS/MMS databases (mmssms.db),
+  contacts (contacts2.db), call logs (calllog.db), media scanner databases
+  (external.db), installed packages (packages.xml), WiFi configuration files,
+  bug reports, and Android backup (.ab) files.
+supported_extensions: [".db", ".sqlite", ".xml", ".txt", ".ab"]
+supported_mime_types: []
+artifact_type: android
+handled_filenames:
+  - MMSSMS.DB
+  - CONTACTS2.DB
+  - CONTACTS.DB
+  - CALLLOG.DB
+  - EXTERNAL.DB
+  - PACKAGES.XML
+author: ForensicsOperator
+version: "1.0.0"
+tags: [android, mobile, sms, contacts, calls, forensics]

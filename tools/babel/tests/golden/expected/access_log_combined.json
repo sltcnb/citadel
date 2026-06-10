@@ -1,0 +1,56 @@
+[
+  {
+    "artifact_type": "access_log",
+    "host": {
+      "hostname": ""
+    },
+    "http": {
+      "method": "GET",
+      "protocol": "HTTP/1.1",
+      "referer": "https://example.com/",
+      "request_path": "/admin/login",
+      "response_size": 1024,
+      "status_code": 200,
+      "user_agent": "Mozilla/5.0 (X11; Linux x86_64)"
+    },
+    "message": "GET /admin/login → 200 [Mozilla/5.0 (X11; Linux x86_64)]",
+    "network": {
+      "src_ip": "10.0.0.5"
+    },
+    "raw": {
+      "line": "10.0.0.5 - alice [15/Sep/2023:12:34:56 +0000] \"GET /admin/login HTTP/1.1\" 200 1024 \"https://example.com/\" \"Mozilla/5.0 (X11; Linux x86_64)\""
+    },
+    "timestamp": "2023-09-15T12:34:56Z",
+    "timestamp_desc": "Request Time",
+    "user": {
+      "name": "alice"
+    }
+  },
+  {
+    "artifact_type": "access_log",
+    "host": {
+      "hostname": ""
+    },
+    "http": {
+      "method": "POST",
+      "protocol": "HTTP/1.1",
+      "referer": "-",
+      "request_path": "/api/v1/upload",
+      "response_size": 57,
+      "status_code": 403,
+      "user_agent": "curl/7.88.1"
+    },
+    "message": "POST /api/v1/upload → 403 [curl/7.88.1]",
+    "network": {
+      "src_ip": "198.51.100.23"
+    },
+    "raw": {
+      "line": "198.51.100.23 - - [15/Sep/2023:12:35:10 +0000] \"POST /api/v1/upload HTTP/1.1\" 403 57 \"-\" \"curl/7.88.1\""
+    },
+    "timestamp": "2023-09-15T12:35:10Z",
+    "timestamp_desc": "Request Time",
+    "user": {
+      "name": ""
+    }
+  }
+]

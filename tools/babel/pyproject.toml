@@ -1,0 +1,11 @@
+[project]
+name = "babel"
+version = "1.0.0"
+description = "Citadel plugins (Babel) — artifact parser library"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+    { name = "Citadel" },
+]
+# runtime deps tracked in requirements.txt
+dependencies = []

@@ -1,0 +1,98 @@
+# ── Redis Configuration for Large-Scale Forensics ──────────────────────────────
+# Memory: 8Gi container with 6Gi maxmemory for 1M+ keys
+# Storage: Persistent AOF for durability across restarts
+# Policy: noeviction to NEVER lose case metadata
+#
+# For VERY large deployments (10M+ keys, enterprise scale):
+#   - Increase memory to 16Gi
+#   - Set maxmemory to 12288mb (12Gi)
+#   - Consider Redis Cluster for horizontal scaling
+# ────────────────────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: __FO_NAMESPACE__
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7.2-alpine
+          args:
+            # Persistence: AOF only — RDB snapshots disabled to prevent fork() OOM.
+            # BGSAVE forks double peak memory (COW); AOF alone provides durability.
+            - "--appendonly"
+            - "yes"
+            - "--appendfsync"
+            - "everysec"
+            - "--save"
+            - ""
+            # AOF rewrite: trigger only when the AOF grows substantially.
+            # Keeps rewrite forks infrequent and predictable.
+            - "--auto-aof-rewrite-percentage"
+            - "100"
+            - "--auto-aof-rewrite-min-size"
+            - "128mb"
+            # Memory cap: 6Gi for large-scale deployments with 1M+ keys
+            # Increased to handle enterprise forensics workloads
+            # Keep 2Gi headroom inside 8Gi container for AOF rewrite COW
+            - "--maxmemory"
+            - "6144mb"
+            - "--maxmemory-policy"
+            - "noeviction"
+            - "--tcp-keepalive"
+            - "300"
+            # Lazily free expired/evicted keys off the main thread.
+            - "--lazyfree-lazy-eviction"
+            - "yes"
+            - "--lazyfree-lazy-expire"
+            - "yes"
+          ports:
+            - containerPort: 6379
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              memory: "4Gi"
+              cpu: "1000m"
+            limits:
+              memory: "8Gi"
+              cpu: "2000m"
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+      volumes:
+        - name: redis-data
+          persistentVolumeClaim:
+            claimName: redis-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-service
+  namespace: __FO_NAMESPACE__
+spec:
+  selector:
+    app: redis
+  ports:
+    - port: 6379
+      targetPort: 6379

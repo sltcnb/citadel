@@ -1,0 +1,48 @@
+[
+  {
+    "artifact_type": "netstat",
+    "message": "ESTABLISHED 10.0.0.5:51000 → 93.184.216.34:443  [curl]",
+    "network": {
+      "dst_ip": "93.184.216.34",
+      "dst_port": 443,
+      "protocol": "tcp",
+      "recv_q": 0,
+      "send_q": 0,
+      "src_ip": "10.0.0.5",
+      "src_port": 51000,
+      "state": "ESTABLISHED"
+    },
+    "process": {
+      "name": "curl",
+      "pid": 4242
+    },
+    "raw": {
+      "line": "0      0      10.0.0.5:51000 93.184.216.34:443 users:((\"curl\",pid=4242,fd=3))"
+    },
+    "timestamp": "2023-09-15T12:34:56Z",
+    "timestamp_desc": "Connection Snapshot"
+  },
+  {
+    "artifact_type": "netstat",
+    "message": "ESTABLISHED 10.0.0.5:51002 → 8.8.8.8:53  [python3]",
+    "network": {
+      "dst_ip": "8.8.8.8",
+      "dst_port": 53,
+      "protocol": "tcp",
+      "recv_q": 0,
+      "send_q": 0,
+      "src_ip": "10.0.0.5",
+      "src_port": 51002,
+      "state": "ESTABLISHED"
+    },
+    "process": {
+      "name": "python3",
+      "pid": 909
+    },
+    "raw": {
+      "line": "0      0      10.0.0.5:51002 8.8.8.8:53 users:((\"python3\",pid=909,fd=7))"
+    },
+    "timestamp": "2023-09-15T12:34:56Z",
+    "timestamp_desc": "Connection Snapshot"
+  }
+]

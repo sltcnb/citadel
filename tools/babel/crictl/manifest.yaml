@@ -1,0 +1,37 @@
+id: crictl
+name: CRI-CTL Container Runtime
+description: >
+  Parses crictl (Container Runtime Interface CLI) tabular output for pod
+  sandboxes (crictl pods), containers (crictl ps), images (crictl images),
+  and container stats (crictl stats).  Each row becomes a structured event
+  with the appropriate artifact_type (k8s_pod, k8s_container, k8s_image, or
+  k8s_container_stats) and kubernetes.* sub-fields.  Compatible with
+  containerd and CRI-O runtimes.
+supported_extensions:
+  - .log
+  - .txt
+supported_mime_types:
+  - text/plain
+artifact_type: k8s_container
+handled_filenames:
+  - crictl_pods.log
+  - crictl_ps.log
+  - crictl_containers.log
+  - crictl_images.log
+  - crictl_info.log
+  - crictl_stats.log
+  - crictl.log
+  - cri_pods.log
+  - cri_containers.log
+  - cri_images.log
+  - sandboxes.log
+  - pod_sandboxes.log
+author: Citadel
+version: "1.0.0"
+tags:
+  - kubernetes
+  - k8s
+  - crictl
+  - containers
+  - cloud
+  - linux

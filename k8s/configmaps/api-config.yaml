@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: api-config
+  namespace: __FO_NAMESPACE__
+data:
+  ELASTICSEARCH_URL: "http://elasticsearch-service:9200"
+  REDIS_URL: "redis://redis-service:6379/0"
+  MINIO_ENDPOINT: "minio-service:9000"
+  MINIO_BUCKET: "forensics-cases"
+  PLUGINS_DIR: "/app/babel"
+  DEFAULT_PAGE_SIZE: "100"
+  MAX_PAGE_SIZE: "1000"
+  # Auth
+  AUTH_ENABLED: "__FO_AUTH_ENABLED__"
+  JWT_EXPIRE_HOURS: "__FO_JWT_EXPIRE_HOURS__"
+  ADMIN_USERNAME: "__FO_ADMIN_USERNAME__"
+---
+# JWT signing secret + admin password — stored as a K8s Secret so they are
+# base64-encoded at rest and excluded from general config queries.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: api-auth-secret
+  namespace: __FO_NAMESPACE__
+type: Opaque
+stringData:
+  JWT_SECRET: "__FO_JWT_SECRET__"
+  ADMIN_PASSWORD: "__FO_ADMIN_PASSWORD__"
+  CITADEL_LICENSE_KEY: "__FO_LICENSE_KEY__"
+  CITADEL_LICENSE_SIGNING_KEY: "__FO_LICENSE_SIGNING_KEY__"

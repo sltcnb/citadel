@@ -1,0 +1,49 @@
+category: Browser Forensics
+rules:
+  - name: Browser Extension Installed
+    description: >-
+      A new browser extension was installed.
+      Malicious extensions can steal data and monitor activity.
+    artifact_type: hindsight
+    query: "hindsight.record_type:extension AND hindsight.extension.event:install"
+    threshold: 1
+
+  - name: Download from Unusual Domain
+    description: >-
+      A file was downloaded from a suspicious or rare domain.
+      May indicate malware delivery or phishing site.
+    artifact_type: hindsight
+    query: "hindsight.record_type:download AND NOT (hindsight.download.host:*google* OR hindsight.download.host:*microsoft* OR hindsight.download.host:*github*)"
+    threshold: 1
+
+  - name: InPrivate Incognito Mode Usage
+    description: >-
+      Browser was used in private browsing mode.
+      Attackers use private mode to avoid leaving traces.
+    artifact_type: hindsight
+    query: "hindsight.record_type:startup AND (hindsight.browser.mode:incognito OR hindsight.browser.mode:private)"
+    threshold: 1
+
+  - name: Credential Form Submission to Rare Domain
+    description: >-
+      A login form was submitted to an uncommon domain.
+      May indicate credential phishing attack.
+    artifact_type: hindsight
+    query: "hindsight.record_type:form_and_field_data AND hindsight.form.action:submit AND NOT (hindsight.form.domain:*google* OR hindsight.form.domain:*microsoft* OR hindsight.form.domain:*facebook*)"
+    threshold: 1
+
+  - name: Multiple Failed Login Attempts
+    description: >-
+      Multiple failed form submissions detected.
+      May indicate brute force attack or credential stuffing.
+    artifact_type: hindsight
+    query: "hindsight.record_type:form_and_field_data AND hindsight.form.result:failure"
+    threshold: 5
+
+  - name: Browser Visited Known Malicious Domain
+    description: >-
+      Browser accessed a domain flagged as malicious.
+      Indicates potential drive-by download or phishing.
+    artifact_type: hindsight
+    query: "hindsight.record_type:visit AND (hindsight.visit.domain:*malware* OR hindsight.visit.domain:*phishing* OR hindsight.visit.domain:*evil*)"
+    threshold: 1

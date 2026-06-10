@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 120" preserveAspectRatio="xMinYMid meet" role="img" aria-label="Citadel">
+  <!-- Citadel wordmark: a keep/battlement monogram + the wordmark. -->
+  <g fill="#2563EB">
+    <!-- battlement crenellations -->
+    <rect x="30" y="16" width="12" height="14"/>
+    <rect x="50" y="16" width="12" height="14"/>
+    <rect x="70" y="16" width="12" height="14"/>
+  </g>
+  <path d="M86 34 H42 a10 10 0 0 0 -10 10 V80 a10 10 0 0 0 10 10 H86"
+        fill="none" stroke="#2563EB" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="112" y="84"
+        font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, Helvetica, Arial, sans-serif"
+        font-size="76" font-weight="700" letter-spacing="1" fill="#1B1C31">Citadel</text>
+</svg>

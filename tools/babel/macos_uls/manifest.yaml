@@ -1,0 +1,32 @@
+id: macos_uls
+name: macOS Unified Logging System
+description: >
+  Parses macOS Unified Logging System (ULS) exports in both text format
+  (produced by `log show`) and JSON/NDJSON format (`log show --style json`).
+  Extracts timestamp, log level, process name, subsystem, category, and
+  message.  For .logarchive directories, first export with:
+    log show /path/to/file.logarchive --style json > unified.ndjson
+supported_extensions:
+  - .log
+  - .ndjson
+  - .json
+supported_mime_types:
+  - text/plain
+  - application/json
+  - application/x-ndjson
+artifact_type: macos_uls
+handled_filenames:
+  - unified.log
+  - unified.ndjson
+  - macos_unified.log
+  - macos_logs.json
+  - uls_export.log
+  - uls_export.ndjson
+author: Citadel
+version: "1.0.0"
+tags:
+  - macos
+  - apple
+  - unified-logging
+  - uls
+  - system-logs

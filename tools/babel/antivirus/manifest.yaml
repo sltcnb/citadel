@@ -1,0 +1,31 @@
+id: antivirus
+name: Antivirus / EDR
+description: >
+  Parses antivirus and EDR artifacts collected under antivirus/<vendor>/ —
+  Microsoft Defender (MpCmdRun/mplog, DetectionHistory, Quarantine), Trend Micro
+  (Apex One / Deep Security ds_agent), Symantec SEP, McAfee/Trellix, Sophos, ESET,
+  Kaspersky, Bitdefender, CrowdStrike, SentinelOne, Carbon Black, Cylance, and on
+  Linux ClamAV, mdatp, falcon-sensor, sophos-spl, rkhunter/chkrootkit. Text logs
+  are split one event per line with light timestamp extraction; binary artifacts
+  (quarantine blobs, DetectionHistory) are indexed as a single collected-artifact
+  event so they remain searchable. The vendor is taken from the archive path.
+supported_extensions: []
+supported_mime_types:
+  - text/x-antivirus
+artifact_type: antivirus
+handled_filenames:
+  - mplog.log
+  - mpcmdrun.log
+  - mpdetection.log
+  - clamav.log
+  - freshclam.log
+  - rkhunter.log
+author: Citadel
+version: "1.0.0"
+tags:
+  - antivirus
+  - edr
+  - detection
+  - quarantine
+  - security
+  - dfir

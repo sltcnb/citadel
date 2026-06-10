@@ -1,0 +1,11 @@
+Record Number,Active/Deleted,Filename,Full Path,File Size,Type,$SI [M],$SI [A],$SI [C],$SI [F]
+36,Active,$MFT,C:\$MFT,16777216,File,2024-06-01 08:00:00,2024-06-15 10:30:00,2024-06-01 08:00:00,2024-06-01 08:00:00
+37,Active,$LogFile,C:\$LogFile,1048576,File,2024-06-01 08:00:00,2024-06-15 10:30:00,2024-06-01 08:00:00,2024-06-01 08:00:00
+100,Active,Windows,C:\Windows,0,Directory,2024-06-01 08:00:00,2024-06-15 09:00:00,2024-06-01 08:00:00,2024-06-01 08:00:00
+101,Active,Users,C:\Users,0,Directory,2024-06-01 08:00:00,2024-06-15 08:30:00,2024-06-01 08:00:00,2024-06-01 08:00:00
+102,Active,admin,C:\Users\admin,0,Directory,2024-06-01 08:00:00,2024-06-15 11:00:00,2024-06-01 08:00:00,2024-06-01 08:00:00
+103,Active,malware.exe,C:\Users\admin\Downloads\malware.exe,45056,File,2024-06-15 10:00:00,2024-06-15 10:00:00,2024-06-15 10:00:00,2024-06-15 10:00:00
+104,Deleted,secret.doc,C:\Users\admin\Documents\secret.doc,24576,File,2024-06-10 14:00:00,2024-06-14 16:00:00,2024-06-10 14:00:00,2024-06-10 14:00:00
+105,Active,Desktop,C:\Users\admin\Desktop,0,Directory,2024-06-01 08:00:00,2024-06-15 11:30:00,2024-06-01 08:00:00,2024-06-01 08:00:00
+106,Active,AppData,C:\Users\admin\AppData,0,Directory,2024-06-01 08:00:00,2024-06-15 11:45:00,2024-06-01 08:00:00,2024-06-01 08:00:00
+107,Active,persistence.bat,C:\Users\admin\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\persistence.bat,1024,File,2024-06-15 09:00:00,2024-06-15 09:00:00,2024-06-15 09:00:00,2024-06-15 09:00:00

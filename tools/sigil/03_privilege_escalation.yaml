@@ -1,0 +1,41 @@
+category: Privilege Escalation
+rules:
+  - name: Account Added to Privileged Group
+    description: >-
+      A user was added to a Global (4728), Local (4732), or Universal (4756)
+      security group — common persistence or privilege escalation step.
+    artifact_type: evtx
+    query: "evtx.event_id:4728 OR evtx.event_id:4732 OR evtx.event_id:4756"
+    threshold: 1
+
+  - name: New Local User Account Created
+    description: >-
+      A new Windows user account was created (EID 4720). Attackers create
+      accounts for persistent backdoor access.
+    artifact_type: evtx
+    query: "evtx.event_id:4720"
+    threshold: 1
+
+  - name: Special Privileges Assigned to New Logon
+    description: >-
+      An administrator or high-privilege account logged on (EID 4672).
+      Sensitive privilege assignments should always be reviewed.
+    artifact_type: evtx
+    query: "evtx.event_id:4672"
+    threshold: 1
+
+  - name: User Account Enabled
+    description: >-
+      A disabled user account was re-enabled (EID 4722). Attackers sometimes
+      re-activate dormant accounts to avoid creating new, visible ones.
+    artifact_type: evtx
+    query: "evtx.event_id:4722"
+    threshold: 1
+
+  - name: Token Privileges Adjusted
+    description: >-
+      A process token had privileges adjusted or impersonated (EID 4703/4674).
+      Used in privilege escalation via token impersonation and manipulation.
+    artifact_type: evtx
+    query: "evtx.event_id:4703 OR evtx.event_id:4674"
+    threshold: 1

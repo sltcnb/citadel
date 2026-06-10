@@ -1,0 +1,49 @@
+category: Zeek Network Analysis
+rules:
+  - name: DNS Query to Rare Domain
+    description: >-
+      A DNS query was made to a domain with an uncommon TLD.
+      Malware often uses rare TLDs for C2.
+    artifact_type: zeek
+    query: "zeek.log_type:dns AND (zeek.dns.qname:*.xyz* OR zeek.dns.qname:*.top* OR zeek.dns.qname:*.club*)"
+    threshold: 5
+
+  - name: Long DNS Query
+    description: >-
+      A DNS query with an unusually long domain name.
+      May indicate DNS tunneling or DGA.
+    artifact_type: zeek
+    query: "zeek.log_type:dns AND zeek.dns.qname_length:>50"
+    threshold: 1
+
+  - name: SSL Certificate with Self-Signed
+    description: >-
+      An SSL connection used a self-signed certificate.
+      Common in malware C2 to avoid certificate costs.
+    artifact_type: zeek
+    query: "zeek.log_type:ssl AND (zeek.ssl.cert_subject:*self* OR zeek.ssl.cert_issuer:*self*)"
+    threshold: 1
+
+  - name: HTTP Download of Executable
+    description: >-
+      An executable file was downloaded over HTTP.
+      May indicate malware delivery.
+    artifact_type: zeek
+    query: "zeek.log_type:http AND (zeek.http.uri:*.exe* OR zeek.http.uri:*.dll*)"
+    threshold: 1
+
+  - name: Connection to Non-Standard Port
+    description: >-
+      A connection was made to an unusual port.
+      Malware often uses non-standard ports for C2.
+    artifact_type: zeek
+    query: "zeek.log_type:conn AND NOT (zeek.conn.dst_port:80 OR zeek.conn.dst_port:443 OR zeek.conn.dst_port:53 OR zeek.conn.dst_port:25)"
+    threshold: 10
+
+  - name: Beaconing Behavior
+    description: >-
+      Regular periodic connections to the same destination.
+      Indicates potential C2 beaconing.
+    artifact_type: zeek
+    query: "zeek.log_type:conn AND zeek.conn.duration:>0"
+    threshold: 20

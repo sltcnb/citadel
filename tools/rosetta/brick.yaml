@@ -1,0 +1,20 @@
+# Rosetta — canonicalizer (any event stream -> ECS v8 + OSSEM)
+name: Rosetta
+kind: canonicalizer
+version: "0.1.0"
+repository: rosetta
+status: partial
+consumes:
+  content_types:
+    - application/x-ndjson
+  schema:
+    - https://citadel.dfir/contracts/forensic_event/v1.json
+produces:
+  schema:
+    - https://citadel.dfir/contracts/ecs_extension   # ECS v8 + OSSEM
+  artifact_types:
+    - "*"
+dependencies:
+  - elasticsearch          # daemon mode: watch + ES out
+health:
+  command: "rosetta --version"

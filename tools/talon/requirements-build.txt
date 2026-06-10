@@ -1,0 +1,2 @@
+# Build-time dependencies only — collect.py uses stdlib exclusively at runtime
+pyinstaller>=6.0

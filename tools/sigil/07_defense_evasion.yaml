@@ -1,0 +1,49 @@
+category: Defense Evasion
+rules:
+  - name: Windows Defender Real-Time Protection Disabled
+    description: >-
+      Windows Defender real-time protection was turned off (EID 5001/5010/5012).
+      Attackers disable AV before deploying malware payloads.
+    artifact_type: evtx
+    query: "evtx.event_id:5001 OR evtx.event_id:5010 OR evtx.event_id:5012"
+    threshold: 1
+
+  - name: Firewall Rule Added or Modified
+    description: >-
+      A Windows Firewall rule was added (4946) or modified (4948/4950).
+      Attackers change firewall rules to allow inbound C2 traffic.
+    artifact_type: evtx
+    query: "evtx.event_id:4946 OR evtx.event_id:4948 OR evtx.event_id:4950"
+    threshold: 1
+
+  - name: Event Log Service Stopped
+    description: >-
+      The Windows Event Log service was stopped (EID 6006).
+      Stopping this service prevents audit log collection.
+    artifact_type: evtx
+    query: "evtx.event_id:6006"
+    threshold: 1
+
+  - name: Process Injection — Remote Thread Created
+    description: >-
+      CreateRemoteThread was used to inject code into another process (EID 8 in Sysmon).
+      A primary technique for DLL injection and process hollowing.
+    artifact_type: evtx
+    query: "evtx.event_id:8 AND message:*CreateRemoteThread*"
+    threshold: 1
+
+  - name: AMSI Bypass Indicator
+    description: >-
+      Script block logging captured a known AMSI bypass string (AmsiScanBuffer patch,
+      Invoke-Bypass, amsiContext). Used to disable Windows malware scanning.
+    artifact_type: evtx
+    query: "evtx.event_id:4104 AND (message:*amsiContext* OR message:*AmsiScanBuffer* OR message:*amsiInitFailed*)"
+    threshold: 1
+
+  - name: DLL Hijacking — Suspicious Side-Load Path
+    description: >-
+      An executable loaded a DLL from the same directory as the process (EID 7 Sysmon).
+      Common DLL hijacking indicator when the directory is user-writable.
+    artifact_type: evtx
+    query: "evtx.event_id:7 AND message:*\\\\Temp\\\\* AND message:*.dll*"
+    threshold: 1

@@ -1,0 +1,45 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Make the shared contract package importable without runtime sys.path hacks
+# (citadel_contracts is COPYed to /app/citadel_contracts below).
+ENV PYTHONPATH=/app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc libmagic1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Build context is the repo root — copy api/ sources first
+COPY api/requirements.txt requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY api/ .
+
+# Shared contract package — API + parser packs depend on it (BasePlugin /
+# ForensicEvent helpers). At /app/citadel_contracts so base_plugin's re-export
+# shim (parents[1]) resolves it.
+COPY tools/citadel_contracts/ /app/citadel_contracts/
+RUN pip install --no-cache-dir /app/citadel_contracts
+
+# Sigil detection-rule content (its own repo/submodule at tools/sigil).
+COPY tools/sigil/ /app/sigil/
+ENV CITADEL_RULES_DIR=/app/sigil
+
+# Bake the artifact collector script into the image so the download
+# endpoint always works — regardless of whether the volume mount is present.
+RUN mkdir -p /app/collector
+COPY tools/talon/collect.py /app/collector/collect.py
+COPY tools/talon/fo_uploader.py /app/collector/fo_uploader.py
+
+
+# Built-in analysis modules — seeded into modules-pvc by the seed-modules init container.
+COPY tools/anvil/ /app/anvil_builtin/
+RUN mkdir -p /app/anvil /app/static
+
+# Ensure all internal packages have __init__.py stubs
+RUN touch routers/__init__.py services/__init__.py auth/__init__.py
+
+EXPOSE 8000
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

@@ -1,0 +1,84 @@
+[
+  {
+    "artifact_type": "suricata",
+    "host": {
+      "hostname": "10.0.0.5"
+    },
+    "message": "[ALERT] ET MALWARE Suspicious User-Agent — A Network Trojan was detected  (10.0.0.5 → 93.184.216.34)",
+    "network": {
+      "dst_ip": "93.184.216.34",
+      "dst_port": null,
+      "flow_id": "1001",
+      "protocol": "TCP",
+      "src_ip": "10.0.0.5",
+      "src_port": null
+    },
+    "raw": {
+      "alert": {
+        "category": "A Network Trojan was detected",
+        "signature": "ET MALWARE Suspicious User-Agent"
+      },
+      "dest_ip": "93.184.216.34",
+      "event_type": "alert",
+      "flow_id": 1001,
+      "proto": "TCP",
+      "src_ip": "10.0.0.5",
+      "timestamp": "2023-09-15T12:34:56.000000+0000"
+    },
+    "suricata": {
+      "alert": {
+        "category": "A Network Trojan was detected",
+        "signature": "ET MALWARE Suspicious User-Agent"
+      },
+      "dns": {},
+      "event_type": "alert",
+      "http": {},
+      "tls": {}
+    },
+    "timestamp": "2023-09-15T12:34:56Z",
+    "timestamp_desc": "Event Time"
+  },
+  {
+    "artifact_type": "suricata",
+    "host": {
+      "hostname": "10.0.0.5"
+    },
+    "message": "[DNS QUERY] evil.example.com A  10.0.0.5 → 8.8.8.8",
+    "network": {
+      "dst_ip": "8.8.8.8",
+      "dst_port": null,
+      "flow_id": "1002",
+      "protocol": "UDP",
+      "src_ip": "10.0.0.5",
+      "src_port": null
+    },
+    "raw": {
+      "dest_ip": "8.8.8.8",
+      "dns": {
+        "rcode": "NOERROR",
+        "rrname": "evil.example.com",
+        "rrtype": "A",
+        "type": "query"
+      },
+      "event_type": "dns",
+      "flow_id": 1002,
+      "proto": "UDP",
+      "src_ip": "10.0.0.5",
+      "timestamp": "2023-09-15T12:35:01.000000+0000"
+    },
+    "suricata": {
+      "alert": {},
+      "dns": {
+        "rcode": "NOERROR",
+        "rrname": "evil.example.com",
+        "rrtype": "A",
+        "type": "query"
+      },
+      "event_type": "dns",
+      "http": {},
+      "tls": {}
+    },
+    "timestamp": "2023-09-15T12:35:01Z",
+    "timestamp_desc": "Event Time"
+  }
+]

@@ -1,0 +1,21 @@
+id: bulk_extractor
+name: Bulk Extractor
+description: >-
+  Carve forensic artifacts from raw binary images — email addresses, URLs,
+  credit card numbers, phone numbers, GPS coordinates, domain names, and
+  network packets. Works without mounting a filesystem.
+input_extensions:
+  - .dd
+  - .img
+  - .iso
+  - .raw
+  - .bin
+  - .vmdk
+  - .e01
+  - .s01
+  - .ex01
+input_filenames: []
+available: false
+unavailable_reason: "Binary packaging in progress — coming soon."
+category: Disk Forensics
+tags: [carving, disk-image, email, urls, bulk-extractor]

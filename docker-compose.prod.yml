@@ -1,0 +1,235 @@
+version: "3.9"
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Citadel — production Docker Compose
+#
+# Differences from docker-compose.yml (dev):
+#   - No source-code volume mounts: code is baked into images at build time
+#   - Frontend runs the production nginx:alpine stage (not the Vite dev server)
+#   - nginx proxy service on port 80 is the single app entry point
+#   - Elasticsearch and Redis are not exposed to the host
+#   - API is not exposed on port 8000 to the host (proxy only)
+#   - Plugins are seeded from the image into a named volume at worker startup
+#
+# Usage:
+#   cp .env.example .env && $EDITOR .env          # fill in JWT_SECRET at minimum
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# Or use fo.sh which handles the above automatically:
+#   ./fo.sh deploy docker
+# ══════════════════════════════════════════════════════════════════════════════
+
+services:
+
+  # ── Infrastructure ──────────────────────────────────────────────────────────
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.0
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms${ES_HEAP_SIZE:-1g} -Xmx${ES_HEAP_SIZE:-1g}
+      - xpack.ml.enabled=false
+      - xpack.watcher.enabled=false
+      - indices.memory.index_buffer_size=20%
+      - thread_pool.write.queue_size=1000
+    # Not exposed to host in production — only internal services access ES directly
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+      memlock:
+        soft: -1
+        hard: -1
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health | grep -q '\"status\":\"yellow\\|green\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.13.0
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - XPACK_SECURITY_ENABLED=false
+    ports:
+      - "5601:5601"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.2-alpine
+    command: >
+      redis-server
+      --save 60 1
+      --appendonly yes
+      --appendfsync everysec
+      --maxmemory ${REDIS_MAXMEM:-2gb}
+      --maxmemory-policy allkeys-lru
+      --tcp-backlog 511
+      --tcp-keepalive 300
+    # Not exposed to host in production
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:RELEASE.2024-04-18T19-09-19Z
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY:-minioadmin}
+    ports:
+      - "9000:9000"   # S3 API (used by workers; also accessible for external tools)
+      - "9001:9001"   # MinIO web console
+    volumes:
+      - minio_data:/data
+    restart: unless-stopped
+
+  # ── Application ─────────────────────────────────────────────────────────────
+
+  api:
+    build:
+      context: .          # repo root — Dockerfile copies api/ + collector/
+      dockerfile: api/Dockerfile
+    environment:
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+      - REDIS_URL=redis://redis:6379/0
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-minioadmin}
+      - MINIO_BUCKET=forensics-cases
+      - PLUGINS_DIR=/app/babel
+      - INGESTER_DIR=/app/sluice
+      - MODULES_DIR=/app/anvil
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET must be set in .env}
+      - JWT_EXPIRE_HOURS=${JWT_EXPIRE_HOURS:-8}
+      - AUTH_ENABLED=${AUTH_ENABLED:-true}
+      - FO_PUBLIC_URL=${FO_PUBLIC_URL:-}
+      # Chunk assembly dir — on the shared uploads volume so all API replicas see the same chunks
+      - CHUNK_DIR=/app/uploads/_chunks
+    volumes:
+      # Plugins seeded by workers at startup; API reads them read-only
+      - plugins_data:/app/babel:ro
+      # Shared uploads volume for chunked upload assembly and triage archive staging
+      - uploads_data:/app/uploads
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --workers ${API_WORKERS:-4} --no-access-log
+    # Not exposed on host port 8000 — all traffic goes through the nginx proxy
+    restart: unless-stopped
+
+  # ── Ingest worker ──────────────────────────────────────────────────────────
+  # Handles file parsing (EVTX, MFT, registry, LNK…) and ES bulk indexing.
+  # I/O-bound: benefits from higher concurrency (MinIO download + ES writes).
+  worker-ingest:
+    build:
+      context: .          # repo root — Dockerfile copies processor/ + plugins/
+      dockerfile: processor/Dockerfile
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-minioadmin}
+      - MINIO_BUCKET=forensics-cases
+      - BULK_SIZE=${BULK_SIZE:-1000}
+      - INGESTER_DIR=/app/sluice
+      - MODULES_DIR=/app/anvil
+      - WORKER_MAX_TASKS=${WORKER_MAX_TASKS:-50}
+    volumes:
+      # cp -rn: copy built-in plugins into the volume on first boot, skip if already present
+      - plugins_data:/app/babel
+      - uploads_data:/app/uploads
+    depends_on:
+      - redis
+      - elasticsearch
+      - minio
+    command: >
+      sh -c "cp -rn /app/babel_builtin/. /app/babel/ &&
+             celery -A celery_app worker
+             --loglevel=info
+             --queues=ingest
+             --concurrency=${INGEST_CONCURRENCY:-4}
+             --hostname=ingest@%h
+             --max-tasks-per-child=${WORKER_MAX_TASKS:-50}"
+    restart: unless-stopped
+
+  # ── Module worker ──────────────────────────────────────────────────────────
+  # Handles analysis modules: Hayabusa, YARA, Hindsight, RegRipper, Wintriage.
+  # CPU/memory-bound: lower concurrency to avoid OOM when running heavy binaries.
+  worker-modules:
+    build:
+      context: .          # repo root
+      dockerfile: processor/Dockerfile
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-minioadmin}
+      - MINIO_BUCKET=forensics-cases
+      - BULK_SIZE=${BULK_SIZE:-1000}
+      - INGESTER_DIR=/app/sluice
+      - MODULES_DIR=/app/anvil
+      - WORKER_MAX_TASKS=${WORKER_MAX_TASKS:-50}
+    volumes:
+      - plugins_data:/app/babel
+      - uploads_data:/app/uploads
+    depends_on:
+      - redis
+      - elasticsearch
+      - minio
+    command: >
+      sh -c "cp -rn /app/babel_builtin/. /app/babel/ &&
+             celery -A celery_app worker
+             --loglevel=info
+             --queues=modules
+             --concurrency=${MODULE_CONCURRENCY:-2}
+             --hostname=modules@%h
+             --max-tasks-per-child=${WORKER_MAX_TASKS:-50}"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      # No 'target' — uses the full two-stage build: Vite build → nginx:alpine
+      # Result: a lean static file server, not the Vite dev hot-reload server
+    # Not exposed to the host — the proxy routes / to this container
+    restart: unless-stopped
+
+  # ── Reverse proxy ──────────────────────────────────────────────────────────
+  # Single host entry point for the application.
+  # Routes /api/ → FastAPI, / → frontend SPA.
+  proxy:
+    image: nginx:1.25-alpine
+    ports:
+      # PROXY_PORT (default 80) — change in .env if another service already owns port 80.
+      # Example: PROXY_PORT=8090 then point your nginx/Caddy/HAProxy to localhost:8090.
+      - "${PROXY_PORT:-80}:80"
+    volumes:
+      - ./nginx/nginx.prod.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - api
+      - frontend
+    restart: unless-stopped
+
+volumes:
+  es_data:
+  redis_data:
+  minio_data:
+  # Shared plugin directory: populated once by the first worker that boots,
+  # then read-only by the API and subsequent workers.
+  plugins_data:
+  # Shared uploads volume: chunked upload assembly + triage archive staging.
+  # Size is unbounded on Docker (uses host disk); use CHUNK_DIR for routing.
+  uploads_data:

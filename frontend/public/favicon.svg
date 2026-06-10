@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180" role="img" aria-label="Citadel">
+  <!-- App icon: dark rounded square + Citadel "C" keep monogram. -->
+  <rect x="0" y="0" width="180" height="180" rx="36" fill="#1B1C31"/>
+  <!-- battlement crenellations -->
+  <g fill="#4F8DF7">
+    <rect x="52" y="40" width="16" height="18"/>
+    <rect x="82" y="40" width="16" height="18"/>
+    <rect x="112" y="40" width="16" height="18"/>
+  </g>
+  <!-- open "C" keep -->
+  <path d="M128 64 H74 a16 16 0 0 0 -16 16 V108 a16 16 0 0 0 16 16 H128"
+        fill="none" stroke="#4F8DF7" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

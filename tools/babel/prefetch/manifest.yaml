@@ -1,0 +1,12 @@
+id: prefetch
+name: Prefetch Files
+description: >-
+  Parses Windows Prefetch files (.pf) to reconstruct program execution history.
+  Extracts executable name, run count, last run timestamps (up to 8), and
+  referenced file paths. Essential for proving execution of deleted or renamed binaries.
+supported_extensions: [".pf"]
+supported_mime_types: []
+artifact_type: prefetch
+author: ForensicsOperator
+version: "1.0.0"
+tags: [windows, prefetch, execution, forensics]

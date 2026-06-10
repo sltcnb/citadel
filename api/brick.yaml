@@ -1,0 +1,27 @@
+# Citadel — platform & integrator (orchestration API + React console)
+name: Citadel
+kind: platform
+version: "1.0.0"
+repository: citadel
+status: built
+consumes:
+  schema:
+    - https://citadel.dfir/contracts/forensic_event/v1.json
+    - https://citadel.dfir/contracts/bundle_manifest/v1.json
+produces:
+  schema: []
+  artifact_types: []
+dependencies:
+  - sluice
+  - babel
+  - rosetta
+  - sigil
+  - anvil
+  - augur
+  - pilot
+  - scribe
+  - elasticsearch
+  - redis
+  - minio
+health:
+  endpoint: /api/health

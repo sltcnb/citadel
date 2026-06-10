@@ -1,0 +1,18 @@
+# Talon — acquisition agent
+name: Talon
+kind: collector
+version: "1.0.0"
+repository: talon
+status: built
+consumes:
+  content_types: []        # reads live hosts / disks / images, not bus input
+  filenames: []
+produces:
+  schema:
+    - https://citadel.dfir/contracts/bundle_manifest/v1.json
+  artifact_types:
+    - "*"                   # ~80 artifact categories
+dependencies:
+  - sluice                  # hands bundles to Sluice (gRPC / upload token)
+health:
+  command: "talon --version"

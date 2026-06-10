@@ -1,0 +1,20 @@
+id: registry
+name: Windows Registry
+description: >-
+  Parses Windows registry hive files (NTUSER.DAT, SYSTEM, SOFTWARE, SAM, SECURITY,
+  USRCLASS.DAT). Extracts key/value pairs with last-write timestamps. Covers
+  persistence keys, user activity (RecentDocs, MRU), network configuration,
+  and installed software.
+supported_extensions: [".dat", ".hive"]
+supported_mime_types: []
+artifact_type: registry
+handled_filenames:
+  - NTUSER.DAT
+  - SYSTEM
+  - SOFTWARE
+  - SAM
+  - SECURITY
+  - USRCLASS.DAT
+author: ForensicsOperator
+version: "1.0.0"
+tags: [windows, registry, persistence, hive]

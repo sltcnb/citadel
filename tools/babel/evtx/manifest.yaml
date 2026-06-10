@@ -1,0 +1,13 @@
+id: evtx
+name: Windows Event Logs
+description: >-
+  Parses Windows Event Log (.evtx) binary files. Extracts all events with
+  normalized fields: event_id, provider, computer, user, process, and full
+  event_data. Supports Security, System, Application, PowerShell, Sysmon,
+  and all other Windows channels.
+supported_extensions: [".evtx"]
+supported_mime_types: []
+artifact_type: evtx
+author: ForensicsOperator
+version: "1.0.0"
+tags: [windows, evtx, event-log, security, sysmon]

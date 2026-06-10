@@ -1,0 +1,17 @@
+id: regripper
+name: RegRipper
+description: >-
+  Deep Windows registry analysis — 200+ plugins covering persistence (Run keys,
+  Services, COM hijacks), execution (ShimCache, UserAssist, AppCompatCache),
+  network (recent servers, mapped drives), and user activity (MRU, typed paths).
+input_extensions: [".dat", ".hive"]
+input_filenames:
+  - NTUSER.DAT
+  - SYSTEM
+  - SOFTWARE
+  - SAM
+  - SECURITY
+  - USRCLASS.DAT
+available: true
+category: Windows
+tags: [registry, windows, persistence, shimcache, userassist, mru]

@@ -1,0 +1,20 @@
+id: ios
+name: iOS Forensics
+description: >-
+  Parses iOS forensic artifacts including iMessage/SMS databases (sms.db),
+  call history (call_history.db), contacts (AddressBook.sqlitedb), location
+  data (consolidated.db), Safari history and bookmarks, WiFi known-networks
+  plists, device info (Info.plist), and iTunes backup manifests (Manifest.db).
+supported_extensions: [".db", ".sqlite", ".sqlitedb", ".plist"]
+supported_mime_types: []
+artifact_type: ios
+handled_filenames:
+  - SMS.DB
+  - CALL_HISTORY.DB
+  - ADDRESSBOOK.SQLITEDB
+  - CONSOLIDATED.DB
+  - MANIFEST.DB
+  - INFO.PLIST
+author: ForensicsOperator
+version: "1.0.0"
+tags: [ios, apple, mobile, imessage, sms, contacts, safari, forensics]

@@ -1,0 +1,15 @@
+id: dd_image
+name: DD / Raw Disk Image
+description: >-
+  Parses raw disk images (.dd, .img, .raw). Walks all partitions using The
+  Sleuth Kit, yields a searchable file listing (dd_file events), and dispatches
+  a child ingest job for every extracted file so that EVTX, MFT, registry, LNK
+  and all other parsers process the image contents automatically.
+  If photorec is available, also carves unallocated space for deleted/fragmented
+  files (dd_carved events).
+supported_extensions: [".dd", ".img", ".raw"]
+supported_mime_types: []
+artifact_type: dd_file
+author: Citadel
+version: "1.0.0"
+tags: [disk-image, dd, forensics, tsk, photorec, file-carving, ntfs, ext4, fat32]

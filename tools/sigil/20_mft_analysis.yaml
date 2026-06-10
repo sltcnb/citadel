@@ -1,0 +1,41 @@
+category: MFT Analysis
+rules:
+  - name: File Created in System Directory
+    description: >-
+      A file was created in a protected Windows directory.
+      Malware often drops files in system locations.
+    artifact_type: mft
+    query: "mft.full_path:*\\\\Windows\\\\* OR mft.full_path:*\\\\Program Files\\\\*"
+    threshold: 1
+
+  - name: File with Multiple Names ADS
+    description: >-
+      A file has multiple names or alternate data streams.
+      Used by malware to hide payloads.
+    artifact_type: mft
+    query: "mft.file_name_attributes:*multiple* OR mft.ads_count:>1"
+    threshold: 1
+
+  - name: File Created and Deleted Rapidly
+    description: >-
+      A file was created and deleted within seconds.
+      Indicates temporary payload execution or staging.
+    artifact_type: mft
+    query: "mft.crtime:* AND mft.mtime:* AND (mft.sequence_number:* OR mft.fn_deleted:*)"
+    threshold: 5
+
+  - name: File with Suspicious Extension
+    description: >-
+      A file with an extension commonly associated with malware.
+      Includes script, executable, and archive extensions.
+    artifact_type: mft
+    query: "(mft.name:*.exe* OR mft.name:*.dll* OR mft.name:*.ps1* OR mft.name:*.vbs* OR mft.name:*.js* OR mft.name:*.hta*)"
+    threshold: 1
+
+  - name: File Timestamp Anomaly
+    description: >-
+      File timestamps are inconsistent or timestomped.
+      Attackers modify timestamps to evade detection.
+    artifact_type: mft
+    query: "mft.crtime:>mft.mtime OR mft.mtime:>mft.a_time"
+    threshold: 1

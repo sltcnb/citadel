@@ -1,0 +1,258 @@
+{
+  "index_patterns": ["fo-case-*"],
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 0,
+      "refresh_interval": "5s",
+      "index.mapping.total_fields.limit": 3000
+    },
+    "mappings": {
+      "dynamic": "true",
+      "dynamic_templates": [
+        {
+          "strings_as_text_keyword": {
+            "match_mapping_type": "string",
+            "mapping": {
+              "type": "text",
+              "fields": { "keyword": { "type": "keyword", "ignore_above": 1024 } }
+            }
+          }
+        }
+      ],
+      "properties": {
+        "fo_id":          { "type": "keyword" },
+        "case_id":        { "type": "keyword" },
+        "artifact_type":  { "type": "keyword" },
+        "os":             { "type": "keyword" },
+        "source_file":    { "type": "keyword", "index": false },
+        "ingest_job_id":  { "type": "keyword" },
+        "ingested_at":    { "type": "date" },
+        "timestamp":      { "type": "date" },
+        "timestamp_desc": { "type": "keyword" },
+        "message": {
+          "type": "text",
+          "fields": { "keyword": { "type": "keyword", "ignore_above": 1024 } }
+        },
+        "tags":           { "type": "keyword" },
+        "analyst_note":   { "type": "text" },
+        "is_flagged":     { "type": "boolean" },
+        "is_pinned":      { "type": "boolean" },
+        "pin_note":       { "type": "text" },
+
+        "host": {
+          "type": "object", "dynamic": true,
+          "properties": {
+            "hostname":  { "type": "text", "fields": { "keyword": { "type": "keyword" } } },
+            "fqdn":      { "type": "text", "fields": { "keyword": { "type": "keyword" } } },
+            "ip":        { "type": "ip", "fields": { "keyword": { "type": "keyword" } } },
+            "os":        { "type": "keyword" },
+            "os_version":{ "type": "keyword" },
+            "domain":    { "type": "keyword" },
+            "timezone":  { "type": "keyword" }
+          }
+        },
+        "user": {
+          "type": "object", "dynamic": true,
+          "properties": {
+            "name":   { "type": "text", "fields": { "keyword": { "type": "keyword" } } },
+            "domain": { "type": "keyword" },
+            "sid":    { "type": "keyword" },
+            "type":   { "type": "keyword" },
+            "id":     { "type": "keyword" }
+          }
+        },
+        "process": {
+          "type": "object", "dynamic": true,
+          "properties": {
+            "name":            { "type": "text", "fields": { "keyword": { "type": "keyword" } } },
+            "executable_name": { "type": "text", "fields": { "keyword": { "type": "keyword" } } },
+            "path":            { "type": "text", "fields": { "keyword": { "type": "keyword" } } },
+            "command_line":    { "type": "text", "fields": { "keyword": { "type": "keyword", "ignore_above": 4096 } } },
+            "args":            { "type": "text", "fields": { "keyword": { "type": "keyword" } } },
+            "pid":             { "type": "long" },
+            "ppid":            { "type": "long" },
+            "parent_name":     { "type": "text", "fields": { "keyword": { "type": "keyword" } } },
+            "parent_executable":{"type": "text", "fields": { "keyword": { "type": "keyword" } } },
+            "parent_pid":      { "type": "long" },
+            "parent_command_line": { "type": "text", "fields": { "keyword": { "type": "keyword", "ignore_above": 4096 } } },
+            "user":            { "type": "keyword" },
+            "integrity_level": { "type": "keyword" },
+            "hash_md5":        { "type": "keyword" },
+            "hash_sha1":       { "type": "keyword" },
+            "hash_sha256":     { "type": "keyword" },
+            "elevation_token": { "type": "keyword" },
+            "logon_id":        { "type": "keyword" }
+          }
+        },
+        "network": {
+          "type": "object", "dynamic": true,
+          "properties": {
+            "src_ip":     { "type": "ip", "fields": { "keyword": { "type": "keyword" } } },
+            "src_port":   { "type": "long" },
+            "dst_ip":     { "type": "ip", "fields": { "keyword": { "type": "keyword" } } },
+            "dst_port":   { "type": "long" },
+            "dst_domain": { "type": "text", "fields": { "keyword": { "type": "keyword" } } },
+            "dst_host":   { "type": "keyword" },
+            "protocol":   { "type": "keyword" },
+            "action":     { "type": "keyword" },
+            "bytes":      { "type": "long" },
+            "direction":  { "type": "keyword" }
+          }
+        },
+        "http": {
+          "type": "object", "dynamic": true,
+          "properties": {
+            "method":        { "type": "keyword" },
+            "request_path":  { "type": "text", "fields": { "keyword": { "type": "keyword" } } },
+            "status_code":   { "type": "short" },
+            "user_agent":    { "type": "text", "fields": { "keyword": { "type": "keyword", "ignore_above": 1024 } } },
+            "referer":       { "type": "text", "fields": { "keyword": { "type": "keyword", "ignore_above": 1024 } } },
+            "host":          { "type": "keyword" },
+            "response_size": { "type": "long" }
+          }
+        },
+        "mitre": {
+          "type": "object", "dynamic": true,
+          "properties": {
+            "technique_id":   { "type": "keyword" },
+            "technique_name": { "type": "text", "fields": { "keyword": { "type": "keyword" } } },
+            "tactic":         { "type": "keyword" }
+          }
+        },
+        "evtx": {
+          "type": "object", "dynamic": true,
+          "properties": {
+            "event_id":     { "type": "long" },
+            "level":        { "type": "keyword" },
+            "level_name":   { "type": "keyword" },
+            "channel":      { "type": "keyword" },
+            "rule_title":   { "type": "text", "fields": { "keyword": { "type": "keyword" } } },
+            "provider_name":{ "type": "keyword" },
+            "task":         { "type": "long" },
+            "opcode":       { "type": "long" },
+            "record_id":    { "type": "long" },
+            "computer":     { "type": "text", "fields": { "keyword": { "type": "keyword" } } },
+            "correlation_activity_id": { "type": "keyword" }
+          }
+        },
+        "prefetch": {
+          "type": "object", "dynamic": true,
+          "properties": {
+            "executable_name":  { "type": "text", "fields": { "keyword": { "type": "keyword" } } },
+            "executable_hash":  { "type": "keyword" },
+            "run_count":        { "type": "long" },
+            "last_run_time":    { "type": "date" },
+            "earlier_run_times":{ "type": "date" },
+            "volume_serial":    { "type": "keyword" }
+          }
+        },
+        "registry": {
+          "type": "object", "dynamic": true,
+          "properties": {
+            "key_path":       { "type": "text", "fields": { "keyword": { "type": "keyword" } } },
+            "value_name":     { "type": "text", "fields": { "keyword": { "type": "keyword" } } },
+            "value_type":     { "type": "keyword" },
+            "value_data":     { "type": "text", "fields": { "keyword": { "type": "keyword", "ignore_above": 2048 } } },
+            "last_write_time":{ "type": "date" },
+            "hive":           { "type": "keyword" }
+          }
+        },
+        "mft": {
+          "type": "object", "dynamic": true,
+          "properties": {
+            "file_path":   { "type": "text", "fields": { "keyword": { "type": "keyword" } } },
+            "file_name":   { "type": "text", "fields": { "keyword": { "type": "keyword" } } },
+            "extension":   { "type": "keyword" },
+            "size":        { "type": "long" },
+            "size_allocated": { "type": "long" },
+            "created":     { "type": "date" },
+            "modified":    { "type": "date" },
+            "accessed":    { "type": "date" },
+            "entry_changed": { "type": "date" },
+            "fn_created":  { "type": "date" },
+            "fn_modified": { "type": "date" },
+            "is_directory":{ "type": "boolean" },
+            "is_deleted":  { "type": "boolean" },
+            "record_number": { "type": "long" },
+            "parent_record_number": { "type": "long" }
+          }
+        },
+        "lnk":           { "type": "object", "dynamic": true },
+        "plaso":         { "type": "object", "dynamic": true },
+        "hayabusa": {
+          "type": "object", "dynamic": true,
+          "properties": {
+            "rule_title":    { "type": "text", "fields": { "keyword": { "type": "keyword" } } },
+            "level":         { "type": "keyword" },
+            "mitre_tactics": { "type": "keyword" },
+            "details":       { "type": "object", "dynamic": true }
+          }
+        },
+        "file": {
+          "type": "object", "dynamic": true,
+          "properties": {
+            "filename":   { "type": "text", "fields": { "keyword": { "type": "keyword" } } },
+            "size_bytes": { "type": "long" },
+            "sha256":     { "type": "keyword" },
+            "sha1":       { "type": "keyword" },
+            "md5":        { "type": "keyword" },
+            "mime_type":  { "type": "keyword" },
+            "extension":  { "type": "keyword" },
+            "line_count": { "type": "long" },
+            "truncated":  { "type": "boolean" }
+          }
+        },
+        "raw": { "type": "object", "enabled": false },
+
+        "hostname":         { "type": "alias", "path": "host.hostname" },
+        "fqdn":             { "type": "alias", "path": "host.fqdn" },
+        "host_ip":          { "type": "alias", "path": "host.ip" },
+        "host_os":          { "type": "alias", "path": "host.os" },
+        "username":         { "type": "alias", "path": "user.name" },
+        "user_domain":      { "type": "alias", "path": "user.domain" },
+        "user_sid":         { "type": "alias", "path": "user.sid" },
+        "process_name":     { "type": "alias", "path": "process.name" },
+        "executable_name":  { "type": "alias", "path": "process.executable_name" },
+        "process_path":     { "type": "alias", "path": "process.path" },
+        "command_line":     { "type": "alias", "path": "process.command_line" },
+        "cmdline":          { "type": "alias", "path": "process.command_line" },
+        "pid":              { "type": "alias", "path": "process.pid" },
+        "parent_name":      { "type": "alias", "path": "process.parent_name" },
+        "parent_executable":{ "type": "alias", "path": "process.parent_executable" },
+        "parent_pid":       { "type": "alias", "path": "process.parent_pid" },
+        "parent_command_line": { "type": "alias", "path": "process.parent_command_line" },
+        "process_user":     { "type": "alias", "path": "process.user" },
+        "integrity_level":  { "type": "alias", "path": "process.integrity_level" },
+        "hash_md5":         { "type": "alias", "path": "process.hash_md5" },
+        "hash_sha1":        { "type": "alias", "path": "process.hash_sha1" },
+        "hash_sha256":      { "type": "alias", "path": "process.hash_sha256" },
+        "src_ip":           { "type": "alias", "path": "network.src_ip" },
+        "src_port":         { "type": "alias", "path": "network.src_port" },
+        "dst_ip":           { "type": "alias", "path": "network.dst_ip" },
+        "dst_port":         { "type": "alias", "path": "network.dst_port" },
+        "dst_domain":       { "type": "alias", "path": "network.dst_domain" },
+        "protocol":         { "type": "alias", "path": "network.protocol" },
+        "action":           { "type": "alias", "path": "network.action" },
+        "http_method":      { "type": "alias", "path": "http.method" },
+        "http_status":      { "type": "alias", "path": "http.status_code" },
+        "http_path":        { "type": "alias", "path": "http.request_path" },
+        "user_agent":       { "type": "alias", "path": "http.user_agent" },
+        "event_id":         { "type": "alias", "path": "evtx.event_id" },
+        "channel":          { "type": "alias", "path": "evtx.channel" },
+        "provider":         { "type": "alias", "path": "evtx.provider_name" },
+        "rule_title":       { "type": "alias", "path": "evtx.rule_title" },
+        "technique_id":     { "type": "alias", "path": "mitre.technique_id" },
+        "tactic":           { "type": "alias", "path": "mitre.tactic" },
+        "file_path":        { "type": "alias", "path": "mft.file_path" },
+        "file_name":        { "type": "alias", "path": "mft.file_name" },
+        "file_size":        { "type": "alias", "path": "mft.size" },
+        "registry_key":     { "type": "alias", "path": "registry.key_path" },
+        "registry_value":   { "type": "alias", "path": "registry.value_name" },
+        "run_count":        { "type": "alias", "path": "prefetch.run_count" },
+        "last_run":         { "type": "alias", "path": "prefetch.last_run_time" }
+      }
+    }
+  },
+  "priority": 100
+}
