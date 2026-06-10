@@ -41,15 +41,12 @@
   },
 
   "secrets": {
-    "minio_access_key": "CHANGE_ME",
-    "minio_secret_key": "CHANGE_ME",
-
-    "_comment_jwt": "Generate a strong secret with: python3 -c \"import secrets; print(secrets.token_hex(32))\"",
-    "jwt_secret": "CHANGE_ME",
-
-    "_comment_admin": "Default admin credentials created on first boot. Change admin_password immediately.",
+    "_comment_autogen": "Leave these EMPTY — foctl generates strong values on first deploy and writes them back here (stable across redeploys). The generated admin password is printed once during deploy. Override only if you want specific values.",
+    "minio_access_key": "",
+    "minio_secret_key": "",
+    "jwt_secret": "",
     "admin_username": "admin",
-    "admin_password": "CHANGE_ME",
+    "admin_password": "",
 
     "_comment_license": "Leave both empty to run on the Community plan. To unlock pro/enterprise/mssp, mint a JWT with the external licensing/generate_license.py script and paste the JWT into license_key. license_signing_key must be the same HS256 secret you passed to --signing-key when minting (mismatch → silent fallback to Community).",
     "license_key": "",
@@ -62,32 +59,7 @@
     "jwt_expire_hours": 8
   },
 
-  "resources": {
-    "_comment": "Reduce elasticsearch_heap_mb to 256 on machines with less than 8 GB RAM.",
-    "elasticsearch_heap_mb": 2048,
-    "elasticsearch_storage_gi": 20,
-    "minio_storage_gi": 30,
-    "redis_storage_gi": 50,
-    "uploads_storage_gi": 500,
-    "_comment_hpa": "Minimum pod replicas for API and processor HPAs. Use 1 on shared/single-node clusters.",
-    "hpa_min_replicas": 1,
-    "api_memory_request": "2Gi",
-    "api_memory_limit": "4Gi",
-    "api_cpu_request": "250m",
-    "api_cpu_limit": "10000m",
-    "processor_memory_request": "8Gi",
-    "processor_memory_limit": "16Gi",
-    "processor_cpu_request": "500m",
-    "processor_cpu_limit": "40000m",
-    "minio_memory_request": "4Gi",
-    "minio_memory_limit": "8Gi",
-    "minio_cpu_request": "750m",
-    "minio_cpu_limit": "1500m",
-    "frontend_memory_request": "512Mi",
-    "frontend_memory_limit": "2048Mi",
-    "frontend_cpu_request": "250m",
-    "frontend_cpu_limit": "600m"
-  },
+  "_comment_resources": "Resources are AUTO-SIZED — helm mode runs scripts/allocate_resources.py (detects host RAM/CPU, honours config/resources.yaml's max_pct_of_host + headroom + weights); k8s mode uses sane defaults. Add an optional 'resources' block here only to override specific values (e.g. elasticsearch_heap_mb, *_storage_gi).",
 
   "images": {
     "_comment": "Leave registry empty to auto-load images directly into the cluster (k3s, k3d, minikube, kind). Set registry to push/pull via a registry, e.g. 'docker.io/youruser/' (trailing slash required).",

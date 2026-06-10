@@ -49,6 +49,7 @@ import base64
 import json
 import os
 import re
+import secrets as _secrets
 import shutil
 import subprocess
 import sys
@@ -149,6 +150,48 @@ def load_config():
     return cfg
 
 
+_PLACEHOLDERS = {"", "CHANGE_ME", "CHANGE_ME_IN_PRODUCTION"}
+SECRET_GENERATORS = {
+    "minio_access_key": lambda: "citadel-" + _secrets.token_hex(8),
+    "minio_secret_key": lambda: _secrets.token_urlsafe(32),
+    "jwt_secret":       lambda: _secrets.token_hex(32),
+    "admin_password":   lambda: _secrets.token_urlsafe(12),
+}
+
+
+def ensure_secrets():
+    """Generate any missing/placeholder secrets in config.json on first deploy.
+
+    Values are written back to config.json (preserving comments) so they stay
+    STABLE across redeploys — a regenerated jwt_secret would log everyone out,
+    and changed MinIO keys would orphan stored artifacts. Returns the dict of
+    freshly generated secrets so the caller can surface the admin password once.
+    """
+    path = ROOT / "config.json"
+    if not path.exists():
+        die("config.json not found. Copy config.json.example to config.json first.")
+    raw = json.load(open(path))
+    sec = raw.setdefault("secrets", {})
+    generated = {}
+    for key, gen in SECRET_GENERATORS.items():
+        cur = sec.get(key)
+        if cur is None or str(cur).strip() in _PLACEHOLDERS:
+            sec[key] = gen()
+            generated[key] = sec[key]
+    sec.setdefault("admin_username", "admin")
+    if generated:
+        with open(path, "w") as f:
+            json.dump(raw, f, indent=2)
+            f.write("\n")
+        step("Generated secrets → saved to config.json (stable across redeploys)")
+        for k in sorted(generated):
+            if k == "admin_password":
+                warn(f"admin password: {GREEN}{generated[k]}{RESET}  ← save it; change after first login")
+            else:
+                ok(f"{k}: generated")
+    return generated
+
+
 def image_name(svc, cfg):
     reg = cfg["images"]["registry"].rstrip("/")
     prefix = f"{reg}/" if reg else ""
@@ -156,9 +199,11 @@ def image_name(svc, cfg):
 
 
 def build_substitutions(cfg, pull_policy):
-    es_heap = cfg["resources"]["elasticsearch_heap_mb"]
+    # resources is OPTIONAL — defaults below keep a single-node cluster runnable
+    # without hand-tuning. (Helm mode sizes from the host via allocate_resources.)
+    res     = cfg.get("resources", {})
+    es_heap = res.get("elasticsearch_heap_mb", 512)
     auth    = cfg.get("auth", {})
-    res     = cfg["resources"]
     return {
         "__FO_NAMESPACE__":        NS,
         "__FO_API_IMAGE__":        image_name("api",       cfg),
@@ -175,9 +220,9 @@ def build_substitutions(cfg, pull_policy):
         "__FO_AUTH_ENABLED__":     str(auth.get("auth_enabled", True)).lower(),
         "__FO_JWT_EXPIRE_HOURS__": str(auth.get("jwt_expire_hours", 8)),
         "__FO_ES_HEAP__":          f"{es_heap}m",
-        "__FO_ES_STORAGE__":       f"{res['elasticsearch_storage_gi']}Gi",
-        "__FO_MINIO_STORAGE__":    f"{res['minio_storage_gi']}Gi",
-        "__FO_REDIS_STORAGE__":    f"{res['redis_storage_gi']}Gi",
+        "__FO_ES_STORAGE__":       f"{res.get('elasticsearch_storage_gi', 20)}Gi",
+        "__FO_MINIO_STORAGE__":    f"{res.get('minio_storage_gi', 30)}Gi",
+        "__FO_REDIS_STORAGE__":    f"{res.get('redis_storage_gi', 10)}Gi",
         "__FO_UPLOADS_STORAGE__":  f"{res.get('uploads_storage_gi', 500)}Gi",
         "__FO_HOSTNAME__":         cfg["access"]["hostname"],
         "__FO_HPA_MIN_REPLICAS__": str(res.get("hpa_min_replicas", 1)),
@@ -1248,16 +1293,20 @@ def deploy_helm(cfg, no_build=False, no_cache=False):
         if ing_class != "traefik":
             bool_sets["ingress.tls.enabled"] = "false"   # tailscale/nginx terminate TLS themselves
 
+    # Size requests/limits from the real host (admin cap + headroom in
+    # config/resources.yaml) → emits charts/citadel/values-resources.generated.yaml
+    overlay = CHART / "values-resources.generated.yaml"
+    step("Sizing resources from host (scripts/allocate_resources.py)")
+    run([sys.executable, str(ROOT / "scripts" / "allocate_resources.py")], check=False)
+
     cmd = ["helm", "upgrade", "--install", release, str(CHART),
            "-n", NS, "--create-namespace"]
+    if overlay.exists():
+        cmd += ["-f", str(overlay)]
     for k, v in str_sets.items():
         cmd += ["--set-string", f"{k}={v}"]
     for k, v in bool_sets.items():
         cmd += ["--set", f"{k}={v}"]
-
-    if not sec.get("jwt_secret"):
-        warn("secrets.jwt_secret not set in config.json — chart auto-generates one "
-             "(changes on every upgrade → logs users out). Set it for stable sessions.")
 
     step(f"helm upgrade --install {release} → namespace '{NS}'")
     run(cmd)
@@ -1305,6 +1354,7 @@ def main():
             deploy_docker()
 
         elif mode == "helm":
+            ensure_secrets()
             cfg = load_config()
             deploy_helm(cfg,
                         no_build="--no-build" in flags,
@@ -1316,6 +1366,7 @@ def main():
             restart       = "--restart"       in flags
             setup_traefik = "--setup-traefik" in flags
 
+            ensure_secrets()
             cfg = load_config()
             if mode == "k8s-new":
                 ensure_k3d()
