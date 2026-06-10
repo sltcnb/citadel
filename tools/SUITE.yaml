@@ -1,0 +1,110 @@
+# Citadel tool-suite index.
+# Each tool is a standalone product; Citadel pins each at a tested version and
+# composes them over the shared contracts in ../contracts/.
+# status: built | partial | planned
+schema_contracts: ../contracts
+tools:
+  - name: Talon
+    role: Acquisition agent
+    kind: collector
+    path: tools/talon
+    repository: talon
+    status: built
+    brick: tools/talon/brick.yaml
+  - name: Sluice
+    role: Intake & routing
+    kind: intake
+    path: tools/sluice
+    also: [tools/sluice-worker]
+    repository: sluice
+    status: built
+    brick: tools/sluice/brick.yaml
+  - name: Babel
+    role: Parser library (43 parsers)
+    kind: parser-lib
+    path: tools/babel
+    repository: babel
+    status: built
+    brick: tools/babel/brick.yaml
+  - name: Rosetta
+    role: Canonicalizer (ECS v8 + OSSEM)
+    kind: canonicalizer
+    path: tools/rosetta
+    repository: rosetta
+    status: planned
+    brick: tools/rosetta/brick.yaml
+  - name: Sigil
+    role: Detection engine (Sigma + YARA)
+    kind: detection
+    path: tools/sigil
+    repository: sigil
+    status: partial
+    brick: tools/sigil/brick.yaml
+  - name: Anvil
+    role: Analysis runner (12+ analyzers)
+    kind: analysis-runner
+    path: tools/anvil
+    repository: anvil
+    status: built
+    brick: tools/anvil/brick.yaml
+  - name: Augur
+    role: Intel enrichment
+    kind: enrichment
+    path: tools/augur
+    repository: augur
+    status: partial
+    brick: tools/augur/brick.yaml
+  - name: Pilot
+    role: Investigation agent (LLM)
+    kind: agent
+    path: tools/pilot
+    repository: citadel-pilot
+    status: built
+    brick: tools/pilot/brick.yaml
+  - name: Scribe
+    role: Report engine
+    kind: report
+    path: tools/scribe
+    repository: citadel-report
+    status: partial
+    brick: tools/scribe/brick.yaml
+  - name: Wraith
+    role: Memory forensics
+    kind: domain-analyzer
+    path: ../domain-tools/wraith
+    external: true
+    repository: wraith
+    status: planned
+    brick: ../domain-tools/wraith/brick.yaml
+  - name: Wiretap
+    role: Network threat detection
+    kind: domain-analyzer
+    path: ../domain-tools/wiretap
+    external: true
+    repository: wiretap
+    status: planned
+    brick: ../domain-tools/wiretap/brick.yaml
+  - name: Nimbus
+    role: Cloud forensics
+    kind: domain-analyzer
+    path: ../domain-tools/nimbus
+    external: true
+    repository: nimbus
+    status: planned
+    brick: ../domain-tools/nimbus/brick.yaml
+  - name: Warden
+    role: Identity & attack-path audit
+    kind: domain-analyzer
+    path: ../domain-tools/warden
+    external: true
+    repository: warden
+    status: planned
+    brick: ../domain-tools/warden/brick.yaml
+  - name: Citadel
+    role: Platform / integrator
+    kind: platform
+    path: api
+    also: [frontend]
+    repository: citadel
+    status: built
+    brick: api/brick.yaml

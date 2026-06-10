@@ -1,0 +1,49 @@
+category: PowerShell Execution
+rules:
+  - name: PowerShell Downgraded to Version 2
+    description: >-
+      PowerShell version 2 was explicitly requested.
+      Version 2 lacks security features and is used by malware.
+    artifact_type: evtx
+    query: "evtx.event_id:4688 AND message:*powershell* AND message:*-version 2*"
+    threshold: 1
+
+  - name: PowerShell Bypass Execution Policy
+    description: >-
+      PowerShell was launched with -ExecutionPolicy Bypass.
+      Used to run scripts despite restrictive policies.
+    artifact_type: evtx
+    query: "evtx.event_id:4688 AND message:*powershell* AND message:*-ExecutionPolicy* AND (message:*Bypass* OR message:*Unrestricted*)"
+    threshold: 1
+
+  - name: PowerShell Download Cradle
+    description: >-
+      PowerShell downloaded and executed a script in one command.
+      Common malware delivery technique.
+    artifact_type: evtx
+    query: "evtx.event_id:4104 AND (message:*IEX* OR message:*Invoke-Expression* OR message:*Invoke-WebRequest* OR message:*DownloadString*)"
+    threshold: 1
+
+  - name: PowerShell Reflection Usage
+    description: >-
+      PowerShell loaded a .NET assembly via reflection.
+      Used by fileless malware to avoid writing to disk.
+    artifact_type: evtx
+    query: "evtx.event_id:4104 AND (message:*[Reflection.Assembly]* OR message:*LoadFromByteArray* OR message::*Assembly.Load*)"
+    threshold: 1
+
+  - name: PowerShell Web Request to IP Address
+    description: >-
+      PowerShell made a web request directly to an IP.
+      Malware often uses IPs instead of domains to evade detection.
+    artifact_type: evtx
+    query: "evtx.event_id:4104 AND (message:*Invoke-WebRequest* OR message:*DownloadFile*) AND message:*http://[0-9]"
+    threshold: 1
+
+  - name: PowerShell Module Import from Remote Path
+    description: >-
+      PowerShell imported a module from a UNC path.
+      May indicate lateral movement or payload staging.
+    artifact_type: evtx
+    query: "evtx.event_id:4104 AND (message:*Import-Module* OR message:*.psm1*) AND message:*\\\\\\\\*"
+    threshold: 1

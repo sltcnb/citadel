@@ -1,0 +1,65 @@
+category: Sysmon Specific
+rules:
+  - name: Sysmon Service Stopped
+    description: >-
+      Sysmon service was stopped.
+      Attackers stop Sysmon to evade detection.
+    artifact_type: evtx
+    query: "evtx.event_id:7036 AND message:*Sysmon*"
+    threshold: 1
+
+  - name: Process Created with Hidden Window
+    description: >-
+      A process was started with a hidden window (Sysmon Event ID 1).
+      Common technique for running malware in the background.
+    artifact_type: evtx
+    query: "evtx.event_id:1 AND message:*HiddenWindow=true*"
+    threshold: 1
+
+  - name: Network Connection by System Process
+    description: >-
+      A system process made a network connection (Sysmon Event ID 3).
+      Review for unusual destinations or ports.
+    artifact_type: evtx
+    query: "evtx.event_id:3 AND (message:*System* OR message:*svchost*) AND NOT (network.dest_port:53 OR network.dest_port:80 OR network.dest_port:443)"
+    threshold: 1
+
+  - name: File Created in System Directory
+    description: >-
+      A file was created in Windows or System32 directory (Sysmon Event ID 11).
+      Malware often drops files in system directories.
+    artifact_type: evtx
+    query: "evtx.event_id:11 AND (message:*\\\\Windows\\\\* OR message:*\\\\System32\\\\* OR message:*\\\\SysWOW64\\\\*)"
+    threshold: 1
+
+  - name: Registry Persistence Key Created
+    description: >-
+      A registry key was created in a known persistence location (Sysmon Event ID 13).
+      Common locations include Run keys and service entries.
+    artifact_type: evtx
+    query: "evtx.event_id:13 AND (message:*\\\\CurrentVersion\\\\Run* OR message:*\\\\CurrentVersion\\\\RunOnce* OR message:*\\\\Control\\\\Services*)"
+    threshold: 1
+
+  - name: Process Access to Sensitive Process
+    description: >-
+      A process opened another process (Sysmon Event ID 10).
+      Review for credential dumping or process injection.
+    artifact_type: evtx
+    query: "evtx.event_id:10 AND (message:*lsass* OR message:*sam* OR message:*ntds*)"
+    threshold: 1
+
+  - name: DNS Query to Rare TLD
+    description: >-
+      DNS query to an unusual top-level domain (Sysmon Event ID 22).
+      Malware often uses rare TLDs for C2.
+    artifact_type: evtx
+    query: "evtx.event_id:22 AND (message:*.xyz* OR message:*.top* OR message:*.club* OR message:*.work* OR message:*.click*)"
+    threshold: 5
+
+  - name: File Hash Match Known Malware
+    description: >-
+      A file was created with a hash matching known malware (Sysmon Event ID 11).
+      Requires hash blocklist integration.
+    artifact_type: evtx
+    query: "evtx.event_id:11 AND message:*Hash=*"
+    threshold: 1

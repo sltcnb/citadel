@@ -1,0 +1,20 @@
+# Anvil — analysis runner (sandboxed deep analyzers)
+name: Anvil
+kind: analysis-runner
+version: "1.0.0"
+repository: anvil
+status: built
+consumes:
+  content_types:
+    - application/octet-stream   # raw artifacts (memory images, evtx dirs, PEs)
+  filenames:
+    - "*"
+produces:
+  schema:
+    - https://citadel.dfir/contracts/forensic_event/v1.json   # findings as events
+  artifact_types:
+    - module_finding
+dependencies:
+  - redis                   # queue + cancel flags + log streaming
+health:
+  command: "anvil list"

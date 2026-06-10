@@ -1,0 +1,29 @@
+[project]
+name = "citadel-contracts"
+version = "1.0.0"
+description = "Citadel shared contract surface (parser + module contracts, ForensicEvent helpers, runtime validator). No required deps."
+requires-python = ">=3.11"
+
+[project.optional-dependencies]
+# Full JSON-Schema validation (the core validator works without it).
+validate = ["jsonschema>=4"]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+# Flat layout: this directory *is* the citadel_contracts package, so
+# `pip install ./tools/citadel_contracts` installs it importable as
+# `citadel_contracts`.
+[tool.setuptools]
+packages = ["citadel_contracts"]
+include-package-data = true
+
+[tool.setuptools.package-dir]
+citadel_contracts = "."
+
+[tool.setuptools.package-data]
+citadel_contracts = ["*.schema.json"]
+
+[tool.setuptools.exclude-package-data]
+citadel_contracts = ["test_*.py"]

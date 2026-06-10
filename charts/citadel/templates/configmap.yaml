@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "citadel.fullname" . }}-config
+  labels:
+    {{- include "citadel.labels" . | nindent 4 }}
+data:
+  ELASTICSEARCH_URL: {{ .Values.config.elasticsearchUrl | quote }}
+  REDIS_URL: {{ .Values.config.redisUrl | quote }}
+  MINIO_ENDPOINT: {{ .Values.config.minioEndpoint | quote }}
+  MINIO_BUCKET: {{ .Values.config.minioBucket | quote }}
+  PLUGINS_DIR: {{ .Values.config.pluginsDir | quote }}
+  MODULES_DIR: {{ .Values.config.modulesDir | quote }}
+  DEFAULT_PAGE_SIZE: {{ .Values.config.defaultPageSize | quote }}
+  MAX_PAGE_SIZE: {{ .Values.config.maxPageSize | quote }}
+  {{- range $key, $value := .Values.config.extraEnv }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}

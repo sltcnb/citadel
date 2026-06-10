@@ -1,0 +1,20 @@
+# Augur — intel enrichment (IOCs -> scored, sourced, shareable intel)
+name: Augur
+kind: enrichment
+version: "0.5.0"
+repository: augur
+status: partial
+consumes:
+  content_types:
+    - application/json       # IOC lists
+  schema:
+    - https://citadel.dfir/contracts/forensic_event/v1.json
+produces:
+  schema:
+    - https://citadel.dfir/contracts/forensic_event/v1.json   # enriched IOCs / STIX
+  artifact_types:
+    - intel_indicator
+dependencies:
+  - redis                    # enrichment cache (TTL) + rate limit
+health:
+  command: "augur --version"

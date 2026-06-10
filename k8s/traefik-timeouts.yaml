@@ -1,0 +1,21 @@
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: upload-timeouts
+  namespace: citadel-dev
+spec:
+  plugin:
+    # Traefik doesn't have native timeout middleware, we need to configure it on the entrypoint
+    # Instead, we'll use annotations on the ingress
+---
+# This ConfigMap configures Traefik's global timeouts
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: traefik-timeout-config
+  namespace: traefik-system  # Adjust to your Traefik namespace
+data:
+  # Add to Traefik static config:
+  # --serversTransport.maxIdleConnsPerHost=100
+  # --entryPoints.web.transport.lifeCycle.requestAcceptGraceTimeout=10m
+  # --entryPoints.websecure.transport.lifeCycle.requestAcceptGraceTimeout=10m

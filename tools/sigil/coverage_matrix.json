@@ -1,0 +1,117 @@
+{
+  "matrix": [
+    {
+      "tactic": "Reconnaissance",
+      "native": 0,
+      "sigma": 0,
+      "total": 0,
+      "techniques": []
+    },
+    {
+      "tactic": "Resource Development",
+      "native": 0,
+      "sigma": 0,
+      "total": 0,
+      "techniques": []
+    },
+    {
+      "tactic": "Initial Access",
+      "native": 6,
+      "sigma": 0,
+      "total": 6,
+      "techniques": []
+    },
+    {
+      "tactic": "Execution",
+      "native": 9,
+      "sigma": 321,
+      "total": 330,
+      "techniques": [
+        "T1047"
+      ]
+    },
+    {
+      "tactic": "Persistence",
+      "native": 7,
+      "sigma": 321,
+      "total": 328,
+      "techniques": []
+    },
+    {
+      "tactic": "Privilege Escalation",
+      "native": 5,
+      "sigma": 0,
+      "total": 5,
+      "techniques": []
+    },
+    {
+      "tactic": "Defense Evasion",
+      "native": 11,
+      "sigma": 0,
+      "total": 11,
+      "techniques": []
+    },
+    {
+      "tactic": "Credential Access",
+      "native": 18,
+      "sigma": 0,
+      "total": 18,
+      "techniques": []
+    },
+    {
+      "tactic": "Discovery",
+      "native": 5,
+      "sigma": 56,
+      "total": 61,
+      "techniques": []
+    },
+    {
+      "tactic": "Lateral Movement",
+      "native": 5,
+      "sigma": 0,
+      "total": 5,
+      "techniques": []
+    },
+    {
+      "tactic": "Collection",
+      "native": 0,
+      "sigma": 32,
+      "total": 32,
+      "techniques": []
+    },
+    {
+      "tactic": "Command and Control",
+      "native": 6,
+      "sigma": 0,
+      "total": 6,
+      "techniques": []
+    },
+    {
+      "tactic": "Exfiltration",
+      "native": 5,
+      "sigma": 20,
+      "total": 25,
+      "techniques": []
+    },
+    {
+      "tactic": "Impact",
+      "native": 6,
+      "sigma": 38,
+      "total": 44,
+      "techniques": []
+    },
+    {
+      "tactic": "Uncategorized",
+      "native": 58,
+      "sigma": 699,
+      "total": 757,
+      "techniques": []
+    }
+  ],
+  "totals": {
+    "tactics_covered": 13,
+    "tactics_total": 14,
+    "rules": 1628,
+    "techniques_tagged": 1
+  }
+}

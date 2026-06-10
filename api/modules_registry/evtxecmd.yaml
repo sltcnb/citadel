@@ -1,0 +1,11 @@
+id: evtxecmd
+name: EvtxECmd
+description: >-
+  Eric Zimmermann's EVTX timeline reconstruction tool. Converts Windows Event
+  Logs to a normalized timeline format with maps for enhanced field parsing.
+input_extensions: [".evtx"]
+input_filenames: []
+available: false
+unavailable_reason: "Windows/.NET only — not supported on Linux."
+category: Windows
+tags: [evtx, windows, timeline, eric-zimmermann]

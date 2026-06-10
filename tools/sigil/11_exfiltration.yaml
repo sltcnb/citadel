@@ -1,0 +1,41 @@
+category: Exfiltration
+rules:
+  - name: Suricata — Data Exfiltration Alert
+    description: >-
+      Suricata fired an INFO or POLICY alert related to data upload.
+      May indicate files being sent outside the network.
+    artifact_type: suricata
+    query: "suricata.event_type:alert AND (message:*ET\\ INFO* OR message:*ET\\ POLICY*) AND message:*upload*"
+    threshold: 1
+
+  - name: Archive File Created in Staging Location
+    description: >-
+      A compressed archive (.zip, .7z, .rar) was created in a temp or public directory.
+      Indicates data being staged before exfiltration.
+    artifact_type: evtx
+    query: "evtx.event_id:4663 AND (message:*.zip* OR message:*.7z* OR message:*.rar*) AND (message:*\\\\Temp\\\\* OR message:*\\\\Public\\\\*)"
+    threshold: 1
+
+  - name: Large Outbound File Transfer
+    description: >-
+      Suricata recorded a large outbound transfer (bytes_toserver > 10MB).
+      Potentially sensitive data being uploaded to an external destination.
+    artifact_type: suricata
+    query: "suricata.event_type:flow AND suricata.flow.bytes_toserver:>10000000"
+    threshold: 1
+
+  - name: Cloud Storage Upload (Dropbox / OneDrive / Google Drive)
+    description: >-
+      A process connected to a known cloud storage service. May indicate
+      deliberate exfiltration to personal cloud accounts.
+    artifact_type: suricata
+    query: "suricata.event_type:flow AND (message:*dropbox* OR message:*onedrive* OR message:*drive.google*)"
+    threshold: 1
+
+  - name: FTP / SCP Outbound Transfer
+    description: >-
+      Outbound FTP (port 21) or SCP/SFTP (port 22) transfer detected.
+      File transfer protocols are commonly abused for data exfiltration.
+    artifact_type: suricata
+    query: "suricata.event_type:flow AND (suricata.dest_port:21 OR suricata.dest_port:22)"
+    threshold: 1

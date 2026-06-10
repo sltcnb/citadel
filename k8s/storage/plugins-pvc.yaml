@@ -1,0 +1,22 @@
+# ── Plugins shared storage ────────────────────────────────────────────────────
+#
+# Single-node clusters (k3s, k3d, minikube, kind, Docker Desktop):
+#   ReadWriteOnce is sufficient — all pods land on the same node and
+#   Kubernetes allows multiple pods on the same node to share an RWO volume.
+#   The default storage class (local-path on k3s) provisions this automatically.
+#
+# Multi-node clusters:
+#   Change accessModes to ReadWriteMany and set storageClassName to a class
+#   that supports RWX (e.g. nfs-client, longhorn).
+#
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: plugins-pvc
+  namespace: __FO_NAMESPACE__
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi

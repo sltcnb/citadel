@@ -1,0 +1,1411 @@
+#!/usr/bin/env python3
+"""
+foctl — Citadel unified deployment tool.
+
+FOUR DEPLOYMENT MODES:
+
+  docker      Docker Compose on this machine — no Kubernetes needed.
+              Single port (80) via nginx reverse proxy.
+              Best for: laptop, single-server, quick evaluation, air-gapped.
+
+  helm        Deploy the app (api/processor/frontend) via the Helm umbrella
+              chart (charts/citadel). App-only — bring your own substrate
+              (ES/Redis/MinIO) via config.json's `substrate` block. Reuses your
+              existing ingress (traefik/tailscale/nginx) via access.ingress_class.
+              Best for: clusters that already run substrate + an ingress.
+
+  k8s         Deploy to a Kubernetes cluster reachable via kubectl (raw
+              manifests — also provisions ES/Redis/MinIO in-namespace).
+              Best for: staging / production clusters (GKE, EKS, AKS,
+              k3s bare-metal, Rancher, OpenShift ...).
+
+  k8s-new     Create a local k3d cluster (runs inside Docker), then deploy.
+              Best for: development machines, CI pipelines, offline labs.
+              Requires Docker.
+
+USAGE:
+  ./foctl                          Interactive menu
+  ./foctl deploy docker            Docker Compose deployment
+  ./foctl deploy helm              Helm chart (app-only; bring-your-own substrate)
+  ./foctl deploy k8s               Deploy to the current kubectl context
+  ./foctl deploy k8s-new           Create k3d cluster then deploy
+
+  ./foctl deploy k8s --no-build    Skip Docker image build
+  ./foctl deploy k8s --no-cache    Force full Docker rebuild (ignore cache)
+  ./foctl deploy k8s --restart     Re-apply manifests + restart pods only
+  ./foctl deploy k8s --setup-traefik  Also apply kube-system Traefik config
+
+  ./foctl status  [docker|k8s]     Health check
+  ./foctl logs    <svc> [mode]     Stream logs: api | processor | frontend | all
+  ./foctl update  [docker|k8s]     Rebuild images + redeploy
+  ./foctl destroy [docker|k8s]     Tear everything down (confirms first)
+  ./foctl config                   Show parsed configuration
+
+All Kubernetes settings are in config.json.
+Docker settings are in .env (created from .env.example on first run).
+"""
+
+import base64
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+# ── Constants ─────────────────────────────────────────────────────────────────
+
+ROOT         = Path(__file__).parent
+K8S          = ROOT / "k8s"
+COMPOSE_FILE = ROOT / "docker-compose.prod.yml"
+ENV_FILE     = ROOT / ".env"
+NS           = "forensics-operator"   # overwritten by load_config()
+
+APPLY_ORDER = [
+    K8S / "namespace.yaml",
+    K8S / "storage",
+    K8S / "redis",
+    K8S / "minio",
+    K8S / "elasticsearch",
+    K8S / "kibana",
+    K8S / "configmaps",
+    K8S / "api",
+    K8S / "processor",
+    K8S / "frontend",
+    K8S / "ingress",
+    K8S / "image-pruner-cronjob.yaml",
+]
+
+SERVICES = ["api", "processor", "frontend"]
+
+# ── Terminal colours ──────────────────────────────────────────────────────────
+
+if sys.stdout.isatty():
+    RED    = '\033[0;31m'
+    GREEN  = '\033[0;32m'
+    YELLOW = '\033[1;33m'
+    CYAN   = '\033[0;36m'
+    BOLD   = '\033[1m'
+    RESET  = '\033[0m'
+else:
+    RED = GREEN = YELLOW = CYAN = BOLD = RESET = ''
+
+def step(msg): print(f"\n{CYAN}→{RESET} {BOLD}{msg}{RESET}")
+def ok(msg):   print(f"  {GREEN}✓{RESET}  {msg}")
+def warn(msg): print(f"  {YELLOW}⚠{RESET}   {msg}")
+def info(msg): print(f"     {msg}")
+def die(msg):  print(f"\n  {RED}✗  ERROR:{RESET} {msg}\n", file=sys.stderr); sys.exit(1)
+
+
+def run(cmd, capture=False, check=True, stdin_text=None, shell=False):
+    if not capture and not shell:
+        info("$ " + " ".join(str(c) for c in cmd))
+    result = subprocess.run(
+        cmd, capture_output=capture, text=True, check=False,
+        input=stdin_text, shell=shell,
+    )
+    if check and result.returncode != 0:
+        if capture:
+            print(result.stderr or result.stdout or "(no output)")
+        die(f"Command failed (exit {result.returncode})")
+    return result
+
+
+def cmd_exists(name): return shutil.which(name) is not None
+
+
+# ── Docker Compose helpers ────────────────────────────────────────────────────
+
+def dc_cmd():
+    r = subprocess.run(["docker", "compose", "version"], capture_output=True, text=True)
+    if r.returncode == 0:
+        return ["docker", "compose"]
+    if cmd_exists("docker-compose"):
+        return ["docker-compose"]
+    die("Neither 'docker compose' (v2) nor 'docker-compose' (v1) found.\n"
+        "  Install Docker Desktop or the Docker Compose plugin.")
+
+
+# ── Config ────────────────────────────────────────────────────────────────────
+
+def load_config():
+    path = ROOT / "config.json"
+    if not path.exists():
+        die("config.json not found. Run this script from the citadel directory.")
+    with open(path) as f:
+        raw = json.load(f)
+
+    def clean(d):
+        if isinstance(d, dict):
+            return {k: clean(v) for k, v in d.items() if not k.startswith("_")}
+        return d
+
+    cfg = clean(raw)
+    global NS
+    NS = cfg.get("namespace", "forensics-operator")
+    return cfg
+
+
+def image_name(svc, cfg):
+    reg = cfg["images"]["registry"].rstrip("/")
+    prefix = f"{reg}/" if reg else ""
+    return f"{prefix}forensics-operator/{svc}:{cfg['images']['tag']}"
+
+
+def build_substitutions(cfg, pull_policy):
+    es_heap = cfg["resources"]["elasticsearch_heap_mb"]
+    auth    = cfg.get("auth", {})
+    res     = cfg["resources"]
+    return {
+        "__FO_NAMESPACE__":        NS,
+        "__FO_API_IMAGE__":        image_name("api",       cfg),
+        "__FO_PROCESSOR_IMAGE__":  image_name("processor", cfg),
+        "__FO_FRONTEND_IMAGE__":   image_name("frontend",  cfg),
+        "__FO_PULL_POLICY__":      pull_policy,
+        "__FO_MINIO_ACCESS_KEY__": cfg["secrets"]["minio_access_key"],
+        "__FO_MINIO_SECRET_KEY__": cfg["secrets"]["minio_secret_key"],
+        "__FO_JWT_SECRET__":              cfg["secrets"].get("jwt_secret", "CHANGE_ME_IN_PRODUCTION"),
+        "__FO_ADMIN_USERNAME__":          cfg["secrets"].get("admin_username", "admin"),
+        "__FO_ADMIN_PASSWORD__":          cfg["secrets"].get("admin_password", "CitadelAdmin1!"),
+        "__FO_LICENSE_KEY__":             cfg["secrets"].get("license_key", ""),
+        "__FO_LICENSE_SIGNING_KEY__":     cfg["secrets"].get("license_signing_key", ""),
+        "__FO_AUTH_ENABLED__":     str(auth.get("auth_enabled", True)).lower(),
+        "__FO_JWT_EXPIRE_HOURS__": str(auth.get("jwt_expire_hours", 8)),
+        "__FO_ES_HEAP__":          f"{es_heap}m",
+        "__FO_ES_STORAGE__":       f"{res['elasticsearch_storage_gi']}Gi",
+        "__FO_MINIO_STORAGE__":    f"{res['minio_storage_gi']}Gi",
+        "__FO_REDIS_STORAGE__":    f"{res['redis_storage_gi']}Gi",
+        "__FO_UPLOADS_STORAGE__":  f"{res.get('uploads_storage_gi', 500)}Gi",
+        "__FO_HOSTNAME__":         cfg["access"]["hostname"],
+        "__FO_HPA_MIN_REPLICAS__": str(res.get("hpa_min_replicas", 1)),
+        # API resources
+        "__FO_API_MEMORY_REQUEST__":  res.get("api_memory_request", "512Mi"),
+        "__FO_API_MEMORY_LIMIT__":    res.get("api_memory_limit", "2Gi"),
+        "__FO_API_CPU_REQUEST__":     res.get("api_cpu_request", "100m"),
+        "__FO_API_CPU_LIMIT__":       res.get("api_cpu_limit", "1000m"),
+        # Processor resources
+        "__FO_PROCESSOR_MEMORY_REQUEST__": res.get("processor_memory_request", "1Gi"),
+        "__FO_PROCESSOR_MEMORY_LIMIT__":   res.get("processor_memory_limit", "8Gi"),
+        "__FO_PROCESSOR_CPU_REQUEST__":    res.get("processor_cpu_request", "500m"),
+        "__FO_PROCESSOR_CPU_LIMIT__":      res.get("processor_cpu_limit", "4000m"),
+        # MinIO resources
+        "__FO_MINIO_MEMORY_REQUEST__":  res.get("minio_memory_request", "1Gi"),
+        "__FO_MINIO_MEMORY_LIMIT__":    res.get("minio_memory_limit", "4Gi"),
+        "__FO_MINIO_CPU_REQUEST__":     res.get("minio_cpu_request", "250m"),
+        "__FO_MINIO_CPU_LIMIT__":       res.get("minio_cpu_limit", "1000m"),
+        # Frontend resources
+        "__FO_FRONTEND_MEMORY_REQUEST__":  res.get("frontend_memory_request", "128Mi"),
+        "__FO_FRONTEND_MEMORY_LIMIT__":    res.get("frontend_memory_limit", "512Mi"),
+        "__FO_FRONTEND_CPU_REQUEST__":     res.get("frontend_cpu_request", "50m"),
+        "__FO_FRONTEND_CPU_LIMIT__":       res.get("frontend_cpu_limit", "200m"),
+    }
+
+
+# ── Cluster detection ─────────────────────────────────────────────────────────
+
+def get_current_context():
+    r = run(["kubectl", "config", "current-context"], capture=True, check=False)
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def cluster_reachable():
+    r = run(["kubectl", "cluster-info"], capture=True, check=False)
+    return r.returncode == 0
+
+
+def detect_engine():
+    ctx = get_current_context()
+    if ctx.startswith("k3d-"):
+        return "k3d", ctx[4:]
+    if ctx in ("docker-desktop", "docker-for-desktop"):
+        return "docker-desktop", ctx
+    if ctx == "minikube" or cmd_exists("minikube"):
+        return "minikube", ctx
+    if ctx.startswith("kind-") or cmd_exists("kind"):
+        return "kind", ctx[5:] if ctx.startswith("kind-") else ctx
+    if cmd_exists("k3s"):
+        return "k3s", ctx
+    return "registry", ctx
+
+
+# ── Cluster setup ─────────────────────────────────────────────────────────────
+
+def setup_cluster(cfg):
+    step("Connecting to cluster")
+    desired_ctx = cfg["cluster"].get("context", "").strip()
+    if desired_ctx:
+        run(["kubectl", "config", "use-context", desired_ctx])
+    if cluster_reachable():
+        ok(f"Connected — context: {get_current_context()}")
+        return
+    if cfg["cluster"].get("auto_create_k3d", False):
+        warn("No cluster reachable. auto_create_k3d is true → creating k3d cluster.")
+        ensure_k3d()
+        create_k3d_cluster(cfg)
+    else:
+        die(
+            "kubectl cannot reach any cluster.\n\n"
+            "  Fix options:\n"
+            "    1. Start your cluster (k3s, minikube, Docker Desktop Kubernetes, etc.)\n"
+            "    2. Set the correct context:  kubectl config use-context <name>\n"
+            "    3. For k3s: export KUBECONFIG=/etc/rancher/k3s/k3s.yaml\n"
+            "    4. Set 'cluster.auto_create_k3d: true' in config.json to auto-create a k3d cluster."
+        )
+
+
+# ── k3d cluster provisioning ──────────────────────────────────────────────────
+
+def ensure_k3d():
+    step("Checking k3d")
+    if cmd_exists("k3d"):
+        ok("k3d found")
+        return
+    warn("k3d not found — installing...")
+    if cmd_exists("brew"):
+        run(["brew", "install", "k3d"])
+    else:
+        run("curl -sf https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash",
+            shell=True)
+    if not cmd_exists("k3d"):
+        die("k3d install failed. Install manually: https://k3d.io/#installation")
+    ok("k3d installed")
+
+
+def create_k3d_cluster(cfg):
+    name = cfg["cluster"]["name"]
+    port = cfg["access"]["http_port"]
+    step(f"Provisioning k3d cluster '{name}'")
+    r = run(["k3d", "cluster", "list", "-o", "json"], capture=True, check=False)
+    try:
+        existing = [c["name"] for c in json.loads(r.stdout or "[]")]
+    except Exception:
+        existing = []
+    if name in existing:
+        ok(f"Cluster '{name}' already exists — reusing")
+    else:
+        run(["k3d", "cluster", "create", name,
+             "--port", f"{port}:{port}@loadbalancer",
+             "--port", "443:443@loadbalancer",
+             "--agents", "0"])
+        ok(f"Cluster '{name}' created")
+    run(["k3d", "kubeconfig", "merge", name, "--kubeconfig-merge-default"], capture=True)
+    run(["kubectl", "config", "use-context", f"k3d-{name}"], capture=True)
+    ok(f"kubectl context → k3d-{name}")
+
+
+# ── Image build ───────────────────────────────────────────────────────────────
+
+def build_images(cfg, no_cache=False):
+    step("Building Docker images" + (" (--no-cache)" if no_cache else ""))
+    cache_flag = ["--no-cache"] if no_cache else []
+    for svc in SERVICES:
+        img = image_name(svc, cfg)
+        print(f"  Building {img} ...")
+        ctx = str(ROOT) if svc in ("processor", "api") else str(ROOT / svc)
+        run(["docker", "build", "-t", img, "-f", str(ROOT / svc / "Dockerfile"), ctx]
+            + cache_flag)
+        ok(f"Built {img}")
+
+
+# ── Image loading ─────────────────────────────────────────────────────────────
+
+def load_images(cfg):
+    if cfg["images"]["registry"]:
+        _push_to_registry(cfg)
+        return "Always"
+    engine, engine_id = detect_engine()
+    step(f"Loading images into cluster (engine: {engine})")
+    if engine == "k3d":
+        _load_k3d(cfg, engine_id)
+    elif engine == "docker-desktop":
+        _load_docker_desktop(cfg)
+    elif engine == "minikube":
+        _load_minikube(cfg)
+    elif engine == "kind":
+        _load_kind(cfg, engine_id)
+    elif engine == "k3s":
+        _load_k3s(cfg)
+    else:
+        die(
+            "Cannot auto-load images: cluster engine not recognised and no registry is set.\n\n"
+            "  Options:\n"
+            "    1. Set 'images.registry' in config.json (e.g. 'docker.io/youruser/').\n"
+            "    2. Manually load images and re-run with --no-build."
+        )
+    return "Never"
+
+
+def _push_to_registry(cfg):
+    step("Pushing images to registry")
+    for svc in SERVICES:
+        img = image_name(svc, cfg)
+        run(["docker", "push", img])
+        ok(f"Pushed {img}")
+
+
+def _load_k3d(cfg, cluster_name):
+    for svc in SERVICES:
+        img = image_name(svc, cfg)
+        run(["k3d", "image", "import", img, "-c", cluster_name])
+        ok(f"Loaded {img} → k3d:{cluster_name}")
+
+
+def _load_docker_desktop(cfg):
+    for svc in SERVICES:
+        ok(f"Already available (shared daemon): {image_name(svc, cfg)}")
+
+
+def _load_minikube(cfg):
+    for svc in SERVICES:
+        img = image_name(svc, cfg)
+        run(["minikube", "image", "load", img])
+        ok(f"Loaded {img} → minikube")
+
+
+def _load_kind(cfg, cluster_name):
+    for svc in SERVICES:
+        img = image_name(svc, cfg)
+        cmd = ["kind", "load", "docker-image", img]
+        if cluster_name:
+            cmd += ["--name", cluster_name]
+        run(cmd)
+        ok(f"Loaded {img} → kind:{cluster_name}")
+
+
+def _load_k3s(cfg):
+    tmp_dir = Path("/tmp/fo_images")
+    tmp_dir.mkdir(exist_ok=True)
+    for svc in SERVICES:
+        img = image_name(svc, cfg)
+        tar = tmp_dir / f"{svc}.tar"
+        print(f"  Saving {img} ...")
+        run(["docker", "save", img, "-o", str(tar)])
+        for cmd_prefix in [[], ["sudo"]]:
+            r = run(cmd_prefix + ["k3s", "ctr", "images", "import", str(tar)],
+                    capture=True, check=False)
+            if r.returncode == 0:
+                break
+        else:
+            warn(f"Could not import {img} automatically.\n"
+                 f"  Run manually: sudo k3s ctr images import {tar}")
+            continue
+        tar.unlink(missing_ok=True)
+        ok(f"Loaded {img} → k3s")
+    try:
+        tmp_dir.rmdir()
+    except OSError:
+        pass
+
+
+# ── TLS certificate ───────────────────────────────────────────────────────────
+
+def _ensure_namespace():
+    manifest = f"apiVersion: v1\nkind: Namespace\nmetadata:\n  name: {NS}\n"
+    subprocess.run(["kubectl", "apply", "-f", "-"],
+                   input=manifest, capture_output=True, text=True)
+
+
+def setup_tls_secret(cfg):
+    secret_name = "forensics-tls"
+    hostname    = cfg["access"]["hostname"]
+    cert_path   = cfg["access"].get("tls_cert", "").strip()
+    key_path    = cfg["access"].get("tls_key",  "").strip()
+
+    if cert_path and key_path:
+        step("Creating TLS secret from provided certificate")
+        run(["kubectl", "delete", "secret", secret_name, "-n", NS,
+             "--ignore-not-found"], capture=True)
+        run(["kubectl", "create", "secret", "tls", secret_name,
+             "--cert", cert_path, "--key", key_path, "-n", NS])
+        ok(f"TLS secret '{secret_name}' created from {cert_path}")
+        return
+
+    # If an existing secret is present, validate it has correct key usage.
+    # Certs generated by old versions of this tool used keyEncipherment +
+    # dataEncipherment but omitted digitalSignature, causing browsers to
+    # reject the handshake with ERR_SSL_KEY_USAGE_INCOMPATIBLE.
+    r = run(["kubectl", "get", "secret", secret_name, "-n", NS, "-o",
+             "jsonpath={.data.tls\\.crt}"], capture=True, check=False)
+    if r.returncode == 0 and r.stdout.strip():
+        try:
+            cert_pem = base64.b64decode(r.stdout.strip())
+            r2 = subprocess.run(["openssl", "x509", "-noout", "-text"],
+                                input=cert_pem, capture_output=True)
+            if "Digital Signature" in r2.stdout.decode(errors="ignore"):
+                ok(f"TLS secret '{secret_name}' already exists and is valid — keeping it")
+                return
+            warn(f"TLS secret '{secret_name}' missing digitalSignature key usage — regenerating")
+            run(["kubectl", "delete", "secret", secret_name, "-n", NS,
+                 "--ignore-not-found"], capture=True)
+        except Exception:
+            pass
+
+    step(f"Generating self-signed TLS certificate for {hostname}")
+    if not cmd_exists("openssl"):
+        die("openssl not found — cannot auto-generate a certificate.\n"
+            "  Install openssl or set tls_cert / tls_key in config.json.")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp       = Path(tmpdir)
+        cfg_file  = tmp / "openssl.cnf"
+        key_file  = tmp / "tls.key"
+        cert_file = tmp / "tls.crt"
+
+        cfg_file.write_text(f"""\
+[req]
+distinguished_name = req_dn
+x509_extensions    = v3_req
+prompt             = no
+
+[req_dn]
+CN = {hostname}
+
+[v3_req]
+keyUsage         = critical, digitalSignature, keyEncipherment
+extendedKeyUsage = serverAuth
+subjectAltName   = DNS:{hostname}
+""")
+        run(["openssl", "req", "-x509", "-nodes", "-days", "3650",
+             "-newkey", "rsa:2048",
+             "-config",  str(cfg_file),
+             "-keyout",  str(key_file),
+             "-out",     str(cert_file)],
+            capture=True)
+        run(["kubectl", "create", "secret", "tls", secret_name,
+             "--cert", str(cert_file), "--key", str(key_file), "-n", NS])
+
+    ok(f"TLS secret '{secret_name}' created (self-signed, valid 10 years)")
+
+
+# ── Stale resource cleanup ────────────────────────────────────────────────────
+
+_STALE_RESOURCES = [
+    ("middleware", "upload-buffering"),
+]
+
+
+def cleanup_stale_resources():
+    step("Removing legacy cluster resources")
+    any_removed = False
+    for kind, name in _STALE_RESOURCES:
+        r = run(["kubectl", "delete", kind, name, "-n", NS, "--ignore-not-found"],
+                capture=True, check=False)
+        if "deleted" in (r.stdout or ""):
+            ok(f"Removed legacy {kind}/{name} from {NS}")
+            any_removed = True
+    if not any_removed:
+        ok("No legacy resources found — nothing to remove")
+
+
+# ── Manifest application ──────────────────────────────────────────────────────
+
+def _targets_kube_system(path):
+    try:
+        return "namespace: kube-system" in path.read_text()
+    except OSError:
+        return False
+
+
+def _is_vpa_manifest(path):
+    try:
+        return "VerticalPodAutoscaler" in path.read_text()
+    except OSError:
+        return False
+
+
+def vpa_crds_available():
+    r = run(["kubectl", "get", "crd", "verticalpodautoscalers.autoscaling.k8s.io"],
+            capture=True, check=False)
+    return r.returncode == 0
+
+
+def ensure_vpa_controller():
+    if vpa_crds_available():
+        ok("VPA controller is available")
+        return
+    warn(
+        "VPA CRDs not found — VerticalPodAutoscaler manifests will be skipped.\n"
+        "     To install the VPA controller:\n"
+        "       kubectl apply -f https://github.com/kubernetes/autoscaler/releases/latest/download/vpa-v1.yaml\n"
+        "     Then re-run deploy to apply the VPA manifests."
+    )
+
+
+def apply_all_manifests(cfg, pull_policy, setup_traefik=False):
+    step("Applying Kubernetes manifests")
+    subs = build_substitutions(cfg, pull_policy)
+
+    def apply_one(path):
+        content = path.read_text()
+        for k, v in subs.items():
+            content = content.replace(k, str(v))
+        r = subprocess.run(["kubectl", "apply", "-f", "-"],
+                            input=content, capture_output=True, text=True)
+        if r.returncode != 0:
+            stderr = r.stderr or ""
+            if "StatefulSet" in stderr and "Forbidden" in stderr and "spec" in stderr:
+                name_match = re.search(r"^\s*name:\s+(\S+)", content, re.MULTILINE)
+                ns_match   = re.search(r"^\s*namespace:\s+(\S+)", content, re.MULTILINE)
+                if name_match and ns_match:
+                    sts_name = name_match.group(1)
+                    sts_ns   = ns_match.group(1)
+                    warn(f"StatefulSet '{sts_name}' has immutable field changes — "
+                         "deleting and recreating (PVCs/data are preserved)")
+                    run(["kubectl", "delete", "statefulset", sts_name,
+                         "-n", sts_ns, "--ignore-not-found"], capture=True)
+                    r2 = subprocess.run(["kubectl", "apply", "-f", "-"],
+                                        input=content, capture_output=True, text=True)
+                    if r2.returncode != 0:
+                        print(r2.stderr)
+                        die(f"kubectl apply failed for {path.name} after delete-and-recreate")
+                    for line in r2.stdout.strip().splitlines():
+                        info(line)
+                    return
+            print(stderr)
+            die(f"kubectl apply failed for {path.name}")
+        for line in r.stdout.strip().splitlines():
+            info(line)
+
+    _vpa_available = vpa_crds_available()
+
+    for item in APPLY_ORDER:
+        if item.is_file() and item.suffix == ".yaml":
+            if _targets_kube_system(item) and not setup_traefik:
+                warn(f"Skipping {item.name} — targets kube-system "
+                     "(use --setup-traefik to apply)")
+                continue
+            if not _vpa_available and _is_vpa_manifest(item):
+                warn(f"Skipping {item.name} — VPA CRDs not installed")
+                continue
+            info(str(item.relative_to(ROOT)))
+            apply_one(item)
+        elif item.is_dir():
+            for f in sorted(item.glob("*.yaml")):
+                if _targets_kube_system(f) and not setup_traefik:
+                    warn(f"Skipping {f.name} — targets kube-system")
+                    continue
+                if not _vpa_available and _is_vpa_manifest(f):
+                    warn(f"Skipping {f.name} — VPA CRDs not installed")
+                    continue
+                info(str(f.relative_to(ROOT)))
+                apply_one(f)
+
+    ok("All manifests applied")
+
+
+# ── Post-deploy ───────────────────────────────────────────────────────────────
+
+def rollout_restart_apps():
+    step("Restarting application pods (api · processor · frontend)")
+    for svc in SERVICES:
+        r = run(["kubectl", "rollout", "restart", f"deployment/{svc}", "-n", NS],
+                capture=True, check=False)
+        if r.returncode == 0:
+            ok(f"Restart triggered: {svc}")
+        else:
+            warn(f"Could not restart {svc} — skipping (may not exist on first deploy)")
+    for svc in SERVICES:
+        r = run(["kubectl", "rollout", "status", f"deployment/{svc}", "-n", NS,
+                 "--timeout=5m0s"], capture=True, check=False)
+        if r.returncode == 0:
+            ok(f"Rollout complete: {svc}")
+        else:
+            warn(f"Rollout timeout for {svc} — pods may still be initialising "
+                 f"(check: kubectl get pods -n {NS})")
+
+
+def clear_stale_celery_tasks():
+    step("Recovering tasks stuck in 'celery' queue → moving to 'default'")
+    r_len = run(["kubectl", "exec", "-n", NS, "deploy/redis", "--",
+                 "redis-cli", "LLEN", "celery"], capture=True, check=False)
+    if r_len.returncode != 0:
+        warn("Could not reach Redis — skipping stuck-task recovery")
+        return
+    count = int(r_len.stdout.strip() or "0")
+    if count == 0:
+        ok("No stuck tasks in 'celery' queue")
+        return
+    warn(f"Found {count} stuck task(s) in 'celery' queue — moving to 'default'")
+    lua = ("local n=redis.call('llen','celery'); "
+           "for i=1,n do redis.call('rpoplpush','celery','default') end; return n")
+    r_move = run(["kubectl", "exec", "-n", NS, "deploy/redis", "--",
+                  "redis-cli", "EVAL", lua, "0"], capture=True, check=False)
+    if r_move.returncode == 0:
+        ok(f"Moved {count} stuck task(s) from 'celery' → 'default' for reprocessing")
+    else:
+        warn("Could not move stuck tasks — they may need manual recovery")
+
+
+def verify_celery_queues():
+    step("Verifying Celery queue configuration")
+    for queue in ["ingest", "modules", "celery"]:
+        r = run(["kubectl", "exec", "-n", NS, "deploy/redis", "--",
+                 "redis-cli", "llen", queue], capture=True, check=False)
+        if r.returncode == 0:
+            info(f"Queue '{queue}': {r.stdout.strip()} tasks")
+    r = run(["kubectl", "logs", "-n", NS, "-l", "app=processor", "--tail=20"],
+            capture=True, check=False)
+    if r.returncode == 0 and "ready" in r.stdout.lower():
+        ok("Celery workers are running")
+    else:
+        warn("Celery workers may not be ready yet")
+
+
+def wait_for_elasticsearch():
+    step("Waiting for Elasticsearch (up to 3 minutes)")
+    for i in range(36):
+        r = run(["kubectl", "exec", "-n", NS, "elasticsearch-0", "--",
+                 "curl", "-sf",
+                 "http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s"],
+                capture=True, check=False)
+        if r.returncode == 0:
+            ok("Elasticsearch is ready")
+            return
+        print(f"\r  Waiting {'.' * (i % 4 + 1):<4}", end="", flush=True)
+        time.sleep(5)
+    print()
+    warn("Elasticsearch took too long — it may still be starting up")
+
+
+def apply_es_template():
+    tmpl = ROOT / "elasticsearch" / "index_templates" / "fo-cases-template.json"
+    if not tmpl.exists():
+        return
+    step("Applying Elasticsearch index template")
+    r = run(["kubectl", "exec", "-n", NS, "elasticsearch-0", "--",
+             "curl", "-sf", "-X", "PUT",
+             "http://localhost:9200/_index_template/fo-cases-template",
+             "-H", "Content-Type: application/json",
+             "-d", tmpl.read_text()], capture=True, check=False)
+    if r.returncode != 0:
+        warn("Could not apply template yet — retry with --no-build")
+        return
+    ok("Template applied")
+    # Backfill: ES templates apply at index creation. Existing fo-case-* indices
+    # use the original dynamic mapping. Aliases can be added to live mappings —
+    # but ES requires the alias target field to exist in that index, so a single
+    # wildcard PUT fails. We pass the alias spec into a single in-pod Python
+    # script that iterates indices server-side and applies matching aliases.
+    backfill_aliases_in_pod(tmpl)
+
+
+# In-pod alias back-fill runs entirely inside one kubectl exec (avoids spawning
+# hundreds of kubectl calls over SSH, which gets killed by the connection).
+_BACKFILL_PY = r"""
+import json, sys, urllib.request, urllib.error
+
+aliases = json.loads(sys.stdin.read())  # {name: {type:alias, path:dotted}}
+if not aliases:
+    print('NO_ALIASES'); sys.exit(0)
+
+def es(method, path, body=None):
+    req = urllib.request.Request(
+        'http://elasticsearch:9200' + path, method=method,
+        data=(json.dumps(body).encode() if body else None),
+        headers={'Content-Type': 'application/json'} if body else {},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return r.status, json.loads(r.read() or b'{}')
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads((e.read() or b'{}'))
+    except Exception as e:
+        return 0, {'error': str(e)}
+
+st, j = es('GET', '/_cat/indices/fo-case-*?h=index&format=json')
+if st != 200:
+    print('LIST_FAIL', st); sys.exit(1)
+indices = sorted(row['index'] for row in j)
+applied = skipped = errored = 0
+for idx in indices:
+    st, mp = es('GET', f'/{idx}/_mapping/field/*')
+    if st != 200: errored += 1; continue
+    existing = set(mp.get(idx, {}).get('mappings', {}).keys())
+    valid = {n: s for n, s in aliases.items()
+             if s.get('path') in existing and n not in existing}
+    if not valid: skipped += 1; continue
+    # Raise the per-index field limit; aliases count toward total_fields.limit
+    # and existing indices may already be at the cap (template default = 2000).
+    es('PUT', f'/{idx}/_settings', {'index.mapping.total_fields.limit': 2200})
+    st2, body = es('PUT', f'/{idx}/_mapping', {'properties': valid})
+    if 200 <= st2 < 300: applied += 1
+    else:
+        errored += 1
+        print(f'FAIL {idx} {st2} {json.dumps(body)[:160]}', flush=True)
+print(f'RESULT applied={applied} skipped={skipped} errored={errored}')
+"""
+
+
+def backfill_aliases_in_pod(tmpl):
+    try:
+        import json as _json
+        spec = _json.loads(tmpl.read_text())
+        props = spec.get("template", {}).get("mappings", {}).get("properties", {}) or {}
+        aliases = {k: v for k, v in props.items()
+                   if isinstance(v, dict) and v.get("type") == "alias"}
+        if not aliases:
+            return
+        step(f"Back-filling {len(aliases)} aliases on existing fo-case-* indices")
+        # Pick a pod that has python — the api pod always does.
+        r_pod = run(["kubectl", "get", "pod", "-n", NS, "-l", "app=api",
+                     "-o", "jsonpath={.items[0].metadata.name}"],
+                    capture=True, check=False)
+        pod = (r_pod.stdout or "").strip()
+        if not pod:
+            warn("No api pod found — alias back-fill skipped")
+            return
+        r = run(["kubectl", "exec", "-n", NS, "-i", pod, "--",
+                 "python3", "-c", _BACKFILL_PY],
+                stdin_text=_json.dumps(aliases), capture=True, check=False)
+        out = (r.stdout or "").strip()
+        if "RESULT" in out:
+            ok(f"Alias back-fill — {out.splitlines()[-1]}")
+        else:
+            warn(f"Alias back-fill output: {out or r.stderr.strip()}")
+    except Exception as exc:  # pragma: no cover
+        warn(f"Alias back-fill skipped: {exc}")
+
+
+# ── Status / Logs / Destroy ───────────────────────────────────────────────────
+
+def cmd_status_k8s():
+    run(["kubectl", "get", "pods",    "-n", NS, "-o", "wide"])
+    run(["kubectl", "get", "svc",     "-n", NS])
+    run(["kubectl", "get", "ingress", "-n", NS])
+    run(["kubectl", "get", "hpa",     "-n", NS], check=False)
+    r = run(["kubectl", "get", "vpa", "-n", NS], capture=True, check=False)
+    if r.returncode == 0:
+        print(r.stdout)
+    else:
+        info("VPA: not installed (kubectl get vpa failed — VPA controller may be missing)")
+
+
+def cmd_logs_k8s(svc):
+    if svc not in SERVICES:
+        die(f"Unknown service '{svc}'. Choose from: {', '.join(SERVICES)}")
+    run(["kubectl", "logs", "-n", NS, "-l", f"app={svc}", "-f", "--tail=100"])
+
+
+def cmd_destroy_k8s(cfg):
+    ctx = get_current_context()
+    print(f"\n  Context  : {ctx}")
+    print(f"  Namespace: {NS}")
+    print(f"\n  This deletes ALL data. Type the namespace name to confirm:")
+    if input("  > ").strip() != NS:
+        print("  Aborted.")
+        return
+    engine, engine_id = detect_engine()
+    if engine == "k3d" and cfg["cluster"].get("auto_create_k3d", False):
+        run(["k3d", "cluster", "delete", engine_id])
+        ok(f"k3d cluster '{engine_id}' deleted")
+    else:
+        run(["kubectl", "delete", "namespace", NS, "--ignore-not-found"])
+        ok(f"Namespace '{NS}' deleted")
+
+
+# ── Docker Compose ────────────────────────────────────────────────────────────
+
+def check_docker():
+    step("Checking Docker")
+    if not cmd_exists("docker"):
+        die("Docker not found.\n  Install from: https://docs.docker.com/get-docker/")
+    if run(["docker", "info"], capture=True, check=False).returncode != 0:
+        die("Docker daemon is not running.\n"
+            "  macOS: open Docker Desktop\n"
+            "  Linux: sudo systemctl start docker")
+    ok(f"Docker {run(['docker', '--version'], capture=True, check=False).stdout.split()[2].rstrip(',')}")
+    ok(f"{' '.join(dc_cmd())} found")
+
+
+def ensure_env_file():
+    if ENV_FILE.exists():
+        ok(".env found")
+    elif (ROOT / ".env.example").exists():
+        shutil.copy(ROOT / ".env.example", ENV_FILE)
+        warn(".env was not found — created from .env.example")
+        warn("Review settings and update secrets before production use.")
+        input("\n     Press Enter to continue with defaults, or Ctrl-C to edit .env first...")
+    else:
+        die(".env not found and .env.example is missing. Create .env manually (see README).")
+    with open(ENV_FILE) as f:
+        for line in f:
+            if line.startswith("JWT_SECRET="):
+                jwt = line.split("=", 1)[1].strip().strip("\"'")
+                if not jwt or jwt == "CHANGE_ME_IN_PRODUCTION":
+                    warn("JWT_SECRET in .env is not set — update before exposing to the network.")
+                break
+
+
+def deploy_docker():
+    check_docker()
+    ensure_env_file()
+    if not COMPOSE_FILE.exists():
+        die(f"docker-compose.prod.yml not found in {ROOT}")
+    step("Building and starting all services (first build may take several minutes)")
+    dc = dc_cmd()
+    run(dc + ["-f", str(COMPOSE_FILE), "--env-file", str(ENV_FILE), "up", "-d", "--build"])
+    step("Waiting for API to be healthy (up to 120 s)")
+    for i in range(24):
+        r = subprocess.run(["curl", "-sf", "http://localhost/api/v1/health"],
+                           capture_output=True, text=True)
+        if r.returncode == 0:
+            ok("API is healthy")
+            break
+        print(f"\r     Waiting {'.' * (i % 4 + 1):<4}", end="", flush=True)
+        time.sleep(5)
+    else:
+        print()
+        warn("API did not respond in 120 s. Check: ./foctl logs api docker")
+    _summary_docker()
+
+
+def cmd_status_docker():
+    step("Docker Compose — service health")
+    dc = dc_cmd()
+    r = run(dc + ["-f", str(COMPOSE_FILE), "--env-file", str(ENV_FILE), "ps"],
+            check=False)
+    if r.returncode != 0:
+        warn("No services appear to be running.")
+
+
+def cmd_logs_docker(svc):
+    dc = dc_cmd()
+    run(dc + ["-f", str(COMPOSE_FILE), "--env-file", str(ENV_FILE),
+              "logs", "-f", "--tail=100"] + ([svc] if svc != "all" else []))
+
+
+def cmd_update_docker():
+    check_docker()
+    ensure_env_file()
+    step("Rebuilding and redeploying (Docker Compose)")
+    dc = dc_cmd()
+    run(dc + ["-f", str(COMPOSE_FILE), "--env-file", str(ENV_FILE), "up", "-d", "--build"])
+    ok("Update complete.")
+
+
+def cmd_destroy_docker():
+    print(f"\n  {RED}{BOLD}WARNING:{RESET} This stops all containers and DELETES all volumes.")
+    print("  All case data, uploaded files, and indices will be permanently lost.")
+    ans = input("\n  Type 'yes' to confirm: ").strip()
+    if ans != "yes":
+        print("  Aborted.")
+        return
+    dc = dc_cmd()
+    run(dc + ["-f", str(COMPOSE_FILE), "--env-file", str(ENV_FILE), "down", "-v"])
+    ok("All containers and volumes removed.")
+
+
+# ── Mode auto-detection ───────────────────────────────────────────────────────
+
+def _detect_mode():
+    if cmd_exists("docker") and COMPOSE_FILE.exists() and ENV_FILE.exists():
+        try:
+            dc = dc_cmd()
+            r = subprocess.run(
+                dc + ["-f", str(COMPOSE_FILE), "--env-file", str(ENV_FILE), "ps", "-q"],
+                capture_output=True, text=True
+            )
+            if r.returncode == 0 and r.stdout.strip():
+                return "docker"
+        except SystemExit:
+            pass
+    r = subprocess.run(["kubectl", "get", "namespace", NS],
+                       capture_output=True, text=True)
+    if r.returncode == 0:
+        return "k8s"
+    return ""
+
+
+# ── Summary helpers ───────────────────────────────────────────────────────────
+
+def print_summary(cfg):
+    hostname   = cfg["access"]["hostname"]
+    https_port = cfg["access"].get("https_port", 443)
+    port_str   = f":{https_port}" if https_port != 443 else ""
+    auto_cert  = not (cfg["access"].get("tls_cert") and cfg["access"].get("tls_key"))
+    cert_note  = (
+        "\n  Note: using a self-signed certificate — your browser will\n"
+        "  show a security warning. Accept it to proceed.\n"
+        "  To use your own cert, set tls_cert/tls_key in config.json.\n"
+    ) if auto_cert else ""
+
+    print()
+    print("┌" + "─" * 58 + "┐")
+    print("│  Citadel deployed!                                      │")
+    print("└" + "─" * 58 + "┘")
+    print(f"""
+  1. Add to /etc/hosts (one-time, requires sudo):
+
+       echo "{hostname}  {hostname}" | sudo tee -a /etc/hosts
+
+  2. Open in your browser (HTTP auto-redirects to HTTPS):
+{cert_note}
+       Web UI:    https://{hostname}{port_str}/
+       API docs:  https://{hostname}{port_str}/api/v1/docs
+       Kibana:    https://{hostname}{port_str}/kibana/
+       MinIO:     https://{hostname}{port_str}/minio/
+
+  Useful commands:
+
+       ./foctl status k8s                  # pod / service health
+       ./foctl logs api k8s               # stream API logs
+       ./foctl logs processor k8s         # stream processor logs
+       ./foctl deploy k8s --restart       # re-apply + restart pods (skip rebuild)
+       ./foctl deploy k8s --no-build      # re-apply manifests without rebuilding images
+       ./foctl deploy k8s --no-cache      # force full Docker rebuild (ignore cache)
+       ./foctl destroy k8s                # remove all cluster resources
+""")
+
+
+def _summary_docker():
+    print()
+    print("┌────────────────────────────────────────────────────────────────────┐")
+    print("│  Citadel — running via Docker Compose                               │")
+    print("└────────────────────────────────────────────────────────────────────┘")
+    print()
+    print("  Web UI:      http://localhost/")
+    print("  API docs:    http://localhost/api/v1/docs")
+    print("  Kibana:      http://localhost:5601/")
+    print("  MinIO UI:    http://localhost:9001/")
+    print()
+    print("  Default credentials:  admin / CitadelAdmin1!")
+    print("  ⚠  Change the admin password on first login.")
+    print()
+    print("  Commands:")
+    print("    ./foctl status              — service health")
+    print("    ./foctl logs api            — API logs")
+    print("    ./foctl logs all            — all logs")
+    print("    ./foctl update              — rebuild + restart")
+    print("    ./foctl destroy             — remove containers and all data")
+    print()
+
+
+# ── Config display ────────────────────────────────────────────────────────────
+
+def cmd_config():
+    step("Configuration")
+    cfg = load_config()
+    res = cfg.get("resources", {})
+    sec = cfg.get("secrets", {})
+    acc = cfg.get("access", {})
+    img = cfg.get("images", {})
+
+    print()
+    print("  ── Kubernetes deployment ─────────────────────────────────────")
+    print(f"  namespace   : {cfg.get('namespace', '(not set)')}")
+    print(f"  hostname    : {acc.get('hostname', '(not set)')}")
+    print(f"  context     : {cfg.get('cluster', {}).get('context') or '(current kubectl context)'}")
+    print(f"  registry    : {img.get('registry') or '(none — direct load into cluster)'}")
+    print(f"  image tag   : {img.get('tag', 'latest')}")
+    print()
+    print("  ── Resources ─────────────────────────────────────────────────")
+    print(f"  API         : CPU {res.get('api_cpu_request','?')}–{res.get('api_cpu_limit','?')}  "
+          f"RAM {res.get('api_memory_request','?')}–{res.get('api_memory_limit','?')}")
+    print(f"  Processor   : CPU {res.get('processor_cpu_request','?')}–{res.get('processor_cpu_limit','?')}  "
+          f"RAM {res.get('processor_memory_request','?')}–{res.get('processor_memory_limit','?')}")
+    print(f"  ES heap     : {res.get('elasticsearch_heap_mb','?')} MB   "
+          f"storage: {res.get('elasticsearch_storage_gi','?')} Gi")
+    print(f"  MinIO       : {res.get('minio_storage_gi','?')} Gi")
+    print(f"  HPA min     : {res.get('hpa_min_replicas', 1)}")
+    print()
+    print("  ── Secrets ───────────────────────────────────────────────────")
+    jwt = sec.get("jwt_secret", "")
+    if not jwt or jwt == "CHANGE_ME_IN_PRODUCTION":
+        print("  jwt_secret  : ⚠  CHANGE_ME_IN_PRODUCTION  ← update config.json")
+    else:
+        print("  jwt_secret  : ● (set)")
+    print(f"  admin user  : {sec.get('admin_username', 'admin')}")
+    ap = sec.get("admin_password", "")
+    if not ap or ap == "CitadelAdmin1!":
+        print("  admin pass  : ⚠  default  ← change after first login")
+    else:
+        print("  admin pass  : ● (changed)")
+    print()
+
+    if ENV_FILE.exists():
+        step("Docker .env (secrets redacted)")
+        with open(ENV_FILE) as f:
+            for line in f:
+                line = line.rstrip()
+                if not line or line.startswith("#"):
+                    continue
+                key = line.split("=", 1)[0]
+                if any(x in key.upper() for x in ("SECRET", "PASSWORD", "KEY")):
+                    line = f"{key}=●●●●●●●●"
+                print(f"     {line}")
+    else:
+        warn(".env not found — Docker deployment not configured")
+    print()
+
+
+# ── Interactive menu ──────────────────────────────────────────────────────────
+
+def _menu():
+    print()
+    print(f"{BOLD}╔══════════════════════════════════════════════════════════════╗{RESET}")
+    print(f"{BOLD}║         Citadel — Deployment                                  ║{RESET}")
+    print(f"{BOLD}╚══════════════════════════════════════════════════════════════╝{RESET}")
+    print()
+    print("  Choose a deployment mode:")
+    print()
+    print(f"  {BOLD}[1]{RESET} Docker Compose")
+    print("      All services run in containers on this machine.")
+    print("      Single port (80) · no Kubernetes required")
+    print("      Best for: laptop, single-server, quick evaluation")
+    print()
+    print(f"  {BOLD}[2]{RESET} Kubernetes — existing cluster")
+    print("      Deploy to whichever cluster kubectl is currently pointing at.")
+    print("      Best for: staging / production (GKE, EKS, AKS, k3s ...)")
+    print()
+    print(f"  {BOLD}[3]{RESET} Kubernetes — new local cluster (k3d)")
+    print("      Creates a k3d cluster inside Docker, then deploys automatically.")
+    print("      Best for: development, CI pipelines, offline labs")
+    print("      Requires: Docker")
+    print()
+    print(f"  {BOLD}[s]{RESET}  Status    — check what is currently running")
+    print(f"  {BOLD}[c]{RESET}  Config    — show current configuration")
+    print(f"  {BOLD}[q]{RESET}  Quit")
+    print()
+    choice = input("  Choice [1/2/3/s/c/q]: ").strip()
+    if choice == "1":
+        deploy_docker()
+    elif choice == "2":
+        cfg = load_config()
+        _deploy_k8s_flow(cfg)
+    elif choice == "3":
+        cfg = load_config()
+        ensure_k3d()
+        create_k3d_cluster(cfg)
+        _deploy_k8s_flow(cfg)
+    elif choice in ("s", "S"):
+        load_config()
+        mode = _detect_mode()
+        if mode == "docker":
+            cmd_status_docker()
+        elif mode == "k8s":
+            cmd_status_k8s()
+        elif mode == "helm":
+            cmd_status_helm(load_config())
+        else:
+            die("No active deployment detected.")
+    elif choice in ("c", "C"):
+        cmd_config()
+    elif choice in ("q", "Q"):
+        sys.exit(0)
+    else:
+        die(f"Invalid choice: '{choice}'")
+
+
+# ── k8s deploy flow ───────────────────────────────────────────────────────────
+
+def _deploy_k8s_flow(cfg, no_build=False, no_cache=False, restart=False,
+                     setup_traefik=False):
+    if restart:
+        no_build = True
+
+    mode = "Restart-only" if restart else ("No-build" if no_build else "Full")
+    print(f"\n  Citadel — Deploying ({mode})\n")
+    info(f"Context  : {cfg['cluster'].get('context') or '(current)'}")
+    info(f"Hostname : {cfg['access']['hostname']}")
+    info(f"Registry : {cfg['images']['registry'] or '(none — direct load)'}")
+    info(f"ES heap  : {cfg['resources']['elasticsearch_heap_mb']} MB")
+    info(f"\n  ⚠️  This script will NOT touch:")
+    info("     - analyse namespace (CoreDNS, Bloodhound, etc.)")
+    info("     - kube-system namespace (Traefik, k3s system)")
+    info("     - tailscale namespace")
+    info(f"     Only {NS} namespace will be modified.\n")
+
+    if not no_build:
+        if not cmd_exists("docker"):
+            die("Docker not found. Install Docker Desktop or the Docker CLI.")
+        if run(["docker", "info"], capture=True, check=False).returncode != 0:
+            die("Docker daemon is not running.")
+        ok("Docker is running")
+
+    # Pull latest submodule content (plugins, modules, collector, alert_rules).
+    # sync first so .git/config reflects any URL changes in .gitmodules.
+    step("Updating git submodules")
+    run(["git", "submodule", "sync", "--recursive"], capture=True, check=False)
+    r = run(["git", "submodule", "update", "--init", "--recursive"], capture=True, check=False)
+    if r.returncode == 0:
+        ok("Submodules up to date")
+    else:
+        warn("git submodule update failed — build may use stale submodule content\n" + (r.stderr or ""))
+
+    setup_cluster(cfg)
+
+    if not no_build:
+        build_images(cfg, no_cache=no_cache)
+
+    pull_policy = "IfNotPresent" if cfg["images"]["registry"] else "Never"
+    if not no_build:
+        pull_policy = load_images(cfg)
+    else:
+        ok("Skipping image load (--no-build)")
+
+    _ensure_namespace()
+    setup_tls_secret(cfg)
+    cleanup_stale_resources()
+
+    step("Checking VPA controller")
+    ensure_vpa_controller()
+
+    apply_all_manifests(cfg, pull_policy, setup_traefik=setup_traefik)
+    wait_for_elasticsearch()
+    apply_es_template()
+    rollout_restart_apps()
+    clear_stale_celery_tasks()
+    verify_celery_queues()
+    print_summary(cfg)
+
+
+# ── Usage ─────────────────────────────────────────────────────────────────────
+
+def _usage():
+    print("""
+  foctl — Citadel deployment CLI
+
+  Usage:  ./foctl <command> [args]
+
+  DEPLOY
+    deploy docker               Docker Compose — builds images, starts all services
+    deploy k8s   [flags]        Deploy to the current kubectl context
+    deploy k8s-new [flags]      Create a local k3d cluster then deploy
+
+  Kubernetes deploy flags:
+    --no-build                  Skip Docker image rebuild (re-apply manifests only)
+    --no-cache                  Force full Docker rebuild (ignore layer cache)
+    --restart                   Re-apply manifests + restart pods, skip build + load
+    --setup-traefik             Also apply kube-system Traefik config (first deploy only)
+                                WARNING: restarts Traefik, breaks Tailscale DNS until re-applied
+
+  OPERATIONS  (mode auto-detected if omitted)
+    status  [docker|k8s]        Service / pod health overview
+    logs    <svc> [mode]        Stream logs — api | processor | frontend | all
+    update  [docker|k8s]        Rebuild images + redeploy
+    destroy [docker|k8s]        Remove all services and data (confirms first)
+    config                      Show parsed config.json + redacted .env
+""")
+
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+
+CHART = ROOT / "charts" / "citadel"
+
+
+def deploy_helm(cfg, no_build=False, no_cache=False):
+    """Deploy via the Helm umbrella chart (charts/citadel).
+
+    The chart is app-only (api/processor/frontend) by design — substrate
+    (Elasticsearch/Redis/MinIO) is "bring your own": point config.json's
+    `substrate` block at existing/external services. Reuses build_images /
+    load_images, so image build + cluster import work exactly like the k8s mode.
+    """
+    if not cmd_exists("helm"):
+        die("helm not found. Install Helm 3, or use './foctl deploy k8s'.")
+    if not cluster_reachable():
+        die("No reachable cluster (check kubectl context/kubeconfig).")
+
+    if not no_build:
+        build_images(cfg, no_cache=no_cache)
+    load_images(cfg)   # imports images into the cluster runtime (k3s/k3d/…)
+
+    reg      = cfg["images"]["registry"].rstrip("/")
+    registry = f"{reg}/" if reg else ""
+    tag      = cfg["images"]["tag"]
+    sub      = cfg.get("substrate", {})
+    sec      = cfg.get("secrets", {})
+    acc      = cfg.get("access", {})
+    release  = cfg.get("release", "citadel")
+
+    # String values → --set-string (URLs/repos must not be type-coerced).
+    str_sets = {
+        "global.image.registry":        registry,
+        "global.image.tag":             tag,
+        "global.image.pullPolicy":      "IfNotPresent",
+        "api.image.repository":         "forensics-operator/api",
+        "processor.image.repository":   "forensics-operator/processor",
+        "frontend.image.repository":    "forensics-operator/frontend",
+        "config.elasticsearchUrl":      sub.get("elasticsearch_url", "http://elasticsearch:9200"),
+        "config.redisUrl":              sub.get("redis_url", "redis://redis-service:6379/0"),
+        "config.minioEndpoint":         sub.get("minio_endpoint", "minio-service:9000"),
+        "config.minioBucket":           sub.get("minio_bucket", "forensics-cases"),
+        "secret.jwtSecret":             sec.get("jwt_secret", ""),
+        "secret.minioAccessKey":        sec.get("minio_access_key", "minioadmin"),
+        "secret.minioSecretKey":        sec.get("minio_secret_key", "minioadmin"),
+        "secret.authEnabled":           str(cfg.get("auth", {}).get("auth_enabled", True)).lower(),
+    }
+    # Booleans → --set (a string "false" would be truthy in the templates).
+    bool_sets = {}
+    if acc.get("hostname"):
+        bool_sets["ingress.enabled"] = "true"
+        str_sets["ingress.fqdn"]      = acc["hostname"]
+        ing_class = acc.get("ingress_class", "traefik")
+        str_sets["ingress.className"] = ing_class
+        if ing_class != "traefik":
+            bool_sets["ingress.tls.enabled"] = "false"   # tailscale/nginx terminate TLS themselves
+
+    cmd = ["helm", "upgrade", "--install", release, str(CHART),
+           "-n", NS, "--create-namespace"]
+    for k, v in str_sets.items():
+        cmd += ["--set-string", f"{k}={v}"]
+    for k, v in bool_sets.items():
+        cmd += ["--set", f"{k}={v}"]
+
+    if not sec.get("jwt_secret"):
+        warn("secrets.jwt_secret not set in config.json — chart auto-generates one "
+             "(changes on every upgrade → logs users out). Set it for stable sessions.")
+
+    step(f"helm upgrade --install {release} → namespace '{NS}'")
+    run(cmd)
+    ok(f"Helm release '{release}' applied to '{NS}'")
+    info(f"Watch rollout:  kubectl -n {NS} get pods -w")
+    if acc.get("hostname"):
+        info(f"URL:            https://{acc['hostname']}/")
+
+
+def cmd_destroy_helm(cfg):
+    release = cfg.get("release", "citadel")
+    if input(f"  Uninstall helm release '{release}' from '{NS}'? [y/N] ").strip().lower() != "y":
+        info("Aborted."); return
+    run(["helm", "uninstall", release, "-n", NS], check=False)
+    ok("Helm release uninstalled (substrate in other namespaces untouched).")
+
+
+def cmd_status_helm(cfg):
+    release = cfg.get("release", "citadel")
+    run(["helm", "status", release, "-n", NS], check=False)
+    run(["kubectl", "-n", NS, "get", "pods,svc,ingress"], check=False)
+
+
+def main():
+    args = sys.argv[1:]
+
+    if not args:
+        _menu()
+        return
+
+    cmd  = args[0]
+    rest = args[1:]
+
+    if cmd in ("help", "-h", "--help"):
+        _usage()
+        return
+
+    if cmd == "deploy":
+        if not rest:
+            die("Usage: ./foctl deploy <docker|k8s|k8s-new>")
+        mode  = rest[0]
+        flags = rest[1:]
+
+        if mode == "docker":
+            deploy_docker()
+
+        elif mode == "helm":
+            cfg = load_config()
+            deploy_helm(cfg,
+                        no_build="--no-build" in flags,
+                        no_cache="--no-cache" in flags)
+
+        elif mode in ("k8s", "k8s-new"):
+            no_build      = "--no-build"      in flags or "--restart" in flags
+            no_cache      = "--no-cache"      in flags
+            restart       = "--restart"       in flags
+            setup_traefik = "--setup-traefik" in flags
+
+            cfg = load_config()
+            if mode == "k8s-new":
+                ensure_k3d()
+                create_k3d_cluster(cfg)
+
+            _deploy_k8s_flow(cfg, no_build=no_build, no_cache=no_cache,
+                             restart=restart, setup_traefik=setup_traefik)
+        else:
+            die(f"Unknown deploy mode '{mode}'. Choose one of: docker, helm, k8s, k8s-new")
+
+    elif cmd == "status":
+        mode = rest[0] if rest else ""
+        load_config()
+        if not mode:
+            mode = _detect_mode()
+        if not mode:
+            die("No active deployment detected. Pass 'docker' or 'k8s' explicitly.")
+        if mode == "docker":
+            cmd_status_docker()
+        elif mode == "k8s":
+            cmd_status_k8s()
+        else:
+            die(f"Unknown mode '{mode}'")
+
+    elif cmd == "logs":
+        svc  = rest[0] if rest else "api"
+        mode = rest[1] if len(rest) > 1 else ""
+        load_config()
+        if not mode:
+            mode = _detect_mode()
+        if not mode:
+            die("No active deployment detected. Pass mode explicitly.")
+        if mode == "docker":
+            cmd_logs_docker(svc)
+        elif mode == "k8s":
+            if svc == "all":
+                procs = [
+                    subprocess.Popen(["kubectl", "logs", "-n", NS,
+                                      "-l", f"app={s}", "-f", "--tail=50"])
+                    for s in ["api", "processor"]
+                ]
+                try:
+                    for p in procs:
+                        p.wait()
+                except KeyboardInterrupt:
+                    for p in procs:
+                        p.terminate()
+            else:
+                cmd_logs_k8s(svc)
+        else:
+            die(f"Unknown mode '{mode}'")
+
+    elif cmd == "update":
+        mode = rest[0] if rest else ""
+        if not mode:
+            load_config()
+            mode = _detect_mode()
+        if not mode:
+            die("No active deployment detected. Pass mode explicitly.")
+        if mode == "docker":
+            cmd_update_docker()
+        elif mode == "k8s":
+            cfg = load_config()
+            _deploy_k8s_flow(cfg)
+        else:
+            die(f"Unknown mode '{mode}'")
+
+    elif cmd == "destroy":
+        mode = rest[0] if rest else ""
+        if not mode:
+            load_config()
+            mode = _detect_mode()
+        if not mode:
+            die("No active deployment detected. Pass mode explicitly.")
+        if mode == "docker":
+            cmd_destroy_docker()
+        elif mode == "k8s":
+            cfg = load_config()
+            cmd_destroy_k8s(cfg)
+        elif mode == "helm":
+            cmd_destroy_helm(load_config())
+        else:
+            die(f"Unknown mode '{mode}'")
+
+    elif cmd == "config":
+        cmd_config()
+
+    else:
+        die(f"Unknown command '{cmd}'. Run ./foctl --help for usage.")
+
+
+if __name__ == "__main__":
+    main()

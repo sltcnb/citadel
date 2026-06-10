@@ -1,0 +1,16 @@
+id: wintriage
+name: Windows Triage
+description: >-
+  Auto-detect and parse Windows artifacts — EVTX (35+ forensic event IDs),
+  registry persistence keys, LNK shell-links, Prefetch execution evidence.
+input_extensions: [".evtx", ".dat", ".hive", ".lnk", ".pf"]
+input_filenames:
+  - NTUSER.DAT
+  - SYSTEM
+  - SOFTWARE
+  - SAM
+  - SECURITY
+  - USRCLASS.DAT
+available: true
+category: Windows
+tags: [windows, triage, evtx, registry, lnk, prefetch]

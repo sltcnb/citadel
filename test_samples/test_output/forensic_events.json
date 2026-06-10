@@ -1,0 +1,42 @@
+{
+  "forensic_events": [
+    {
+      "timestamp": "2024-06-15T08:00:00Z",
+      "event_type": "process_create",
+      "process_name": "malware.exe",
+      "pid": 4567,
+      "user": "admin"
+    },
+    {
+      "timestamp": "2024-06-15T08:01:00Z",
+      "event_type": "network_connect",
+      "process_name": "malware.exe",
+      "dest_ip": "203.0.113.50",
+      "dest_port": 443
+    },
+    {
+      "timestamp": "2024-06-15T08:02:00Z",
+      "event_type": "file_create",
+      "path": "C:\\Windows\\Temp\\payload.dll",
+      "size": 32768
+    },
+    {
+      "timestamp": "2024-06-15T08:03:00Z",
+      "event_type": "registry_modify",
+      "key": "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run",
+      "value": "malware"
+    },
+    {
+      "timestamp": "2024-06-15T08:04:00Z",
+      "event_type": "process_inject",
+      "source_process": "malware.exe",
+      "target_process": "explorer.exe",
+      "target_pid": 1234
+    }
+  ],
+  "metadata": {
+    "source": "EDR",
+    "collection_time": "2024-06-15T12:00:00Z",
+    "hostname": "WORKSTATION-01"
+  }
+}

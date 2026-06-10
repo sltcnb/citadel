@@ -1,0 +1,23 @@
+id: utmp
+name: Login Records (utmp/wtmp/btmp)
+description: >
+  Parses Linux login accounting files — wtmp (login/logout history + reboots,
+  as read by `last`), btmp (failed login attempts, as read by `lastb`), and
+  utmp (currently logged-in sessions, as read by `who`). Each fixed-width
+  binary record is decoded into a typed login_event with user, tty, source
+  host/IP, pid, and the ut_type (USER_PROCESS, DEAD_PROCESS, BOOT_TIME, ...).
+supported_extensions: []
+supported_mime_types: []
+artifact_type: login_event
+handled_filenames:
+  - wtmp
+  - btmp
+  - utmp
+author: Citadel
+version: "1.0.0"
+tags:
+  - linux
+  - login
+  - authentication
+  - lateral-movement
+  - dfir

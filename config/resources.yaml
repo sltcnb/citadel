@@ -1,0 +1,46 @@
+# Global resource budget + allocation policy for Citadel.
+#
+# `scripts/allocate_resources.py` reads this, DETECTS the real host capacity,
+# and splits the allocatable pool across services by weight — emitting a Helm
+# values overlay (charts/citadel/values-resources.generated.yaml).
+#
+# total.memory/cpu: a hard ceiling. "auto" = use the detected host capacity.
+# A number larger than what the host actually has is capped (with a warning) —
+# you can claim 64Gi, but if the box has 36Gi the allocator uses 36Gi.
+
+total:
+  memory: auto        # e.g. "64Gi" | "auto"
+  cpu: auto           # e.g. 12     | "auto"
+  storage: "500Gi"    # total persistent storage to divide among stateful svcs
+
+# Admin ceiling: the MOST of the host Citadel may ever use, as a percentage.
+# The box may run other workloads — set this to keep Citadel boxed in.
+# Effective pool = host * (max_pct_of_host/100) * (1 - headroom_pct/100),
+# also capped by total.memory/cpu above. 100 = no extra cap beyond headroom.
+max_pct_of_host: 100
+
+# Fraction of the admitted budget reserved for the OS + kube system.
+headroom_pct: 20
+
+# requests = requests_ratio * limits  (burstable QoS; guarantees the floor).
+requests_ratio: 0.5
+
+# Relative share of the allocatable compute pool. Hot workers get more.
+weights:
+  api: 2
+  processor: 5          # Babel/Anvil hot path — gets the largest slice
+  frontend: 1
+  elasticsearch: 6      # heaviest: indexing + search
+  redis: 1
+  minio: 2
+
+# Per-service share of total.storage (percent). Must sum to <= 100.
+storage_weights:
+  elasticsearch: 60
+  minio: 35
+  redis: 5
+
+# Floors so a tiny host still yields runnable pods (Mi / millicpu).
+floors:
+  memory_mi: 128
+  cpu_m: 100

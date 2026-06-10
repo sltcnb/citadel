@@ -1,0 +1,97 @@
+{
+  "_readme": "Copy this file to config.json and fill in your values, then run: ./foctl deploy k8s",
+
+  "_comment_namespace": "Kubernetes namespace for all deployed resources.",
+  "namespace": "citadel",
+
+  "_comment_release": "Helm release name (used by './foctl deploy helm').",
+  "release": "citadel",
+
+  "_comment_substrate": "HELM mode only (the chart is app-only): point these at existing/external ES/Redis/MinIO. The k8s raw-manifest mode ignores this and provisions substrate in-namespace.",
+  "substrate": {
+    "elasticsearch_url": "http://elasticsearch:9200",
+    "redis_url": "redis://redis-service:6379/0",
+    "minio_endpoint": "minio-service:9000",
+    "minio_bucket": "forensics-cases"
+  },
+
+  "cluster": {
+    "_comment_context": "The kubectl context to use. Leave empty to use whatever kubectl is currently pointing at.",
+    "context": "",
+
+    "_comment_auto_k3d": "Set to true ONLY if you have no cluster at all and want deploy.py to create a local one using k3d (requires Docker).",
+    "auto_create_k3d": false,
+
+    "_comment_name": "Used as the k3d cluster name when auto_create_k3d is true. Ignored otherwise.",
+    "name": "citadel"
+  },
+
+  "access": {
+    "_comment": "The hostname you will type in your browser. Add it to /etc/hosts pointing to your cluster's ingress IP.",
+    "hostname": "citadel.csirt.lab",
+    "http_port": 80,
+    "https_port": 443,
+
+    "_comment_ingress_class": "HELM mode: which IngressClass to use (traefik | tailscale | nginx). Non-traefik classes skip the traefik redirect middleware and let the controller terminate TLS.",
+    "ingress_class": "traefik",
+
+    "_comment_tls": "Optional: paths to your own TLS certificate and private key files. Leave both empty to auto-generate a self-signed certificate (valid for 10 years).",
+    "tls_cert": "",
+    "tls_key": ""
+  },
+
+  "secrets": {
+    "minio_access_key": "CHANGE_ME",
+    "minio_secret_key": "CHANGE_ME",
+
+    "_comment_jwt": "Generate a strong secret with: python3 -c \"import secrets; print(secrets.token_hex(32))\"",
+    "jwt_secret": "CHANGE_ME",
+
+    "_comment_admin": "Default admin credentials created on first boot. Change admin_password immediately.",
+    "admin_username": "admin",
+    "admin_password": "CHANGE_ME",
+
+    "_comment_license": "Leave both empty to run on the Community plan. To unlock pro/enterprise/mssp, mint a JWT with the external licensing/generate_license.py script and paste the JWT into license_key. license_signing_key must be the same HS256 secret you passed to --signing-key when minting (mismatch → silent fallback to Community).",
+    "license_key": "",
+    "license_signing_key": ""
+  },
+
+  "auth": {
+    "_comment": "Set auth_enabled to false to disable authentication (dev/trusted-LAN only).",
+    "auth_enabled": true,
+    "jwt_expire_hours": 8
+  },
+
+  "resources": {
+    "_comment": "Reduce elasticsearch_heap_mb to 256 on machines with less than 8 GB RAM.",
+    "elasticsearch_heap_mb": 2048,
+    "elasticsearch_storage_gi": 20,
+    "minio_storage_gi": 30,
+    "redis_storage_gi": 50,
+    "uploads_storage_gi": 500,
+    "_comment_hpa": "Minimum pod replicas for API and processor HPAs. Use 1 on shared/single-node clusters.",
+    "hpa_min_replicas": 1,
+    "api_memory_request": "2Gi",
+    "api_memory_limit": "4Gi",
+    "api_cpu_request": "250m",
+    "api_cpu_limit": "10000m",
+    "processor_memory_request": "8Gi",
+    "processor_memory_limit": "16Gi",
+    "processor_cpu_request": "500m",
+    "processor_cpu_limit": "40000m",
+    "minio_memory_request": "4Gi",
+    "minio_memory_limit": "8Gi",
+    "minio_cpu_request": "750m",
+    "minio_cpu_limit": "1500m",
+    "frontend_memory_request": "512Mi",
+    "frontend_memory_limit": "2048Mi",
+    "frontend_cpu_request": "250m",
+    "frontend_cpu_limit": "600m"
+  },
+
+  "images": {
+    "_comment": "Leave registry empty to auto-load images directly into the cluster (k3s, k3d, minikube, kind). Set registry to push/pull via a registry, e.g. 'docker.io/youruser/' (trailing slash required).",
+    "registry": "",
+    "tag": "latest"
+  }
+}

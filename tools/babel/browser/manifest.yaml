@@ -1,0 +1,24 @@
+id: browser
+name: Browser Forensics
+description: >-
+  Parses browser artifacts from Chrome, Firefox, Brave, Opera, Edge, and Safari.
+  Extracts browsing history, cookies, downloads, login data, bookmarks, web form
+  autofill, and favicons from SQLite databases. Handles both Chromium-based
+  (WebKit epoch) and Firefox (Unix microseconds) timestamp formats.
+supported_extensions: [".sqlite", ".db", ".sqlite3"]
+supported_mime_types: []
+artifact_type: browser
+author: ForensicsOperator
+version: "1.0.0"
+tags: [browser, chrome, firefox, brave, opera, edge, safari, history, cookies, downloads, forensics]
+handled_filenames:
+  - History
+  - Cookies
+  - Login Data
+  - Bookmarks
+  - Web Data
+  - Downloads
+  - places.sqlite
+  - cookies.sqlite
+  - favicons.sqlite
+  - formhistory.sqlite

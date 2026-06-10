@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://citadel.dfir/tools/anvil/result/v1.json",
+  "title": "AnvilResult",
+  "description": "Structured output of an Anvil analyzer (BaseModule.run). Back-compatible with the processor sandbox, which reads the 'hits' array. Each hit conforms to the legacy finding shape; 'artifacts' and 'metrics' carry the richer structured payload.",
+  "type": "object",
+  "required": ["module", "status", "hits"],
+  "properties": {
+    "module": {
+      "type": "string",
+      "description": "Analyzer name (BaseModule.name)."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["ok", "skipped", "error"],
+      "description": "Coarse run outcome."
+    },
+    "error": {
+      "type": ["string", "null"],
+      "description": "Error message when status == 'error'."
+    },
+    "hits": {
+      "type": "array",
+      "description": "Findings, serialised to the legacy hit-dict shape.",
+      "items": {
+        "type": "object",
+        "required": ["level", "rule_title"],
+        "properties": {
+          "level": {
+            "type": "string",
+            "enum": ["critical", "high", "medium", "low", "informational"]
+          },
+          "level_int": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5
+          },
+          "rule_title": {"type": "string"},
+          "description": {"type": "string"},
+          "file": {"type": "string"},
+          "techniques": {
+            "type": "array",
+            "items": {"type": "string"}
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "description": "Files/blobs the analyzer produced.",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": {"type": "string"},
+          "kind": {
+            "type": "string",
+            "enum": ["file", "report", "extracted", "log"]
+          },
+          "path": {"type": "string"},
+          "minio_key": {"type": "string"},
+          "sha256": {"type": "string"},
+          "size": {"type": "integer", "minimum": 0}
+        },
+        "additionalProperties": false
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "description": "Free-form numeric/string telemetry.",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

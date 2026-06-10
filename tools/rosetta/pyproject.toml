@@ -1,0 +1,29 @@
+[project]
+name = "rosetta"
+version = "0.1.0"
+description = "Rosetta — canonicalizer: ForensicEvent JSONL -> ECS v8 JSONL"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+    { name = "Citadel" },
+]
+dependencies = [
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
+
+[project.scripts]
+rosetta = "rosetta.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["rosetta*"]
+
+[tool.setuptools.package-data]
+rosetta = ["fieldmaps/*.yaml"]

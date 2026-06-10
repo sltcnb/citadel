@@ -1,0 +1,24 @@
+# Pilot — investigation agent (LLM investigates a case the way an analyst would)
+name: Pilot
+kind: agent
+version: "1.0.0"
+repository: citadel-pilot
+status: built
+consumes:
+  content_types:
+    - application/x-ndjson    # an ES index or a Citadel case
+  schema:
+    - https://citadel.dfir/contracts/forensic_event/v1.json
+produces:
+  schema:
+    - https://citadel.dfir/contracts/forensic_event/v1.json   # report + findings
+  artifact_types:
+    - investigation_report
+dependencies:
+  - elasticsearch
+  - sluice
+  - sigil
+  - anvil
+  - augur
+health:
+  command: "pilot --version"

@@ -1,0 +1,7 @@
+{
+  "parser_name": "myparser",
+  "artifact_type": "my_artifact",
+  "extension": ".log",
+  "mime_type": "text/plain",
+  "author": "Citadel"
+}

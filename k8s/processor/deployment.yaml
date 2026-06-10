@@ -1,0 +1,129 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: processor
+  namespace: __FO_NAMESPACE__
+spec:
+  replicas: 2
+  revisionHistoryLimit: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0        # never schedule extra pods during rollout (avoids Pending on resource-constrained nodes)
+      maxUnavailable: 1  # terminate one old pod first, then start the replacement
+  selector:
+    matchLabels:
+      app: processor
+  template:
+    metadata:
+      labels:
+        app: processor
+    spec:
+      initContainers:
+        # Seed built-in plugins into the shared PVC on every start.
+        # Uses cp -r (overwrite) so image updates always propagate.
+        # Studio customizations use /app/sluice/ (separate volume) — not affected.
+        - name: seed-plugins
+          image: __FO_PROCESSOR_IMAGE__
+          imagePullPolicy: __FO_PULL_POLICY__
+          command:
+            - sh
+            - -c
+            - |
+              cp -r /app/babel_builtin/. /app/babel/ 2>/dev/null || true
+              echo "Built-in plugins seeded: $(ls /app/babel)"
+          volumeMounts:
+            - name: plugins-volume
+              mountPath: /app/babel
+        - name: seed-modules
+          image: __FO_PROCESSOR_IMAGE__
+          imagePullPolicy: __FO_PULL_POLICY__
+          command:
+            - sh
+            - -c
+            - |
+              cp -rn /app/anvil_builtin/. /app/anvil/ 2>/dev/null || true
+              echo "Built-in modules seeded: $(ls /app/anvil)"
+          volumeMounts:
+            - name: modules-volume
+              mountPath: /app/anvil
+        - name: wait-redis
+          image: busybox:1.36
+          command: ['sh', '-c', 'until nc -z redis-service 6379; do echo waiting; sleep 2; done']
+        - name: wait-elasticsearch
+          image: busybox:1.36
+          command: ['sh', '-c', 'until nc -z elasticsearch-service 9200; do echo waiting; sleep 3; done']
+        - name: wait-minio
+          image: busybox:1.36
+          command: ['sh', '-c', 'until nc -z minio-service 9000; do echo waiting; sleep 2; done']
+      containers:
+        - name: processor
+          image: __FO_PROCESSOR_IMAGE__
+          imagePullPolicy: __FO_PULL_POLICY__
+          env:
+            - name: REDIS_URL
+              value: "redis://redis-service:6379/0"
+            - name: ELASTICSEARCH_URL
+              value: "http://elasticsearch-service:9200"
+            - name: MINIO_ENDPOINT
+              value: "minio-service:9000"
+            - name: MINIO_BUCKET
+              value: "forensics-cases"
+            - name: BULK_SIZE
+              value: "1000"
+            # Worker concurrency — number of parallel Celery processes per pod.
+            # Increase to match the CPU limit above (1 process per vCPU is a good rule).
+            # Change here + redeploy; no image rebuild needed.
+            - name: CELERY_CONCURRENCY
+              value: "4"
+            # Sandbox limits for custom Python modules written in Studio.
+            # SANDBOX_CPU_SECONDS  — max CPU time a custom module can consume
+            # SANDBOX_MEMORY_BYTES — max RSS (bytes) — default 4 GB for large file analysis
+            # SANDBOX_TIMEOUT_SEC  — wall-clock kill timer — default 30 min
+            - name: SANDBOX_CPU_SECONDS
+              value: "7200"
+            - name: SANDBOX_MEMORY_BYTES
+              value: "4294967296"
+            - name: SANDBOX_TIMEOUT_SEC
+              value: "3600"
+            - name: MODULES_DIR
+              value: "/app/anvil"
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: minio-secret
+                  key: access_key
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: minio-secret
+                  key: secret_key
+          resources:
+            requests:
+              memory: "__FO_PROCESSOR_MEMORY_REQUEST__"
+              cpu: "__FO_PROCESSOR_CPU_REQUEST__"
+            limits:
+              memory: "__FO_PROCESSOR_MEMORY_LIMIT__"
+              cpu: "__FO_PROCESSOR_CPU_LIMIT__"
+          volumeMounts:
+            - name: plugins-volume
+              mountPath: /app/babel
+            - name: uploads-volume
+              mountPath: /app/uploads
+            - name: modules-volume
+              mountPath: /app/anvil
+            - name: tmp-storage
+              mountPath: /tmp
+      volumes:
+        - name: plugins-volume
+          persistentVolumeClaim:
+            claimName: plugins-pvc
+        - name: uploads-volume
+          persistentVolumeClaim:
+            claimName: uploads-pvc
+        - name: modules-volume
+          persistentVolumeClaim:
+            claimName: modules-pvc
+        - name: tmp-storage
+          emptyDir:
+            sizeLimit: 20Gi

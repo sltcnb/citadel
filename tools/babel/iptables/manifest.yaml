@@ -1,0 +1,35 @@
+id: iptables
+name: IPTables / Firewall Rules
+description: >
+  Parses Linux iptables-save output and iptables -L -v -n tabular listings.
+  Handles both IPv4 (iptables) and IPv6 (ip6tables) formats across all
+  tables (filter, nat, mangle, raw, security).  Each rule becomes a
+  structured event with table, chain, target, protocol, source/destination
+  IPs and ports, interfaces, ctstate, and normalised network.action
+  (allow/deny/nat/log).
+supported_extensions:
+  - .log
+  - .txt
+supported_mime_types:
+  - text/plain
+artifact_type: iptables_rule
+handled_filenames:
+  - iptables_save.log
+  - iptables_rules.log
+  - iptables.log
+  - iptables-save.log
+  - iptables-restore.log
+  - ip6tables_save.log
+  - ip6tables_rules.log
+  - ip6tables.log
+  - nftables_save.log
+  - firewall_rules.log
+  - firewall.log
+author: Citadel
+version: "1.0.0"
+tags:
+  - linux
+  - firewall
+  - iptables
+  - network
+  - security

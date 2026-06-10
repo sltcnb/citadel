@@ -1,0 +1,15 @@
+id: yara
+name: YARA Scanner
+description: >-
+  Scan any file with YARA signature matching. A built-in ruleset of malware,
+  packer (UPX, Themida), and threat-hunting signatures is always applied;
+  custom rules can be added in the rule editor below and are appended on top.
+  Results show the matched rule name and the byte offset where the match was
+  found — e.g. "[$string @ 0x76]" means the named string pattern hit at
+  offset 118 within the file. Best run against executables, memory dumps,
+  or suspicious binaries, though any file type is accepted.
+input_extensions: []
+input_filenames: []
+available: true
+category: Malware Detection
+tags: [yara, malware, detection, all-files]

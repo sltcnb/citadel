@@ -1,0 +1,94 @@
+---
+name: Build
+
+env:
+  # Opt into Node 24 runtime for JS actions (silences the Node 20 deprecation).
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.image.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - name: api
+            context: .
+            dockerfile: api/Dockerfile
+          - name: processor
+            context: .
+            dockerfile: tools/sluice-worker/Dockerfile
+          - name: frontend
+            context: frontend
+            dockerfile: frontend/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+      # Fast path for CI: build amd64 natively (with layer caching) and load it
+      # for scanning. Emulated arm64 under QEMU is ~10-50x slower (pip crawls),
+      # so the cross-arch build runs only on release tags below.
+      - name: Build image (amd64)
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.image.context }}
+          file: ${{ matrix.image.dockerfile }}
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: citadel-${{ matrix.image.name }}:scan
+          cache-from: type=gha,scope=${{ matrix.image.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image.name }}
+      - name: Build multi-arch (release tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.image.context }}
+          file: ${{ matrix.image.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: false
+          load: false
+          tags: citadel-${{ matrix.image.name }}:${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.image.name }}
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: citadel-${{ matrix.image.name }}:scan
+          format: table
+          exit-code: "0"
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: citadel-${{ matrix.image.name }}:scan
+          format: spdx-json
+          artifact-name: sbom-${{ matrix.image.name }}.spdx.json
+
+  kubeconform:
+    name: Validate Kubernetes manifests
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/yannh/kubeconform:latest-alpine
+    steps:
+      - uses: actions/checkout@v4
+      - name: kubeconform
+        continue-on-error: true
+        run: |
+          /kubeconform \
+            -strict \
+            -ignore-missing-schemas \
+            -summary \
+            k8s/

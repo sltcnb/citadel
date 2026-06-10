@@ -1,0 +1,141 @@
+---
+name: CI
+
+env:
+  # Opt into Node 24 runtime for JS actions (silences the Node 20 deprecation).
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint-python:
+    name: Lint Python
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install linters
+        run: pip install ruff mypy
+      - name: ruff check
+        continue-on-error: true
+        run: ruff check api/ tools/
+      - name: ruff format --check
+        continue-on-error: true
+        run: ruff format --check api/ tools/
+      - name: mypy
+        continue-on-error: true
+        run: mypy api/ tools/
+
+  lint-frontend:
+    name: Lint Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Lint
+        continue-on-error: true
+        working-directory: frontend
+        run: npm run lint
+
+  lint-docker:
+    name: Lint Dockerfiles
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dockerfile:
+          - api/Dockerfile
+          - tools/sluice-worker/Dockerfile
+          - frontend/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+      - name: hadolint
+        continue-on-error: true
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: ${{ matrix.dockerfile }}
+
+  lint-yaml:
+    name: Lint YAML
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install yamllint
+        run: pip install yamllint
+      - name: yamllint
+        continue-on-error: true
+        run: yamllint -c .yamllint.yml tools/ contracts/ k8s/
+
+  docs:
+    name: Docs build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install docs deps
+        run: pip install -r docs/requirements.txt
+      - name: Build site (strict — fails on broken links / missing nav targets)
+        run: mkdocs build --strict
+      - name: Upload site
+        uses: actions/upload-artifact@v4
+        with:
+          name: site
+          path: site
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install test deps
+        run: pip install pyyaml jsonschema cryptography requests
+      - name: Run suite test gate
+        # Enforced (no continue-on-error): the dependency-light gate that runs
+        # every tool's standalone suite + the Babel→Rosetta→Sigil integration.
+        # Invoked via `bash` so it works regardless of the script's exec bit.
+        run: bash scripts/run_tests.sh
+      - name: Generated TS contracts are up to date
+        # Frontend types are generated from contracts/*.schema.json; fail if stale.
+        run: python3 scripts/contracts_codegen.py --check
+      - name: Run pytest (richer, optional deps)
+        continue-on-error: true
+        run: |
+          pip install pytest pytest-asyncio pytest-cov || true
+          pytest -q --cov=. --cov-report=xml || true
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.python-version }}
+          path: coverage.xml
+          if-no-files-found: ignore

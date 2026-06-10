@@ -1,0 +1,9 @@
+# hadolint config. These are best-practice infos/warnings, not correctness
+# issues; silenced to keep the Dockerfile lint clean. Revisit when hardening
+# images for release (pin versions, consolidate layers).
+ignored:
+  - DL3008   # pin apt versions
+  - DL3013   # pin pip versions
+  - DL3009   # delete apt lists
+  - DL3059   # consecutive RUN
+  - DL4006   # SHELL -o pipefail

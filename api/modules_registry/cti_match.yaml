@@ -1,0 +1,8 @@
+id: cti_match
+name: CTI IOC Matching
+description: "Scan case events against the CTI indicator database (hashes, IPs, domains, URLs)"
+input_extensions: ["*"]
+available: true
+run_on_events: true
+category: Threat Intelligence
+tags: [cti, ioc, stix, threat-intel]

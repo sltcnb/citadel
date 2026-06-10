@@ -1,0 +1,28 @@
+[project]
+name = "augur"
+version = "0.5.0"
+description = "Augur — Citadel intel enrichment (IOCs -> scored, sourced STIX 2.1)"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+    { name = "Citadel" },
+]
+dependencies = [
+    "requests>=2.28",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[project.scripts]
+augur = "augur.cli:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["augur*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

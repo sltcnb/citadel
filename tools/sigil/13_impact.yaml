@@ -1,0 +1,49 @@
+category: Impact
+rules:
+  - name: Ransomware File Extension Change
+    description: >-
+      Multiple files were renamed with a new extension.
+      Indicates ransomware encryption activity.
+    artifact_type: evtx
+    query: "evtx.event_id:4663 AND (message:*.encrypted* OR message:*.locked* OR message:*.crypto* OR message:*.ransom*)"
+    threshold: 10
+
+  - name: Mass File Deletion
+    description: >-
+      A large number of files were deleted in a short time.
+      May indicate wiper malware or destructive attack.
+    artifact_type: evtx
+    query: "evtx.event_id:4660"
+    threshold: 50
+
+  - name: Boot Configuration Modified
+    description: >-
+      BCD (Boot Configuration Data) was modified.
+      Attackers modify boot config to disable safe mode or recovery.
+    artifact_type: evtx
+    query: "evtx.event_id:4657 AND (message:*BCD* OR message:*bootcfg*)"
+    threshold: 1
+
+  - name: Windows Recovery Disabled
+    description: >-
+      Windows recovery options were disabled (bcdedit /set {default} recoveryenabled no).
+      Common ransomware pre-encryption activity.
+    artifact_type: evtx
+    query: "evtx.event_id:4688 AND message:*bcdedit* AND message:*recoveryenabled*"
+    threshold: 1
+
+  - name: Volume Shadow Copy Deleted
+    description: >-
+      Alternative command for shadow copy deletion detected.
+      Used by ransomware to prevent file recovery.
+    artifact_type: evtx
+    query: "evtx.event_id:4688 AND (message:*vssadmin* OR message:*wmic* OR message:*powershell*) AND (message:*delete* OR message:*remove*) AND (message:*shadow* OR message:*vss*)"
+    threshold: 1
+
+  - name: Encrypting File System Activity
+    description: >-
+      Files were encrypted using Windows EFS.
+      Could indicate legitimate use or ransomware activity.
+    artifact_type: evtx
+    query: "evtx.event_id:5051 OR evtx.event_id:5052"
+    threshold: 5

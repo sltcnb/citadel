@@ -1,0 +1,11 @@
+id: hayabusa
+name: Hayabusa
+description: >-
+  Sigma-based EVTX threat hunting with 4 000+ built-in detection rules.
+  Produces severity-classified detections (critical/high/medium/low/informational)
+  mapped to MITRE ATT&CK tactics and techniques.
+input_extensions: [".evtx"]
+input_filenames: []
+available: true
+category: Threat Hunting
+tags: [sigma, evtx, mitre, threat-hunting, windows]

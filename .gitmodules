@@ -1,0 +1,31 @@
+# Each Citadel tool is its own repository. Two ways to assemble the suite:
+#   1. git submodules (this file) — `git submodule update --init`
+#   2. pinned manifest fetch — `scripts/fetch_tools.sh` reading tools/versions.yaml
+# The manifest is preferred for deploys (it pins a tested ref per tool); these
+# submodule entries mirror it. Paths match the in-repo tools/ layout. Domain
+# tools (Wraith/Wiretap/Nimbus/Warden) live in the sibling ../domain-tools/ tree.
+[submodule "talon"]
+	path = tools/talon
+	url = https://github.com/sltcnb/talon.git
+[submodule "sluice"]
+	path = tools/sluice
+	url = https://github.com/sltcnb/sluice.git
+[submodule "babel"]
+	path = tools/babel
+	url = https://github.com/sltcnb/babel.git
+[submodule "rosetta"]
+	path = tools/rosetta
+	url = https://github.com/sltcnb/rosetta.git
+[submodule "anvil"]
+	path = tools/anvil
+	url = https://github.com/sltcnb/anvil.git
+[submodule "augur"]
+	path = tools/augur
+	url = https://github.com/sltcnb/augur.git
+[submodule "sigil"]
+	path = tools/sigil
+	url = https://github.com/sltcnb/sigil.git
+# Shared contract package every tool + the platform depend on (pip-installed).
+[submodule "citadel-contracts"]
+	path = tools/citadel_contracts
+	url = https://github.com/sltcnb/citadel-contracts.git

@@ -1,0 +1,82 @@
+id: linux_triage
+name: Linux Triage Collection
+description: >
+  Parses structured output files produced by Linux live triage and incident
+  response collection scripts (fo-harvester, custom bash triage kits, etc.).
+  Handles process lists (ps aux), listening ports (ss -tlnp), ARP tables,
+  routing tables, logged users (who), login history (last), installed
+  packages (dpkg -l / rpm -qa), kernel modules (lsmod), open network files
+  (lsof -i), environment variables, system information (uname / hostname),
+  and cron jobs (crontab -l). Each file type is emitted with a distinct
+  artifact_type so the Timeline can filter by collection category.
+supported_extensions:
+  - .log
+  - .txt
+supported_mime_types:
+  - text/plain
+artifact_type: linux_triage
+handled_filenames:
+  # process list
+  - running_processes.log
+  - process_list.log
+  - processes.log
+  - ps_output.log
+  # listening ports
+  - listening_ports.log
+  - open_ports.log
+  - listening.log
+  # ARP table
+  - arp_table.log
+  - arp.log
+  - arp_cache.log
+  # routing table
+  - routing_table.log
+  - routes.log
+  - route_table.log
+  # logged users
+  - logged_users.log
+  - who.log
+  - active_sessions.log
+  # login history
+  - login_history.log
+  - last.log
+  - auth_history.log
+  # installed packages
+  - installed_packages.log
+  - packages.log
+  - packages.txt
+  - installed_software.log
+  - software.log
+  # kernel modules
+  - kernel_modules.log
+  - lsmod.log
+  - modules.log
+  # open files (lsof)
+  - open_files.log
+  - lsof.log
+  - network_files.log
+  # environment variables
+  - environment.log
+  - env.log
+  - env_variables.log
+  - environment_variables.log
+  # system info
+  - system_info.log
+  - uname.log
+  - sysinfo.log
+  - host_info.log
+  # cron / scheduled jobs
+  - cron_jobs.log
+  - scheduled_jobs.log
+  - crontab.log
+author: Citadel
+version: "1.0.0"
+tags:
+  - linux
+  - triage
+  - forensics
+  - process
+  - network
+  - packages
+  - persistence
+  - live-response

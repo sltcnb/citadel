@@ -1,0 +1,12 @@
+id: chainsaw
+name: Chainsaw
+description: >-
+  Rapid EVTX analysis using Sigma rules and built-in detection logic.
+  Complementary to Hayabusa — focuses on speed and broad triage across
+  Windows event logs.
+input_extensions: [".evtx"]
+input_filenames: []
+available: false
+unavailable_reason: "Sigma rules bundle required — coming soon."
+category: Threat Hunting
+tags: [sigma, evtx, chainsaw, windows, threat-hunting]

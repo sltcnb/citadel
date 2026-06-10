@@ -1,0 +1,342 @@
+# Rosetta default field-map.
+#
+# Config-driven mapping from ForensicEvent.artifact_type -> ECS categorization
+# plus per-type field copies pulled out of the ForensicEvent.raw record.
+#
+# Structure:
+#   ecs_version : default ECS version emitted (overridable via --ecs).
+#   default     : fallback categorization for unknown artifact_types.
+#   artifact_types:
+#     <artifact_type>:
+#       category: [ECS event.category ...]
+#       type:     [ECS event.type ...]
+#       fields:   map of "ecs.dotted.field" -> "raw.dotted.source"
+#                 source keys are looked up in raw first, then on the event.
+#
+# See ../../../contracts/ecs_extension.md for the target shape.
+
+ecs_version: "8.11"
+
+default:
+  category: []
+  type: []
+  fields: {}
+
+artifact_types:
+
+  # ---- Windows EVTX / Windows Event Log -------------------------------------
+  windows_event:
+    category: [process]          # refined per-event below where possible
+    type: [info]
+    fields:
+      "event.code": "EventID"
+      "event.provider": "Provider"
+      "winlog.channel": "Channel"
+      "winlog.computer_name": "Computer"
+      "winlog.event_id": "EventID"
+      "host.name": "Computer"
+      "user.name": "TargetUserName"
+      "user.domain": "TargetDomainName"
+      "process.name": "ProcessName"
+      "process.pid": "ProcessId"
+      "process.command_line": "CommandLine"
+      "process.parent.name": "ParentProcessName"
+      "source.ip": "IpAddress"
+      "source.port": "IpPort"
+
+  # Sysmon-style process creation (ECS process category)
+  process:
+    category: [process]
+    type: [start]
+    fields:
+      "process.name": "Image"
+      "process.pid": "ProcessId"
+      "process.command_line": "CommandLine"
+      "process.executable": "Image"
+      "process.parent.name": "ParentImage"
+      "process.parent.pid": "ParentProcessId"
+      "process.parent.command_line": "ParentCommandLine"
+      "user.name": "User"
+      "host.name": "Computer"
+
+  # ---- Unix syslog ----------------------------------------------------------
+  syslog:
+    category: [host]
+    type: [info]
+    fields:
+      "host.name": "hostname"
+      "process.name": "program"
+      "process.pid": "pid"
+      "log.syslog.facility.name": "facility"
+      "log.syslog.severity.name": "severity"
+      "user.name": "user"
+
+  # ---- Windows Prefetch -----------------------------------------------------
+  prefetch:
+    category: [process]
+    type: [start]
+    fields:
+      "process.name": "executable"
+      "process.executable": "path"
+      "host.name": "hostname"
+
+  # ---- Windows registry & execution evidence --------------------------------
+  registry:
+    category: [configuration]
+    type: [change]
+    fields:
+      "registry.path": "key_path"
+      "registry.value": "value_name"
+      "registry.data.strings": "value_data"
+      "host.name": "hostname"
+  amcache:
+    category: [process]
+    type: [info]
+    fields:
+      "process.executable": "path"
+      "file.hash.sha1": "sha1"
+  shimcache:
+    category: [process]
+    type: [info]
+    fields:
+      "process.executable": "path"
+  srum:
+    category: [process]
+    type: [info]
+    fields:
+      "process.executable": "app"
+      "user.name": "user"
+  lnk:
+    category: [file]
+    type: [info]
+    fields:
+      "file.path": "target_path"
+      "file.size": "target_size"
+  jumplist:
+    category: [file]
+    type: [info]
+    fields:
+      "file.path": "target_path"
+  scheduled_task:
+    category: [configuration]
+    type: [creation]
+    fields:
+      "host.name": "hostname"
+      "process.command_line": "command"
+  persistence:
+    category: [configuration]
+    type: [creation]
+    fields:
+      "host.name": "hostname"
+  wlan_profile:
+    category: [network]
+    type: [info]
+    fields:
+      "network.name": "ssid"
+  wer:
+    category: [host]
+    type: [error]
+    fields:
+      "host.name": "hostname"
+      "process.name": "app"
+
+  # ---- NTFS / filesystem ----------------------------------------------------
+  mft:
+    category: [file]
+    type: [info]
+    fields:
+      "file.path": "path"
+      "file.size": "size"
+      "file.inode": "record_number"
+  usnjrnl:
+    category: [file]
+    type: [change]
+    fields:
+      "file.path": "path"
+  file:
+    category: [file]
+    type: [info]
+    fields:
+      "file.path": "path"
+      "file.size": "size"
+
+  # ---- Linux host -----------------------------------------------------------
+  auditd:
+    category: [host]
+    type: [info]
+    fields:
+      "host.name": "node"
+      "user.name": "uid"
+      "process.pid": "pid"
+      "process.executable": "exe"
+  authentication:
+    category: [authentication]
+    type: [start]
+    fields:
+      "user.name": "user"
+      "source.ip": "src_ip"
+      "host.name": "hostname"
+  utmp:
+    category: [authentication]
+    type: [start]
+    fields:
+      "user.name": "user"
+      "source.ip": "host"
+      "process.pid": "pid"
+  shell_history:
+    category: [process]
+    type: [start]
+    fields:
+      "process.command_line": "command"
+      "user.name": "user"
+  iptables:
+    category: [network]
+    type: [connection]
+    fields:
+      "source.ip": "src"
+      "destination.ip": "dst"
+      "destination.port": "dpt"
+      "network.transport": "proto"
+  package:
+    category: [package]
+    type: [info]
+    fields:
+      "package.name": "name"
+      "package.version": "version"
+  iam:
+    category: [iam]
+    type: [info]
+    fields:
+      "user.name": "user"
+
+  # ---- macOS ----------------------------------------------------------------
+  macos_uls:
+    category: [host]
+    type: [info]
+    fields:
+      "host.name": "hostname"
+      "process.name": "process"
+  plist:
+    category: [configuration]
+    type: [info]
+    fields:
+      "file.path": "path"
+  fsevents:
+    category: [file]
+    type: [change]
+    fields:
+      "file.path": "path"
+  session:
+    category: [session]
+    type: [info]
+    fields:
+      "user.name": "user"
+
+  # ---- Network --------------------------------------------------------------
+  network:
+    category: [network]
+    type: [connection]
+    fields:
+      "source.ip": "src_ip"
+      "source.port": "src_port"
+      "destination.ip": "dest_ip"
+      "destination.port": "dest_port"
+      "network.transport": "proto"
+  network_traffic:
+    category: [network]
+    type: [connection]
+    fields:
+      "source.ip": "src_ip"
+      "destination.ip": "dest_ip"
+      "destination.port": "dest_port"
+      "network.transport": "proto"
+  dns:
+    category: [network]
+    type: [protocol]
+    fields:
+      "dns.question.name": "query"
+      "dns.answers.data": "answer"
+      "source.ip": "src_ip"
+  intrusion_detection:
+    category: [intrusion_detection]
+    type: [info]
+    fields:
+      "source.ip": "src_ip"
+      "destination.ip": "dest_ip"
+      "rule.name": "signature"
+
+  # ---- Web / browser --------------------------------------------------------
+  web:
+    category: [web]
+    type: [access]
+    fields:
+      "url.full": "url"
+      "user.name": "user"
+  access_log:
+    category: [web]
+    type: [access]
+    fields:
+      "source.ip": "client_ip"
+      "url.path": "path"
+      "http.response.status_code": "status"
+      "http.request.method": "method"
+      "user_agent.original": "user_agent"
+
+  # ---- Email / messaging ----------------------------------------------------
+  email:
+    category: [email]
+    type: [info]
+    fields:
+      "email.from.address": "from"
+      "email.to.address": "to"
+      "email.subject": "subject"
+  chat:
+    category: [host]
+    type: [info]
+    fields:
+      "user.name": "user"
+
+  # ---- Containers / cloud ---------------------------------------------------
+  docker_event:
+    category: [host]
+    type: [info]
+    fields:
+      "container.id": "container_id"
+      "container.name": "container_name"
+      "container.image.name": "image"
+  cloud_event:
+    category: [configuration]
+    type: [info]
+    fields:
+      "cloud.provider": "provider"
+      "cloud.account.id": "account_id"
+      "user.name": "actor"
+
+  # ---- Detections / intel / findings ----------------------------------------
+  detection:
+    category: [intrusion_detection]
+    type: [indicator]
+    fields:
+      "rule.name": "rule_title"
+      "rule.id": "rule_id"
+  intel_indicator:
+    category: [threat]
+    type: [indicator]
+    fields:
+      "threat.indicator.type": "ioc_type"
+  module_finding:
+    category: [process]
+    type: [info]
+    fields:
+      "rule.name": "rule_title"
+
+# ---- ATT&CK / OSSEM enrichment ----------------------------------------------
+# artifact_type -> default ATT&CK technique/tactic when the event carries no
+# explicit mitre tag of its own. Conservative: only well-established mappings.
+attack:
+  scheduled_task: { technique: "T1053", tactic: "Persistence" }
+  persistence:    { technique: "T1547", tactic: "Persistence" }
+  shell_history:  { technique: "T1059", tactic: "Execution" }
+  wlan_profile:   { technique: "T1016", tactic: "Discovery" }
+  amcache:        { technique: "T1204", tactic: "Execution" }
+  shimcache:      { technique: "T1204", tactic: "Execution" }
