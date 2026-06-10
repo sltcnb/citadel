@@ -381,6 +381,7 @@ export const api = {
   logs: {
     services: ()                     => request('GET', '/admin/logs/services'),
     tail:     (service, params = {}) => request('GET', withParams(`/admin/logs/${service}`, params)),
+    clear:    (service)              => request('DELETE', `/admin/logs/${service}`),
   },
 
   companies: {
