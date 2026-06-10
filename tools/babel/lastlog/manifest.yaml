@@ -1,0 +1,18 @@
+id: lastlog
+name: Linux lastlog
+description: >
+  Parses the Linux /var/log/lastlog binary (fixed 292-byte records, one per UID)
+  into last-login events carrying the source host/IP and tty. Surfaces login
+  origins that otherwise stay buried in the strings/binary fallback.
+supported_extensions: []
+supported_mime_types: []
+handled_filenames:
+  - lastlog
+artifact_type: login_event
+author: Citadel
+version: "1.0.0"
+tags:
+  - linux
+  - login
+  - authentication
+  - lastlog
