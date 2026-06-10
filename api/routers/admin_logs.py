@@ -69,7 +69,14 @@ def get_service_logs(
         if want and lvl != want:
             continue
         lines.append(
-            {"level": lvl, "logger": fields.get("logger", ""), "line": fields.get("line", "")}
+            {
+                "ts": fields.get("ts", ""),
+                "level": lvl,
+                "logger": fields.get("logger", ""),
+                # Prefer the discrete message; fall back to the legacy full line.
+                "msg": fields.get("msg", fields.get("line", "")),
+                "exc": fields.get("exc") or None,
+            }
         )
         if len(lines) >= limit:
             break

@@ -12,6 +12,7 @@ import {
   AlertTriangle, Upload, Copy, FolderOpen,
 } from 'lucide-react'
 import { api } from '../api/client'
+import { ToolByline } from './Suite'
 
 function _currentUser() {
   try { return JSON.parse(localStorage.getItem('fo_user')) } catch { return null }
@@ -583,6 +584,7 @@ export default function Collector() {
           <p className="text-xs text-gray-500 mt-0.5">
             Generate a pre-configured collection script for live systems, mounted directories, or external drives
           </p>
+          <div className="mt-2"><ToolByline tool="talon" /></div>
         </div>
 
         {/* ── How the Collector works ──────────────────────────────── */}
