@@ -312,8 +312,16 @@ def get_search_facets(
     case_id: str,
     query: str = "",
     artifact_type: str | None = None,
+    from_ts: str | None = None,
+    to_ts: str | None = None,
 ) -> dict[str, Any]:
-    """Return aggregation buckets for the facet panel."""
+    """Return aggregation buckets for the facet panel.
+
+    The activity histogram uses ``auto_date_histogram`` so the bucket interval
+    adapts to the (optionally zoomed) time range — days at case scale, down to
+    minutes/seconds when from_ts/to_ts narrow the window. ES picks and reports
+    the interval; the client formats labels from the bucket spacing.
+    """
     index = f"fo-case-{case_id}-{artifact_type}" if artifact_type else f"fo-case-{case_id}-*"
 
     must = (
@@ -321,6 +329,13 @@ def get_search_facets(
         if query
         else [{"match_all": {}}]
     )
+    if from_ts or to_ts:
+        rng = {}
+        if from_ts:
+            rng["gte"] = from_ts
+        if to_ts:
+            rng["lt"] = to_ts
+        must.append({"range": {"timestamp": rng}})
 
     body = {
         "query": {"bool": {"must": must}},
@@ -332,10 +347,9 @@ def get_search_facets(
             "by_event_id": {"terms": {"field": "evtx.event_id", "size": 30}},
             "by_channel": {"terms": {"field": "evtx.channel.keyword", "size": 20}},
             "events_over_time": {
-                "date_histogram": {
+                "auto_date_histogram": {
                     "field": "timestamp",
-                    "calendar_interval": "day",
-                    "min_doc_count": 1,
+                    "buckets": 80,
                 }
             },
         },

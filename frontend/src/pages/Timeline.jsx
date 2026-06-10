@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import {
   Search, Filter, X, Flag, Loader2, Download, RefreshCw,
   BarChart2, Plus, Minus, Keyboard, SlidersHorizontal, Brain,
-  Sparkles, Trash2, BookmarkCheck, Bookmark, ChevronDown, CalendarDays, Layers, Sigma, BookOpen,
+  Sparkles, Trash2, BookmarkCheck, Bookmark, ChevronDown, CalendarDays, Layers, Sigma, BookOpen, HelpCircle,
 } from 'lucide-react'
 import { api } from '../api/client'
 import EventDetail from '../components/shared/EventDetail'
@@ -535,6 +535,10 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
     }
     if (facetQ) params.q = facetQ
     Object.assign(params, facetFilters)
+    // Scope the activity histogram to the zoomed range so it rescales
+    // (days → hours → minutes) instead of always bucketing by day.
+    if (fromTs) params.from_ts = new Date(fromTs).toISOString()
+    if (toTs)   params.to_ts   = new Date(toTs).toISOString()
     api.search.facets(caseId, params)
       .then(r => {
         const f = r.facets || {}
@@ -542,7 +546,7 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
         setHistogram(f.events_over_time?.buckets || [])
       })
       .catch(() => {})
-  }, [caseId, query, selectedTypesStr, facetFilters])
+  }, [caseId, query, selectedTypesStr, facetFilters, fromTs, toTs])
 
   // Load the mapping field list once per case — drives field explorer + autocomplete
   useEffect(() => {
@@ -744,11 +748,13 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
   function applyHistogramRange(i0, i1) {
     if (!histogram.length) return
     const [a, b] = i0 <= i1 ? [i0, i1] : [i1, i0]
-    const start = new Date(histogram[a].key)
-    const next  = new Date(histogram[b].key)
-    next.setDate(next.getDate() + 1)
-    const fromIso = start.toISOString()
-    const toIso   = next.toISOString()
+    // Bucket width comes from the (uniform) auto_date_histogram spacing, so a
+    // click selects exactly one bucket whether that's a day, an hour or a minute.
+    const widthMs = histogram.length > 1
+      ? (histogram[1].key - histogram[0].key)
+      : 86400000
+    const fromIso = new Date(histogram[a].key).toISOString()
+    const toIso   = new Date(histogram[b].key + widthMs).toISOString()
     // Toggle: re-selecting the exact active range clears the filter
     if (fromTs === fromIso && toTs === toIso) {
       setFromTs('')
@@ -1648,26 +1654,36 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
         </div>
 
         {/* Histogram */}
-        {showHistogram && histogram.length > 0 && (
+        {showHistogram && histogram.length > 0 && (() => {
+          // Uniform spacing from auto_date_histogram → drives label granularity.
+          const bucketMs = histogram.length > 1 ? (histogram[1].key - histogram[0].key) : 86400000
+          const fmtBucket = (key) => {
+            const d = new Date(key)
+            if (bucketMs < 60000)    return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+            if (bucketMs < 3600000)  return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+            if (bucketMs < 86400000) return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit' })
+            return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+          }
+          const grain = bucketMs < 60000 ? 'second' : bucketMs < 3600000 ? 'minute' : bucketMs < 86400000 ? 'hour' : 'day'
+          return (
           <div className="px-4 py-2 border-b border-gray-200 bg-gray-50">
             <div className="flex items-center gap-2 mb-1.5">
               <p className="text-[10px] text-gray-500 flex items-center gap-1">
-                <BarChart2 size={9} /> Event activity — click a day, or click + swipe to select a range
+                <BarChart2 size={9} /> Event activity (per {grain}) — click a bar, or click + swipe to zoom a range
               </p>
               {fromTs && toTs && (
                 <span className="text-[10px] font-semibold text-brand-accent flex items-center gap-1">
-                  {new Date(fromTs).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                  {fmtBucket(new Date(fromTs).getTime())}
                   {(() => {
-                    // Range label end = last included day (toTs is exclusive)
-                    const end = new Date(new Date(toTs).getTime() - 86400000)
-                    return end.toDateString() !== new Date(fromTs).toDateString()
-                      ? <> – {end.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</>
+                    const end = new Date(new Date(toTs).getTime() - bucketMs)
+                    return end.getTime() > new Date(fromTs).getTime()
+                      ? <> – {fmtBucket(end.getTime())}</>
                       : null
                   })()}
                   <button
                     onClick={() => { setFromTs(''); setToTs('') }}
                     className="text-gray-400 hover:text-red-500 transition-colors ml-0.5"
-                    title="Clear time filter"
+                    title="Clear time filter (zoom out)"
                   >×</button>
                 </span>
               )}
@@ -1675,7 +1691,7 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
             <div className="flex items-end gap-0.5 h-12 overflow-x-auto select-none">
               {histogram.map((b, i) => {
                 const h = Math.max(2, Math.round((b.doc_count / maxCount) * 40))
-                const day = new Date(b.key).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+                const day = fmtBucket(b.key)
                 const inDrag = histoDragSel &&
                   i >= Math.min(histoDragSel.start, histoDragSel.end) &&
                   i <= Math.max(histoDragSel.start, histoDragSel.end)
@@ -1705,7 +1721,8 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
               })}
             </div>
           </div>
-        )}
+          )
+        })()}
 
         {/* AI explain floating action bar */}
         {checkedFoIds.size > 0 && (
@@ -2298,8 +2315,38 @@ const AGG_OPTIONS = [
 ]
 const INTERVALS = ['5m','15m','1h','6h','1d','7d','30d']
 
+// Mirror api/agg_rules.py so the UI can validate BEFORE submitting (and explain).
+const NUMERIC_TYPES = new Set([
+  'long','integer','short','byte','double','float','half_float','scaled_float','unsigned_long',
+])
+// Which agg works on which field type. Returns true when compatible.
+function aggSupportsType(agg, type) {
+  if (!type) return true            // unknown mapping → let the backend decide
+  if (agg === 'terms' || agg === 'cardinality') return true
+  if (agg === 'date_histogram') return type === 'date'
+  // sum/avg/min/max/stats/percentiles
+  return NUMERIC_TYPES.has(type)
+}
+// One-line, human reason a field can't be used with the current agg.
+function incompatReason(agg, type) {
+  if (agg === 'date_histogram') return `needs a date field — this is '${type}'`
+  return `needs a numeric field — this is '${type}'`
+}
+const AGG_HELP = [
+  { agg: 'Group by (terms)',  use: 'Top values of a field — e.g. busiest hosts, top users.', fields: 'Any field (text, keyword, ip, number, date).' },
+  { agg: 'Distinct count',    use: 'How many unique values — e.g. distinct IPs contacted.', fields: 'Any field.' },
+  { agg: 'Sum / Average / Min / Max / Stats / Percentiles', use: 'Math over a number — e.g. avg response size, max bytes.', fields: 'Numeric only (long, double, …). Not ip/keyword.' },
+  { agg: 'Over time (date_histogram)', use: 'Counts bucketed by time — the activity curve.', fields: 'A date field only (e.g. timestamp).' },
+]
+
 function AggregatePanel({ caseId, query, fieldMap, state, setState, result, loading, onRun, onClose }) {
-  const allFields = (fieldMap?.groups || []).flatMap(g => g.fields.filter(f => f.searchable).map(f => f.name))
+  // name → ES mapping type, so we can validate + annotate field choices.
+  const fieldTypes = useMemo(() => {
+    const m = {}
+    for (const g of (fieldMap?.groups || [])) for (const f of g.fields) m[f.name] = f.type
+    return m
+  }, [fieldMap])
+  const allSearchable = (fieldMap?.groups || []).flatMap(g => g.fields.filter(f => f.searchable))
   const isNumericAgg = ['sum','avg','min','max','stats','percentiles'].includes(state.agg)
   const isDateAgg    = state.agg === 'date_histogram'
   const showInterval = isDateAgg
@@ -2307,6 +2354,15 @@ function AggregatePanel({ caseId, query, fieldMap, state, setState, result, load
   const isTerms      = state.agg === 'terms'
   const [draftField, setDraftField] = useState('')
   const [draftSub, setDraftSub]     = useState('')
+  const [showAll, setShowAll]       = useState(false)
+  const [showHelp, setShowHelp]     = useState(false)
+
+  // Fields offered in the picker: compatible-only by default, all on request.
+  const compatibleFields = allSearchable
+    .filter(f => showAll || aggSupportsType(state.agg, f.type))
+    .map(f => f.name)
+  // Selected fields that won't work with the current agg → block Run + explain.
+  const badFields = state.fields.filter(f => !aggSupportsType(state.agg, fieldTypes[f]))
 
   function addField(f) {
     const name = (f || draftField).trim()
@@ -2367,13 +2423,45 @@ function AggregatePanel({ caseId, query, fieldMap, state, setState, result, load
           <button
             type="button"
             onClick={onRun}
-            disabled={!state.fields.length || loading}
+            disabled={!state.fields.length || badFields.length > 0 || loading}
             className="btn-primary text-xs h-7 px-3 disabled:opacity-50"
+            title={badFields.length ? 'Fix incompatible field(s) first' : ''}
           >
             {loading ? <Loader2 size={11} className="animate-spin" /> : 'Run'}
           </button>
-          <button onClick={onClose} className="icon-btn h-7 w-7 ml-auto" title="Close"><X size={13} /></button>
+          <button
+            type="button"
+            onClick={() => setShowHelp(h => !h)}
+            className={`icon-btn h-7 w-7 ml-auto ${showHelp ? 'text-brand-accent' : ''}`}
+            title="How aggregations work"
+          ><HelpCircle size={14} /></button>
+          <button onClick={onClose} className="icon-btn h-7 w-7" title="Close"><X size={13} /></button>
         </div>
+
+        {/* Help */}
+        {showHelp && (
+          <div className="border border-blue-100 bg-blue-50/60 rounded-md p-2.5 text-[11px] text-gray-600 space-y-1.5">
+            <p className="font-semibold text-brand-text">Pick an aggregation, then a field of a matching type.</p>
+            {AGG_HELP.map(h => (
+              <div key={h.agg} className="grid grid-cols-[10rem_1fr] gap-2">
+                <span className="font-semibold text-gray-700">{h.agg}</span>
+                <span>{h.use} <span className="text-gray-400">— {h.fields}</span></span>
+              </div>
+            ))}
+            <p className="text-gray-400 pt-1">The field picker lists only compatible fields. Toggle “show all” to see everything (incompatible picks are blocked before running).</p>
+          </div>
+        )}
+
+        {/* Incompatible-field warning */}
+        {badFields.length > 0 && (
+          <div className="border border-amber-200 bg-amber-50 rounded-md p-2 text-[11px] text-amber-800">
+            {badFields.map(f => (
+              <div key={f} className="font-mono">
+                <span className="font-semibold">{f}</span> — {incompatReason(state.agg, fieldTypes[f])}
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Fields cascade chips */}
         <div className="flex items-start gap-2 flex-wrap">
@@ -2381,13 +2469,22 @@ function AggregatePanel({ caseId, query, fieldMap, state, setState, result, load
             {isTerms ? 'Group by →' : 'Field'}
           </span>
           <div className="flex items-center gap-1 flex-wrap flex-1">
-            {state.fields.map((f, i) => (
-              <span key={f} className="inline-flex items-center gap-1 bg-brand-accentlight text-brand-text text-[11px] font-mono px-2 py-1 rounded">
-                {i > 0 && <ChevronDown size={10} className="text-gray-400 -rotate-90" />}
-                {f}
-                <button onClick={() => removeField(f)} className="text-gray-500 hover:text-red-600 ml-0.5"><X size={10} /></button>
-              </span>
-            ))}
+            {state.fields.map((f, i) => {
+              const bad = !aggSupportsType(state.agg, fieldTypes[f])
+              return (
+                <span
+                  key={f}
+                  title={bad ? incompatReason(state.agg, fieldTypes[f]) : (fieldTypes[f] || '')}
+                  className={`inline-flex items-center gap-1 text-[11px] font-mono px-2 py-1 rounded ${
+                    bad ? 'bg-amber-50 text-amber-800 ring-1 ring-amber-300' : 'bg-brand-accentlight text-brand-text'
+                  }`}
+                >
+                  {i > 0 && <ChevronDown size={10} className="text-gray-400 -rotate-90" />}
+                  {f}
+                  <button onClick={() => removeField(f)} className="text-gray-500 hover:text-red-600 ml-0.5"><X size={10} /></button>
+                </span>
+              )
+            })}
             {(isTerms || state.fields.length === 0) && (
               <>
                 <input
@@ -2399,7 +2496,7 @@ function AggregatePanel({ caseId, query, fieldMap, state, setState, result, load
                   className="h-7 px-2 text-xs font-mono border border-gray-200 rounded-md outline-none focus:border-gray-400 focus:ring-2 focus:ring-gray-200 w-52"
                 />
                 <datalist id="agg-fields">
-                  {allFields.map(n => <option key={n} value={n} />)}
+                  {compatibleFields.map(n => <option key={n} value={n} />)}
                 </datalist>
                 <button
                   type="button"
@@ -2407,6 +2504,10 @@ function AggregatePanel({ caseId, query, fieldMap, state, setState, result, load
                   disabled={!draftField.trim()}
                   className="btn-ghost text-xs h-7 px-2 disabled:opacity-40"
                 >+</button>
+                <label className="text-[10px] text-gray-500 flex items-center gap-1 cursor-pointer select-none ml-1">
+                  <input type="checkbox" checked={showAll} onChange={e => setShowAll(e.target.checked)} className="scale-90" />
+                  show all fields
+                </label>
               </>
             )}
           </div>
@@ -2904,7 +3005,7 @@ function EventRow({ event, index, onSelect, selected, keyboardSelected, onFilter
 
       {vis('host') && (
         <td className="px-3 py-2 text-gray-500 max-w-[7rem]">
-          <div className="flex items-center">
+          <div className="flex items-center min-w-0">
             <span className="truncate">{host}</span>
             {host && <FilterButtons field="host.hostname" value={host} onIn={onFilterIn} onOut={onFilterOut} />}
           </div>
@@ -2913,7 +3014,7 @@ function EventRow({ event, index, onSelect, selected, keyboardSelected, onFilter
 
       {vis('user') && (
         <td className="px-3 py-2 text-gray-500 max-w-[6rem]">
-          <div className="flex items-center">
+          <div className="flex items-center min-w-0">
             <span className="truncate">{user}</span>
             {user && <FilterButtons field="user.name" value={user} onIn={onFilterIn} onOut={onFilterOut} />}
           </div>
@@ -2922,7 +3023,7 @@ function EventRow({ event, index, onSelect, selected, keyboardSelected, onFilter
 
       {vis('process') && (
         <td className="px-3 py-2 text-gray-500 max-w-[7rem]">
-          <div className="flex items-center">
+          <div className="flex items-center min-w-0">
             <span className="truncate">{process}</span>
             {process && <FilterButtons field="process.name" value={process} onIn={onFilterIn} onOut={onFilterOut} />}
           </div>

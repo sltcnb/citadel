@@ -51,12 +51,13 @@ function ProgressBar({ percent, level }) {
   )
 }
 
-function MetricRow({ label, value, sub }) {
+const LEVEL_TEXT = { red: 'text-red-600', amber: 'text-amber-600', green: 'text-brand-text' }
+function MetricRow({ label, value, sub, level }) {
   return (
     <div className="flex items-center justify-between py-1.5">
       <span className="text-xs text-gray-500">{label}</span>
       <div className="text-right">
-        <span className="text-sm font-semibold text-brand-text">{value}</span>
+        <span className={`text-sm font-semibold ${LEVEL_TEXT[level] || 'text-brand-text'}`}>{value}</span>
         {sub && <span className="text-xs text-gray-500 ml-1">{sub}</span>}
       </div>
     </div>
@@ -368,6 +369,17 @@ export default function Performance() {
               </div>
               <MetricRow label="Total Documents" value={fmt(es?.total_docs)} />
               <MetricRow label="Total Size" value={fmtMB(es?.total_size_mb)} />
+              {es?.jvm_heap_pct != null && (
+                <MetricRow label="JVM Heap" value={`${es.jvm_heap_pct}%`} level={es.jvm_heap_pct >= 90 ? 'red' : es.jvm_heap_pct >= 75 ? 'amber' : 'green'} />
+              )}
+              {es?.query_latency_ms != null && (
+                <MetricRow label="Avg Query Latency" value={`${es.query_latency_ms} ms`} />
+              )}
+              {es?.search_total != null && <MetricRow label="Queries (total)" value={fmt(es.search_total)} />}
+              {es?.indexing_total != null && <MetricRow label="Docs Indexed (total)" value={fmt(es.indexing_total)} />}
+              {es?.unassigned_shards != null && (
+                <MetricRow label="Shards" value={`${fmt(es.active_shards)} active${es.unassigned_shards ? ` · ${es.unassigned_shards} unassigned` : ''}`} level={es.unassigned_shards ? 'amber' : 'green'} />
+              )}
 
               {/* Collapsible index list */}
               {es?.indices && es.indices.length > 0 && (
@@ -401,6 +413,11 @@ export default function Performance() {
               <MetricRow label="Memory Used" value={fmtMB(redis?.used_memory_mb)} />
               <MetricRow label="Connected Clients" value={fmt(redis?.connected_clients)} />
               <MetricRow label="Total Keys" value={fmt(redis?.total_keys)} />
+              {redis?.ops_per_sec != null && <MetricRow label="Ops / sec" value={fmt(redis.ops_per_sec)} />}
+              {redis?.hit_rate_pct != null && (
+                <MetricRow label="Cache Hit Rate" value={`${redis.hit_rate_pct}%`} level={redis.hit_rate_pct < 50 ? 'amber' : 'green'} />
+              )}
+              {redis?.evicted_keys != null && <MetricRow label="Evicted Keys" value={fmt(redis.evicted_keys)} level={redis.evicted_keys > 0 ? 'amber' : 'green'} />}
               <MetricRow
                 label="Uptime"
                 value={formatUptime(redis?.uptime_seconds)}
