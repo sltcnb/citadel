@@ -43,6 +43,34 @@ _RFC5424_RE = re.compile(
     r"(.*)"  # MSG
 )
 
+# Modern rsyslog ISO format (RFC3339), no PRI prefix:
+#   "2026-05-31T00:00:40.248878+02:00 master2 kernel: nftables-drop: IN=..."
+_ISO_SYSLOG_RE = re.compile(
+    r"^(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[+-]\d{2}:?\d{2}|Z)?)\s+"  # ISO ts
+    r"(\S+)\s+"  # hostname
+    r"([\w.\-/]+?)(?:\[(\d+)\])?:\s+"  # tag[pid]
+    r"(.*)"  # message
+)
+
+
+def _strip_rotation(name: str) -> str:
+    """Reduce a rotated log filename to its base: kern.log.1 / auth.log.2.gz →
+    kern.log / auth.log, so rotation suffixes still match known names."""
+    n = name
+    if n.endswith(".gz"):
+        n = n[:-3]
+    return re.sub(r"\.\d+$", "", n)
+
+
+def _open_text(path: Path):
+    """Open a log file as text, transparently decompressing single .gz files."""
+    if path.name.lower().endswith(".gz"):
+        import gzip
+
+        return gzip.open(path, "rt", errors="replace")
+    return open(path, errors="replace")
+
+
 # Months for RFC 3164 parsing
 _MONTHS = {
     "Jan": "01",
@@ -169,14 +197,17 @@ class SyslogPlugin(BasePlugin):
     @classmethod
     def can_handle(cls, file_path: Path, mime_type: str) -> bool:
         name = file_path.name.lower()
-        if name in _KNOWN_NAMES:
+        # Match rotated variants too: kern.log.1, auth.log.2.gz, syslog.1
+        if name in _KNOWN_NAMES or _strip_rotation(name) in _KNOWN_NAMES:
             return True
-        # Peek at first few lines for syslog patterns
+        # Peek at first few lines for syslog patterns (gz-aware)
         try:
-            with open(file_path, errors="replace") as fh:
+            with _open_text(file_path) as fh:
                 for _ in range(5):
                     line = fh.readline()
-                    if _RFC3164_RE.match(line) or _RFC5424_RE.match(line):
+                    if not line:
+                        break
+                    if _RFC3164_RE.match(line) or _RFC5424_RE.match(line) or _ISO_SYSLOG_RE.match(line):
                         return True
         except OSError:
             pass
@@ -184,12 +215,12 @@ class SyslogPlugin(BasePlugin):
 
     def parse(self) -> Generator[dict[str, Any], None, None]:
         path = self.ctx.source_file_path
-        name_lower = path.name.lower()
+        name_lower = _strip_rotation(path.name.lower())
         atype = _FILENAME_ARTIFACT_TYPE.get(name_lower) or _EXT_ARTIFACT_TYPE.get(
-            path.suffix.lower(), "syslog"
+            Path(name_lower).suffix.lower(), "syslog"
         )
         try:
-            fh = open(path, errors="replace")
+            fh = _open_text(path)
         except OSError as exc:
             raise PluginFatalError(f"Cannot open syslog: {exc}") from exc
 
@@ -241,6 +272,22 @@ class SyslogPlugin(BasePlugin):
                     "structured_data": sd if sd != "-" else "",
                     "raw_message": msg,
                 },
+                "raw": {"line": line},
+            }
+
+        # Modern rsyslog ISO format (no PRI): "<iso> <host> <tag>[pid]: <msg>"
+        m = _ISO_SYSLOG_RE.match(line)
+        if m:
+            ts, hostname, process, pid, msg = m.groups()
+            return {
+                "fo_id": str(uuid.uuid4()),
+                "artifact_type": atype,
+                "timestamp": ts,
+                "timestamp_desc": "Log Time",
+                "message": f"[{process}] {msg}",
+                "host": {"hostname": hostname},
+                "process": {"name": process, "pid": pid or ""},
+                "syslog": {"raw_message": msg},
                 "raw": {"line": line},
             }
 
