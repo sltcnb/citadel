@@ -161,14 +161,6 @@ export default function Logs() {
             >
               <Trash2 size={15} /> Clear
             </button>
-            <button
-              onClick={() => clearLogs('all')}
-              disabled={clearing}
-              className="btn-secondary inline-flex items-center gap-1.5 text-red-600 disabled:opacity-50"
-              title="Reset captured logs for all services"
-            >
-              Clear all
-            </button>
           </div>
         }
       />

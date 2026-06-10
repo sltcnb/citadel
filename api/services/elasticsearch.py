@@ -308,6 +308,19 @@ def search_events(
         raise
 
 
+def _iso_to_epoch_ms(ts: str | None) -> int | None:
+    """Parse an ISO8601 timestamp (Z or offset) to epoch milliseconds, or None."""
+    if not ts:
+        return None
+    from datetime import datetime
+
+    try:
+        s = ts.replace("Z", "+00:00")
+        return int(datetime.fromisoformat(s).timestamp() * 1000)
+    except (ValueError, TypeError):
+        return None
+
+
 def get_search_facets(
     case_id: str,
     query: str = "",
@@ -317,10 +330,12 @@ def get_search_facets(
 ) -> dict[str, Any]:
     """Return aggregation buckets for the facet panel.
 
-    The activity histogram uses ``auto_date_histogram`` so the bucket interval
-    adapts to the (optionally zoomed) time range — days at case scale, down to
-    minutes/seconds when from_ts/to_ts narrow the window. ES picks and reports
-    the interval; the client formats labels from the bucket spacing.
+    Activity histogram:
+      • No range → ``auto_date_histogram`` over the whole case (ES picks interval).
+      • Range set (zoomed) → a fixed-interval ``date_histogram`` whose interval is
+        (to-from)/N and whose ``extended_bounds`` span the EXACT selected window,
+        so the bars fill the selection edge-to-edge (including empty buckets)
+        instead of only where data happens to land.
     """
     index = f"fo-case-{case_id}-{artifact_type}" if artifact_type else f"fo-case-{case_id}-*"
 
@@ -329,6 +344,8 @@ def get_search_facets(
         if query
         else [{"match_all": {}}]
     )
+    from_ms = _iso_to_epoch_ms(from_ts)
+    to_ms = _iso_to_epoch_ms(to_ts)
     if from_ts or to_ts:
         rng = {}
         if from_ts:
@@ -336,6 +353,20 @@ def get_search_facets(
         if to_ts:
             rng["lt"] = to_ts
         must.append({"range": {"timestamp": rng}})
+
+    _TARGET_BUCKETS = 80
+    if from_ms is not None and to_ms is not None and to_ms > from_ms:
+        interval_ms = max(1, (to_ms - from_ms) // _TARGET_BUCKETS)
+        events_over_time = {
+            "date_histogram": {
+                "field": "timestamp",
+                "fixed_interval": f"{interval_ms}ms",
+                "min_doc_count": 0,  # keep empty buckets so the window is full
+                "extended_bounds": {"min": from_ms, "max": to_ms - 1},
+            }
+        }
+    else:
+        events_over_time = {"auto_date_histogram": {"field": "timestamp", "buckets": _TARGET_BUCKETS}}
 
     body = {
         "query": {"bool": {"must": must}},
@@ -346,12 +377,7 @@ def get_search_facets(
             "by_username": {"terms": {"field": "user.name.keyword", "size": 20}},
             "by_event_id": {"terms": {"field": "evtx.event_id", "size": 30}},
             "by_channel": {"terms": {"field": "evtx.channel.keyword", "size": 20}},
-            "events_over_time": {
-                "auto_date_histogram": {
-                    "field": "timestamp",
-                    "buckets": 80,
-                }
-            },
+            "events_over_time": events_over_time,
         },
     }
 
