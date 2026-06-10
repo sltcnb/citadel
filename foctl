@@ -198,10 +198,72 @@ def image_name(svc, cfg):
     return f"{prefix}forensics-operator/{svc}:{cfg['images']['tag']}"
 
 
+def _mib(s, default):
+    """'1234Mi'/'2Gi' -> int MiB; falls back to default."""
+    try:
+        s = str(s).strip()
+        if s.endswith("Gi"):
+            return int(float(s[:-2]) * 1024)
+        if s.endswith("Mi"):
+            return int(float(s[:-2]))
+        return int(float(s))
+    except Exception:
+        return default
+
+
+def auto_resources():
+    """Host-aware resource plan for the k8s (raw-manifest) path, derived from the
+    SAME allocator used by helm mode (config/resources.yaml: max_pct_of_host +
+    headroom + per-service weights). Returns a dict in build_substitutions' shape,
+    or {} on any failure (callers then fall back to static defaults).
+
+    NOTE: sizing is off TOTAL host RAM/CPU — on a shared/loaded node set
+    max_pct_of_host low in config/resources.yaml so Citadel doesn't over-commit.
+    """
+    try:
+        import yaml
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import allocate_resources as alloc
+        cfg_y = yaml.safe_load((ROOT / "config" / "resources.yaml").read_text())
+        plan, extra = alloc.allocate(cfg_y)
+        st = extra["storage"]
+
+        def rq(svc, kind, axis):       # plan[svc][requests|limits][cpu|memory]
+            return plan[svc][kind][axis]
+
+        es_lim_mib = _mib(rq("elasticsearch", "limits", "memory"), 1024)
+        return {
+            "api_memory_request": rq("api", "requests", "memory"),
+            "api_memory_limit":   rq("api", "limits", "memory"),
+            "api_cpu_request":    rq("api", "requests", "cpu"),
+            "api_cpu_limit":      rq("api", "limits", "cpu"),
+            "processor_memory_request": rq("processor", "requests", "memory"),
+            "processor_memory_limit":   rq("processor", "limits", "memory"),
+            "processor_cpu_request":    rq("processor", "requests", "cpu"),
+            "processor_cpu_limit":      rq("processor", "limits", "cpu"),
+            "frontend_memory_request":  rq("frontend", "requests", "memory"),
+            "frontend_memory_limit":    rq("frontend", "limits", "memory"),
+            "frontend_cpu_request":     rq("frontend", "requests", "cpu"),
+            "frontend_cpu_limit":       rq("frontend", "limits", "cpu"),
+            "minio_memory_request": rq("minio", "requests", "memory"),
+            "minio_memory_limit":   rq("minio", "limits", "memory"),
+            "minio_cpu_request":    rq("minio", "requests", "cpu"),
+            "minio_cpu_limit":      rq("minio", "limits", "cpu"),
+            # ES heap ≈ half the container limit (leave headroom for off-heap).
+            "elasticsearch_heap_mb": max(256, es_lim_mib // 2),
+            "elasticsearch_storage_gi": int(float(str(st.get("elasticsearch", "20Gi")).rstrip("Gi"))),
+            "minio_storage_gi":         int(float(str(st.get("minio", "30Gi")).rstrip("Gi"))),
+            "redis_storage_gi":         int(float(str(st.get("redis", "10Gi")).rstrip("Gi"))),
+        }
+    except Exception as exc:
+        warn(f"auto resource sizing unavailable ({exc}); using defaults")
+        return {}
+
+
 def build_substitutions(cfg, pull_policy):
-    # resources is OPTIONAL — defaults below keep a single-node cluster runnable
-    # without hand-tuning. (Helm mode sizes from the host via allocate_resources.)
-    res     = cfg.get("resources", {})
+    # Resources: host-aware auto-allocation by default; an explicit "resources"
+    # block in config.json overrides per-key; static defaults backstop both.
+    res     = {**auto_resources(), **cfg.get("resources", {})}
     es_heap = res.get("elasticsearch_heap_mb", 512)
     auth    = cfg.get("auth", {})
     return {
