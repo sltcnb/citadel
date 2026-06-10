@@ -468,12 +468,20 @@ def metrics_dashboard():
     # we collect results first, then shut the pool down in the background so slow
     # threads (e.g. Celery inspector waiting for broker broadcast) can't stall the
     # HTTP response.
-    pool = ThreadPoolExecutor(max_workers=7)
+    # Celery worker inspection is a broker BROADCAST — under thread contention
+    # with the other 6 collectors its reply round-trip blew past the deadline
+    # and the section returned zeros (even though workers were up). Run it FIRST,
+    # synchronously, on its own, where the broadcast completes promptly.
+    try:
+        celery_metrics = _get_celery_metrics()
+    except Exception:
+        celery_metrics = _DEFAULT_CELERY
+
+    pool = ThreadPoolExecutor(max_workers=6)
     f_system = pool.submit(_get_system_metrics)
     f_es = pool.submit(_get_elasticsearch_metrics)
     f_redis = pool.submit(_get_redis_metrics)
     f_minio = pool.submit(_get_minio_metrics)
-    f_celery = pool.submit(_get_celery_metrics)
     f_cases = pool.submit(_get_cases_metrics)
     f_api = pool.submit(_get_api_metrics)
 
@@ -489,7 +497,7 @@ def metrics_dashboard():
         "elasticsearch": _get(f_es, _DEFAULT_ES),
         "redis": _get(f_redis, _DEFAULT_REDIS),
         "minio": _get(f_minio, _DEFAULT_MINIO),
-        "celery": _get(f_celery, _DEFAULT_CELERY, timeout=_CELERY_TIMEOUT),
+        "celery": celery_metrics,
         "cases": _get(f_cases, _DEFAULT_CASES),
         "api": _get(f_api, _DEFAULT_API),
     }
