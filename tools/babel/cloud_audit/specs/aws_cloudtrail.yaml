@@ -1,0 +1,31 @@
+# AWS CloudTrail — management/data/insight events.
+# Files are usually {"Records": [ ... ]}; the engine also accepts arrays/JSONL.
+name: aws_cloudtrail
+artifact_type: aws_cloudtrail
+os: cloud
+priority: 100
+envelope: Records
+detect:
+  all:
+    - eventName
+    - eventSource
+timestamp:
+  - eventTime
+message: "{eventName} on {eventSource} by {userIdentity.arn} from {sourceIPAddress}"
+fields:
+  user.name: userIdentity.userName
+  user.id: userIdentity.principalId
+  user.domain: recipientAccountId
+  network.src_ip: sourceIPAddress|ip
+attributes:
+  event_name: eventName
+  event_source: eventSource
+  aws_region: awsRegion
+  account_id: recipientAccountId
+  user_type: userIdentity.type
+  user_arn: userIdentity.arn
+  access_key: userIdentity.accessKeyId
+  mfa: userIdentity.sessionContext.attributes.mfaAuthenticated
+  error_code: errorCode
+  error_message: errorMessage
+  user_agent: userAgent

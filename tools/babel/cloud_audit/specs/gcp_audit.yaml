@@ -1,0 +1,27 @@
+# Google Cloud Audit Logs (Cloud Logging export — protoPayload entries).
+name: gcp_audit
+artifact_type: gcp_audit
+os: cloud
+priority: 100
+detect:
+  all:
+    - protoPayload.methodName
+    - protoPayload.authenticationInfo.principalEmail
+timestamp:
+  - timestamp
+  - receiveTimestamp
+message: "{protoPayload.methodName} by {protoPayload.authenticationInfo.principalEmail} on {protoPayload.resourceName} from {protoPayload.requestMetadata.callerIp}"
+fields:
+  user.email: protoPayload.authenticationInfo.principalEmail
+  user.name: protoPayload.authenticationInfo.principalEmail|user_of
+  user.domain: protoPayload.authenticationInfo.principalEmail|domain_of
+  network.src_ip: protoPayload.requestMetadata.callerIp|ip
+attributes:
+  method: protoPayload.methodName
+  service: protoPayload.serviceName
+  resource: protoPayload.resourceName
+  severity: severity
+  status_code: protoPayload.status.code
+  status_message: protoPayload.status.message
+  caller_user_agent: protoPayload.requestMetadata.callerSuppliedUserAgent
+  project: resource.labels.project_id

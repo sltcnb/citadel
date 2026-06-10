@@ -1,0 +1,30 @@
+id: cloud_audit
+name: Cloud & Identity Audit Logs
+description: >
+  One parser for cloud and identity audit logs, driven by declarative mapping
+  specs (specs/*.yaml) over the shared citadel_contracts.mapping engine. Ships
+  with AWS CloudTrail, Microsoft Entra ID sign-ins, Microsoft 365 Unified Audit
+  Log, Google Cloud Audit Logs and Okta System Log. Add a new YAML spec to
+  support a new source — no code change required. Accepts single objects, JSON
+  arrays, {"Records":[...]} / {"value":[...]} envelopes and JSON Lines.
+supported_extensions:
+  - .json
+  - .jsonl
+  - .ndjson
+  - .log
+supported_mime_types:
+  - application/json
+  - application/x-ndjson
+artifact_type: cloud_audit
+author: Citadel
+version: "1.0.0"
+tags:
+  - cloud
+  - identity
+  - aws
+  - azure
+  - entra
+  - o365
+  - gcp
+  - okta
+  - audit

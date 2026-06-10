@@ -29,6 +29,7 @@ const OS_COLORS = {
   linux:   'bg-amber-100 text-amber-700 border border-amber-200',
   macos:   'bg-purple-100 text-purple-700 border border-purple-200',
   mobile:  'bg-emerald-100 text-emerald-700 border border-emerald-200',
+  cloud:   'bg-indigo-100 text-indigo-700 border border-indigo-200',
   cross:   'bg-gray-100 text-gray-600 border border-gray-200',
 }
 
