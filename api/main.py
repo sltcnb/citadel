@@ -112,6 +112,13 @@ app = FastAPI(
     title="Citadel API",
     description="Kubernetes-native digital forensics analysis platform",
     version="1.0.0",
+    # Serve the interactive docs UNDER the routed /api/v1 prefix. The ingress
+    # only forwards /api → the API service (no prefix strip), so the default
+    # app-root /docs and /openapi.json are unreachable behind a FQDN. Mounting
+    # them here makes Swagger work on any host without an ingress change.
+    docs_url="/api/v1/docs",
+    redoc_url="/api/v1/redoc",
+    openapi_url="/api/v1/openapi.json",
 )
 
 # ── Global exception handler ──────────────────────────────────────────────────

@@ -117,6 +117,12 @@ function Field({ name, type, required, children }) {
   )
 }
 
+// API endpoints, derived from the live origin so they're correct on localhost
+// or behind a FQDN/Traefik (the API is routed at <origin>/api/v1).
+const API_ORIGIN = typeof window !== 'undefined' ? window.location.origin : ''
+const API_BASE = `${API_ORIGIN}/api/v1`
+const DOCS_URL = `${API_ORIGIN}/api/v1/docs`
+
 // ── Navigation ────────────────────────────────────────────────────────────────
 
 const SECTIONS = [
@@ -843,9 +849,9 @@ evtx.event_id:4688 AND (message:*winword* OR message:*excel*)`} />
           {/* ── API Reference ─────────────────────────────────────────────── */}
           <Section id="api" title="API Reference" icon={<Code2 size={14} className="text-brand-accent" />}>
             <P>
-              The REST API is served at <code>http://localhost:8000/api/v1</code>.
-              Interactive docs: <a href="http://localhost:8000/docs" target="_blank" rel="noopener noreferrer"
-                className="text-brand-accent hover:underline">localhost:8000/docs</a> (Swagger UI).
+              The REST API is served at <code>{API_BASE}</code>.
+              Interactive docs: <a href={DOCS_URL} target="_blank" rel="noopener noreferrer"
+                className="text-brand-accent hover:underline">{DOCS_URL.replace(/^https?:\/\//, '')}</a> (Swagger UI).
             </P>
 
             <H3>Cases</H3>
