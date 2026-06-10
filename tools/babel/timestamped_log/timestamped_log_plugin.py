@@ -77,8 +77,10 @@ class TimestampedLogPlugin(BasePlugin):
     DEFAULT_ARTIFACT_TYPE = "log_file"
     SUPPORTED_EXTENSIONS = [".log", ".txt", ".out", ".err"]
     SUPPORTED_MIME_TYPES = ["text/plain", "text/x-log"]
-    # Above json_file (15) / strings (1), below syslog (100) and dedicated parsers.
-    PLUGIN_PRIORITY = 20
+    # Above the generic fallbacks — json_file (15), log2timeline/plaso (20),
+    # strings (1) — but below syslog (100) and dedicated parsers. Must beat
+    # log2timeline (also 20) or the heavy plaso fallback shadows app logs.
+    PLUGIN_PRIORITY = 25
 
     def __init__(self, context: PluginContext) -> None:
         super().__init__(context)
