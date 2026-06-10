@@ -306,6 +306,15 @@ async def _auto_archive_loop():
 
 @app.on_event("startup")
 async def _on_startup():
+    # Ship the API's structured logs to Redis so the admin console can tail them
+    # (citadel:logs:api). Best-effort — never block startup on it.
+    try:
+        from citadel_contracts import attach_redis_logs
+        from config import get_redis
+        attach_redis_logs("api", get_redis())
+    except Exception as exc:
+        logger.warning("admin log shipping unavailable: %s", exc)
+
     if settings.AUTH_ENABLED:
         if settings.JWT_SECRET == "CHANGE_ME_IN_PRODUCTION":
             logger.critical(
