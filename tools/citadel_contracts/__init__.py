@@ -31,6 +31,15 @@ from .logship import (  # noqa: F401
     log_stream_key,
     setup_json_logging,
 )
+from .mapping import (  # noqa: F401
+    MappingSpec,
+    apply_mapping,
+    detect_spec,
+    get_path,
+    iter_records,
+    register_transform,
+    render_template,
+)
 
 __all__ = [
     "BasePlugin",
@@ -48,5 +57,12 @@ __all__ = [
     "setup_json_logging",
     "RedisLogHandler",
     "JsonFormatter",
+    "MappingSpec",
+    "apply_mapping",
+    "detect_spec",
+    "iter_records",
+    "get_path",
+    "render_template",
+    "register_transform",
 ]
 __version__ = "1.0.0"

@@ -1,0 +1,27 @@
+# Okta System Log events (identity provider audit trail).
+name: okta_system_log
+artifact_type: okta_system_log
+os: cloud
+priority: 100
+detect:
+  all:
+    - eventType
+    - published
+    - actor.alternateId
+timestamp:
+  - published
+message: "{displayMessage} — {actor.alternateId} from {client.ipAddress} ({outcome.result})"
+fields:
+  user.email: actor.alternateId
+  user.name: actor.displayName
+  user.domain: actor.alternateId|domain_of
+  network.src_ip: client.ipAddress|ip
+attributes:
+  event_type: eventType
+  outcome: outcome.result
+  reason: outcome.reason
+  severity: severity
+  city: client.geographicalContext.city
+  country: client.geographicalContext.country
+  user_agent: client.userAgent.rawUserAgent
+  target: target.0.displayName

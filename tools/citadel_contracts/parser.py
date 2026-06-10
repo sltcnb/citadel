@@ -53,6 +53,11 @@ STRUCTURED_ARTIFACTS: frozenset[str] = frozenset(
         "netstat",
         "macos_uls",
         "pcap",
+        "aws_cloudtrail",
+        "azure_signin",
+        "o365_audit",
+        "gcp_audit",
+        "okta_system_log",
     }
 )
 
@@ -137,6 +142,12 @@ ARTIFACT_OS: dict[str, str] = {
     "archive": "cross",
     "plaso": "cross",
     "log2timeline": "cross",
+    # ── Cloud / identity audit logs (mapped via citadel_contracts.mapping) ──────
+    "aws_cloudtrail": "cloud",
+    "azure_signin": "cloud",
+    "o365_audit": "cloud",
+    "gcp_audit": "cloud",
+    "okta_system_log": "cloud",
     "generic": "cross",
 }
 

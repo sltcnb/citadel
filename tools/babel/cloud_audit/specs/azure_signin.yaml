@@ -1,0 +1,30 @@
+# Microsoft Entra ID (Azure AD) sign-in logs — Graph / exported shape.
+name: azure_signin
+artifact_type: azure_signin
+os: cloud
+priority: 100
+detect:
+  all:
+    - userPrincipalName
+    - appDisplayName
+timestamp:
+  - createdDateTime
+  - time
+message: "Sign-in: {userPrincipalName} to {appDisplayName} from {ipAddress} ({status.failureReason})"
+fields:
+  user.email: userPrincipalName
+  user.name: userPrincipalName|user_of
+  user.domain: userPrincipalName|domain_of
+  network.src_ip: ipAddress|ip
+attributes:
+  app: appDisplayName
+  client_app: clientAppUsed
+  error_code: status.errorCode
+  failure_reason: status.failureReason
+  conditional_access: conditionalAccessStatus
+  risk_state: riskState
+  risk_level: riskLevelAggregated
+  city: location.city
+  country: location.countryOrRegion
+  device_os: deviceDetail.operatingSystem
+  is_interactive: isInteractive
