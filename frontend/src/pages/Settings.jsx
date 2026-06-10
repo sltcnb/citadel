@@ -690,7 +690,7 @@ export default function Settings() {
 
   /* ── System handlers ──────────────────────────────────────────────────── */
   async function runPurge() {
-    if (!confirm('Purge all orphaned case data? This deletes MinIO objects, ES indices, and Redis job keys for cases no longer in the database. Active cases are untouched.')) return
+    if (!confirm('Purge all orphaned case data? This deletes MinIO objects, ES indices, and all Redis keys (jobs, collab lists, dedup sets, alert runs, case records) for cases no longer in the database. Active cases are untouched.')) return
     setPurging(true); setPurgeResult(null)
     try {
       const res = await api.admin.purgeOrphaned()
@@ -1755,6 +1755,7 @@ resources:
                 <p className="text-gray-500">MinIO cases purged: <strong>{purgeResult.data.minio_cases_purged.length}</strong> ({purgeResult.data.minio_cases_purged.map(c => c.case_id).join(', ') || 'none'})</p>
                 <p className="text-gray-500">ES cases purged: <strong>{purgeResult.data.es_cases_purged.length}</strong> ({purgeResult.data.es_cases_purged.join(', ') || 'none'})</p>
                 <p className="text-gray-500">Redis job keys deleted: <strong>{purgeResult.data.redis_job_keys_deleted.toLocaleString()}</strong></p>
+                <p className="text-gray-500">Redis case keys deleted: <strong>{(purgeResult.data.redis_case_keys_deleted ?? 0).toLocaleString()}</strong></p>
               </div>
             ) : (
               <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-start gap-1.5">

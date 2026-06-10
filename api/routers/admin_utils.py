@@ -24,12 +24,16 @@ def purge_orphaned_data():
     Safe to run at any time — active cases (present in cases:all) are never touched.
     """
     r = get_redis()
-    active_cases: set[str] = r.smembers("cases:all")
+    # Normalize to str so comparisons hold whether or not the client decodes.
+    active_cases: set[str] = {
+        (c.decode() if isinstance(c, bytes) else c) for c in (r.smembers("cases:all") or set())
+    }
 
     result = {
         "minio_cases_purged": [],
         "es_cases_purged": [],
         "redis_job_keys_deleted": 0,
+        "redis_case_keys_deleted": 0,
     }
 
     # ── 1. MinIO: find case prefixes with no matching Redis record ────────────
@@ -135,6 +139,49 @@ def purge_orphaned_data():
             logger.info("Purged %d orphaned Redis job keys", deleted_keys)
     except Exception as exc:
         logger.warning("Redis job purge error: %s", exc)
+
+    # ── 4. Redis: other case-scoped keys keyed by case_id as the LAST segment ──
+    # These were left behind by deletes during ingestion: collab lists, the
+    # per-case dedup set, alert-run results, and the bare case:{id} hash.
+    try:
+        aux_deleted = 0
+        # pattern → function(key_str) -> case_id
+        last_seg_patterns = [
+            "fo:collab:list:*",
+            "fo:ingest:seen_sha256:*",
+            "fo:alert_run:*",
+        ]
+        for pat in last_seg_patterns:
+            cursor = 0
+            while True:
+                cursor, keys = r.scan(cursor, match=pat, count=1000)
+                for key in keys:
+                    ks = key.decode() if isinstance(key, bytes) else key
+                    case_id = ks.rsplit(":", 1)[-1]
+                    if case_id not in active_cases:
+                        r.delete(key)
+                        aux_deleted += 1
+                if cursor == 0:
+                    break
+        # Bare case:{id} hash (NOT case:{id}:jobs* — those are handled above).
+        cursor = 0
+        while True:
+            cursor, keys = r.scan(cursor, match="case:*", count=1000)
+            for key in keys:
+                ks = key.decode() if isinstance(key, bytes) else key
+                parts = ks.split(":")
+                if len(parts) != 2:  # only "case:{id}", skip "case:{id}:jobs" etc.
+                    continue
+                if parts[1] not in active_cases:
+                    r.delete(key)
+                    aux_deleted += 1
+            if cursor == 0:
+                break
+        result["redis_case_keys_deleted"] = aux_deleted
+        if aux_deleted:
+            logger.info("Purged %d orphaned Redis case-scoped keys", aux_deleted)
+    except Exception as exc:
+        logger.warning("Redis case-key purge error: %s", exc)
 
     return result
 
