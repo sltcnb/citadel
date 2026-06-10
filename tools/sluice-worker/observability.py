@@ -25,72 +25,23 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 
 # ── structured logs ──────────────────────────────────────────────────────────
-class _JsonFormatter(logging.Formatter):
-    def format(self, record: logging.LogRecord) -> str:
-        payload = {
-            "ts": datetime.fromtimestamp(record.created, UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-            "level": record.levelname,
-            "logger": record.name,
-            "msg": record.getMessage(),
-        }
-        if record.exc_info:
-            payload["exc"] = self.formatException(record.exc_info)
-        for k, v in getattr(record, "extra_fields", {}).items():
-            payload[k] = v
-        return json.dumps(payload, default=str)
+# Log shipping is shared via citadel_contracts so api + every tool use the same
+# path. Bootstrap sys.path so it resolves however this module is loaded
+# (dev tree: tools/ is parents[1]; container: PYTHONPATH=/app).
+import sys as _sys
+from pathlib import Path as _Path
 
+_cp = _Path(__file__).resolve().parents[1]
+if str(_cp) not in _sys.path:
+    _sys.path.insert(0, str(_cp))
 
-def setup_json_logging(level: int = logging.INFO) -> None:
-    handler = logging.StreamHandler()
-    handler.setFormatter(_JsonFormatter())
-    root = logging.getLogger()
-    root.handlers[:] = [handler]
-    root.setLevel(level)
-
-
-# Redis stream key for a service's recent logs — read by the admin log viewer.
-def log_stream_key(service: str) -> str:
-    return f"citadel:logs:{service}"
-
-
-class RedisLogHandler(logging.Handler):
-    """Ship structured log records to a capped Redis stream so an admin can tail
-    a tool's recent logs from the console. Best-effort: never raises into the
-    app, and degrades to a no-op if redis is unavailable.
-
-    Capped via XADD MAXLEN so it can't grow unbounded (a ring buffer).
-    """
-
-    def __init__(
-        self, service: str, redis_client, *, maxlen: int = 2000, level: int = logging.INFO
-    ) -> None:
-        super().__init__(level)
-        self.service = service
-        self.redis = redis_client
-        self.maxlen = maxlen
-        self.key = log_stream_key(service)
-        self.setFormatter(_JsonFormatter())
-
-    def emit(self, record: logging.LogRecord) -> None:
-        try:
-            self.redis.xadd(
-                self.key,
-                {
-                    "svc": self.service,
-                    "level": record.levelname,
-                    "logger": record.name,
-                    "line": self.format(record),
-                },
-                maxlen=self.maxlen,
-                approximate=True,
-            )
-        except Exception:
-            pass  # logging must never break the app
-
-
-def attach_redis_logs(service: str, redis_client, *, level: int = logging.INFO) -> None:
-    """Attach a RedisLogHandler to the root logger (in addition to stdout)."""
-    logging.getLogger().addHandler(RedisLogHandler(service, redis_client, level=level))
+from citadel_contracts.logship import (  # noqa: E402,F401
+    JsonFormatter as _JsonFormatter,
+    RedisLogHandler,
+    attach_redis_logs,
+    log_stream_key,
+    setup_json_logging,
+)
 
 
 # ── metrics registry ─────────────────────────────────────────────────────────

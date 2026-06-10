@@ -24,6 +24,13 @@ from .validator import (  # noqa: F401
     is_valid_forensic_event,
     validate_forensic_event,
 )
+from .logship import (  # noqa: F401
+    JsonFormatter,
+    RedisLogHandler,
+    attach_redis_logs,
+    log_stream_key,
+    setup_json_logging,
+)
 
 __all__ = [
     "BasePlugin",
@@ -36,5 +43,10 @@ __all__ = [
     "iso_z",
     "validate_forensic_event",
     "is_valid_forensic_event",
+    "attach_redis_logs",
+    "log_stream_key",
+    "setup_json_logging",
+    "RedisLogHandler",
+    "JsonFormatter",
 ]
 __version__ = "1.0.0"

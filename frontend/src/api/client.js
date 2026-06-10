@@ -378,6 +378,11 @@ export const api = {
     updateArchiveSettings: (body) => request('PUT', '/admin/archive-settings', body),
   },
 
+  logs: {
+    services: ()                     => request('GET', '/admin/logs/services'),
+    tail:     (service, params = {}) => request('GET', withParams(`/admin/logs/${service}`, params)),
+  },
+
   companies: {
     list:   ()     => request('GET',    '/companies'),
     add:    (name) => request('POST',   '/companies', { name }),

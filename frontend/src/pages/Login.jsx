@@ -67,10 +67,8 @@ export default function Login({ onLogin }) {
 
         {/* Logo / brand */}
         <div className="flex flex-col items-center mb-8">
-          <div className="w-14 h-14 rounded-2xl bg-brand-sidebar flex items-center justify-center mb-4 shadow-card-md">
-            <span className="text-white text-3xl font-black tracking-tight select-none">X</span>
-          </div>
-          <h1 className="text-2xl font-bold text-brand-text tracking-tight">Citadel</h1>
+          <img src="/favicon.svg" alt="Citadel" className="w-16 h-16 mb-4 shadow-card-md rounded-2xl select-none" />
+          <img src="/logo.svg" alt="Citadel" className="h-9 object-contain" />
           <p className="text-sm text-gray-500 mt-1">Sign in to your account</p>
         </div>
 
