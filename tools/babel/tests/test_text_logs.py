@@ -100,6 +100,12 @@ def test_apt_history(tmp_path):
     assert set(ins["package_event"]["actions"]) == {"Install", "Remove"}
 
 
+def test_timestamped_outranks_plaso_fallback():
+    # log2timeline (plaso) is priority 20; timestamped_log must beat it or the
+    # heavy generic fallback shadows app logs (clickhouse → generic blob).
+    assert TimestampedLogPlugin.PLUGIN_PRIORITY > 20
+
+
 def test_apt_history_gz(tmp_path):
     f = tmp_path / "history.log.7.gz"
     f.write_bytes(gzip.compress(APT.encode()))
