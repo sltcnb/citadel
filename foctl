@@ -272,8 +272,8 @@ def build_substitutions(cfg, pull_policy):
         "__FO_PROCESSOR_IMAGE__":  image_name("processor", cfg),
         "__FO_FRONTEND_IMAGE__":   image_name("frontend",  cfg),
         "__FO_PULL_POLICY__":      pull_policy,
-        "__FO_MINIO_ACCESS_KEY__": cfg["secrets"]["minio_access_key"],
-        "__FO_MINIO_SECRET_KEY__": cfg["secrets"]["minio_secret_key"],
+        "__FO_MINIO_ACCESS_KEY__": cfg.get("secrets", {}).get("minio_access_key", "minioadmin"),
+        "__FO_MINIO_SECRET_KEY__": cfg.get("secrets", {}).get("minio_secret_key", "minioadmin"),
         "__FO_JWT_SECRET__":              cfg["secrets"].get("jwt_secret", "CHANGE_ME_IN_PRODUCTION"),
         "__FO_ADMIN_USERNAME__":          cfg["secrets"].get("admin_username", "admin"),
         "__FO_ADMIN_PASSWORD__":          cfg["secrets"].get("admin_password", "CitadelAdmin1!"),
@@ -1218,7 +1218,8 @@ def _deploy_k8s_flow(cfg, no_build=False, no_cache=False, restart=False,
     info(f"Context  : {cfg['cluster'].get('context') or '(current)'}")
     info(f"Hostname : {cfg['access']['hostname']}")
     info(f"Registry : {cfg['images']['registry'] or '(none — direct load)'}")
-    info(f"ES heap  : {cfg['resources']['elasticsearch_heap_mb']} MB")
+    _heap = {**auto_resources(), **cfg.get("resources", {})}.get("elasticsearch_heap_mb", 512)
+    info(f"ES heap  : {_heap} MB (auto-sized; override via config.json resources)")
     info(f"\n  ⚠️  This script will NOT touch:")
     info("     - analyse namespace (CoreDNS, Bloodhound, etc.)")
     info("     - kube-system namespace (Traefik, k3s system)")
