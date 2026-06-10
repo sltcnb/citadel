@@ -1666,13 +1666,37 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
             return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
           }
           const grain = bucketMs < 60000 ? 'second' : bucketMs < 3600000 ? 'minute' : bucketMs < 86400000 ? 'hour' : 'day'
+          const humanizeSpan = (ms) => {
+            const s = Math.round(ms / 1000)
+            if (s < 90) return `${s}s`
+            const m = Math.round(s / 60); if (m < 90) return `${m}m`
+            const h = Math.round(m / 60); if (h < 48) return `${h}h`
+            return `${Math.round(h / 24)}d`
+          }
+          // Live read-out while dragging — span + event count, before release.
+          const dragInfo = histoDragSel ? (() => {
+            const a = Math.min(histoDragSel.start, histoDragSel.end)
+            const b = Math.max(histoDragSel.start, histoDragSel.end)
+            let n = 0
+            for (let i = a; i <= b; i++) n += histogram[i].doc_count
+            const from = histogram[a].key
+            const to = histogram[b].key + bucketMs
+            return { from, to, count: n, bars: b - a + 1, span: to - from }
+          })() : null
           return (
           <div className="px-4 py-2 border-b border-gray-200 bg-gray-50">
             <div className="flex items-center gap-2 mb-1.5">
               <p className="text-[10px] text-gray-500 flex items-center gap-1">
                 <BarChart2 size={9} /> Event activity (per {grain}) — click a bar, or click + swipe to zoom a range
               </p>
-              {fromTs && toTs && (
+              {dragInfo ? (
+                <span className="text-[10px] font-semibold text-brand-accent flex items-center gap-1 tabular-nums">
+                  {fmtBucket(dragInfo.from)} – {fmtBucket(dragInfo.to - bucketMs)}
+                  <span className="text-gray-400 font-normal">
+                    · {humanizeSpan(dragInfo.span)} · {dragInfo.count.toLocaleString()} events
+                  </span>
+                </span>
+              ) : fromTs && toTs && (
                 <span className="text-[10px] font-semibold text-brand-accent flex items-center gap-1">
                   {fmtBucket(new Date(fromTs).getTime())}
                   {(() => {
@@ -1721,6 +1745,20 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
                 )
               })}
             </div>
+            {/* Time axis — evenly spaced ticks across the visible range */}
+            {histogram.length > 1 && (
+              <div className="flex justify-between text-[9px] text-gray-400 mt-1 tabular-nums px-px">
+                {(() => {
+                  const n = histogram.length
+                  const idxs = [...new Set([0, Math.floor(n / 4), Math.floor(n / 2), Math.floor((3 * n) / 4), n - 1])]
+                  return idxs.map((i, k) => (
+                    <span key={i} className={k === 0 ? 'text-left' : k === idxs.length - 1 ? 'text-right' : 'text-center'}>
+                      {fmtBucket(histogram[i].key)}
+                    </span>
+                  ))
+                })()}
+              </div>
+            )}
           </div>
           )
         })()}

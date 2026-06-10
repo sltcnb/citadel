@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Path, Query
 
 from config import get_redis
 
@@ -81,3 +81,21 @@ def get_service_logs(
         if len(lines) >= limit:
             break
     return {"service": service, "count": len(lines), "lines": lines}
+
+
+@router.delete("/admin/logs/{service}")
+def clear_service_logs(service: str = Path(...)):
+    """Reset (delete) the captured log stream for one service, or all of them
+    when ``service`` is ``all``. Only clears the admin viewer's Redis streams —
+    stdout/cluster logs are untouched."""
+    r = get_redis()
+    targets = _TRACKED_SERVICES if service == "all" else [service]
+    if service != "all" and service not in _TRACKED_SERVICES:
+        raise HTTPException(status_code=404, detail=f"unknown service '{service}'")
+    cleared = 0
+    for svc in targets:
+        try:
+            cleared += r.delete(_stream_key(svc))
+        except Exception:
+            pass
+    return {"cleared": cleared, "services": targets}
