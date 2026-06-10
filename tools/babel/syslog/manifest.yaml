@@ -1,0 +1,18 @@
+id: syslog
+name: Syslog
+description: >-
+  Parses Linux/Unix syslog and journald log files. Supports RFC 3164 and RFC 5424
+  formats, as well as common variations from rsyslog and syslog-ng.
+  Extracts host, process, PID, and structured message fields.
+supported_extensions: [".log", ".syslog"]
+supported_mime_types: ["text/plain"]
+handled_filenames:
+  - syslog
+  - auth.log
+  - messages
+  - secure
+  - kern.log
+artifact_type: syslog
+author: ForensicsOperator
+version: "1.0.0"
+tags: [linux, syslog, auth, kernel, unix]

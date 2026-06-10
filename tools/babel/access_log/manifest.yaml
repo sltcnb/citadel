@@ -1,0 +1,27 @@
+id: access_log
+name: Apache / Nginx Access Log
+description: >
+  Parses HTTP access logs in Apache Combined Log Format (CLF), Common Log
+  Format, and Nginx error log format.  Extracts client IP, HTTP method,
+  request path, status code, response size, referer, and user-agent.
+supported_extensions:
+  - .log
+supported_mime_types:
+  - text/plain
+  - text/x-log
+artifact_type: access_log
+handled_filenames:
+  - access.log
+  - access_log
+  - error.log
+  - error_log
+  - other_vhosts_access.log
+  - ssl_access.log
+author: Citadel
+version: "1.0.0"
+tags:
+  - web
+  - apache
+  - nginx
+  - http
+  - network

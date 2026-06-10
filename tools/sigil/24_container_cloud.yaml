@@ -1,0 +1,49 @@
+category: Container and Cloud
+rules:
+  - name: Docker Container Started with Privileged Flag
+    description: >-
+      A Docker container was started with --privileged flag.
+      Grants full host access and bypasses container isolation.
+    artifact_type: syslog
+    query: "syslog.message:*docker* AND syslog.message:*--privileged*"
+    threshold: 1
+
+  - name: Kubernetes Pod with Host Network
+    description: >-
+      A Kubernetes pod was created with hostNetwork: true.
+      Allows pod to access host network interfaces.
+    artifact_type: syslog
+    query: "syslog.message:*kubernetes* AND syslog.message:*hostNetwork*"
+    threshold: 1
+
+  - name: AWS CLI Assume Role from Unusual IP
+    description: >-
+      AWS STS AssumeRole called from an unusual source IP.
+      May indicate credential compromise or lateral movement.
+    artifact_type: syslog
+    query: "syslog.message:*aws* AND syslog.message:*sts:AssumeRole*"
+    threshold: 1
+
+  - name: Azure AD Privileged Role Assigned
+    description: >-
+      A privileged Azure AD role was assigned to a user.
+      Review for unauthorized privilege escalation.
+    artifact_type: syslog
+    query: "syslog.message:*AzureAD* AND (syslog.message:*Global Administrator* OR syslog.message:*Privileged Role Administrator*)"
+    threshold: 1
+
+  - name: GCP Service Account Key Created
+    description: >-
+      A new service account key was generated.
+      Keys can be exfiltrated for persistent access.
+    artifact_type: syslog
+    query: "syslog.message:*gcloud* AND syslog.message:*create-key*"
+    threshold: 1
+
+  - name: S3 Bucket Made Public
+    description: >-
+      An S3 bucket policy was changed to allow public access.
+      May lead to data exposure or unauthorized access.
+    artifact_type: syslog
+    query: "syslog.message:*s3:PutBucketPolicy* OR syslog.message:*s3:PutBucketAcl*"
+    threshold: 1

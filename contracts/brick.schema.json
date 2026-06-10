@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://citadel.dfir/contracts/brick/v1.json",
+  "title": "brick.yaml",
+  "description": "Per-tool manifest. Every Citadel tool ships one at its repo root, declaring how it composes into the suite. Standalone use never requires it.",
+  "type": "object",
+  "required": ["name", "kind", "version"],
+  "properties": {
+    "name": { "type": "string", "description": "Tool name (Talon, Sluice, …)." },
+    "kind": {
+      "type": "string",
+      "enum": ["collector", "intake", "parser-lib", "canonicalizer", "detection", "analysis-runner", "enrichment", "agent", "report", "domain-analyzer", "platform"],
+      "description": "What role the tool plays in the pipeline."
+    },
+    "version": { "type": "string", "description": "SemVer of the tool." },
+    "repository": { "type": "string", "description": "Source repo slug." },
+    "consumes": {
+      "type": "object",
+      "properties": {
+        "content_types": { "type": "array", "items": { "type": "string" } },
+        "filenames": { "type": "array", "items": { "type": "string" } },
+        "schema": { "type": "array", "items": { "type": "string" }, "description": "Contract $ids consumed." }
+      }
+    },
+    "produces": {
+      "type": "object",
+      "properties": {
+        "schema": { "type": "array", "items": { "type": "string" }, "description": "Contract $ids produced." },
+        "artifact_types": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "dependencies": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Other suite tools or substrate (elasticsearch, redis, minio) this tool needs."
+    },
+    "health": {
+      "type": "object",
+      "properties": {
+        "endpoint": { "type": "string" },
+        "command": { "type": "string" }
+      },
+      "description": "How to probe liveness (HTTP endpoint for services, CLI for tools)."
+    },
+    "status": { "type": "string", "enum": ["built", "partial", "planned"] }
+  },
+  "additionalProperties": false
+}

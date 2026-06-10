@@ -1,0 +1,26 @@
+id: cuckoo
+name: Cuckoo Sandbox
+description: "Submit suspicious files to Cuckoo Sandbox for dynamic malware analysis. Reports include behavioral indicators, network activity, dropped files, and API calls."
+input_extensions:
+  - .exe
+  - .dll
+  - .msi
+  - .bat
+  - .ps1
+  - .vbs
+  - .js
+  - .doc
+  - .docx
+  - .xls
+  - .xlsx
+  - .pdf
+  - .jar
+  - .apk
+  - .zip
+available: true
+run_on_files: true
+category: Malware Detection
+tags: [sandbox, dynamic, behavior, malware, cuckoo]
+config_keys:
+  - cuckoo_api_url
+  - cuckoo_api_token

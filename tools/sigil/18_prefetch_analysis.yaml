@@ -1,0 +1,41 @@
+category: Prefetch Analysis
+rules:
+  - name: Rare Executable Run
+    description: >-
+      An executable with no prefetch history was run.
+      Could indicate new malware or first-time execution.
+    artifact_type: prefetch
+    query: "prefetch.run_count:1"
+    threshold: 1
+
+  - name: Executable Run from Temp Directory
+    description: >-
+      A program was executed from a temporary directory.
+      Malware often runs from temp to avoid detection.
+    artifact_type: prefetch
+    query: "prefetch.path:*\\\\TEMP\\\\* OR prefetch.path:*\\\\AppData\\\\Local\\\\Temp\\\\*"
+    threshold: 1
+
+  - name: LOLBin Execution
+    description: >-
+      A living-off-the-land binary was executed.
+      These tools are used for fileless attacks.
+    artifact_type: prefetch
+    query: "(prefetch.name:POWERSHELL* OR prefetch.name:WMIC* OR prefetch.name:RUNDLL32* OR prefetch.name:REGSVR32* OR prefetch.name:MSHTA* OR prefetch.name:CERTUTIL* OR prefetch.name:BITSADMIN*)"
+    threshold: 1
+
+  - name: Multiple Executables with Similar Names
+    description: >-
+      Multiple versions of similarly named executables were run.
+      May indicate malware variants or updates.
+    artifact_type: prefetch
+    query: "prefetch.name:*update* OR prefetch.name:*setup* OR prefetch.name:*install*"
+    threshold: 3
+
+  - name: Executable with Long Runtime
+    description: >-
+      A process ran for an unusually long time.
+      Could indicate mining, C2, or persistent backdoor.
+    artifact_type: prefetch
+    query: "prefetch.last_run:* AND prefetch.run_count:>10"
+    threshold: 1

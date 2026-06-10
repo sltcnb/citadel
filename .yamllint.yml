@@ -1,0 +1,18 @@
+---
+extends: relaxed
+
+# Cookiecutter template manifests contain {{...}} placeholders — not valid YAML.
+ignore: |
+  tools/babel/template/
+  frontend/node_modules/
+
+rules:
+  line-length: disable
+  document-start: disable
+  trailing-spaces: disable
+  colons: disable          # aligned mappings in fieldmaps are intentional
+  empty-lines: disable     # bulk-vendored sigma_hq packs
+  comments:
+    min-spaces-from-content: 1
+  truthy:
+    check-keys: false

@@ -1,0 +1,15 @@
+id: suricata
+name: Suricata EVE JSON
+description: >-
+  Parses Suricata EVE JSON logs (eve.json). Ingests all event types including
+  alerts, flows, DNS, HTTP, TLS, files, and SMTP. Normalizes source/destination
+  IPs, ports, protocol, and alert severity for timeline correlation with host events.
+supported_extensions: [".json", ".log"]
+supported_mime_types: ["application/json", "text/plain"]
+artifact_type: suricata
+handled_filenames:
+  - eve.json
+  - suricata.json
+author: ForensicsOperator
+version: "1.0.0"
+tags: [network, ids, suricata, eve, alerts, flows, dns]

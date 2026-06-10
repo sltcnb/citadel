@@ -1,0 +1,38 @@
+id: netstat
+name: Network Connections (ss / netstat)
+description: >
+  Parses Linux ss and netstat network connection snapshots.
+  Recognises the Recv-Q / Send-Q header format produced by `ss -tnp`,
+  `ss -tunp`, and `netstat -tn`. Each connection becomes a structured
+  event with network.src_ip, src_port, dst_ip, dst_port, state, and
+  optional process name/PID.  IPv4-mapped IPv6 addresses (::ffff:x.x.x.x)
+  are normalised to plain IPv4.  Symmetric loopback mirror pairs are
+  deduplicated automatically.
+supported_extensions:
+  - .log
+  - .txt
+supported_mime_types:
+  - text/plain
+artifact_type: netstat
+handled_filenames:
+  - established_connections.log
+  - connections.log
+  - netstat.log
+  - netstat.txt
+  - ss_output.log
+  - ss.log
+  - network_connections.log
+  - active_connections.log
+  - open_connections.log
+  - tcp_connections.log
+  - udp_connections.log
+  - socket_stats.log
+author: Citadel
+version: "1.1.0"
+tags:
+  - network
+  - connections
+  - netstat
+  - ss
+  - linux
+  - sockets

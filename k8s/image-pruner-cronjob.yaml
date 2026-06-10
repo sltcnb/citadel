@@ -1,0 +1,45 @@
+---
+# Weekly image pruner — prunes unreferenced k3s container images on the host
+# to reclaim disk and prevent DiskPressure taints from accumulated images.
+# Chroots into the host filesystem to run the k3s binary directly.
+# Schedule: 03:00 every Sunday.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: image-pruner
+  namespace: __FO_NAMESPACE__
+spec:
+  schedule: "0 3 * * 0"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          tolerations:
+            # Run even when node has DiskPressure — that is when it's most needed
+            - key: "node.kubernetes.io/disk-pressure"
+              operator: "Exists"
+              effect: "NoSchedule"
+          containers:
+            - name: pruner
+              image: alpine:3.19
+              command:
+                - sh
+                - -c
+                - |
+                  echo "[image-pruner] Starting at $(date)"
+                  chroot /host k3s ctr images prune --all 2>&1 | head -50
+                  echo "[image-pruner] Done at $(date). Disk usage:"
+                  chroot /host df -h /
+              securityContext:
+                privileged: true
+              volumeMounts:
+                - name: host-root
+                  mountPath: /host
+          volumes:
+            - name: host-root
+              hostPath:
+                path: /

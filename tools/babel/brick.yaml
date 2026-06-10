@@ -1,0 +1,19 @@
+# Babel — parser library (43 parsers, priority-routed)
+name: Babel
+kind: parser-lib
+version: "1.0.0"
+repository: babel
+status: built
+consumes:
+  content_types:
+    - "*"                   # each parser declares supported_mime_types
+  filenames:
+    - "*"                   # each parser declares handled_filenames
+produces:
+  schema:
+    - https://citadel.dfir/contracts/forensic_event/v1.json
+  artifact_types:
+    - "*"                   # ~90-entry taxonomy across windows/linux/macos/mobile/network/generic
+dependencies: []            # pure library; runs standalone or inside Sluice
+health:
+  command: "babel list-parsers"

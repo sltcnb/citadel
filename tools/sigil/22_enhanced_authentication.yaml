@@ -1,0 +1,41 @@
+category: Authentication
+rules:
+  - name: Kerberos Double-Hop Authentication
+    description: >-
+      A Kerberos ticket was requested with delegation.
+      Can indicate pass-the-ticket or constrained delegation abuse.
+    artifact_type: evtx
+    query: "evtx.event_id:4672 AND message:*SeDelegateRemoteAccessPrivilege*"
+    threshold: 1
+
+  - name: Smart Card Logon from Unknown Workstation
+    description: >-
+      A smart card authentication from an unusual computer.
+      May indicate stolen smart card or credential.
+    artifact_type: evtx
+    query: "evtx.event_id:4624 AND message:*LogonType:2* AND message:*SmartCard*"
+    threshold: 1
+
+  - name: WDigest Authentication Enabled
+    description: >-
+      WDigest authentication was used (clear-text passwords in memory).
+      Attackers enable this for credential theft.
+    artifact_type: evtx
+    query: "evtx.event_id:4624 AND message:*WDigest*"
+    threshold: 1
+
+  - name: Network Logon with Blank Password
+    description: >-
+      A network logon succeeded with an empty password.
+      Indicates weak security configuration.
+    artifact_type: evtx
+    query: "evtx.event_id:4624 AND message:*LogonType:3* AND message:*NULL SID*"
+    threshold: 1
+
+  - name: Service Account Used Interactively
+    description: >-
+      A service account logged on interactively.
+      Service accounts should never have interactive sessions.
+    artifact_type: evtx
+    query: "evtx.event_id:4624 AND (message:*svc* OR message:*service* OR message:*gmsa*) AND (message:*LogonType:2* OR message:*LogonType:10*)"
+    threshold: 1

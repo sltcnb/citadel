@@ -1,0 +1,23 @@
+# Sluice — intake & routing (intake in ingester/, async stages in processor/)
+name: Sluice
+kind: intake
+version: "1.0.0"
+repository: sluice
+status: built
+consumes:
+  content_types:
+    - "*"                   # sniffs magic -> extension -> filename
+  filenames:
+    - "*"
+  schema:
+    - https://citadel.dfir/contracts/bundle_manifest/v1.json
+produces:
+  schema:
+    - https://citadel.dfir/contracts/forensic_event/v1.json
+  artifact_types: []        # whatever the selected Babel parser yields
+dependencies:
+  - babel
+  - redis                   # bus + queue
+  - minio                   # blob store
+health:
+  endpoint: /healthz

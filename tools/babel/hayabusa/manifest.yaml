@@ -1,0 +1,14 @@
+id: hayabusa
+name: Hayabusa (CSV output ingester)
+description: >-
+  Ingests pre-generated Hayabusa CSV output files. Use this ingester if you
+  have already run Hayabusa externally and want to import results into the
+  timeline. For on-demand Hayabusa execution, use the Hayabusa Module instead.
+supported_extensions: [".csv"]
+supported_mime_types: ["text/csv", "text/plain"]
+handled_filenames:
+  - hayabusa_results.csv
+artifact_type: hayabusa
+author: ForensicsOperator
+version: "1.0.0"
+tags: [hayabusa, csv, sigma, evtx, threat-hunting]

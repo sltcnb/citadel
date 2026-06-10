@@ -1,0 +1,24 @@
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: redis-vpa
+  namespace: __FO_NAMESPACE__
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: redis
+  updatePolicy:
+    updateMode: "Auto"       # restarts pod with new limits when recommendation diverges significantly
+    minReplicas: 1
+  resourcePolicy:
+    containerPolicies:
+      - containerName: redis
+        controlledResources: ["memory", "cpu"]
+        minAllowed:
+          memory: "512Mi"
+          cpu: "100m"
+        maxAllowed:
+          memory: "6Gi"      # hard ceiling — don't let Redis eat the whole node
+          cpu: "2"
+        controlledValues: RequestsAndLimits

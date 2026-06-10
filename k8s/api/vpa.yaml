@@ -1,0 +1,23 @@
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: api-vpa
+  namespace: __FO_NAMESPACE__
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: api
+  updatePolicy:
+    updateMode: "Auto"
+    minReplicas: 1
+  resourcePolicy:
+    containerPolicies:
+      - containerName: api
+        # Only control memory — CPU is handled by HPA (avoid VPA/HPA conflict on CPU)
+        controlledResources: ["memory"]
+        minAllowed:
+          memory: "256Mi"
+        maxAllowed:
+          memory: "4Gi"
+        controlledValues: RequestsAndLimits

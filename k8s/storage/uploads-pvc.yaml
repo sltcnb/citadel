@@ -1,0 +1,25 @@
+# ── Uploads / chunk assembly storage ──────────────────────────────────────────
+#
+# Dedicated PVC for chunked file upload assembly and large triage archive
+# staging.  Mounted at /app/uploads in both the API and processor pods.
+#
+# The API writes incoming chunks here (CHUNK_DIR=/app/uploads/_chunks).
+# Using a separate PVC keeps triage data (potentially hundreds of GBs) off the
+# plugins-pvc and prevents it from exhausting plugin storage.
+#
+# Sizing:
+#   Default 500Gi — adjust uploads_storage_gi in config.json as needed.
+#   For multi-node clusters change accessModes to ReadWriteMany and set a RWX
+#   storageClassName (e.g. nfs-client, longhorn).
+#
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: uploads-pvc
+  namespace: __FO_NAMESPACE__
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: __FO_UPLOADS_STORAGE__

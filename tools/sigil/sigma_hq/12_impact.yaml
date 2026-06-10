@@ -1,0 +1,1584 @@
+# Sigma HQ Rules - 12 Impact
+# Imported: 2026-04-28T11:18:22.168819+00:00
+# Total rules: 38
+#
+# These rules were automatically imported from Sigma HQ
+# and will be converted to Elasticsearch queries at runtime.
+#
+# Source: https://github.com/SigmaHQ/sigma
+#
+
+category: Sigma HQ
+
+rules:
+  # Source: image_load_dll_rstrtmgr_suspicious_load.yml
+  - name: Load Of RstrtMgr.DLL By A Suspicious Process
+    description: >-
+      Detects the load of RstrtMgr DLL (Restart Manager) by a suspicious process.
+      This library has been used during ransomware campaigns to kill processes that would prevent file encryption by locking them (e.g. Conti ransomware, Cactus ransomware). It has also recently been seen used by the BiBi wiper for Windows.
+      It could also be used for anti-analysis purposes by shut downing specific processes.
+      
+    artifact_type: evtx
+    # detection: (will be converted at runtime)
+    sigma_detection: |
+      condition: selection_img and 1 of selection_folders_*
+      selection_folders_1:
+        Image|contains:
+        - :\Perflogs\
+        - :\Users\Public\
+        - \Temporary Internet
+      selection_folders_2:
+      - Image|contains|all:
+        - :\Users\
+        - \Favorites\
+      - Image|contains|all:
+        - :\Users\
+        - \Favourites\
+      - Image|contains|all:
+        - :\Users\
+        - \Contacts\
+      selection_img:
+      - ImageLoaded|endswith: \RstrtMgr.dll
+      - OriginalFileName: RstrtMgr.dll
+      
+    # level: high
+    # tags: attack.impact, attack.defense-evasion, attack.t1486, attack.t1562.001
+    # authors: Luc Génaux
+    # ref: https://www.crowdstrike.com/blog/windows-restart-manager-part-1/
+    # ref: https://www.crowdstrike.com/blog/windows-restart-manager-part-2/
+    # sigma_id: b48492dc-c5ef-4572-8dff-32bc241c15c8
+
+  # Source: image_load_dll_vssapi_susp_load.yml
+  - name: Suspicious Volume Shadow Copy Vssapi.dll Load
+    description: >-
+      Detects the image load of VSS DLL by uncommon executables
+    artifact_type: evtx
+    # detection: (will be converted at runtime)
+    sigma_detection: |
+      condition: selection and not 1 of filter_main_* and not 1 of filter_optional_*
+      filter_main_null_image:
+        Image: null
+      filter_main_program_files:
+        Image|startswith:
+        - C:\Program Files\
+        - C:\Program Files (x86)\
+      filter_main_windows:
+      - Image:
+        - C:\Windows\explorer.exe
+        - C:\Windows\ImmersiveControlPanel\SystemSettings.exe
+      - Image|startswith:
+        - C:\Windows\System32\
+        - C:\Windows\SysWOW64\
+        - C:\Windows\Temp\{
+        - C:\Windows\WinSxS\
+      filter_optional_avira:
+        Image|contains|all:
+        - \temp\is-
+        - \avira_system_speedup.tmp
+      filter_optional_programdata_packagecache:
+        Image|startswith: C:\ProgramData\Package Cache\
+      selection:
+        ImageLoaded|endswith: \vssapi.dll
+      
+    # level: high
+    # tags: attack.defense-evasion, attack.impact, attack.t1490
+    # authors: frack113
+    # ref: https://github.com/ORCx41/DeleteShadowCopies
+    # sigma_id: 37774c23-25a1-4adb-bb6d-8bb9fd59c0f8
+
+  # Source: image_load_dll_vss_ps_susp_load.yml
+  - name: Suspicious Volume Shadow Copy VSS_PS.dll Load
+    description: >-
+      Detects the image load of vss_ps.dll by uncommon executables. This DLL is used by the Volume Shadow Copy Service (VSS) to manage shadow copies of files and volumes.
+      It is often abused by attackers to delete or manipulate shadow copies, which can hinder forensic investigations and data recovery efforts.
+      The fact that it is loaded by processes that are not typically associated with VSS operations can indicate suspicious activity.
+      
+    artifact_type: evtx
+    # detection: (will be converted at runtime)
+    sigma_detection: |
+      condition: selection and not 1 of filter_main_* and not 1 of filter_optional_*
+      filter_main_image_null:
+        Image: null
+      filter_main_legit:
+        Image|endswith:
+        - \clussvc.exe
+        - \dismhost.exe
+        - \dllhost.exe
+        - \inetsrv\appcmd.exe
+        - \inetsrv\iissetup.exe
+        - \msiexec.exe
+        - \rundll32.exe
+        - \searchindexer.exe
+        - \srtasks.exe
+        - \svchost.exe
+        - \System32\SystemPropertiesAdvanced.exe
+        - \taskhostw.exe
+        - \thor.exe
+        - \thor64.exe
+        - \tiworker.exe
+        - \vssvc.exe
+        - \vssadmin.exe
+        - \WmiPrvSE.exe
+        - \wsmprovhost.exe
+        Image|startswith: C:\Windows\
+      filter_main_update:
+        CommandLine|contains: \dismhost.exe {
+        CommandLine|startswith: C:\$WinREAgent\Scratch\
+      filter_optional_programfiles:
+        Image|startswith:
+        - C:\Program Files\
+        - C:\Program Files (x86)\
+      selection:
+        ImageLoaded|endswith: \vss_ps.dll
+      
+    # level: high
+    # tags: attack.defense-evasion, attack.impact, attack.t1490
+    # authors: Markus Neis, @markus_neis
+    # ref: https://www.virustotal.com/gui/file/ba88ca45589fae0139a40ca27738a8fc2dfbe1be5a64a9558f4e0f52b35c5add
+    # ref: https://twitter.com/am0nsec/status/1412232114980982787
+    # sigma_id: 333cdbe8-27bb-4246-bf82-b41a0dca4b70
+
+  # Source: proc_creation_win_susp_service_tamper.yml
+  - name: Suspicious Windows Service Tampering
+    description: >-
+      Detects the usage of binaries such as 'net', 'sc' or 'powershell' in order to stop, pause, disable or delete critical or important Windows services such as AV, Backup, etc. As seen being used in some ransomware scripts
+      
+    artifact_type: evtx
+    # detection: (will be converted at runtime)
+    sigma_detection: |
+      condition: all of selection_*
+      selection_services:
+        CommandLine|contains:
+        - 143Svc
+        - Acronis VSS Provider
+        - AcronisAgent
+        - AcrSch2Svc
+        - AdobeARMservice
+        - AHS Service
+        - Antivirus
+        - Apache4
+        - ARSM
+        - aswBcc
+        - AteraAgent
+        - Avast Business Console Client Antivirus Service
+        - avast! Antivirus
+        - AVG Antivirus
+        - avgAdminClient
+        - AvgAdminServer
+        - AVP1
+        - BackupExec
+        - bedbg
+        - BITS
+        - BrokerInfrastructure
+        - CASLicenceServer
+        - CASWebServer
+        - Client Agent 7.60
+        - Core Browsing Protection
+        - Core Mail Protection
+        - Core Scanning Server
+        - DCAgent
+        - dwmrcs
+        - EhttpSr
+        - ekrn
+        - Enterprise Client Service
+        - epag
+        - EPIntegrationService
+        - EPProtectedService
+        - EPRedline
+        - EPSecurityService
+        - EPUpdateService
+        - EraserSvc11710
+        - EsgShKernel
+        - ESHASRV
+        - FA_Scheduler
+        - FirebirdGuardianDefaultInstance
+        - FirebirdServerDefaultInstance
+        - FontCache3.0.0.0
+        - HealthTLService
+        - hmpalertsvc
+        - HMS
+        - HostControllerService
+        - hvdsvc
+        - IAStorDataMgrSvc
+        - IBMHPS
+        - ibmspsvc
+        - IISAdmin
+        - IMANSVC
+        - IMAP4Svc
+        - instance2
+        - KAVFS
+        - KAVFSGT
+        - kavfsslp
+        - KeyIso
+        - klbackupdisk
+        - klbackupflt
+        - klflt
+        - klhk
+        - KLIF
+        - klim6
+        - klkbdflt
+        - klmouflt
+        - klnagent
+        - klpd
+        - kltap
+        - KSDE1.0.0
+        - LogProcessorService
+        - M8EndpointAgent
+        - macmnsvc
+        - masvc
+        - MBAMService
+        - MBCloudEA
+        - MBEndpointAgent
+        - McAfeeDLPAgentService
+        - McAfeeEngineService
+        - MCAFEEEVENTPARSERSRV
+        - McAfeeFramework
+        - MCAFEETOMCATSRV530
+        - McShield
+        - McTaskManager
+        - mfefire
+        - mfemms
+        - mfevto
+        - mfevtp
+        - mfewc
+        - MMS
+        - mozyprobackup
+        - mpssvc
+        - MSComplianceAudit
+        - MSDTC
+        - MsDtsServer
+        - MSExchange
+        - msftesq1SPROO
+        - msftesql$PROD
+        - msftesql$SQLEXPRESS
+        - MSOLAP$SQL_2008
+        - MSOLAP$SYSTEM_BGC
+        - MSOLAP$TPS
+        - MSOLAP$TPSAMA
+        - MSOLAPSTPS
+        - MSOLAPSTPSAMA
+        - mssecflt
+        - MSSQ!I.SPROFXENGAGEMEHT
+        - MSSQ0SHAREPOINT
+        - MSSQ0SOPHOS
+        - MSSQL
+        - MSSQLFDLauncher$
+        - MySQL
+        - NanoServiceMain
+        - NetMsmqActivator
+        - NetPipeActivator
+        - netprofm
+        - NetTcpActivator
+        - NetTcpPortSharing
+        - ntrtscan
+        - nvspwmi
+        - ofcservice
+        - Online Protection System
+        - OracleClientCache80
+        - OracleDBConsole
+        - OracleMTSRecoveryService
+        - OracleOraDb11g_home1
+        - OracleService
+        - OracleVssWriter
+        - osppsvc
+        - PandaAetherAgent
+        - PccNTUpd
+        - PDVFSService
+        - POP3Svc
+        - postgresql-x64-9.4
+        - POVFSService
+        - PSUAService
+        - Quick Update Service
+        - RepairService
+        - ReportServer
+        - ReportServer$
+        - RESvc
+        - RpcEptMapper
+        - sacsvr
+        - SamSs
+        - SAVAdminService
+        - SAVService
+        - ScSecSvc
+        - SDRSVC
+        - SearchExchangeTracing
+        - sense
+        - SentinelAgent
+        - SentinelHelperService
+        - SepMasterService
+        - ShMonitor
+        - Smcinst
+        - SmcService
+        - SMTPSvc
+        - SNAC
+        - SntpService
+        - Sophos
+        - SQ1SafeOLRService
+        - SQL Backups
+        - SQL Server
+        - SQLAgent
+        - SQLANYs_Sage_FAS_Fixed_Assets
+        - SQLBrowser
+        - SQLsafe
+        - SQLSERVERAGENT
+        - SQLTELEMETRY
+        - SQLWriter
+        - SSISTELEMETRY130
+        - SstpSvc
+        - storflt
+        - svcGenericHost
+        - swc_service
+        - swi_filter
+        - swi_service
+        - swi_update
+        - Symantec
+        - sysmon
+        - TeamViewer
+        - Telemetryserver
+        - ThreatLockerService
+        - TMBMServer
+        - TmCCSF
+        - TmFilter
+        - TMiCRCScanService
+        - tmlisten
+        - TMLWCSService
+        - TmPfw
+        - TmPreFilter
+        - TmProxy
+        - TMSmartRelayService
+        - tmusa
+        - Tomcat
+        - Trend Micro Deep Security Manager
+        - TrueKey
+        - UFNet
+        - UI0Detect
+        - UniFi
+        - UTODetect
+        - vds
+        - Veeam
+        - VeeamDeploySvc
+        - Veritas System Recovery
+        - vmic
+        - VMTools
+        - vmvss
+        - VSApiNt
+        - VSS
+        - W3Svc
+        - wbengine
+        - WdNisSvc
+        - WeanClOudSve
+        - Weems JY
+        - WinDefend
+        - wmms
+        - wozyprobackup
+        - WPFFontCache_v0400
+        - WRSVC
+        - wsbexchange
+        - WSearch
+        - wscsvc
+        - Zoolz 2 Service
+      selection_tools_cli:
+      - CommandLine|contains:
+        - ' delete '
+        - .delete()
+        - ' pause '
+        - ' stop '
+        - 'Stop-Service '
+        - 'Remove-Service '
+      - CommandLine|contains|all:
+        - config
+        - start=disabled
+      selection_tools_img:
+      - OriginalFileName:
+        - net.exe
+        - net1.exe
+        - PowerShell_ISE.EXE
+        - PowerShell.EXE
+        - psservice.exe
+        - pwsh.dll
+        - sc.exe
+        - wmic.exe
+      - Image|endswith:
+        - \net.exe
+        - \net1.exe
+        - \PowerShell_ISE.EXE
+        - \powershell.exe
+        - \PsService.exe
+        - \PsService64.exe
+        - \pwsh.exe
+        - \sc.exe
+        - \wmic.exe
+      
+    # level: high
+    # tags: attack.defense-evasion, attack.impact, attack.t1489, attack.t1562.001
+    # authors: Nasreddine Bencherchali (Nextron Systems), frack113 , X__Junior (Nextron Systems)
+    # ref: https://www.trendmicro.com/content/dam/trendmicro/global/en/research/22/h/ransomware-actor-abuses-genshin-impact-anti-cheat-driver-to-kill-antivirus/Genshin%20Impact%20Figure%2010.jpg
+    # ref: https://www.trellix.com/en-sg/about/newsroom/stories/threat-labs/lockergoga-ransomware-family-used-in-targeted-attacks.html
+    # sigma_id: ce72ef99-22f1-43d4-8695-419dcb5d9330
+
+  # Source: proc_creation_win_bcdedit_boot_conf_tamper.yml
+  - name: Boot Configuration Tampering Via Bcdedit.EXE
+    description: >-
+      Detects the use of the bcdedit command to tamper with the boot configuration data. This technique is often times used by malware or attackers as a destructive way before launching ransomware.
+    artifact_type: evtx
+    # detection: (will be converted at runtime)
+    sigma_detection: |
+      condition: all of selection_*
+      selection_cli:
+      - CommandLine|contains|all:
+        - bootstatuspolicy
+        - ignoreallfailures
+      - CommandLine|contains|all:
+        - recoveryenabled
+        - 'no'
+      selection_img:
+      - Image|endswith: \bcdedit.exe
+      - OriginalFileName: bcdedit.exe
+      selection_set:
+        CommandLine|contains: set
+      
+    # level: high
+    # tags: attack.impact, attack.t1490
+    # authors: E.M. Anhaus (originally from Atomic Blue Detections, Endgame), oscd.community
+    # ref: https://github.com/redcanaryco/atomic-red-team/blob/f339e7da7d05f6057fdfcdd3742bfcf365fee2a9/atomics/T1490/T1490.md
+    # ref: https://eqllib.readthedocs.io/en/latest/analytics/c4732632-9c1d-4980-9fa8-1d98c93f918e.html
+    # sigma_id: 1444443e-6757-43e4-9ea4-c8fc705f79a2
+
+  # Source: proc_creation_win_reg_system_restore_modification.yml
+  - name: System Restore Registry Modification via CommandLine
+    description: >-
+      Detects system restore registry modification via command line, which can be used by adversaries to disable system restore on the computer.
+      
+    artifact_type: evtx
+    # detection: (will be converted at runtime)
+    sigma_detection: |
+      condition: all of selection_*
+      selection_cli_action:
+        CommandLine|contains:
+        - ' add '
+        - Set-ItemProperty
+        - New-ItemProperty
+      selection_cli_reg_key:
+        CommandLine|contains:
+        - DisableConfig
+        - DisableSR
+      selection_cli_reg_root:
+        CommandLine|contains:
+        - \SOFTWARE\Policies\Microsoft\Windows NT\SystemRestore
+        - \SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore
+      selection_img:
+      - Image|endswith:
+        - \powershell.exe
+        - \pwsh.exe
+        - \reg.exe
+      - OriginalFileName:
+        - powershell.exe
+        - pwsh.dll
+        - reg.exe
+      
+    # level: high
+    # tags: attack.impact, attack.t1490
+    # authors: Swachchhanda Shrawan Poudel (Nextron Systems)
+    # ref: https://github.com/redcanaryco/atomic-red-team/blob/f339e7da7d05f6057fdfcdd3742bfcf365fee2a9/atomics/T1490/T1490.md#atomic-test-9---disable-system-restore-through-registry
+    # sigma_id: 7c06ab9b-b1d2-4ba9-b06e-09491ded20d9
+
+  # Source: proc_creation_win_reg_bitlocker.yml
+  - name: Suspicious Reg Add BitLocker
+    description: >-
+      Detects suspicious addition to BitLocker related registry keys via the reg.exe utility
+    artifact_type: evtx
+    # detection: (will be converted at runtime)
+    sigma_detection: |
+      condition: selection
+      selection:
+        CommandLine|contains:
+        - EnableBDEWithNoTPM
+        - UseAdvancedStartup
+        - UseTPM
+        - UseTPMKey
+        - UseTPMKeyPIN
+        - RecoveryKeyMessageSource
+        - UseTPMPIN
+        - RecoveryKeyMessage
+        CommandLine|contains|all:
+        - REG
+        - ADD
+        - \SOFTWARE\Policies\Microsoft\FVE
+        - /v
+        - /f
+      
+    # level: high
+    # tags: attack.impact, attack.t1486
+    # authors: frack113
+    # ref: https://thedfirreport.com/2021/11/15/exchange-exploit-leads-to-domain-wide-ransomware/
+    # sigma_id: 0e0255bf-2548-47b8-9582-c0955c9283f5
+
+  # Source: proc_creation_win_wbadmin_delete_all_backups.yml
+  - name: All Backups Deleted Via Wbadmin.EXE
+    description: >-
+      Detects the deletion of all backups or system state backups via "wbadmin.exe".
+      This technique is used by numerous ransomware families and actors.
+      This may only be successful on server platforms that have Windows Backup enabled.
+      
+    artifact_type: evtx
+    # detection: (will be converted at runtime)
+    sigma_detection: |
+      condition: all of selection_*
+      selection_cli:
+        CommandLine|contains: keepVersions:0
+        CommandLine|contains|all:
+        - delete
+        - backup
+      selection_img:
+      - Image|endswith: \wbadmin.exe
+      - OriginalFileName: WBADMIN.EXE
+      
+    # level: high
+    # tags: attack.impact, attack.t1490
+    # authors: frack113, Nasreddine Bencherchali (Nextron Systems)
+    # ref: https://github.com/redcanaryco/atomic-red-team/blob/f339e7da7d05f6057fdfcdd3742bfcf365fee2a9/atomics/T1490/T1490.md#atomic-test-5---windows---delete-volume-shadow-copies-via-wmi-with-powershell
+    # ref: https://github.com/albertzsigovits/malware-notes/blob/558898932c1579ff589290092a2c8febefc3a4c9/Ransomware/Lockbit.md
+    # sigma_id: 639c9081-f482-47d3-a0bd-ddee3d4ecd76
+
+  # Source: proc_creation_win_susp_shadow_copies_deletion.yml
+  - name: Shadow Copies Deletion Using Operating Systems Utilities
+    description: >-
+      Shadow Copies deletion using operating systems utilities
+    artifact_type: evtx
+    # detection: (will be converted at runtime)
+    sigma_detection: |
+      condition: (all of selection1*) or (all of selection2*) or (all of selection3*)
+      selection1_cli:
+        CommandLine|contains|all:
+        - shadow
+        - delete
+      selection1_img:
+      - Image|endswith:
+        - \powershell.exe
+        - \pwsh.exe
+        - \wmic.exe
+        - \vssadmin.exe
+        - \diskshadow.exe
+      - OriginalFileName:
+        - PowerShell.EXE
+        - pwsh.dll
+        - wmic.exe
+        - VSSADMIN.EXE
+        - diskshadow.exe
+      selection2_cli:
+        CommandLine|contains|all:
+        - delete
+        - catalog
+        - quiet
+      selection2_img:
+      - Image|endswith: \wbadmin.exe
+      - OriginalFileName: WBADMIN.EXE
+      selection3_cli:
+        CommandLine|contains:
+        - unbounded
+        - /MaxSize=
+        CommandLine|contains|all:
+        - resize
+        - shadowstorage
+      selection3_img:
+      - Image|endswith: \vssadmin.exe
+      - OriginalFileName: VSSADMIN.EXE
+      
+    # level: high
+    # tags: attack.defense-evasion, attack.impact, attack.t1070, attack.t1490
+    # authors: Florian Roth (Nextron Systems), Michael Haag, Teymur Kheirkhabarov, Daniil Yugoslavskiy, oscd.community, Andreas Hunkeler (@Karneades)
+    # ref: https://www.slideshare.net/heirhabarov/hunting-for-credentials-dumping-in-windows-environment
+    # ref: https://blog.talosintelligence.com/2017/05/wannacry.html
+    # sigma_id: c947b146-0abc-4c87-9c64-b17e9d7274a2
+
+  # Source: proc_creation_win_renamed_sysinternals_sdelete.yml
+  - name: Renamed Sysinternals Sdelete Execution
+    description: >-
+      Detects the use of a renamed SysInternals Sdelete, which is something an administrator shouldn't do (the renaming)
+    artifact_type: evtx
+    # detection: (will be converted at runtime)
+    sigma_detection: |
+      condition: selection and not filter
+      filter:
+        Image|endswith:
+        - \sdelete.exe
+        - \sdelete64.exe
+      selection:
+        OriginalFileName: sdelete.exe
+      
+    # level: high
+    # tags: attack.impact, attack.t1485
+    # authors: Florian Roth (Nextron Systems)
+    # ref: https://learn.microsoft.com/en-us/sysinternals/downloads/sdelete
+    # ref: https://github.com/redcanaryco/atomic-red-team/blob/f339e7da7d05f6057fdfcdd3742bfcf365fee2a9/atomics/T1485/T1485.md
+    # sigma_id: c1d867fe-8d95-4487-aab4-e53f2d339f90
+
+  # Source: proc_creation_win_schtasks_disable.yml
+  - name: Disable Important Scheduled Task
+    description: >-
+      Detects when adversaries stop services or processes by disabling their respective scheduled tasks in order to conduct data destructive activities
+    artifact_type: evtx
+    # detection: (will be converted at runtime)
+    sigma_detection: |
+      condition: all of selection_*
+      selection_cli_disable:
+        CommandLine|contains|windash: /disable
+      selection_cli_task:
+        CommandLine|contains:
+        - \Windows\BitLocker
+        - \Windows\ExploitGuard
+        - \Windows\ExploitGuard\ExploitGuard MDM policy Refresh
+        - \Windows\SystemRestore\SR
+        - \Windows\UpdateOrchestrator\
+        - \Windows\Windows Defender\
+        - \Windows\WindowsBackup\
+        - \Windows\WindowsUpdate\
+      selection_img:
+      - Image|endswith: \schtasks.exe
+      - OriginalFileName: schtasks.exe
+      
+    # level: high
+    # tags: attack.impact, attack.t1489
+    # authors: frack113, Nasreddine Bencherchali (Nextron Systems), X__Junior
+    # ref: https://github.com/redcanaryco/atomic-red-team/blob/f339e7da7d05f6057fdfcdd3742bfcf365fee2a9/atomics/T1490/T1490.md#atomic-test-8---windows---disable-the-sr-scheduled-task
+    # ref: https://twitter.com/MichalKoczwara/status/1553634816016498688
+    # sigma_id: 9ac94dc8-9042-493c-ba45-3b5e7c86b980
+
+  # Source: proc_creation_win_cmd_shadowcopy_access.yml
+  - name: Copy From VolumeShadowCopy Via Cmd.EXE
+    description: >-
+      Detects the execution of the builtin "copy" command that targets a shadow copy (sometimes used to copy registry hives that are in use)
+    artifact_type: evtx
+    # detection: (will be converted at runtime)
+    sigma_detection: |
+      condition: selection
+      selection:
+        CommandLine|contains|all:
+        - 'copy '
+        - \\\\\?\\GLOBALROOT\\Device\\HarddiskVolumeShadowCopy
+      
+    # level: high
+    # tags: attack.impact, attack.t1490
+    # authors: Max Altgelt (Nextron Systems), Tobias Michalski (Nextron Systems)
+    # ref: https://twitter.com/vxunderground/status/1423336151860002816?s=20
+    # ref: https://www.virustotal.com/gui/file/03e9b8c2e86d6db450e5eceec057d7e369ee2389b9daecaf06331a95410aa5f8/detection
+    # sigma_id: c73124a7-3e89-44a3-bdc1-25fe4df754b1
+
+  # Source: proc_creation_win_schtasks_delete.yml
+  - name: Delete Important Scheduled Task
+    description: >-
+      Detects when adversaries stop services or processes by deleting their respective scheduled tasks in order to conduct data destructive activities
+    artifact_type: evtx
+    # detection: (will be converted at runtime)
+    sigma_detection: |
+      condition: all of selection_*
+      selection_cli_delete:
+        CommandLine|contains|windash: /delete
+      selection_cli_task:
+        CommandLine|contains:
+        - \Windows\BitLocker
+        - \Windows\ExploitGuard
+        - \Windows\SystemRestore\SR
+        - \Windows\UpdateOrchestrator\
+        - \Windows\Windows Defender\
+        - \Windows\WindowsBackup\
+        - \Windows\WindowsUpdate\
+      selection_img:
+      - Image|endswith: \schtasks.exe
+      - OriginalFileName: schtasks.exe
+      
+    # level: high
+    # tags: attack.impact, attack.t1489
+    # authors: Nasreddine Bencherchali (Nextron Systems)
+    # ref: Internal Research
+    # sigma_id: dbc1f800-0fe0-4bc0-9c66-292c2abe3f78
+
+  # Source: proc_creation_win_susp_sensitive_file_access_shadowcopy.yml
+  - name: Sensitive File Access Via Volume Shadow Copy Backup
+    description: >-
+      Detects a command that accesses the VolumeShadowCopy in order to extract sensitive files such as the Security or SAM registry hives or the AD database (ntds.dit)
+      
+    artifact_type: evtx
+    # detection: (will be converted at runtime)
+    sigma_detection: |
+      condition: all of selection_*
+      selection_1:
+        CommandLine|contains: \\\\\?\\GLOBALROOT\\Device\\HarddiskVolumeShadowCopy
+      selection_2:
+        CommandLine|contains:
+        - \\NTDS.dit
+        - \\SYSTEM
+        - \\SECURITY
+      
+    # level: high
+    # tags: attack.impact, attack.t1490
+    # authors: Max Altgelt (Nextron Systems), Tobias Michalski (Nextron Systems)
+    # ref: https://twitter.com/vxunderground/status/1423336151860002816?s=20
+    # ref: https://www.virustotal.com/gui/file/03e9b8c2e86d6db450e5eceec057d7e369ee2389b9daecaf06331a95410aa5f8/detection
+    # sigma_id: f57f8d16-1f39-4dcb-a604-6c73d9b54b3d
+
+  # Source: proc_creation_win_sysinternals_sdelete.yml
+  - name: Potential File Overwrite Via Sysinternals SDelete
+    description: >-
+      Detects the use of SDelete to erase a file not the free space
+    artifact_type: evtx
+    # detection: (will be converted at runtime)
+    sigma_detection: |
+      condition: selection and not filter
+      filter:
+        CommandLine|contains:
+        - ' -h'
+        - ' -c'
+        - ' -z'
+        - ' /\?'
+      selection:
+        OriginalFileName: sdelete.exe
+      
+    # level: high
+    # tags: attack.impact, attack.t1485
+    # authors: frack113
+    # ref: https://github.com/redcanaryco/atomic-red-team/blob/f339e7da7d05f6057fdfcdd3742bfcf365fee2a9/atomics/T1485/T1485.md
+    # sigma_id: a4824fca-976f-4964-b334-0621379e84c4
+
+  # Source: proc_creation_win_powershell_shadowcopy_deletion.yml
+  - name: Deletion of Volume Shadow Copies via WMI with PowerShell
+    description: >-
+      Detects deletion of Windows Volume Shadow Copies with PowerShell code and Get-WMIObject. This technique is used by numerous ransomware families such as Sodinokibi/REvil
+    artifact_type: evtx
+    # detection: (will be converted at runtime)
+    sigma_detection: |
+      condition: all of selection*
+      selection_delete:
+        CommandLine|contains:
+        - .Delete()
+        - Remove-WmiObject
+        - rwmi
+        - Remove-CimInstance
+        - rcim
+      selection_get:
+        CommandLine|contains:
+        - Get-WmiObject
+        - gwmi
+        - Get-CimInstance
+        - gcim
+      selection_shadowcopy:
+        CommandLine|contains: Win32_ShadowCopy
+      
+    # level: high
+    # tags: attack.impact, attack.t1490
+    # authors: Tim Rauch, Elastic (idea)
+    # ref: https://github.com/redcanaryco/atomic-red-team/blob/f339e7da7d05f6057fdfcdd3742bfcf365fee2a9/atomics/T1490/T1490.md#atomic-test-5---windows---delete-volume-shadow-copies-via-wmi-with-powershell
+    # ref: https://www.elastic.co/guide/en/security/current/volume-shadow-copy-deletion-via-powershell.html
+    # sigma_id: 21ff4ca9-f13a-41ad-b828-0077b2af2e40
+
+  # Source: proc_creation_win_fsutil_usage.yml
+  - name: Fsutil Suspicious Invocation
+    description: >-
+      Detects suspicious parameters of fsutil (deleting USN journal, configuring it with small size, etc).
+      Might be used by ransomwares during the attack (seen by NotPetya and others).
+      
+    artifact_type: evtx
+    # detection: (will be converted at runtime)
+    sigma_detection: |
+      condition: all of selection_*
+      selection_cli:
+        CommandLine|contains:
+        - deletejournal
+        - createjournal
+        - setZeroData
+      selection_img:
+      - Image|endswith: \fsutil.exe
+      - OriginalFileName: fsutil.exe
+      
+    # level: high
+    # tags: attack.defense-evasion, attack.impact, attack.t1070, attack.t1485
+    # authors: Ecco, E.M. Anhaus, oscd.community
+    # ref: https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/fsutil-usn
+    # ref: https://github.com/redcanaryco/atomic-red-team/blob/f339e7da7d05f6057fdfcdd3742bfcf365fee2a9/atomics/T1070/T1070.md
+    # sigma_id: add64136-62e5-48ea-807e-88638d02df1e
+
+  # Source: proc_creation_win_renamed_gpg4win.yml
+  - name: Renamed Gpg.EXE Execution
+    description: >-
+      Detects the execution of a renamed "gpg.exe". Often used by ransomware and loaders to decrypt/encrypt data.
+    artifact_type: evtx
+    # detection: (will be converted at runtime)
+    sigma_detection: |
+      condition: selection and not 1 of filter_main_*
+      filter_main_img:
+        Image|endswith:
+        - \gpg.exe
+        - \gpg2.exe
+      selection:
+        OriginalFileName: gpg.exe
+      
+    # level: high
+    # tags: attack.impact, attack.t1486
+    # authors: Nasreddine Bencherchali (Nextron Systems), frack113
+    # ref: https://securelist.com/locked-out/68960/
+    # sigma_id: ec0722a3-eb5c-4a56-8ab2-bf6f20708592
+
+  # Source: proc_creation_win_schtasks_delete_all.yml
+  - name: Delete All Scheduled Tasks
+    description: >-
+      Detects the usage of schtasks with the delete flag and the asterisk symbol to delete all tasks from the schedule of the local computer, including tasks scheduled by other users.
+    artifact_type: evtx
+    # detection: (will be converted at runtime)
+    sigma_detection: |
+      condition: selection
+      selection:
+        CommandLine|contains|all:
+        - ' /delete '
+        - /tn \*
+        - ' /f'
+        Image|endswith: \schtasks.exe
+      
+    # level: high
+    # tags: attack.impact, attack.t1489
+    # authors: Nasreddine Bencherchali (Nextron Systems)
+    # ref: https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/schtasks-delete
+    # sigma_id: 220457c1-1c9f-4c2e-afe6-9598926222c1
+
+  # Source: proc_creation_win_susp_crypto_mining_monero.yml
+  - name: Potential Crypto Mining Activity
+    description: >-
+      Detects command line parameters or strings often used by crypto miners
+    artifact_type: evtx
+    # detection: (will be converted at runtime)
+    sigma_detection: |
+      condition: selection and not filter
+      filter:
+        CommandLine|contains:
+        - ' pool.c '
+        - ' pool.o '
+        - gcc -
+      selection:
+        CommandLine|contains:
+        - ' --cpu-priority='
+        - --donate-level=0
+        - ' -o pool.'
+        - ' --nicehash'
+        - ' --algo=rx/0 '
+        - stratum+tcp://
+        - stratum+udp://
+        - LS1kb25hdGUtbGV2ZWw9
+        - 0tZG9uYXRlLWxldmVsP
+        - tLWRvbmF0ZS1sZXZlbD
+        - c3RyYXR1bSt0Y3A6Ly
+        - N0cmF0dW0rdGNwOi8v
+        - zdHJhdHVtK3RjcDovL
+        - c3RyYXR1bSt1ZHA6Ly
+        - N0cmF0dW0rdWRwOi8v
+        - zdHJhdHVtK3VkcDovL
+      
+    # level: high
+    # tags: attack.impact, attack.t1496
+    # authors: Florian Roth (Nextron Systems)
+    # ref: https://www.poolwatch.io/coin/monero
+    # sigma_id: 66c3b204-9f88-4d0a-a7f7-8a57d521ca55
+
+  # Source: net_connection_win_domain_crypto_mining_pools.yml
+  - name: Network Communication With Crypto Mining Pool
+    description: >-
+      Detects initiated network connections to crypto mining pools
+    artifact_type: evtx
+    # detection: (will be converted at runtime)
+    sigma_detection: |
+      condition: selection
+      selection:
+        DestinationHostname:
+        - alimabi.cn
+        - ap.luckpool.net
+        - bcn.pool.minergate.com
+        - bcn.vip.pool.minergate.com
+        - bohemianpool.com
+        - ca-aipg.miningocean.org
+        - ca-dynex.miningocean.org
+        - ca-neurai.miningocean.org
+        - ca-qrl.miningocean.org
+        - ca-upx.miningocean.org
+        - ca-zephyr.miningocean.org
+        - ca.minexmr.com
+        - ca.monero.herominers.com
+        - cbd.monerpool.org
+        - cbdv2.monerpool.org
+        - cryptmonero.com
+        - crypto-pool.fr
+        - crypto-pool.info
+        - cryptonight-hub.miningpoolhub.com
+        - d1pool.ddns.net
+        - d5pool.us
+        - daili01.monerpool.org
+        - de-aipg.miningocean.org
+        - de-dynex.miningocean.org
+        - de-zephyr.miningocean.org
+        - de.minexmr.com
+        - dl.nbminer.com
+        - donate.graef.in
+        - donate.ssl.xmrig.com
+        - donate.v2.xmrig.com
+        - donate.xmrig.com
+        - donate2.graef.in
+        - drill.moneroworld.com
+        - dwarfpool.com
+        - emercoin.com
+        - emercoin.net
+        - emergate.net
+        - ethereumpool.co
+        - eu.luckpool.net
+        - eu.minerpool.pw
+        - fcn-xmr.pool.minergate.com
+        - fee.xmrig.com
+        - fr-aipg.miningocean.org
+        - fr-dynex.miningocean.org
+        - fr-neurai.miningocean.org
+        - fr-qrl.miningocean.org
+        - fr-upx.miningocean.org
+        - fr-zephyr.miningocean.org
+        - fr.minexmr.com
+        - hellominer.com
+        - herominers.com
+        - hk-aipg.miningocean.org
+        - hk-dynex.miningocean.org
+        - hk-neurai.miningocean.org
+        - hk-qrl.miningocean.org
+        - hk-upx.miningocean.org
+        - hk-zephyr.miningocean.org
+        - huadong1-aeon.ppxxmr.com
+        - iwanttoearn.money
+        - jw-js1.ppxxmr.com
+        - koto-pool.work
+        - lhr.nbminer.com
+        - lhr3.nbminer.com
+        - linux.monerpool.org
+        - lokiturtle.herominers.com
+        - luckpool.net
+        - masari.miner.rocks
+        - mine.c3pool.com
+        - mine.moneropool.com
+        - mine.ppxxmr.com
+        - mine.zpool.ca
+        - mine1.ppxxmr.com
+        - minemonero.gq
+        - miner.ppxxmr.com
+        - miner.rocks
+        - minercircle.com
+        - minergate.com
+        - minerpool.pw
+        - minerrocks.com
+        - miners.pro
+        - minerxmr.ru
+        - minexmr.cn
+        - minexmr.com
+        - mining-help.ru
+        - miningpoolhub.com
+        - mixpools.org
+        - moner.monerpool.org
+        - moner1min.monerpool.org
+        - monero-master.crypto-pool.fr
+        - monero.crypto-pool.fr
+        - monero.hashvault.pro
+        - monero.herominers.com
+        - monero.lindon-pool.win
+        - monero.miners.pro
+        - monero.riefly.id
+        - monero.us.to
+        - monerocean.stream
+        - monerogb.com
+        - monerohash.com
+        - moneroocean.stream
+        - moneropool.com
+        - moneropool.nl
+        - monerorx.com
+        - monerpool.org
+        - moriaxmr.com
+        - mro.pool.minergate.com
+        - multipool.us
+        - myxmr.pw
+        - na.luckpool.net
+        - nanopool.org
+        - nbminer.com
+        - node3.luckpool.net
+        - noobxmr.com
+        - pangolinminer.comgandalph3000.com
+        - pool.4i7i.com
+        - pool.armornetwork.org
+        - pool.cortins.tk
+        - pool.gntl.co.uk
+        - pool.hashvault.pro
+        - pool.minergate.com
+        - pool.minexmr.com
+        - pool.monero.hashvault.pro
+        - pool.ppxxmr.com
+        - pool.somec.cc
+        - pool.support
+        - pool.supportxmr.com
+        - pool.usa-138.com
+        - pool.xmr.pt
+        - pool.xmrfast.com
+        - pool2.armornetwork.org
+        - poolchange.ppxxmr.com
+        - pooldd.com
+        - poolmining.org
+        - poolto.be
+        - ppxvip1.ppxxmr.com
+        - ppxxmr.com
+        - prohash.net
+        - r.twotouchauthentication.online
+        - randomx.xmrig.com
+        - ratchetmining.com
+        - seed.emercoin.com
+        - seed.emercoin.net
+        - seed.emergate.net
+        - seed1.joulecoin.org
+        - seed2.joulecoin.org
+        - seed3.joulecoin.org
+        - seed4.joulecoin.org
+        - seed5.joulecoin.org
+        - seed6.joulecoin.org
+        - seed7.joulecoin.org
+        - seed8.joulecoin.org
+        - sg-aipg.miningocean.org
+        - sg-dynex.miningocean.org
+        - sg-neurai.miningocean.org
+        - sg-qrl.miningocean.org
+        - sg-upx.miningocean.org
+        - sg-zephyr.miningocean.org
+        - sg.minexmr.com
+        - sheepman.mine.bz
+        - siamining.com
+        - sumokoin.minerrocks.com
+        - supportxmr.com
+        - suprnova.cc
+        - teracycle.net
+        - trtl.cnpool.cc
+        - trtl.pool.mine2gether.com
+        - turtle.miner.rocks
+        - us-aipg.miningocean.org
+        - us-dynex.miningocean.org
+        - us-neurai.miningocean.org
+        - us-west.minexmr.com
+        - us-zephyr.miningocean.org
+        - usxmrpool.com
+        - viaxmr.com
+        - webservicepag.webhop.net
+        - xiazai.monerpool.org
+        - xiazai1.monerpool.org
+        - xmc.pool.minergate.com
+        - xmo.pool.minergate.com
+        - xmr-asia1.nanopool.org
+        - xmr-au1.nanopool.org
+        - xmr-eu1.nanopool.org
+        - xmr-eu2.nanopool.org
+        - xmr-jp1.nanopool.org
+        - xmr-us-east1.nanopool.org
+        - xmr-us-west1.nanopool.org
+        - xmr-us.suprnova.cc
+        - xmr-usa.dwarfpool.com
+        - xmr.2miners.com
+        - xmr.5b6b7b.ru
+        - xmr.alimabi.cn
+        - xmr.bohemianpool.com
+        - xmr.crypto-pool.fr
+        - xmr.crypto-pool.info
+        - xmr.f2pool.com
+        - xmr.hashcity.org
+        - xmr.hex7e4.ru
+        - xmr.ip28.net
+        - xmr.monerpool.org
+        - xmr.mypool.online
+        - xmr.nanopool.org
+        - xmr.pool.gntl.co.uk
+        - xmr.pool.minergate.com
+        - xmr.poolto.be
+        - xmr.ppxxmr.com
+        - xmr.prohash.net
+        - xmr.simka.pw
+        - xmr.somec.cc
+        - xmr.suprnova.cc
+        - xmr.usa-138.com
+        - xmr.vip.pool.minergate.com
+        - xmr1min.monerpool.org
+        - xmrf.520fjh.org
+        - xmrf.fjhan.club
+        - xmrfast.com
+        - xmrigcc.graef.in
+        - xmrminer.cc
+        - xmrpool.de
+        - xmrpool.eu
+        - xmrpool.me
+        - xmrpool.net
+        - xmrpool.xyz
+        - xx11m.monerpool.org
+        - xx11mv2.monerpool.org
+        - xxx.hex7e4.ru
+        - zarabotaibitok.ru
+        - zer0day.ru
+      
+    # level: high
+    # tags: attack.impact, attack.t1496
+    # authors: Florian Roth (Nextron Systems), Nasreddine Bencherchali (Nextron Systems)
+    # ref: https://www.poolwatch.io/coin/monero
+    # ref: https://github.com/stamparm/maltrail/blob/3ea70459b9559134449423c0a7d8b965ac5c40ea/trails/static/suspicious/crypto_mining.txt
+    # sigma_id: fa5b1358-b040-4403-9868-15f7d9ab6329
+
+  # Source: win_taskscheduler_susp_schtasks_delete_or_disable.yml
+  - name: Important Scheduled Task Deleted or Disabled
+    description: >-
+      Detects when adversaries try to stop system services or processes by deleting or disabling their respective scheduled tasks in order to conduct data destructive activities
+      
+    artifact_type: evtx
+    # detection: (will be converted at runtime)
+    sigma_detection: |
+      condition: selection and not 1 of filter_main_*
+      filter_main_user:
+        UserName|contains:
+        - AUTHORI
+        - AUTORI
+      selection:
+        EventID:
+        - 141
+        - 142
+        TaskName|contains:
+        - \Windows\SystemRestore\SR
+        - \Windows\Windows Defender\
+        - \Windows\BitLocker
+        - \Windows\WindowsBackup\
+        - \Windows\WindowsUpdate\
+        - \Windows\UpdateOrchestrator\
+        - \Windows\ExploitGuard
+      
+    # level: high
+    # tags: attack.impact, attack.t1489
+    # authors: frack113
+    # ref: https://www.socinvestigation.com/most-common-windows-event-ids-to-hunt-mind-map/
+    # sigma_id: 9e3cb244-bdb8-4632-8c90-6079c8f4f16d
+
+  # Source: win_system_ntfs_vuln_exploit.yml
+  - name: NTFS Vulnerability Exploitation
+    description: >-
+      This the exploitation of a NTFS vulnerability as reported without many details via Twitter
+    artifact_type: evtx
+    # detection: (will be converted at runtime)
+    sigma_detection: |
+      condition: selection
+      selection:
+        Description|contains|all:
+        - contains a corrupted file record
+        - The name of the file is "\"
+        EventID: 55
+        Origin: File System Driver
+        Provider_Name: Ntfs
+      
+    # level: high
+    # tags: attack.impact, attack.t1499.001
+    # authors: Florian Roth (Nextron Systems)
+    # ref: https://twitter.com/jonasLyk/status/1347900440000811010
+    # ref: https://twitter.com/wdormann/status/1347958161609809921
+    # sigma_id: f14719ce-d3ab-4e25-9ce6-2899092260b0
+
+  # Source: registry_set_legalnotice_susp_message.yml
+  - name: Potential Ransomware Activity Using LegalNotice Message
+    description: >-
+      Detect changes to the "LegalNoticeCaption" or "LegalNoticeText" registry values where the message set contains keywords often used in ransomware ransom messages
+    artifact_type: evtx
+    # detection: (will be converted at runtime)
+    sigma_detection: |
+      condition: selection
+      selection:
+        Details|contains:
+        - encrypted
+        - Unlock-Password
+        - paying
+        TargetObject|contains:
+        - \SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\LegalNoticeCaption
+        - \SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\LegalNoticeText
+      
+    # level: high
+    # tags: attack.impact, attack.t1491.001
+    # authors: frack113
+    # ref: https://github.com/redcanaryco/atomic-red-team/blob/5c1e6f1b4fafd01c8d1ece85f510160fc1275fbf/atomics/T1491.001/T1491.001.md
+    # sigma_id: 8b9606c9-28be-4a38-b146-0e313cc232c1
+
+  # Source: registry_set_disable_system_restore.yml
+  - name: Registry Disable System Restore
+    description: >-
+      Detects the modification of the registry to disable a system restore on the computer
+    artifact_type: evtx
+    # detection: (will be converted at runtime)
+    sigma_detection: |
+      condition: selection
+      selection:
+        Details: DWORD (0x00000001)
+        TargetObject|contains:
+        - \Policies\Microsoft\Windows NT\SystemRestore
+        - \Microsoft\Windows NT\CurrentVersion\SystemRestore
+        TargetObject|endswith:
+        - DisableConfig
+        - DisableSR
+      
+    # level: high
+    # tags: attack.impact, attack.t1490
+    # authors: frack113
+    # ref: https://github.com/redcanaryco/atomic-red-team/blob/f339e7da7d05f6057fdfcdd3742bfcf365fee2a9/atomics/T1490/T1490.md#atomic-test-9---disable-system-restore-through-registry
+    # sigma_id: 5de03871-5d46-4539-a82d-3aa992a69a83
+
+  # Source: posh_pc_delete_volume_shadow_copies.yml
+  - name: Delete Volume Shadow Copies Via WMI With PowerShell
+    description: >-
+      Shadow Copies deletion using operating systems utilities via PowerShell
+    artifact_type: evtx
+    # detection: (will be converted at runtime)
+    sigma_detection: |
+      condition: selection
+      selection:
+        Data|contains:
+        - Delete()
+        - Remove-WmiObject
+        Data|contains|all:
+        - Get-WmiObject
+        - Win32_ShadowCopy
+      
+    # level: high
+    # tags: attack.impact, attack.t1490
+    # authors: frack113
+    # ref: https://github.com/redcanaryco/atomic-red-team/blob/f339e7da7d05f6057fdfcdd3742bfcf365fee2a9/atomics/T1490/T1490.md
+    # ref: https://www.fortinet.com/blog/threat-research/stomping-shadow-copies-a-second-look-into-deletion-methods
+    # sigma_id: 87df9ee1-5416-453a-8a08-e8d4a51e9ce1
+
+  # Source: posh_ps_add_dnsclient_rule.yml
+  - name: Powershell Add Name Resolution Policy Table Rule
+    description: >-
+      Detects powershell scripts that adds a Name Resolution Policy Table (NRPT) rule for the specified namespace.
+      This will bypass the default DNS server and uses a specified server for answering the query.
+      
+    artifact_type: evtx
+    # detection: (will be converted at runtime)
+    sigma_detection: |
+      condition: selection
+      selection:
+        ScriptBlockText|contains|all:
+        - Add-DnsClientNrptRule
+        - -Namesp
+        - -NameSe
+      
+    # level: high
+    # tags: attack.impact, attack.t1565
+    # authors: Borna Talebi
+    # ref: https://twitter.com/NathanMcNulty/status/1569497348841287681
+    # ref: https://learn.microsoft.com/en-us/powershell/module/dnsclient/add-dnsclientnrptrule?view=windowsserver2022-ps
+    # sigma_id: 4368354e-1797-463c-bc39-a309effbe8d7
+
+  # Source: posh_ps_susp_win32_shadowcopy_deletion.yml
+  - name: Deletion of Volume Shadow Copies via WMI with PowerShell - PS Script
+    description: >-
+      Detects deletion of Windows Volume Shadow Copies with PowerShell code and Get-WMIObject. This technique is used by numerous ransomware families such as Sodinokibi/REvil
+    artifact_type: evtx
+    # detection: (will be converted at runtime)
+    sigma_detection: |
+      condition: all of selection*
+      selection_delete:
+        ScriptBlockText|contains:
+        - .Delete()
+        - Remove-WmiObject
+        - rwmi
+        - Remove-CimInstance
+        - rcim
+      selection_get:
+        ScriptBlockText|contains:
+        - Get-WmiObject
+        - gwmi
+        - Get-CimInstance
+        - gcim
+      selection_shadowcopy:
+        ScriptBlockText|contains: Win32_ShadowCopy
+      
+    # level: high
+    # tags: attack.impact, attack.t1490
+    # authors: Tim Rauch, frack113
+    # ref: https://github.com/redcanaryco/atomic-red-team/blob/f339e7da7d05f6057fdfcdd3742bfcf365fee2a9/atomics/T1490/T1490.md#atomic-test-5---windows---delete-volume-shadow-copies-via-wmi-with-powershell
+    # ref: https://www.elastic.co/guide/en/security/current/volume-shadow-copy-deletion-via-powershell.html
+    # sigma_id: c1337eb8-921a-4b59-855b-4ba188ddcc42
+
+  # Source: opencanary_ntp_monlist.yml
+  - name: OpenCanary - NTP Monlist Request
+    description: >-
+      Detects instances where an NTP service on an OpenCanary node has had a NTP monlist request.
+    # detection: (will be converted at runtime)
+    sigma_detection: |
+      condition: selection
+      selection:
+        logtype: 11001
+      
+    # level: high
+    # tags: attack.impact, attack.t1498
+    # authors: Security Onion Solutions
+    # ref: https://opencanary.readthedocs.io/en/latest/starting/configuration.html#services-configuration
+    # ref: https://github.com/thinkst/opencanary/blob/a0896adfcaf0328cfd5829fe10d2878c7445138e/opencanary/logger.py#L52
+    # sigma_id: 7cded4b3-f09e-405a-b96f-24248433ba44
+
+  # Source: aws_kms_import_key_material.yml
+  - name: AWS KMS Imported Key Material Usage
+    description: >-
+      Detects the import or deletion of key material in AWS KMS, which can be used as part of ransomware attacks. This activity is uncommon and provides a high certainty signal.
+      
+    # detection: (will be converted at runtime)
+    sigma_detection: |
+      condition: selection
+      selection:
+        eventName:
+        - ImportKeyMaterial
+        - DeleteImportedKeyMaterial
+        eventSource: kms.amazonaws.com
+      
+    # level: high
+    # tags: attack.impact, attack.t1486, attack.resource-development, attack.t1608.003
+    # authors: toopricey
+    # ref: https://www.chrisfarris.com/post/effective-aws-ransomware/
+    # ref: https://docs.aws.amazon.com/kms/latest/developerguide/ct-importkeymaterial.html
+    # sigma_id: 1279262f-1464-422f-ac0d-5b545320c526
+
+  # Source: proc_creation_lnx_susp_history_delete.yml
+  - name: History File Deletion
+    description: >-
+      Detects events in which a history file gets deleted, e.g. the ~/bash_history to remove traces of malicious activity
+    artifact_type: syslog
+    # detection: (will be converted at runtime)
+    sigma_detection: |
+      condition: all of selection*
+      selection:
+        Image|endswith:
+        - /rm
+        - /unlink
+        - /shred
+      selection_history:
+      - CommandLine|contains:
+        - /.bash_history
+        - /.zsh_history
+      - CommandLine|endswith:
+        - _history
+        - .history
+        - zhistory
+      
+    # level: high
+    # tags: attack.impact, attack.t1565.001
+    # authors: Florian Roth (Nextron Systems)
+    # ref: https://github.com/sleventyeleven/linuxprivchecker/
+    # ref: https://github.com/redcanaryco/atomic-red-team/blob/f339e7da7d05f6057fdfcdd3742bfcf365fee2a9/atomics/T1552.003/T1552.003.md
+    # sigma_id: 1182f3b3-e716-4efa-99ab-d2685d04360f
+
+  # Source: proc_creation_lnx_crypto_mining.yml
+  - name: Linux Crypto Mining Indicators
+    description: >-
+      Detects command line parameters or strings often used by crypto miners
+    artifact_type: syslog
+    # detection: (will be converted at runtime)
+    sigma_detection: |
+      condition: selection
+      selection:
+        CommandLine|contains:
+        - ' --cpu-priority='
+        - --donate-level=0
+        - ' -o pool.'
+        - ' --nicehash'
+        - ' --algo=rx/0 '
+        - stratum+tcp://
+        - stratum+udp://
+        - sh -c /sbin/modprobe msr allow_writes=on
+        - LS1kb25hdGUtbGV2ZWw9
+        - 0tZG9uYXRlLWxldmVsP
+        - tLWRvbmF0ZS1sZXZlbD
+        - c3RyYXR1bSt0Y3A6Ly
+        - N0cmF0dW0rdGNwOi8v
+        - zdHJhdHVtK3RjcDovL
+        - c3RyYXR1bSt1ZHA6Ly
+        - N0cmF0dW0rdWRwOi8v
+        - zdHJhdHVtK3VkcDovL
+      
+    # level: high
+    # tags: attack.impact, attack.t1496
+    # authors: Florian Roth (Nextron Systems)
+    # ref: https://www.poolwatch.io/coin/monero
+    # sigma_id: 9069ea3c-b213-4c52-be13-86506a227ab1
+
+  # Source: lnx_clear_syslog.yml
+  - name: Commands to Clear or Remove the Syslog - Builtin
+    description: >-
+      Detects specific commands commonly used to remove or empty the syslog
+    artifact_type: syslog
+    # detection: (will be converted at runtime)
+    sigma_detection: |
+      condition: selection and not falsepositives
+      falsepositives:
+      - /syslog.
+      selection:
+      - rm /var/log/syslog
+      - rm -r /var/log/syslog
+      - rm -f /var/log/syslog
+      - rm -rf /var/log/syslog
+      - mv /var/log/syslog
+      - ' >/var/log/syslog'
+      - ' > /var/log/syslog'
+      
+    # level: high
+    # tags: attack.impact, attack.t1565.001
+    # authors: Max Altgelt (Nextron Systems)
+    # ref: https://www.virustotal.com/gui/file/fc614fb4bda24ae8ca2c44e812d12c0fab6dd7a097472a35dd12ded053ab8474
+    # sigma_id: e09eb557-96d2-4de9-ba2d-30f712a5afd3
+
+  # Source: net_connection_lnx_crypto_mining_indicators.yml
+  - name: Linux Crypto Mining Pool Connections
+    description: >-
+      Detects process connections to a Monero crypto mining pool
+    artifact_type: syslog
+    # detection: (will be converted at runtime)
+    sigma_detection: |
+      condition: selection
+      selection:
+        DestinationHostname:
+        - pool.minexmr.com
+        - fr.minexmr.com
+        - de.minexmr.com
+        - sg.minexmr.com
+        - ca.minexmr.com
+        - us-west.minexmr.com
+        - pool.supportxmr.com
+        - mine.c3pool.com
+        - xmr-eu1.nanopool.org
+        - xmr-eu2.nanopool.org
+        - xmr-us-east1.nanopool.org
+        - xmr-us-west1.nanopool.org
+        - xmr-asia1.nanopool.org
+        - xmr-jp1.nanopool.org
+        - xmr-au1.nanopool.org
+        - xmr.2miners.com
+        - xmr.hashcity.org
+        - xmr.f2pool.com
+        - xmrpool.eu
+        - pool.hashvault.pro
+        - moneroocean.stream
+        - monerocean.stream
+      
+    # level: high
+    # tags: attack.impact, attack.t1496
+    # authors: Florian Roth (Nextron Systems)
+    # ref: https://www.poolwatch.io/coin/monero
+    # sigma_id: a46c93b7-55ed-4d27-a41b-c259456c4746
+
+  # Source: net_dns_pua_cryptocoin_mining_xmr.yml
+  - name: Monero Crypto Coin Mining Pool Lookup
+    description: >-
+      Detects suspicious DNS queries to Monero mining pools
+    artifact_type: suricata
+    # detection: (will be converted at runtime)
+    sigma_detection: |
+      condition: selection
+      selection:
+        query|contains:
+        - pool.minexmr.com
+        - fr.minexmr.com
+        - de.minexmr.com
+        - sg.minexmr.com
+        - ca.minexmr.com
+        - us-west.minexmr.com
+        - pool.supportxmr.com
+        - mine.c3pool.com
+        - xmr-eu1.nanopool.org
+        - xmr-eu2.nanopool.org
+        - xmr-us-east1.nanopool.org
+        - xmr-us-west1.nanopool.org
+        - xmr-asia1.nanopool.org
+        - xmr-jp1.nanopool.org
+        - xmr-au1.nanopool.org
+        - xmr.2miners.com
+        - xmr.hashcity.org
+        - xmr.f2pool.com
+        - xmrpool.eu
+        - pool.hashvault.pro
+      
+    # level: high
+    # tags: attack.impact, attack.t1496, attack.exfiltration, attack.t1567
+    # authors: Florian Roth (Nextron Systems)
+    # ref: https://www.nextron-systems.com/2021/10/24/monero-mining-pool-fqdns/
+    # sigma_id: b593fd50-7335-4682-a36c-4edcb68e4641
+
+  # Source: web_nginx_core_dump.yml
+  - name: Nginx Core Dump
+    description: >-
+      Detects a core dump of a crashing Nginx worker process, which could be a signal of a serious problem or exploitation attempts.
+    # detection: (will be converted at runtime)
+    sigma_detection: |
+      condition: keywords
+      keywords:
+      - exited on signal 6 (core dumped)
+      
+    # level: high
+    # tags: attack.impact, attack.t1499.004
+    # authors: Florian Roth (Nextron Systems)
+    # ref: https://docs.nginx.com/nginx/admin-guide/monitoring/debugging/#enabling-core-dumps
+    # ref: https://www.x41-dsec.de/lab/advisories/x41-2021-002-nginx-resolver-copy/
+    # sigma_id: 59ec40bb-322e-40ab-808d-84fa690d7e56
+
+  # Source: web_apache_segfault.yml
+  - name: Apache Segmentation Fault
+    description: >-
+      Detects a segmentation fault error message caused by a crashing apache worker process
+    # detection: (will be converted at runtime)
+    sigma_detection: |
+      condition: keywords
+      keywords:
+      - exit signal Segmentation Fault
+      
+    # level: high
+    # tags: attack.impact, attack.t1499.004
+    # authors: Florian Roth (Nextron Systems)
+    # ref: http://www.securityfocus.com/infocus/1633
+    # sigma_id: 1da8ce0b-855d-4004-8860-7d64d42063b1
+
+  # Source: av_ransomware.yml
+  - name: Antivirus Ransomware Detection
+    description: >-
+      Detects a highly relevant Antivirus alert that reports ransomware.
+      This event must not be ignored just because the AV has blocked the malware but investigate, how it came there in the first place.
+      
+    # detection: (will be converted at runtime)
+    sigma_detection: |
+      condition: selection
+      selection:
+        Signature|contains:
+        - BlackWorm
+        - Chaos
+        - Cobra
+        - ContiCrypt
+        - Crypter
+        - CRYPTES
+        - Cryptor
+        - CylanCrypt
+        - DelShad
+        - Destructor
+        - Filecoder
+        - GandCrab
+        - GrandCrab
+        - Haperlock
+        - Hiddentear
+        - HydraCrypt
+        - Krypt
+        - Lockbit
+        - Locker
+        - Mallox
+        - Phobos
+        - Ransom
+        - Ryuk
+        - Ryzerlo
+        - Stopcrypt
+        - Tescrypt
+        - TeslaCrypt
+        - WannaCry
+        - Xorist
+      
+    # level: critical
+    # tags: attack.t1486, attack.impact
+    # authors: Florian Roth (Nextron Systems), Arnim Rupp
+    # ref: https://www.nextron-systems.com/?s=antivirus
+    # ref: https://www.virustotal.com/gui/file/43b0f7872900bd234975a0877744554f4f355dc57505517abd1ef611e1ce6916
+    # sigma_id: 4c6ca276-d4d0-4a8c-9e4c-d69832f8671f
+

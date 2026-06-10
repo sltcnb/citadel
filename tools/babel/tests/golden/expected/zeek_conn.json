@@ -1,0 +1,66 @@
+[
+  {
+    "artifact_type": "zeek",
+    "host": {
+      "hostname": "10.0.0.5"
+    },
+    "message": "[CONN] tcp 10.0.0.5 → 93.184.216.34:443  state=SF  dur=1.250000s",
+    "network": {
+      "dst_ip": "93.184.216.34",
+      "dst_port": "443",
+      "protocol": "tcp",
+      "src_ip": "10.0.0.5",
+      "src_port": "51000",
+      "uid": "CXY1"
+    },
+    "raw": {
+      "line": "1694781296.123456\tCXY1\t10.0.0.5\t51000\t93.184.216.34\t443\ttcp\t1.250000\tSF"
+    },
+    "timestamp": "2023-09-15T12:34:56.123456Z",
+    "timestamp_desc": "Event Time",
+    "zeek": {
+      "conn_state": "SF",
+      "duration": "1.250000",
+      "id.orig_h": "10.0.0.5",
+      "id.orig_p": "51000",
+      "id.resp_h": "93.184.216.34",
+      "id.resp_p": "443",
+      "log_type": "conn",
+      "proto": "tcp",
+      "ts": "1694781296.123456",
+      "uid": "CXY1"
+    }
+  },
+  {
+    "artifact_type": "zeek",
+    "host": {
+      "hostname": "10.0.0.5"
+    },
+    "message": "[CONN] udp 10.0.0.5 → 8.8.8.8:53  state=S0  dur=0.010000s",
+    "network": {
+      "dst_ip": "8.8.8.8",
+      "dst_port": "53",
+      "protocol": "udp",
+      "src_ip": "10.0.0.5",
+      "src_port": "51002",
+      "uid": "CXY2"
+    },
+    "raw": {
+      "line": "1694781300.500000\tCXY2\t10.0.0.5\t51002\t8.8.8.8\t53\tudp\t0.010000\tS0"
+    },
+    "timestamp": "2023-09-15T12:35:00.500000Z",
+    "timestamp_desc": "Event Time",
+    "zeek": {
+      "conn_state": "S0",
+      "duration": "0.010000",
+      "id.orig_h": "10.0.0.5",
+      "id.orig_p": "51002",
+      "id.resp_h": "8.8.8.8",
+      "id.resp_p": "53",
+      "log_type": "conn",
+      "proto": "udp",
+      "ts": "1694781300.500000",
+      "uid": "CXY2"
+    }
+  }
+]

@@ -1,0 +1,71 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# Citadel — Traefik reverse proxy override
+#
+# Use this if you already run Traefik on your Docker server and want Citadel
+# to appear at a hostname (e.g. citadel.myserver.com) with automatic HTTPS via
+# Let's Encrypt, instead of binding a host port.
+#
+# SETUP
+# ─────
+# 1. Make sure Traefik is already running and has a Docker network it listens on.
+#    If you don't have one yet:
+#        docker network create traefik_proxy
+#
+# 2. Set CITADEL_HOST in .env (or export it):
+#        CITADEL_HOST=citadel.myserver.com
+#
+# 3. Set TRAEFIK_NETWORK in .env if your network is not named "traefik_proxy":
+#        TRAEFIK_NETWORK=web
+#
+# 4. Start Citadel with both compose files:
+#        docker compose -f docker-compose.prod.yml -f docker-compose.traefik.yml \
+#          --env-file .env up -d --build
+#
+# Or add to foctl — edit the deploy_docker() function and change:
+#    ${dc} -f "${COMPOSE_FILE}" ...
+# to:
+#    ${dc} -f "${COMPOSE_FILE}" -f docker-compose.traefik.yml ...
+#
+# HOW IT WORKS
+# ────────────
+# This override does two things to the 'proxy' service:
+#   - Removes the host port binding (no more port 80 clash)
+#   - Adds Traefik labels so Traefik discovers it and routes the hostname to it
+#   - Attaches it to the external Traefik Docker network
+# ══════════════════════════════════════════════════════════════════════════════
+
+services:
+  proxy:
+    # Remove the host port — Traefik handles routing, no direct port binding needed
+    ports: []
+
+    labels:
+      # Tell Traefik to discover this container
+      - "traefik.enable=true"
+
+      # HTTP router → redirect all HTTP to HTTPS
+      - "traefik.http.routers.citadel-http.rule=Host(`${CITADEL_HOST:-citadel.local}`)"
+      - "traefik.http.routers.citadel-http.entrypoints=web"
+      - "traefik.http.routers.citadel-http.middlewares=citadel-https-redirect"
+      - "traefik.http.middlewares.citadel-https-redirect.redirectscheme.scheme=https"
+
+      # HTTPS router with Let's Encrypt cert
+      - "traefik.http.routers.citadel.rule=Host(`${CITADEL_HOST:-citadel.local}`)"
+      - "traefik.http.routers.citadel.entrypoints=websecure"
+      - "traefik.http.routers.citadel.tls=true"
+      - "traefik.http.routers.citadel.tls.certresolver=${TRAEFIK_CERTRESOLVER:-letsencrypt}"
+
+      # Tell Traefik which internal port the proxy container listens on
+      - "traefik.http.services.citadel.loadbalancer.server.port=80"
+
+      # Which Docker network Traefik should use to reach this container
+      - "traefik.docker.network=${TRAEFIK_NETWORK:-traefik_proxy}"
+
+    networks:
+      - default         # stays connected to all other Citadel containers
+      - traefik_proxy   # also on the Traefik network so Traefik can reach it
+
+networks:
+  traefik_proxy:
+    external: true
+    name: ${TRAEFIK_NETWORK:-traefik_proxy}

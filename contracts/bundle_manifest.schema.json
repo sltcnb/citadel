@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://citadel.dfir/contracts/bundle_manifest/v1.json",
+  "title": "ArtifactBundleManifest",
+  "description": "manifest.json inside a Talon artifact bundle. Bundle layout: bundle/ { manifest.json | events.jsonl | blobs/<sha256> | bundle.sha256 }.",
+  "type": "object",
+  "required": ["session_id", "hostname", "os", "started_at", "artifacts", "artifact_count"],
+  "properties": {
+    "session_id": { "type": "string" },
+    "hostname": { "type": "string" },
+    "os": { "type": "string", "enum": ["windows", "linux", "macos", "cloud", "unknown"] },
+    "started_at": { "type": "string", "format": "date-time" },
+    "finished_at": { "type": "string", "format": "date-time" },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "sha256", "size", "category"],
+        "properties": {
+          "name": { "type": "string" },
+          "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "size": { "type": "integer", "minimum": 0 },
+          "category": { "type": "string" }
+        }
+      }
+    },
+    "artifact_count": { "type": "integer", "minimum": 0 },
+    "total_bytes": { "type": "integer", "minimum": 0 },
+    "errors": { "type": "array", "items": { "type": "string" } }
+  },
+  "additionalProperties": true
+}

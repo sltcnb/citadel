@@ -1,0 +1,41 @@
+category: Lateral Movement
+rules:
+  - name: Windows Admin Share Access (C$, ADMIN$, IPC$)
+    description: >-
+      Access to an administrative share was recorded (EID 5140).
+      Lateral movement tools (PsExec, CrackMapExec) rely on these shares.
+    artifact_type: evtx
+    query: "evtx.event_id:5140 AND (message:*ADMIN$* OR message:*C$* OR message:*IPC$*)"
+    threshold: 1
+
+  - name: PsExec Service Installed
+    description: >-
+      The PSEXESVC service was installed (EID 7045).
+      Direct indicator of PsExec-based remote code execution.
+    artifact_type: evtx
+    query: "evtx.event_id:7045 AND message:*PSEXESVC*"
+    threshold: 1
+
+  - name: RDP Session Reconnected
+    description: >-
+      An existing RDP session was reconnected (EID 4778).
+      Can indicate an attacker resuming a previously opened remote session.
+    artifact_type: evtx
+    query: "evtx.event_id:4778"
+    threshold: 1
+
+  - name: Remote Service Created via SCM
+    description: >-
+      A service was installed remotely via Service Control Manager (EID 7045 with UNC path).
+      Indicates remote service deployment for code execution.
+    artifact_type: evtx
+    query: "evtx.event_id:7045 AND message:*\\\\\\\\*"
+    threshold: 1
+
+  - name: SMB File Write to Remote Share
+    description: >-
+      A file was written to a remote network share (EID 5145 with write access).
+      May indicate malware staging on a remote host.
+    artifact_type: evtx
+    query: "evtx.event_id:5145 AND message:*WriteData*"
+    threshold: 1

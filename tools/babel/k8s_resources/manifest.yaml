@@ -1,0 +1,58 @@
+id: k8s_resources
+name: Kubernetes Resource Listings (kubectl)
+description: >
+  Parses kubectl get tabular output and JSON lines for all common Kubernetes
+  resource types: pods, nodes, services, deployments, namespaces, events,
+  daemonsets, statefulsets, replicasets, ingresses, configmaps, secrets,
+  jobs, cronjobs, persistent volumes, and PVCs.  Detects the resource type
+  from the kubectl column header and emits a distinct artifact_type per
+  resource (k8s_pod, k8s_node, k8s_service, etc.) so each can be filtered
+  independently in the Timeline.
+supported_extensions:
+  - .log
+  - .txt
+supported_mime_types:
+  - text/plain
+artifact_type: k8s_generic
+handled_filenames:
+  - pods.log
+  - pods.txt
+  - kubectl_pods.log
+  - kubectl_get_pods.log
+  - nodes.log
+  - kubectl_nodes.log
+  - kubectl_get_nodes.log
+  - services.log
+  - kubectl_services.log
+  - kubectl_get_services.log
+  - deployments.log
+  - kubectl_deployments.log
+  - kubectl_get_deployments.log
+  - namespaces.log
+  - kubectl_namespaces.log
+  - kubectl_events.log
+  - k8s_events.log
+  - kube_events.log
+  - daemonsets.log
+  - statefulsets.log
+  - replicasets.log
+  - ingresses.log
+  - configmaps.log
+  - secrets.log
+  - jobs.log
+  - cronjobs.log
+  - pvs.log
+  - pvcs.log
+  - kubectl_get.log
+  - kubectl_describe.log
+  - k8s_resources.log
+  - cluster_resources.log
+  - cluster_info.log
+author: Citadel
+version: "1.0.0"
+tags:
+  - kubernetes
+  - k8s
+  - kubectl
+  - containers
+  - cloud

@@ -1,0 +1,12 @@
+id: lnk
+name: LNK Shell Links
+description: >-
+  Parses Windows LNK shortcut files to recover evidence of file access even
+  when the target file has been deleted. Extracts target path, access times,
+  volume serial, machine ID, and network share information.
+supported_extensions: [".lnk"]
+supported_mime_types: []
+artifact_type: lnk
+author: ForensicsOperator
+version: "1.0.0"
+tags: [windows, lnk, shortcut, access, forensics]

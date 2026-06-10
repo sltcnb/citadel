@@ -1,0 +1,52 @@
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    service:
+      enabled: true
+      type: LoadBalancer
+      loadBalancerClass: tailscale
+      annotations:
+        tailscale.com/hostname: "csirt-gateway"
+    ports:
+      web:
+        port: 80
+        transport:
+          respondingTimeouts:
+            readTimeout: 600s
+            writeTimeout: 600s
+            idleTimeout: 600s
+      websecure:
+        port: 443
+        tls:
+          enabled: true
+        transport:
+          respondingTimeouts:
+            readTimeout: 600s
+            writeTimeout: 600s
+            idleTimeout: 600s
+    serversTransport:
+      forwardingTimeouts:
+        responseHeaderTimeout: 600s
+        dialTimeout: 30s
+        idleConnTimeout: 600s
+      maxIdleConnsPerHost: 100
+      disableHTTP2: false
+    # Disable request buffering for large file uploads
+    # This streams requests directly to backend without buffering
+    http:
+      middlewares:
+        no-buffering:
+          buffering:
+            maxRequestBodyBytes: 0
+            memRequestBodyBytes: 0
+    # Increase connection pool for better throughput
+    providers:
+      kubernetesCRD:
+        allowCrossNamespace: true
+    # Tune TCP connections for large transfers
+    tcp:
+      enabled: true

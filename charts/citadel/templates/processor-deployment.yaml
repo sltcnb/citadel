@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "citadel.fullname" . }}-processor
+  labels:
+    {{- include "citadel.labels" . | nindent 4 }}
+    app.kubernetes.io/component: processor
+spec:
+  replicas: {{ .Values.processor.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "citadel.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: processor
+  template:
+    metadata:
+      labels:
+        {{- include "citadel.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: processor
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: processor
+          image: {{ include "citadel.image" (dict "ctx" . "component" .Values.processor) }}
+          imagePullPolicy: {{ include "citadel.pullPolicy" (dict "ctx" . "component" .Values.processor) }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "citadel.fullname" . }}-config
+            - secretRef:
+                name: {{ .Values.secret.existingSecret | default (printf "%s-secret" (include "citadel.fullname" .)) }}
+          {{- if .Values.processor.livenessProbe.enabled }}
+          livenessProbe:
+            exec:
+              {{- toYaml .Values.processor.livenessProbe.exec | nindent 14 }}
+            initialDelaySeconds: {{ .Values.processor.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.processor.livenessProbe.periodSeconds }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.processor.resources | nindent 12 }}

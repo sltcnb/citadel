@@ -1,0 +1,16 @@
+id: mft
+name: MFT (Master File Table)
+description: >-
+  Parses the NTFS Master File Table ($MFT) to reconstruct the full filesystem
+  timeline. Each record yields create, modify, access, and MFT entry times
+  (MACB) for every file and directory that ever existed on the volume —
+  including deleted files.
+supported_extensions: []
+supported_mime_types: []
+artifact_type: mft
+handled_filenames:
+  - $MFT
+  - MFT
+author: ForensicsOperator
+version: "1.0.0"
+tags: [windows, ntfs, mft, filesystem, timeline, deleted-files]

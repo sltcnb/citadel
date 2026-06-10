@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+  namespace: __FO_NAMESPACE__
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: minio
+  template:
+    metadata:
+      labels:
+        app: minio
+    spec:
+      containers:
+        - name: minio
+          image: minio/minio:RELEASE.2024-04-18T19-09-19Z
+          args: ["server", "/data", "--console-address", ":9001"]
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: minio-secret
+                  key: access_key
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: minio-secret
+                  key: secret_key
+          ports:
+            - containerPort: 9000
+              name: api
+            - containerPort: 9001
+              name: console
+          resources:
+            requests:
+              memory: "__FO_MINIO_MEMORY_REQUEST__"
+              cpu: "__FO_MINIO_CPU_REQUEST__"
+            limits:
+              memory: "__FO_MINIO_MEMORY_LIMIT__"
+              cpu: "__FO_MINIO_CPU_LIMIT__"
+          volumeMounts:
+            - name: minio-data
+              mountPath: /data
+          readinessProbe:
+            httpGet:
+              path: /minio/health/ready
+              port: 9000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+      volumes:
+        - name: minio-data
+          persistentVolumeClaim:
+            claimName: minio-pvc
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: minio-secret
+  namespace: __FO_NAMESPACE__
+type: Opaque
+stringData:
+  access_key: __FO_MINIO_ACCESS_KEY__
+  secret_key: __FO_MINIO_SECRET_KEY__
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio-service
+  namespace: __FO_NAMESPACE__
+spec:
+  selector:
+    app: minio
+  ports:
+    - name: api
+      port: 9000
+      targetPort: 9000
+    - name: console
+      port: 9001
+      targetPort: 9001

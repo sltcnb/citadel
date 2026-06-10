@@ -1,0 +1,19 @@
+id: volatility3
+name: Volatility 3
+description: >-
+  Memory forensics framework. Analyses RAM dumps to extract running processes,
+  network connections, loaded modules, registry hives, injected code (Malfind),
+  bash history, and more. Supports Windows and Linux memory images.
+input_extensions:
+  - .raw
+  - .vmem
+  - .dmp
+  - .mem
+  - .lime
+  - .dd
+  - .img
+  - .bin
+input_filenames: []
+available: true
+category: Memory Forensics
+tags: [memory, volatility, ram, processes, network, malware]

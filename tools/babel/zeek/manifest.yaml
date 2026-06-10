@@ -1,0 +1,19 @@
+id: zeek
+name: Zeek Logs
+description: >-
+  Parses Zeek (formerly Bro) network analysis logs. Supports conn.log,
+  dns.log, http.log, ssl.log, files.log, x509.log, and smtp.log.
+  Provides rich network metadata for timeline correlation with host artifacts.
+supported_extensions: [".log"]
+supported_mime_types: ["text/plain"]
+handled_filenames:
+  - conn.log
+  - dns.log
+  - http.log
+  - ssl.log
+  - files.log
+  - weird.log
+artifact_type: zeek
+author: ForensicsOperator
+version: "1.0.0"
+tags: [network, zeek, bro, conn, dns, http, ssl]

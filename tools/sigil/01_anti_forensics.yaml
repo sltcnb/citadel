@@ -1,0 +1,41 @@
+category: Anti-Forensics
+rules:
+  - name: Windows Event Log Cleared
+    description: >-
+      The Windows Security (EID 1102) or System (EID 104) audit log was cleared.
+      A strong anti-forensics indicator — always investigate immediately.
+    artifact_type: evtx
+    query: "evtx.event_id:1102 OR evtx.event_id:104"
+    threshold: 1
+
+  - name: Audit Policy Modified
+    description: >-
+      The system audit policy was changed (EID 4719). Attackers disable auditing
+      before carrying out malicious actions to evade detection.
+    artifact_type: evtx
+    query: "evtx.event_id:4719"
+    threshold: 1
+
+  - name: System Time Changed
+    description: >-
+      The system clock was modified (EID 4616). Attackers alter timestamps to
+      confuse forensic timelines and undermine log integrity.
+    artifact_type: evtx
+    query: "evtx.event_id:4616"
+    threshold: 1
+
+  - name: Shadow Copy Deletion
+    description: >-
+      vssadmin or wmic was used to delete volume shadow copies.
+      A hallmark of ransomware pre-encryption to prevent recovery.
+    artifact_type: evtx
+    query: "evtx.event_id:4688 AND (message:*vssadmin* OR message:*wmic*) AND (message:*delete* OR message:*shadow*)"
+    threshold: 1
+
+  - name: File Deletion via Cmd / PowerShell
+    description: >-
+      del, Remove-Item, or rd commands executed via cmd or PowerShell (EID 4688).
+      May indicate evidence removal or payload cleanup.
+    artifact_type: evtx
+    query: "evtx.event_id:4688 AND (message:*\" del \"* OR message:*Remove-Item* OR message:*rd /s*)"
+    threshold: 1

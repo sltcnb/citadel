@@ -1,0 +1,77 @@
+# Citadel tool manifest — the source of truth for "each tool is its own repo,
+# pulled and PINNED at deploy time" (ROADMAP §3.6, monorepo-of-submodules).
+#
+# scripts/fetch_tools.sh reads this and clones/checks-out each tool at its
+# pinned `ref` into `path`. Pinning a ref (tag or commit) makes a deployment
+# reproducible: the platform composes a tested set of tool versions, not
+# whatever each repo's HEAD happens to be.
+#
+# `vendored: true` means the tool currently lives in-tree in this repo (not yet
+# externalised); fetch_tools skips it unless run with --force.
+
+org: sltcnb
+default_ref: v1.0.0
+
+tools:
+  - name: citadel_contracts
+    repo: citadel-contracts
+    path: tools/citadel_contracts
+    ref: v1.0.0
+    vendored: true
+    shared: true        # the contract package every tool depends on
+  - name: Talon
+    repo: talon
+    path: tools/talon
+    ref: v1.0.0
+    vendored: true
+  - name: Sluice
+    repo: sluice
+    path: tools/sluice
+    ref: v1.0.0
+    vendored: true
+  - name: Babel
+    repo: babel
+    path: tools/babel
+    ref: v1.0.0
+    vendored: true
+  - name: Rosetta
+    repo: rosetta
+    path: tools/rosetta
+    ref: v0.2.0
+    vendored: true
+  - name: Anvil
+    repo: anvil
+    path: tools/anvil
+    ref: v1.0.0
+    vendored: true
+  - name: Augur
+    repo: augur
+    path: tools/augur
+    ref: v0.5.0
+    vendored: true
+  - name: Sigil
+    repo: sigil
+    path: tools/sigil
+    ref: v0.9.0
+    vendored: true
+  # Domain tools live OUTSIDE this repo (sibling folder); fetched independently.
+  - name: Wraith
+    repo: wraith
+    path: ../domain-tools/wraith
+    ref: main
+    vendored: false
+  - name: Wiretap
+    repo: wiretap
+    path: ../domain-tools/wiretap
+    ref: main
+    vendored: false
+  - name: Nimbus
+    repo: nimbus
+    path: ../domain-tools/nimbus
+    ref: main
+    vendored: false
+  - name: Warden
+    repo: warden
+    path: ../domain-tools/warden
+    ref: main
+    vendored: false

@@ -1,0 +1,33 @@
+id: auditd
+name: Linux Auditd
+description: >
+  Parses Linux audit daemon log files (/var/log/audit/audit.log).  Each
+  audit record is decoded into a structured event with audit.type, serial,
+  syscall name (translated from number), result (success/fail), and relevant
+  process/user/network fields.  High-value record types include SYSCALL,
+  EXECVE, PATH, USER_LOGIN, USER_AUTH, ADD_USER, AVC (SELinux/AppArmor
+  denials), SECCOMP violations, and CONFIG_CHANGE.  PROCTITLE records are
+  hex-decoded to reveal the full command line.
+supported_extensions:
+  - .log
+supported_mime_types:
+  - text/plain
+artifact_type: audit_event
+handled_filenames:
+  - audit.log
+  - auditd.log
+  - audit.log.1
+  - audit.log.2
+  - audit.log.3
+  - linux_audit.log
+  - audit_log.log
+  - ausearch.log
+author: Citadel
+version: "1.0.0"
+tags:
+  - linux
+  - audit
+  - auditd
+  - syscall
+  - security
+  - dfir

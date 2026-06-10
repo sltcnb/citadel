@@ -1,0 +1,9 @@
+#separator \x09
+#set_separator	,
+#empty_field	(empty)
+#unset_field	-
+#path	conn
+#fields	ts	uid	id.orig_h	id.orig_p	id.resp_h	id.resp_p	proto	duration	conn_state
+#types	time	string	addr	port	addr	port	enum	interval	string
+1694781296.123456	CXY1	10.0.0.5	51000	93.184.216.34	443	tcp	1.250000	SF
+1694781300.500000	CXY2	10.0.0.5	51002	8.8.8.8	53	udp	0.010000	S0

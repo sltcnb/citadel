@@ -1,0 +1,41 @@
+category: Resource Development
+rules:
+  - name: Malicious Domain Accessed
+    description: >-
+      DNS query or network connection to a known malicious domain.
+      Indicates potential C2 infrastructure or malware download.
+    artifact_type: suricata
+    query: "suricata.event_type:dns AND (suricata.dns.domain:*malware* OR suricata.dns.domain:*c2* OR suricata.dns.domain:*evil*)"
+    threshold: 1
+
+  - name: Rare User-Agent String
+    description: >-
+      HTTP request with an unusual or empty User-Agent string.
+      Malware often uses custom or missing User-Agent headers.
+    artifact_type: suricata
+    query: "suricata.event_type:http AND (suricata.http.http_user_agent:* OR suricata.http.http_user_agent:*)"
+    threshold: 5
+
+  - name: TOR Network Activity
+    description: >-
+      Network traffic to or from TOR network nodes.
+      TOR is commonly used for anonymous C2 communication.
+    artifact_type: suricata
+    query: "suricata.event_type:flow AND (suricata.dest_port:9001 OR suricata.dest_port:9030 OR suricata.dest_port:9150)"
+    threshold: 1
+
+  - name: Cryptocurrency Mining Pool Connection
+    description: >-
+      Network connection to known cryptocurrency mining pools.
+      Indicates cryptojacking or unauthorized mining activity.
+    artifact_type: suricata
+    query: "suricata.event_type:flow AND (message:*stratum* OR message:*mining* OR message:*cryptonight* OR message:*monero*)"
+    threshold: 1
+
+  - name: Paste Site Access
+    description: >-
+      Connection to paste bin or code sharing sites.
+      Attackers use these sites to host payloads and configurations.
+    artifact_type: suricata
+    query: "suricata.event_type:http AND (message:*pastebin* OR message:*ghostbin* OR message:*controlc* OR message:*hastebin*)"
+    threshold: 1

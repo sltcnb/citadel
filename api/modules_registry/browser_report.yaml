@@ -1,0 +1,13 @@
+id: browser_report
+name: Browser History Report
+description: >-
+  Aggregate all browser history events already indexed in the timeline into a
+  structured report: top visited domains, full URL visit log, downloads,
+  detected search queries, and per-browser statistics.
+  Requires browser artifact events to be present (ingest Chrome History,
+  Firefox places.sqlite, or similar files first).
+input_extensions: ["*"]
+available: true
+run_on_events: true
+category: Browser Forensics
+tags: [browser, history, chrome, firefox, edge, safari, report]

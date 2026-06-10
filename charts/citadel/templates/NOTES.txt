@@ -1,0 +1,25 @@
+Citadel has been deployed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+Components:
+  - API        : {{ .Values.api.replicaCount }} replica(s)  image {{ .Values.api.image.repository }}:{{ .Values.api.image.tag | default .Chart.AppVersion }}
+  - Processor  : {{ .Values.processor.replicaCount }} replica(s)
+  - Frontend   : {{ .Values.frontend.replicaCount }} replica(s)
+
+Substrate (set *.enabled=true to deploy in-cluster, otherwise point at external URLs):
+  - Elasticsearch : {{ .Values.elasticsearch.enabled }}
+  - Redis         : {{ .Values.redis.enabled }}
+  - MinIO         : {{ .Values.minio.enabled }}
+
+{{- if .Values.ingress.enabled }}
+
+Reach the API/console at:
+  http{{ if .Values.ingress.tls.enabled }}s{{ end }}://{{ .Values.ingress.fqdn }}/
+{{- else }}
+
+The API service is not exposed via Ingress. Port-forward to reach it:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "citadel.fullname" . }}-api 8000:8000
+  open http://localhost:8000/api/v1/health
+{{- end }}
+
+Check rollout:
+  kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/instance={{ .Release.Name }}
