@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { ScrollText, RefreshCw, Pause, Play, Search as SearchIcon, AlertCircle } from 'lucide-react'
+import { ScrollText, RefreshCw, Pause, Play, Search as SearchIcon, AlertCircle, Trash2 } from 'lucide-react'
 import { PageShell, PageHeader } from '../components/shared/PageShell'
 import { api } from '../api/client'
 
@@ -93,6 +93,19 @@ export default function Logs() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  const [clearing, setClearing] = useState(false)
+  function clearLogs(scope) {
+    // scope: the current service, or 'all'
+    const label = scope === 'all' ? 'ALL services' : scope
+    if (!window.confirm(`Reset captured logs for ${label}? This clears the viewer's buffer (stdout/cluster logs are untouched).`)) return
+    setClearing(true)
+    api.logs.clear(scope)
+      .then(() => { setLines([]); return api.logs.services() })
+      .then(r => setServices(r.services || []))
+      .catch(e => setError(e.message))
+      .finally(() => setClearing(false))
+  }
+
   const fetchTail = useCallback(() => {
     if (!service) return
     const params = { limit }
@@ -139,6 +152,22 @@ export default function Logs() {
             </button>
             <button onClick={fetchTail} className="btn-secondary inline-flex items-center gap-1.5">
               <RefreshCw size={15} className={loading ? 'animate-spin' : ''} /> Refresh
+            </button>
+            <button
+              onClick={() => clearLogs(service)}
+              disabled={!service || clearing}
+              className="btn-secondary inline-flex items-center gap-1.5 text-red-600 disabled:opacity-50"
+              title="Reset captured logs for the selected service"
+            >
+              <Trash2 size={15} /> Clear
+            </button>
+            <button
+              onClick={() => clearLogs('all')}
+              disabled={clearing}
+              className="btn-secondary inline-flex items-center gap-1.5 text-red-600 disabled:opacity-50"
+              title="Reset captured logs for all services"
+            >
+              Clear all
             </button>
           </div>
         }

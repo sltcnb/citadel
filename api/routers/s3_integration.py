@@ -294,6 +294,28 @@ def generate_triage_presign(
 # ── Browse endpoints ──────────────────────────────────────────────────────────
 
 
+def _effective_import(r: redis.Redis) -> tuple[dict, str]:
+    """Resolve the active import-S3 config and its Redis key.
+
+    Two config systems coexist: the legacy single config and the newer named
+    multi-source list (what Settings → Sources writes). The ingest panel's
+    "Import Bucket" used only the legacy one, so a saved *named* source showed
+    "No import S3 configuration saved." This prefers the legacy single config,
+    then falls back to the first named source (mirrored at fo:s3_config:{id},
+    so Celery dispatch works unchanged).
+    """
+    cfg = _load(r, _S3_IMPORT_KEY)
+    if cfg and cfg.get("endpoint"):
+        return cfg, _S3_IMPORT_KEY
+    try:
+        for c in _load_import_list(r):
+            if c.get("endpoint"):
+                return c, rk.s3_import_config(c["id"])
+    except Exception:
+        pass
+    return {}, _S3_IMPORT_KEY
+
+
 def _browse(redis_key: str, label: str, prefix: str, delimiter: str):
     r = _redis()
     cfg = _load(r, redis_key)
@@ -334,8 +356,10 @@ def browse_import_s3(
     prefix: str = Query(""),
     delimiter: str = Query("/"),
 ):
-    """Browse the case-data-import S3 bucket."""
-    return _browse(_S3_IMPORT_KEY, "import", prefix, delimiter)
+    """Browse the case-data-import S3 bucket (legacy single config, else the
+    first named source)."""
+    _, key = _effective_import(_redis())
+    return _browse(key, "import", prefix, delimiter)
 
 
 @router.get("/s3-triage/browse")
@@ -362,7 +386,7 @@ def import_from_s3(case_id: str, body: S3ImportIn):
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
 
-    cfg = _load(_redis(), _S3_IMPORT_KEY)
+    cfg, key = _effective_import(_redis())
     if not cfg or not cfg.get("endpoint"):
         raise HTTPException(status_code=400, detail="No import S3 configuration saved.")
 
@@ -371,11 +395,11 @@ def import_from_s3(case_id: str, body: S3ImportIn):
     minio_key = f"cases/{case_id}/{job_id}/{filename}"
 
     job_svc.create_job(job_id, case_id, filename, minio_key, source_zip="")
-    job_svc.update_job(job_id, s3_config_key=_S3_IMPORT_KEY, s3_source_key=body.s3_key)
+    job_svc.update_job(job_id, s3_config_key=key, s3_source_key=body.s3_key)
 
     from services.celery_dispatch import dispatch_s3_transfer
 
-    dispatch_s3_transfer(job_id, case_id, _S3_IMPORT_KEY, body.s3_key, filename)
+    dispatch_s3_transfer(job_id, case_id, key, body.s3_key, filename)
 
     return {
         "job_id": job_id,
@@ -465,10 +489,10 @@ def import_batch_from_s3(case_id: str, body: S3BatchImportIn):
     """Enqueue async transfer tasks for multiple objects from the import S3 bucket."""
     if not get_case(case_id):
         raise HTTPException(status_code=404, detail="Case not found")
-    cfg = _load(_redis(), _S3_IMPORT_KEY)
+    cfg, key = _effective_import(_redis())
     if not cfg or not cfg.get("endpoint"):
         raise HTTPException(status_code=400, detail="No import S3 configuration saved.")
-    return _batch_dispatch(case_id, _S3_IMPORT_KEY, body.keys)
+    return _batch_dispatch(case_id, key, body.keys)
 
 
 @router.post("/cases/{case_id}/s3-triage-pull-batch")

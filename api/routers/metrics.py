@@ -26,6 +26,10 @@ router = APIRouter(prefix="/metrics", tags=["metrics"])
 
 # Per-section deadline in seconds.  Total endpoint budget ≈ _SECTION_TIMEOUT + 0.5 s.
 _SECTION_TIMEOUT = 1.5
+# Celery worker inspection broadcasts over the broker and needs a longer
+# round-trip than the other (local) collectors — give it its own budget so it
+# isn't killed mid-broadcast (which showed up as "0 registered workers").
+_CELERY_TIMEOUT = 3.5
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -290,17 +294,23 @@ def _get_celery_metrics() -> dict:
         "queue_lengths": {"ingest": 0, "modules": 0, "default": 0},
     }
 
-    # Worker inspection — short timeout so this doesn't stall
+    # Worker inspection — broadcast over the broker; needs a real round-trip.
     try:
         from celery import Celery as _Celery
 
         app = _Celery(broker=settings.REDIS_URL)
-        inspector = app.control.inspect(timeout=1.5)
-        active = inspector.active() or {}
-        result["registered_workers"] = len(active)
-        result["active_tasks"] = sum(len(t) for t in active.values())
-        reserved = inspector.reserved() or {}
-        result["reserved_tasks"] = sum(len(t) for t in reserved.values())
+        inspector = app.control.inspect(timeout=2.5)
+        active = inspector.active()
+        if active:
+            result["registered_workers"] = len(active)
+            result["active_tasks"] = sum(len(t) for t in active.values())
+            reserved = inspector.reserved() or {}
+            result["reserved_tasks"] = sum(len(t) for t in reserved.values())
+        else:
+            # active() can return None under load even when workers are up;
+            # fall back to a cheap ping so the count isn't a misleading 0.
+            pong = inspector.ping() or {}
+            result["registered_workers"] = len(pong)
     except Exception:
         pass
 
@@ -467,9 +477,9 @@ def metrics_dashboard():
     f_cases = pool.submit(_get_cases_metrics)
     f_api = pool.submit(_get_api_metrics)
 
-    def _get(fut, default):
+    def _get(fut, default, timeout=_SECTION_TIMEOUT):
         try:
-            return fut.result(timeout=_SECTION_TIMEOUT)
+            return fut.result(timeout=timeout)
         except Exception:
             return default
 
@@ -479,7 +489,7 @@ def metrics_dashboard():
         "elasticsearch": _get(f_es, _DEFAULT_ES),
         "redis": _get(f_redis, _DEFAULT_REDIS),
         "minio": _get(f_minio, _DEFAULT_MINIO),
-        "celery": _get(f_celery, _DEFAULT_CELERY),
+        "celery": _get(f_celery, _DEFAULT_CELERY, timeout=_CELERY_TIMEOUT),
         "cases": _get(f_cases, _DEFAULT_CASES),
         "api": _get(f_api, _DEFAULT_API),
     }
