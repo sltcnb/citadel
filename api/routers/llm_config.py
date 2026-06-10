@@ -251,6 +251,12 @@ def get_llm_usage():
     raw = r.hgetall(rk.LLM_USAGE) or {}
     data = {k: int(v) for k, v in raw.items()}
 
+    # Current model/base_url drive cost estimation below (7d/30d and 24h
+    # fallbacks). Load once, up front, before any _estimate_cost() call.
+    cfg = _get_config(r) or {}
+    model = cfg.get("model", "")
+    base_url = cfg.get("base_url", "")
+
     # Rolling 24h totals from hourly buckets
     now_hour = int(_time.time()) // 3600
     h24 = {
@@ -318,9 +324,6 @@ def get_llm_usage():
         data["last24h_tps"] = None
 
     # Estimated cost (fallback when API doesn't report cost)
-    cfg = _get_config(r) or {}
-    model = cfg.get("model", "")
-    base_url = cfg.get("base_url", "")
     data["estimated_cost_usd"] = _estimate_cost(
         model, data.get("prompt_tokens", 0), data.get("completion_tokens", 0), base_url
     )

@@ -4,7 +4,7 @@ import {
   LayoutDashboard, FolderOpen, Bell, FileCode, Shield, FlaskConical,
   Cpu, Code2, PackageOpen, Puzzle, BookOpen, Activity, Users, Settings2,
   LogOut, UserCircle, Sun, Moon, ChevronDown, Loader2,
-  X, Menu, Plus, Search, ListChecks, ScrollText,
+  X, Menu, Plus, Search, ListChecks, ScrollText, Boxes,
 } from 'lucide-react'
 import { api } from '../../api/client'
 import { useKeyboardShortcuts } from '../../hooks/useKeyboardShortcuts'
@@ -54,6 +54,7 @@ const DROPDOWN_GROUPS = [
     label: 'Platform',
     adminOnly: true,
     items: [
+      { to: '/suite',     icon: Boxes,    label: 'Suite' },
       { to: '/studio',    icon: Code2,    label: 'Studio' },
       { to: '/ingesters', icon: Puzzle,   label: 'Ingesters' },
       { to: '/docs',      icon: BookOpen, label: 'Docs' },

@@ -14,13 +14,60 @@ const SERVICE_TOOLS = {
 }
 
 const LEVELS = ['all', 'ERROR', 'WARNING', 'INFO', 'DEBUG']
+// Colors tuned for the dark log viewer background.
 const LEVEL_COLOR = {
-  ERROR:   'text-red-600',
-  WARNING: 'text-amber-600',
-  INFO:    'text-gray-600',
-  DEBUG:   'text-gray-400',
+  ERROR:    'text-red-400',
+  CRITICAL: 'text-red-400',
+  WARNING:  'text-amber-300',
+  INFO:     'text-sky-300',
+  DEBUG:    'text-gray-500',
 }
 const POLL_MS = 2500
+
+// "2026-06-08T14:03:22.123456Z" → "14:03:22.123" (keep just the clock).
+function shortTime(ts) {
+  if (!ts) return ''
+  const m = /T(\d{2}:\d{2}:\d{2})\.?(\d{0,3})/.exec(ts)
+  return m ? `${m[1]}${m[2] ? '.' + m[2] : ''}` : ts
+}
+
+function LogRow({ l }) {
+  const [open, setOpen] = useState(false)
+  const msg = l.msg || l.line || ''
+  const hasExc = !!l.exc
+  const lvl = (l.level || '').toUpperCase()
+  return (
+    <div className="px-3 py-1 hover:bg-gray-800/50">
+      <div
+        className={`flex items-start gap-3 ${hasExc ? 'cursor-pointer' : ''}`}
+        onClick={hasExc ? () => setOpen(o => !o) : undefined}
+      >
+        <span className="text-gray-500 whitespace-nowrap select-none tabular-nums">
+          {shortTime(l.ts)}
+        </span>
+        <span className={`w-16 shrink-0 font-semibold select-none ${LEVEL_COLOR[lvl] || 'text-gray-400'}`}>
+          {lvl}
+        </span>
+        <span className="text-gray-500 whitespace-nowrap select-none hidden md:inline max-w-[14rem] truncate" title={l.logger}>
+          {l.logger || ''}
+        </span>
+        <span className="text-gray-100 whitespace-pre-wrap break-words flex-1">
+          {msg}
+          {hasExc && (
+            <span className="ml-2 text-[10px] text-amber-400/80 select-none">
+              {open ? '▾ traceback' : '▸ traceback'}
+            </span>
+          )}
+        </span>
+      </div>
+      {hasExc && open && (
+        <pre className="mt-1 ml-3 pl-3 border-l-2 border-red-500/40 text-red-300/90 whitespace-pre-wrap break-words text-[11px] leading-snug overflow-x-auto">
+          {l.exc}
+        </pre>
+      )}
+    </div>
+  )
+}
 
 export default function Logs() {
   const [services, setServices]   = useState([])     // [{service, lines}]
@@ -68,7 +115,10 @@ export default function Logs() {
   }, [live, service, fetchTail])
 
   const shown = q
-    ? lines.filter(l => (l.line || '').toLowerCase().includes(q.toLowerCase()))
+    ? lines.filter(l => {
+        const hay = `${l.msg || l.line || ''} ${l.logger || ''} ${l.exc || ''}`.toLowerCase()
+        return hay.includes(q.toLowerCase())
+      })
     : lines
 
   return (
@@ -142,27 +192,15 @@ export default function Logs() {
       )}
 
       {/* Log viewer */}
-      <div className="bg-gray-900 text-gray-100 rounded-xl border border-gray-800 overflow-auto max-h-[68vh] font-mono text-xs leading-relaxed">
+      <div className="bg-gray-900 text-gray-100 rounded-xl border border-gray-800 overflow-auto h-[calc(100vh-15rem)] min-h-[24rem] font-mono text-xs leading-relaxed">
         {shown.length === 0 ? (
           <div className="p-6 text-gray-500">
             {service ? 'No log lines (a tool appears here once it emits).' : 'Select a service.'}
           </div>
         ) : (
-          <table className="w-full border-collapse">
-            <tbody>
-              {shown.map((l, i) => (
-                <tr key={i} className="hover:bg-gray-800/60 align-top">
-                  <td className={`px-3 py-1 whitespace-nowrap select-none ${LEVEL_COLOR[l.level] || 'text-gray-500'}`}>
-                    {l.level || ''}
-                  </td>
-                  <td className="px-3 py-1 text-gray-400 whitespace-nowrap select-none hidden sm:table-cell">
-                    {l.logger || ''}
-                  </td>
-                  <td className="px-3 py-1 break-all text-gray-100">{l.line || ''}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="divide-y divide-gray-800/70">
+            {shown.map((l, i) => <LogRow key={i} l={l} />)}
+          </div>
         )}
       </div>
     </PageShell>

@@ -1102,6 +1102,63 @@ def _looks_like_stringified_dict(s: str) -> bool:
     )
 
 
+def _coerce_ip(value):
+    """Return a clean IP string for an ES ``ip``-typed field, or None.
+
+    Parsers sometimes emit ``ip:port`` (access logs, netstat), bracketed IPv6
+    (``[::1]:443``) or zone-suffixed addresses (``fe80::1%eth0``). Elasticsearch
+    rejects any of these in an ``ip`` field, which 400s the *entire* bulk batch
+    (observed: "Bulk indexing had 1000 errors of 1000"). Normalize to a bare
+    address here so one dirty field can't drop a whole artifact's events.
+    """
+    import ipaddress
+
+    if not isinstance(value, str):
+        return None
+    v = value.strip()
+    if not v:
+        return None
+    v = v.split("%", 1)[0]  # drop IPv6 zone id
+    if v.startswith("["):  # [ipv6] or [ipv6]:port
+        v = v[1:].partition("]")[0]
+    try:
+        return str(ipaddress.ip_address(v))
+    except ValueError:
+        pass
+    head, sep, tail = v.rpartition(":")  # strip a trailing :port
+    if sep and tail.isdigit() and head:
+        try:
+            return str(ipaddress.ip_address(head))
+        except ValueError:
+            pass
+    return None
+
+
+def _coerce_network_ips(net: dict) -> None:
+    """In-place: clean IP-typed fields in an event's ``network`` dict.
+
+    Recovers the port into ``*_port`` when one was glued onto the address and
+    no port was recorded; drops fields that aren't IPs at all so they can't
+    poison the ES ``ip`` mapping.
+    """
+    for ip_key, port_key in (("src_ip", "src_port"), ("dest_ip", "dest_port"), ("dst_ip", "dst_port")):
+        raw = net.get(ip_key)
+        if not isinstance(raw, str):
+            continue
+        clean = _coerce_ip(raw)
+        if clean is None:
+            net.pop(ip_key, None)
+            continue
+        if clean != raw and port_key not in net:
+            tail = raw.rsplit(":", 1)[-1].rstrip("]")
+            if tail.isdigit():
+                try:
+                    net[port_key] = int(tail)
+                except ValueError:
+                    pass
+        net[ip_key] = clean
+
+
 def _validate_event(event: dict, plugin_name: str, job_id: str) -> dict:
     """
     Enforce the event contract. Mutates and returns the event.
@@ -1177,6 +1234,13 @@ def _validate_event(event: dict, plugin_name: str, job_id: str) -> dict:
         v = event.get(key)
         if isinstance(v, dict):
             event[key] = {k: vv for k, vv in v.items() if vv not in (None, "", [])}
+
+    # Coerce IP-typed fields so a dirty address (ip:port, [ipv6], zone id) can't
+    # 400 the whole bulk batch. Runs after the None-drop above.
+    net = event.get("network")
+    if isinstance(net, dict) and net:
+        _coerce_network_ips(net)
+        event["network"] = net
     return event
 
 

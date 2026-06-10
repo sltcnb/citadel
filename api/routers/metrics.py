@@ -150,6 +150,12 @@ def _get_elasticsearch_metrics() -> dict:
         "total_docs": 0,
         "total_size_mb": 0.0,
         "indices": [],
+        "jvm_heap_pct": None,
+        "indexing_total": None,
+        "search_total": None,
+        "query_latency_ms": None,
+        "active_shards": None,
+        "unassigned_shards": None,
     }
     base = settings.ELASTICSEARCH_URL
     try:
@@ -159,8 +165,31 @@ def _get_elasticsearch_metrics() -> dict:
             health = json.loads(resp.read())
         result["status"] = health.get("status", "unknown")
         result["node_count"] = health.get("number_of_nodes", 0)
+        result["active_shards"] = health.get("active_shards", 0)
+        result["unassigned_shards"] = health.get("unassigned_shards", 0)
     except Exception:
         return result
+
+    # Node stats — JVM heap pressure + cumulative indexing/search counters.
+    try:
+        with urllib.request.urlopen(
+            urllib.request.Request(f"{base}/_nodes/stats/jvm,indices"), timeout=3
+        ) as resp:
+            ns = json.loads(resp.read())
+        nodes = list((ns.get("nodes") or {}).values())
+        if nodes:
+            heaps = [n.get("jvm", {}).get("mem", {}).get("heap_used_percent") for n in nodes]
+            heaps = [h for h in heaps if isinstance(h, (int, float))]
+            if heaps:
+                result["jvm_heap_pct"] = round(sum(heaps) / len(heaps), 1)
+            idx_total = sum(n.get("indices", {}).get("indexing", {}).get("index_total", 0) for n in nodes)
+            srch_total = sum(n.get("indices", {}).get("search", {}).get("query_total", 0) for n in nodes)
+            srch_ms = sum(n.get("indices", {}).get("search", {}).get("query_time_in_millis", 0) for n in nodes)
+            result["indexing_total"] = idx_total
+            result["search_total"] = srch_total
+            result["query_latency_ms"] = round(srch_ms / srch_total, 2) if srch_total else 0.0
+    except Exception:
+        pass
 
     try:
         with urllib.request.urlopen(
@@ -192,6 +221,10 @@ def _get_redis_metrics() -> dict:
         "connected_clients": 0,
         "total_keys": 0,
         "uptime_seconds": 0,
+        "ops_per_sec": None,
+        "hit_rate_pct": None,
+        "evicted_keys": None,
+        "expired_keys": None,
     }
     try:
         r = _get_redis()
@@ -199,6 +232,13 @@ def _get_redis_metrics() -> dict:
         result["used_memory_mb"] = round(info.get("used_memory", 0) / (1024 * 1024), 2)
         result["connected_clients"] = info.get("connected_clients", 0)
         result["uptime_seconds"] = info.get("uptime_in_seconds", 0)
+        result["ops_per_sec"] = info.get("instantaneous_ops_per_sec", 0)
+        result["evicted_keys"] = info.get("evicted_keys", 0)
+        result["expired_keys"] = info.get("expired_keys", 0)
+        hits = info.get("keyspace_hits", 0)
+        misses = info.get("keyspace_misses", 0)
+        if hits + misses > 0:
+            result["hit_rate_pct"] = round(100 * hits / (hits + misses), 1)
         total_keys = 0
         for key, val in info.items():
             if isinstance(key, str) and key.startswith("db") and isinstance(val, dict):

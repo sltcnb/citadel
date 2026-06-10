@@ -4,6 +4,7 @@ import {
   Check, Loader2, AlertTriangle, Search, Code2, ChevronDown, ChevronUp, Sparkles, Building2,
 } from 'lucide-react'
 import { PageShell, PageHeader } from '../components/shared/PageShell'
+import { ToolByline } from './Suite'
 import { api } from '../api/client'
 import { useCompanies } from './UserManagement'
 import YaraRuleModal from '../components/YaraRuleModal'
@@ -188,6 +189,8 @@ export default function YaraLibrary() {
         icon={FileCode}
         subtitle="Store and manage YARA rules. Rules are automatically available to the YARA Scanner module."
       />
+
+      <div className="-mt-2 mb-4"><ToolByline tool="sigil" /></div>
 
       {/* Toolbar */}
       <div className="card p-3 mb-4 flex items-center gap-3 flex-wrap">

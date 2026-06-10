@@ -126,12 +126,20 @@ def get_facets(
     case_id: str,
     q: str = "",
     artifact_type: str | None = None,
+    from_ts: str | None = None,
+    to_ts: str | None = None,
 ):
-    """Aggregation facets for the search filter panel."""
+    """Aggregation facets for the search filter panel.
+
+    ``from_ts``/``to_ts`` (ISO8601) scope the activity histogram so it rescales
+    to the zoomed range instead of always bucketing by day.
+    """
     if not get_case(case_id):
         raise HTTPException(status_code=404, detail="Case not found")
 
-    aggs = es.get_search_facets(case_id, query=q, artifact_type=artifact_type)
+    aggs = es.get_search_facets(
+        case_id, query=q, artifact_type=artifact_type, from_ts=from_ts, to_ts=to_ts
+    )
     return {"case_id": case_id, "facets": aggs}
 
 

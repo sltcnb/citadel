@@ -62,11 +62,22 @@ class RedisLogHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
+            ts = datetime.fromtimestamp(record.created, timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%S.%fZ"
+            )
+            fields = {
+                "svc": self.service,
+                "ts": ts,
+                "level": record.levelname,
+                "logger": record.name,
+                "msg": record.getMessage(),
+            }
+            if record.exc_info:
+                fields["exc"] = self.formatException(record.exc_info)
+            # `line` kept for backward compatibility with older viewers.
+            fields["line"] = self.format(record)
             self.redis.xadd(
-                self.key,
-                {"svc": self.service, "level": record.levelname,
-                 "logger": record.name, "line": self.format(record)},
-                maxlen=self.maxlen, approximate=True,
+                self.key, fields, maxlen=self.maxlen, approximate=True
             )
         except Exception:
             pass  # logging must never break the app

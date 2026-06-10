@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import { api } from '../api/client'
 import { PageShell, PageHeader } from '../components/shared/PageShell'
+import { ToolByline } from './Suite'
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts'
 import { useCompanies } from './UserManagement'
 import RuleDrawer, {
@@ -489,6 +490,8 @@ export default function AlertLibrary() {
         icon={Bell}
         subtitle="Sigma-based detection rules. Run on any case, or use 'Run Alerts' on a case timeline to fire all rules."
       />
+
+      <div className="-mt-2 mb-4"><ToolByline tool="sigil" /></div>
 
       {/* Library section */}
       <div className="mb-8">

@@ -91,6 +91,9 @@ class PluginLoader:
                     and obj.PLUGIN_NAME != "base"
                     and obj not in self._plugin_classes
                 ):
+                    # Record the file each class came from so the UI can open
+                    # the exact source in Studio (PLUGIN_NAME != filename stem).
+                    obj.__source_file__ = path.name
                     self._plugin_classes.append(obj)
         except Exception as exc:
             logger.error("Failed to load plugin from %s: %s", path, exc, exc_info=True)
@@ -109,4 +112,11 @@ class PluginLoader:
     def list_plugins(self) -> list[dict]:
         if not self._loaded:
             self.load()
-        return [cls.get_info() for cls in self._plugin_classes]
+        out = []
+        for cls in self._plugin_classes:
+            info = cls.get_info()
+            # Source filename (set in _load_module) lets the UI open the exact
+            # file in Studio — PLUGIN_NAME is a display name, not the filename.
+            info["source_file"] = getattr(cls, "__source_file__", None)
+            out.append(info)
+        return out

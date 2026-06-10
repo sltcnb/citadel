@@ -826,10 +826,18 @@ export default function Studio() {
     didAutoOpen.current = true
     setSidebarTab(type === 'module' ? 'modules' : 'ingesters')
     if (name) {
+      // `name` may be an exact filename (preferred — passed as source_file) or
+      // a plugin display name. Try exact, then the known suffix conventions,
+      // then a stem match so built-in *_plugin.py files resolve too.
       const suffix = type === 'module' ? '_module.py' : '_ingester.py'
-      const candidateName = fileList.includes(name) ? name
+      const lc = name.toLowerCase()
+      const candidateName =
+        fileList.includes(name) ? name
         : fileList.includes(name + suffix) ? name + suffix
-        : null
+        : fileList.includes(name + '_plugin.py') ? name + '_plugin.py'
+        : fileList.includes(name + '.py') ? name + '.py'
+        : fileList.find(f => f.toLowerCase().replace(/\.py$/, '').replace(/_(plugin|ingester|module)$/, '') === lc)
+        || null
       if (candidateName) {
         setTimeout(() => openFile(type, candidateName), 50)
       }
