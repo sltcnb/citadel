@@ -331,9 +331,9 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--namespace", "-n",
-        default=os.getenv("K8S_NAMESPACE", "forensics-operator-dev"),
+        default=os.getenv("K8S_NAMESPACE", "citadel-dev"),
         metavar="NS",
-        help="Kubernetes namespace for auto port-forward (default: forensics-operator-dev)",
+        help="Kubernetes namespace for auto port-forward (default: citadel-dev)",
     )
 
     sub = p.add_subparsers(dest="command", required=True)

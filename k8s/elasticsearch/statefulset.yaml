@@ -38,10 +38,10 @@ spec:
             - containerPort: 9300
           resources:
             requests:
-              memory: "2Gi"
+              memory: "__FO_ES_MEMORY_REQUEST__"
               cpu: "500m"
             limits:
-              memory: "4Gi"
+              memory: "__FO_ES_MEMORY_LIMIT__"
               cpu: "2"
           readinessProbe:
             httpGet:

@@ -1251,7 +1251,7 @@ ES syntax. e.g. "Aggregate: top 20 process.executable_name then unique user.name
 - Error-level k8s events only: artifact_type:k8s_event AND kubernetes.level:error
 - Fatal k8s events: artifact_type:k8s_event AND kubernetes.level:fatal
 - CrashLoopBackOff pods: artifact_type:k8s_event AND kubernetes.error:*CrashLoopBackOff*
-- Pod events in a namespace: artifact_type:k8s_event AND kubernetes.namespace:forensics-operator-dev
+- Pod events in a namespace: artifact_type:k8s_event AND kubernetes.namespace:citadel-dev
 - Events for a specific pod: artifact_type:k8s_event AND kubernetes.pod:api-*
 - Container exit / restart: artifact_type:k8s_event AND message:*StartContainer*
 - OOMKilled containers: artifact_type:k8s_event AND (kubernetes.reason:OOMKilled OR kubernetes.error:*OOMKilled*)

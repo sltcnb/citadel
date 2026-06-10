@@ -63,7 +63,7 @@ ROOT         = Path(__file__).parent
 K8S          = ROOT / "k8s"
 COMPOSE_FILE = ROOT / "docker-compose.prod.yml"
 ENV_FILE     = ROOT / ".env"
-NS           = "forensics-operator"   # overwritten by load_config()
+NS           = "citadel"   # overwritten by load_config()
 
 APPLY_ORDER = [
     K8S / "namespace.yaml",
@@ -155,7 +155,7 @@ def load_config():
 
     cfg = clean(raw)
     global NS
-    NS = cfg.get("namespace", "forensics-operator")
+    NS = cfg.get("namespace", "citadel")
     return cfg
 
 
@@ -204,7 +204,7 @@ def ensure_secrets():
 def image_name(svc, cfg):
     reg = cfg["images"]["registry"].rstrip("/")
     prefix = f"{reg}/" if reg else ""
-    return f"{prefix}forensics-operator/{svc}:{cfg['images']['tag']}"
+    return f"{prefix}citadel/{svc}:{cfg['images']['tag']}"
 
 
 def _mib(s, default):
@@ -258,8 +258,12 @@ def auto_resources():
             "minio_memory_limit":   rq("minio", "limits", "memory"),
             "minio_cpu_request":    rq("minio", "requests", "cpu"),
             "minio_cpu_limit":      rq("minio", "limits", "cpu"),
-            # ES heap ≈ half the container limit (leave headroom for off-heap).
-            "elasticsearch_heap_mb": max(256, es_lim_mib // 2),
+            # ES heap = half the container limit (off-heap headroom) — coupled to
+            # the limit below so it can never exceed it (was OOMKilling). ES heap
+            # >31g loses compressed-oops, so cap there.
+            "elasticsearch_memory_request": rq("elasticsearch", "requests", "memory"),
+            "elasticsearch_memory_limit":   rq("elasticsearch", "limits", "memory"),
+            "elasticsearch_heap_mb": min(31000, max(256, es_lim_mib // 2)),
             "elasticsearch_storage_gi": int(float(str(st.get("elasticsearch", "20Gi")).rstrip("Gi"))),
             "minio_storage_gi":         int(float(str(st.get("minio", "30Gi")).rstrip("Gi"))),
             "redis_storage_gi":         int(float(str(st.get("redis", "10Gi")).rstrip("Gi"))),
@@ -291,6 +295,8 @@ def build_substitutions(cfg, pull_policy):
         "__FO_AUTH_ENABLED__":     str(auth.get("auth_enabled", True)).lower(),
         "__FO_JWT_EXPIRE_HOURS__": str(auth.get("jwt_expire_hours", 8)),
         "__FO_ES_HEAP__":          f"{es_heap}m",
+        "__FO_ES_MEMORY_REQUEST__": res.get("elasticsearch_memory_request", "1Gi"),
+        "__FO_ES_MEMORY_LIMIT__":   res.get("elasticsearch_memory_limit", "2Gi"),
         "__FO_ES_STORAGE__":       f"{res.get('elasticsearch_storage_gi', 20)}Gi",
         "__FO_MINIO_STORAGE__":    f"{res.get('minio_storage_gi', 30)}Gi",
         "__FO_REDIS_STORAGE__":    f"{res.get('redis_storage_gi', 10)}Gi",
@@ -1346,9 +1352,9 @@ def deploy_helm(cfg, no_build=False, no_cache=False):
         "global.image.registry":        registry,
         "global.image.tag":             tag,
         "global.image.pullPolicy":      "IfNotPresent",
-        "api.image.repository":         "forensics-operator/api",
-        "processor.image.repository":   "forensics-operator/processor",
-        "frontend.image.repository":    "forensics-operator/frontend",
+        "api.image.repository":         "citadel/api",
+        "processor.image.repository":   "citadel/processor",
+        "frontend.image.repository":    "citadel/frontend",
         "config.elasticsearchUrl":      sub.get("elasticsearch_url", "http://elasticsearch:9200"),
         "config.redisUrl":              sub.get("redis_url", "redis://redis-service:6379/0"),
         "config.minioEndpoint":         sub.get("minio_endpoint", "minio-service:9000"),

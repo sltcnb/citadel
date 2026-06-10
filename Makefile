@@ -2,7 +2,7 @@
 
 REGISTRY   ?= localhost:5000
 TAG        ?= latest
-NAMESPACE  := forensics-operator
+NAMESPACE  := citadel
 
 help:
 	@echo "Citadel — Kubernetes forensics analysis platform"
