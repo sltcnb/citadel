@@ -1,0 +1,27 @@
+# Microsoft 365 Unified Audit Log (Management Activity API records).
+name: o365_audit
+artifact_type: o365_audit
+os: cloud
+priority: 100
+detect:
+  all:
+    - Workload
+    - Operation
+    - UserId
+timestamp:
+  - CreationTime
+message: "{Operation} by {UserId} ({Workload}) from {ClientIP}"
+fields:
+  user.email: UserId
+  user.name: UserId|user_of
+  user.domain: UserId|domain_of
+  network.src_ip: ClientIP|ip
+attributes:
+  operation: Operation
+  workload: Workload
+  record_type: RecordType
+  result: ResultStatus
+  object_id: ObjectId
+  client_ip_alt: ClientIPAddress
+  organization: OrganizationId
+  user_agent: UserAgent
