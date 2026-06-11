@@ -4,8 +4,7 @@ stage: Analyze
 icon: Hammer
 role: "Analysis runner"
 surfaces:
-  - { label: "Modules", to: "/modules" }
-  - { label: "Studio", to: "/studio" }
+  - { label: "Modules", to: "/modules", primary: true }
 version: "1.0.0"
 description: >
   Analysis runner — runs analysis modules over case evidence. The live module

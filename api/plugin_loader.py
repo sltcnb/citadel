@@ -20,6 +20,12 @@ PLUGINS_DIR = Path("/app/babel")
 INGESTER_DIR = Path(os.getenv("INGESTER_DIR", "/app/sluice"))
 
 
+def _is_template_path(path: Path) -> bool:
+    """True for cookiecutter / scaffolding paths that hold un-rendered source."""
+    s = str(path)
+    return "{{" in s or "cookiecutter" in s or f"{os.sep}template{os.sep}" in s
+
+
 class PluginLoader:
     def __init__(self, plugins_dir: Path = PLUGINS_DIR, ingester_dir: Path = INGESTER_DIR) -> None:
         self.plugins_dir = plugins_dir
@@ -45,9 +51,13 @@ class PluginLoader:
 
         from citadel_contracts import BasePlugin  # noqa: F401
 
-        # Built-in plugins (*_plugin.py under plugins/)
+        # Built-in plugins (*_plugin.py under plugins/). Skip scaffolding
+        # templates — cookiecutter dirs hold un-rendered `{{ }}` source that is
+        # not valid Python and must never be imported as a real plugin.
         for plugin_file in sorted(self.plugins_dir.rglob("*_plugin.py")):
             if plugin_file.name.startswith("_"):
+                continue
+            if _is_template_path(plugin_file):
                 continue
             self._load_module(plugin_file)
 
