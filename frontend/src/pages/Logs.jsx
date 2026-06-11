@@ -5,6 +5,7 @@ import { api } from '../api/client'
 
 // Functional service name → the suite tool(s) it runs (shown as a tooltip/subtitle).
 const SERVICE_TOOLS = {
+  tools:     'Tool ↔ Citadel orchestration (announce · capabilities · finalize)',
   api:       'Citadel platform (API)',
   processor: 'Workers — Sluice · Babel · Rosetta · Anvil',
   sluice:    'Intake & routing',

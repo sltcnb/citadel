@@ -183,10 +183,18 @@ def _aggregate() -> list[dict[str, Any]]:
     return out
 
 
+# Dedicated logger so tool↔Citadel chatter is easy to spot/filter in Tool Logs.
+_comms = logging.getLogger("citadel.tools")
+
+
 @router.get("/tools/capabilities")
 def list_tool_capabilities():
     """Every tool's advertised capabilities — drives the dynamic UI."""
     manifests = _aggregate()
+    _comms.info(
+        "[frontend → citadel] requested all capabilities → %d tool(s): %s",
+        len(manifests), ", ".join(m["tool"] for m in manifests),
+    )
     return {"tools": manifests, "count": len(manifests)}
 
 
@@ -194,6 +202,8 @@ def list_tool_capabilities():
 def get_tool_capabilities(tool: str):
     for m in _aggregate():
         if m["tool"] == tool:
+            caps = ", ".join(c["key"] for c in m.get("capabilities", []))
+            _comms.info("[frontend → citadel] requested '%s' capabilities → %s", tool, caps)
             return m
     raise HTTPException(status_code=404, detail=f"no capability manifest for '{tool}'")
 
@@ -217,6 +227,12 @@ def sync_capabilities():
         try:
             register_capability(r, doc)
             synced.append(doc["tool"])
+            caps = ", ".join(c.get("key", "") for c in doc.get("capabilities", []))
+            _comms.info(
+                "[%s → citadel] announced itself: kind=%s v%s, capabilities: %s",
+                doc.get("tool"), doc.get("kind", "?"), doc.get("version", "?"), caps or "(none)",
+            )
         except Exception as exc:  # noqa: BLE001
             logger.warning("sync failed for %s: %s", doc.get("tool"), exc)
+    _comms.info("[citadel] registered %d tool manifest(s)", len(synced))
     return {"synced": sorted(synced), "count": len(synced)}

@@ -20,8 +20,11 @@ from config import get_redis
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["admin"])
 
-# The services worth surfacing to an admin (others stay on stdout/cluster logs).
-_TRACKED_SERVICES = ["api", "processor", "sluice", "babel", "anvil", "rosetta"]
+# Preferred ordering hint — but the list is discovered dynamically from the
+# live log streams, so ANY tool (built-in, custom, or a swapped-in replacement)
+# that ships logs appears here automatically. "tools" carries the tool↔Citadel
+# orchestration trace (announcements, capability requests, finalize chain).
+_TRACKED_SERVICES = ["tools", "api", "processor", "sluice", "babel", "anvil", "rosetta"]
 _STREAM_PREFIX = "citadel:logs:"
 
 
@@ -29,20 +32,36 @@ def _stream_key(service: str) -> str:
     return f"{_STREAM_PREFIX}{service}"
 
 
+def _discover_services(r) -> list[str]:
+    """Every service that currently has a log stream — dynamic, so new/swapped
+    tools surface without a code change. Known services keep their order first."""
+    found: list[str] = []
+    try:
+        for key in r.scan_iter(match=f"{_STREAM_PREFIX}*", count=200):
+            svc = (key.decode() if isinstance(key, bytes) else key)[len(_STREAM_PREFIX):]
+            if svc:
+                found.append(svc)
+    except Exception:
+        pass
+    ordered = [s for s in _TRACKED_SERVICES if s in found]
+    ordered += sorted(s for s in found if s not in _TRACKED_SERVICES)
+    return ordered
+
+
 @router.get("/admin/logs/services")
 def list_log_services():
-    """List services that currently have logs, with line counts."""
+    """List services that currently have logs, with line counts (discovered live)."""
     r = get_redis()
+    services = _discover_services(r)
     out = []
-    for svc in _TRACKED_SERVICES:
-        key = _stream_key(svc)
+    for svc in services:
         try:
-            n = r.xlen(key)
+            n = r.xlen(_stream_key(svc))
         except Exception:
             n = 0
         if n:
             out.append({"service": svc, "lines": n})
-    return {"services": out, "tracked": _TRACKED_SERVICES}
+    return {"services": out, "tracked": services}
 
 
 @router.get("/admin/logs/{service}")
@@ -52,9 +71,10 @@ def get_service_logs(
     level: str | None = Query(None, description="filter: ERROR|WARNING|INFO|…"),
 ):
     """Return the most recent log lines for a service (newest first)."""
-    if service not in _TRACKED_SERVICES:
-        raise HTTPException(status_code=404, detail=f"unknown service '{service}'")
     r = get_redis()
+    # Accept any service that has (or had) a stream — list is dynamic.
+    if service != "all" and service not in _discover_services(r):
+        raise HTTPException(status_code=404, detail=f"unknown service '{service}'")
     try:
         # newest-first; fetch a little extra when filtering by level
         fetch = limit * 4 if level else limit
@@ -89,8 +109,9 @@ def clear_service_logs(service: str = Path(...)):
     when ``service`` is ``all``. Only clears the admin viewer's Redis streams —
     stdout/cluster logs are untouched."""
     r = get_redis()
-    targets = _TRACKED_SERVICES if service == "all" else [service]
-    if service != "all" and service not in _TRACKED_SERVICES:
+    discovered = _discover_services(r)
+    targets = discovered if service == "all" else [service]
+    if service != "all" and service not in discovered:
         raise HTTPException(status_code=404, detail=f"unknown service '{service}'")
     cleared = 0
     for svc in targets:

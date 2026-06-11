@@ -321,6 +321,15 @@ async def _on_startup():
         from citadel_contracts import attach_redis_logs
         from config import get_redis
         attach_redis_logs("api", get_redis())
+        # Dedicated "tools" stream — the tool↔Citadel orchestration choreography
+        # (announcements, capability requests, finalize chain) in one place.
+        import logging as _lg
+
+        from citadel_contracts.logship import RedisLogHandler
+        _tools_log = _lg.getLogger("citadel.tools")
+        if not any(isinstance(h, RedisLogHandler) for h in _tools_log.handlers):
+            _tools_log.addHandler(RedisLogHandler("tools", get_redis()))
+        _tools_log.setLevel(_lg.INFO)  # propagates to api stream too
     except Exception as exc:
         logger.warning("admin log shipping unavailable: %s", exc)
 
@@ -366,12 +375,14 @@ async def _on_startup():
         except Exception as _reg_exc:
             logger.debug("capability self-seed skipped: %s", _reg_exc)
 
+        import logging as _lg2
+        _tlog = _lg2.getLogger("citadel.tools")
         manifests = _aggregate()
-        logger.info("Tool capabilities advertised: %d tool(s)", len(manifests))
+        _tlog.info("[citadel] %d tool(s) plugged in and advertising capabilities", len(manifests))
         for m in manifests:
             caps = ", ".join(c["key"] for c in m.get("capabilities", []))
-            logger.info(
-                "  %s v%s [%s] → %s",
+            _tlog.info(
+                "[%s → citadel] announced: v%s [%s] → %s",
                 m["tool"], m.get("version", "?"),
                 ",".join(m.get("platforms", [])) or "any",
                 caps or "(none)",
