@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -72,6 +73,132 @@ def is_token_revoked(payload: dict) -> bool:
         return bool(_redis().exists(rk.jwt_revoked(jti)))
     except Exception:
         return False
+
+
+# ── MFA / TOTP ─────────────────────────────────────────────────────────────────
+#
+# Login is two-step when a user has TOTP enabled: password is checked first; on
+# success the server issues a short-lived "MFA challenge" token (it is NOT an
+# access token — it only proves the password step passed). The client then posts
+# the 6-digit code (or a one-time backup code) with that challenge to finish.
+
+_TOTP_ISSUER = "Citadel"
+_MFA_CHALLENGE_MINUTES = 5
+_BACKUP_CODE_COUNT = 10
+
+
+def create_mfa_challenge(username: str) -> str:
+    """Short-lived token proving the password step passed (not an access token)."""
+    expire = datetime.now(UTC) + timedelta(minutes=_MFA_CHALLENGE_MINUTES)
+    payload = {"sub": username, "mfa": True, "exp": expire, "jti": str(uuid.uuid4())}
+    return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
+
+
+def decode_mfa_challenge(token: str) -> Optional[str]:
+    """Return the username if ``token`` is a valid MFA challenge, else None."""
+    try:
+        payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
+    except Exception:
+        return None
+    if payload.get("mfa") and payload.get("sub"):
+        return payload["sub"]
+    return None
+
+
+def is_totp_enabled(username: str) -> bool:
+    u = get_user(username)
+    return bool(u and u.get("totp_enabled") == "1")
+
+
+def start_totp_enrollment(username: str) -> dict:
+    """Generate a pending secret + provisioning URI for QR enrollment.
+
+    The secret is stored as *pending* and only promoted to active once the user
+    proves they can produce a valid code (confirm_totp_enrollment).
+    """
+    import pyotp
+
+    secret = pyotp.random_base32()
+    _redis().hset(rk.user_key(username), "totp_pending_secret", secret)
+    uri = pyotp.TOTP(secret).provisioning_uri(name=username, issuer_name=_TOTP_ISSUER)
+    return {"secret": secret, "otpauth_uri": uri}
+
+
+def confirm_totp_enrollment(username: str, code: str) -> Optional[list[str]]:
+    """Verify the pending secret with ``code``; on success activate TOTP and
+    return freshly generated one-time backup codes (shown to the user once)."""
+    import pyotp
+
+    u = get_user(username)
+    secret = (u or {}).get("totp_pending_secret")
+    if not secret:
+        return None
+    if not pyotp.TOTP(secret).verify(code, valid_window=1):
+        return None
+    codes = [_gen_backup_code() for _ in range(_BACKUP_CODE_COUNT)]
+    hashes = [hash_password(c.replace("-", "")) for c in codes]
+    key = rk.user_key(username)
+    r = _redis()
+    r.hset(key, mapping={
+        "totp_secret": secret,
+        "totp_enabled": "1",
+        "totp_backup": json.dumps(hashes),
+    })
+    r.hdel(key, "totp_pending_secret")
+    return codes
+
+
+def verify_totp(username: str, code: str) -> bool:
+    """Accept a current TOTP code OR a one-time backup code (consumed on use)."""
+    import pyotp
+
+    u = get_user(username)
+    if not u or u.get("totp_enabled") != "1":
+        return False
+    secret = u.get("totp_secret", "")
+    code = (code or "").strip()
+    if secret and pyotp.TOTP(secret).verify(code, valid_window=1):
+        return True
+    return _consume_backup_code(username, code, u)
+
+
+def _consume_backup_code(username: str, code: str, user: dict) -> bool:
+    norm = code.replace("-", "").replace(" ", "")
+    try:
+        hashes = json.loads(user.get("totp_backup") or "[]")
+    except (json.JSONDecodeError, TypeError):
+        hashes = []
+    for h in list(hashes):
+        try:
+            if verify_password(norm, h):
+                hashes.remove(h)
+                _redis().hset(rk.user_key(username), "totp_backup", json.dumps(hashes))
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def disable_totp(username: str) -> bool:
+    r = _redis()
+    key = rk.user_key(username)
+    if not r.exists(key):
+        return False
+    r.hdel(key, "totp_secret", "totp_enabled", "totp_backup", "totp_pending_secret")
+    return True
+
+
+def backup_codes_remaining(username: str) -> int:
+    u = get_user(username)
+    try:
+        return len(json.loads((u or {}).get("totp_backup") or "[]"))
+    except (json.JSONDecodeError, TypeError):
+        return 0
+
+
+def _gen_backup_code() -> str:
+    raw = secrets.token_hex(4)  # 8 hex chars
+    return f"{raw[:4]}-{raw[4:]}"
 
 
 # ── User CRUD (Redis-backed) ──────────────────────────────────────────────────
@@ -181,9 +308,12 @@ def user_count() -> int:
     return _redis().scard(_USERS_SET)
 
 
+_SECRET_FIELDS = {"hashed_password", "totp_secret", "totp_pending_secret", "totp_backup"}
+
+
 def _public(user: dict) -> dict:
-    """Strip hashed_password; parse companies JSON before returning."""
-    result = {k: v for k, v in user.items() if k != "hashed_password"}
+    """Strip secrets (password hash, TOTP secret, backup codes); parse companies."""
+    result = {k: v for k, v in user.items() if k not in _SECRET_FIELDS}
     if "companies" in result:
         try:
             result["companies"] = json.loads(result["companies"])
