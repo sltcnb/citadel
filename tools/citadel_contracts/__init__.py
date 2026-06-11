@@ -40,6 +40,17 @@ from .mapping import (  # noqa: F401
     register_transform,
     render_template,
 )
+from .capabilities import (  # noqa: F401
+    CAPABILITIES_KEY_PREFIX,
+    FIELD_TYPES,
+    PLATFORMS,
+    Capability,
+    CapabilityManifest,
+    InputField,
+    capabilities_redis_key,
+    manifest_from_dict,
+    register_capability,
+)
 
 __all__ = [
     "BasePlugin",
@@ -64,5 +75,14 @@ __all__ = [
     "get_path",
     "render_template",
     "register_transform",
+    "CapabilityManifest",
+    "Capability",
+    "InputField",
+    "manifest_from_dict",
+    "register_capability",
+    "capabilities_redis_key",
+    "CAPABILITIES_KEY_PREFIX",
+    "FIELD_TYPES",
+    "PLATFORMS",
 ]
 __version__ = "1.0.0"

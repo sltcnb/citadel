@@ -764,6 +764,48 @@ def clear_stale_celery_tasks():
         warn("Could not move stuck tasks — they may need manual recovery")
 
 
+def sync_capabilities():
+    """Push each tool's working-tree capabilities.yaml into Redis
+    (fo:capabilities:<tool>). The API prefers Redis over its baked-in copy, so a
+    tool-only change (e.g. new Talon collection feature) shows up in the UI with
+    NO API image rebuild — just re-run deploy."""
+    step("Registering tool capabilities (Redis self-registration)")
+    try:
+        import json as _json
+
+        import yaml as _yaml
+    except ImportError:
+        warn("pyyaml not available locally — skipping capability sync")
+        return
+    manifests = sorted(ROOT.glob("tools/*/capabilities.yaml"))
+    if not manifests:
+        warn("no tools/*/capabilities.yaml found — skipping")
+        return
+    synced = 0
+    for path in manifests:
+        try:
+            doc = _yaml.safe_load(path.read_text())
+        except Exception as exc:  # noqa: BLE001
+            warn(f"bad manifest {path}: {exc}")
+            continue
+        tool = isinstance(doc, dict) and doc.get("tool")
+        if not tool:
+            continue
+        payload = _json.dumps(doc)
+        # redis-cli -x reads the value from stdin → no shell-quoting of JSON.
+        r = run(["kubectl", "exec", "-i", "-n", NS, "deploy/redis", "--",
+                 "redis-cli", "-x", "SET", f"fo:capabilities:{tool}"],
+                capture=True, check=False, stdin_text=payload)
+        if r.returncode == 0:
+            synced += 1
+        else:
+            warn(f"could not register {tool}: {r.stderr.strip()[:120]}")
+    if synced:
+        ok(f"Registered {synced} tool capability manifest(s) → Redis")
+    else:
+        warn("No capability manifests registered")
+
+
 def verify_celery_queues():
     step("Verifying Celery queue configuration")
     for queue in ["ingest", "modules", "celery"]:
@@ -1285,6 +1327,7 @@ def _deploy_k8s_flow(cfg, no_build=False, no_cache=False, restart=False,
     rollout_restart_apps()
     clear_stale_celery_tasks()
     verify_celery_queues()
+    sync_capabilities()
     print_summary(cfg)
 
 

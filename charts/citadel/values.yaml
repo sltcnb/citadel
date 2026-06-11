@@ -38,13 +38,18 @@ api:
       port: 8000
     initialDelaySeconds: 15
     periodSeconds: 20
+    # 1s default is too tight under request load → false kills (exit 137).
+    timeoutSeconds: 5
+    failureThreshold: 5
   readinessProbe:
     httpGet:
       path: /api/v1/health/ready
       port: 8000
     initialDelaySeconds: 10
-    periodSeconds: 5
-    failureThreshold: 2
+    periodSeconds: 10
+    # /health/ready pings ES + Redis (~3s each); 1s timeout = false 503s.
+    timeoutSeconds: 8
+    failureThreshold: 3
 
 # ── Processor (Celery worker, no HTTP) ─────────────────────────────────────────
 processor:

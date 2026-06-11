@@ -1,0 +1,11 @@
+tool: rosetta
+kind: canonicalizer
+version: "1.0.0"
+description: Canonicalizer — maps parsed events onto the ECS schema. Runs automatically in the pipeline; no operator input.
+capabilities:
+  - key: normalize
+    label: Normalize to ECS
+    description: Maps every parser's output to one canonical timeline shape.
+    platforms: [any]
+    output: "canonical events"
+    inputs: []

@@ -101,13 +101,21 @@ spec:
               port: 8000
             initialDelaySeconds: 15
             periodSeconds: 20
+            # Default timeout is 1s — far too tight: under heavy collab/event
+            # polling the sync /health handler can't grab a threadpool slot in
+            # time, so the pod got killed (exit 137) despite being healthy.
+            timeoutSeconds: 5
+            failureThreshold: 5
           readinessProbe:
             httpGet:
               path: /api/v1/health/ready
               port: 8000
             initialDelaySeconds: 10
-            periodSeconds: 5
-            failureThreshold: 2
+            periodSeconds: 10
+            # /health/ready pings ES + Redis (up to ~3s each) — a 1s timeout
+            # guaranteed false "not ready" → blanket 503s. Give it real headroom.
+            timeoutSeconds: 8
+            failureThreshold: 3
           volumeMounts:
             - name: plugins-volume
               mountPath: /app/babel

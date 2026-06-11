@@ -54,7 +54,8 @@ const DROPDOWN_GROUPS = [
     label: 'Platform',
     adminOnly: true,
     items: [
-      { to: '/suite',     icon: Boxes,    label: 'Suite' },
+      { to: '/suite',         icon: Boxes,     label: 'Suite' },
+      { to: '/capabilities',  icon: Boxes,     label: 'Capabilities' },
       { to: '/studio',    icon: Code2,    label: 'Studio' },
       { to: '/ingesters', icon: Puzzle,   label: 'Ingesters' },
       { to: '/docs',      icon: BookOpen, label: 'Docs' },

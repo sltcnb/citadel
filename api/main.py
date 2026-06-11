@@ -50,6 +50,7 @@ from routers import (
     saved_searches,
     search,
     sigma_sync,
+    tools as tools_router,
     watchlist,
     webhooks,
     yara_rules,
@@ -345,6 +346,40 @@ async def _on_startup():
     except Exception as _startup_exc:
         logger.warning("Could not ensure fo-artifacts index at startup: %s", _startup_exc)
 
+    # Log the tool capability declarations so the admin console (Tool Logs)
+    # shows what each tool advertised when plugged in — live confirmation of the
+    # declaration → UI contract.
+    try:
+        from routers.tools import _aggregate
+
+        # Seed Redis from the baked-in manifests so the live view has them on a
+        # fresh deploy. foctl pushes the freshest working-tree manifests too;
+        # both write fo:capabilities:<tool> (Redis wins over the image copy).
+        try:
+            from citadel_contracts import register_capability
+            from routers.tools import _from_filesystem
+
+            _r = get_redis()
+            for _doc in _from_filesystem().values():
+                register_capability(_r, _doc)
+        except Exception as _reg_exc:
+            logger.debug("capability self-seed skipped: %s", _reg_exc)
+
+        manifests = _aggregate()
+        logger.info("Tool capabilities advertised: %d tool(s)", len(manifests))
+        for m in manifests:
+            caps = ", ".join(c["key"] for c in m.get("capabilities", []))
+            logger.info(
+                "  %s v%s [%s] → %s",
+                m["tool"], m.get("version", "?"),
+                ",".join(m.get("platforms", [])) or "any",
+                caps or "(none)",
+            )
+            for w in m.get("warnings", []):
+                logger.warning("  capability manifest warning: %s", w)
+    except Exception as _cap_exc:
+        logger.warning("Could not load tool capability manifests: %s", _cap_exc)
+
 
 # ── Auth dependencies for route protection ────────────────────────────────────
 # Health and auth endpoints are public; everything else requires a valid JWT.
@@ -368,6 +403,7 @@ app.include_router(ingest.router, prefix="/api/v1", dependencies=_analyst_or_adm
 app.include_router(jobs.router, prefix="/api/v1", dependencies=_analyst_or_admin)
 app.include_router(search.router, prefix="/api/v1", dependencies=_analyst_or_admin)
 app.include_router(plugins.router, prefix="/api/v1", dependencies=_analyst_or_admin)
+app.include_router(tools_router.router, prefix="/api/v1", dependencies=_analyst_or_admin)
 app.include_router(saved_searches.router, prefix="/api/v1", dependencies=_analyst_or_admin)
 app.include_router(notes.router, prefix="/api/v1", dependencies=_analyst_or_admin)
 app.include_router(alert_rules.router, prefix="/api/v1", dependencies=_analyst_or_admin)

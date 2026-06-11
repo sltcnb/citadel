@@ -58,6 +58,10 @@ Each tool is its own repo (`tools/<name>`), its own CLI, its own `brick.yaml`. R
 
 Domain analyzers — **Wraith** (memory), **Wiretap** (network), **Nimbus** (cloud), **Warden** (identity) — live in the sibling [`../domain-tools/`](../domain-tools) repos and feed Citadel over the same contracts.
 
+### Self-describing tools
+
+Each tool ships a `capabilities.yaml` declaring, per platform, what it can do and the inputs each operation needs. Citadel **renders the UI from that declaration** — forms, options, validation — then routes the user's input to the tool and the tool's output back. Edit a tool's `capabilities.yaml` (e.g. add a Talon collection feature) and the Citadel UI changes with **no orchestrator code change**; `foctl deploy` self-registers the manifest into Redis (`fo:capabilities:<tool>`), so a tool-only change needs **no API rebuild**. Custom parsers (Studio) and custom modules (Anvil registry) are folded in **live** — they appear without editing any manifest. See [docs/contracts.md → Capability advertisement](docs/contracts.md#capability-advertisement).
+
 ---
 
 ## Features

@@ -12,7 +12,7 @@ import { useState } from 'react'
 import {
   BookOpen, Puzzle, Cpu, Bell, Server, ChevronRight,
   Code2, Copy, Check, AlertCircle, CheckCircle, Zap,
-  FileCode2, Database, GitBranch, Terminal, PackageOpen,
+  FileCode2, Database, GitBranch, Terminal, PackageOpen, Boxes,
 } from 'lucide-react'
 
 // ── Code block ────────────────────────────────────────────────────────────────
@@ -127,6 +127,7 @@ const DOCS_URL = `${API_ORIGIN}/api/v1/docs`
 
 const SECTIONS = [
   { id: 'architecture', label: 'Architecture',        icon: <Server size={13} /> },
+  { id: 'capabilities', label: 'Tool Capabilities',   icon: <Boxes size={13} /> },
   { id: 'collector',    label: 'Artifact Collector',  icon: <PackageOpen size={13} /> },
   { id: 'ingesters',    label: 'Built-in Ingesters',  icon: <Puzzle size={13} /> },
   { id: 'custom-ingesters', label: 'Custom Ingesters', icon: <FileCode2 size={13} /> },
@@ -233,6 +234,61 @@ export default function Docs() {
             <InfoBox type="tip">
               Both directories are Docker volume-mounted and writable. Files you save via the <strong>Studio</strong> page are immediately available — no restart required.
             </InfoBox>
+          </Section>
+
+          {/* ── Tool Capabilities ─────────────────────────────────────────── */}
+          <Section id="capabilities" title="Tool Capabilities" icon={<Boxes size={14} className="text-brand-accent" />}>
+            <P>
+              Each tool in the suite advertises <strong>what it can do</strong> in a
+              <code> capabilities.yaml</code> file in its own repository. Citadel reads those
+              declarations and renders the UI from them — forms, options, validation. Change a
+              tool's manifest and the UI changes; the orchestrator has no hardcoded knowledge of
+              what any tool does. Browse it live on the <strong>Capabilities</strong> page.
+            </P>
+
+            <H3>The loop</H3>
+            <CodeBlock language="text" code={`tool declares (capabilities.yaml)
+  → Citadel reads (GET /tools/capabilities)
+  → renders the inputs as a form
+  → user fills it
+  → Citadel hands the input to the tool
+  → tool runs → output back to Citadel → shown to the user`} />
+
+            <H3>Declaring a capability</H3>
+            <P>
+              Per platform (<code>windows · linux · macos · android · ios · cloud · any</code>),
+              with typed inputs (<code>string · text · int · float · bool · enum · multiselect ·
+              path · host · secret</code>):
+            </P>
+            <CodeBlock language="yaml" code={`tool: talon
+kind: collector
+version: "1.0.0"
+capabilities:
+  - key: collect_windows
+    label: Collect — Windows
+    platforms: [windows]
+    output: "bundle → Sluice"
+    inputs:
+      - { name: categories, type: multiselect, required: true, options: [...] }
+      - { name: output, type: enum, default: citadel, options: [...] }`} />
+
+            <H3>Elastic — no API rebuild</H3>
+            <P>
+              Citadel reads manifests from the baked-in image, from Redis
+              (<code>fo:capabilities:&lt;tool&gt;</code>, which wins), and from the repo in dev.
+              <code> foctl deploy</code> pushes the freshest manifests straight to Redis, so a
+              tool-only change (e.g. a new Talon collection feature) appears in the UI with no API
+              image rebuild. Use the <strong>Re-sync</strong> button on the Capabilities page to
+              refresh on demand.
+            </P>
+
+            <H3>Custom parsers &amp; modules</H3>
+            <P>
+              Runtime-added units need no manifest edit. Babel's manifest reflects the
+              <strong> live parser set</strong> (an ingester built in Studio shows up immediately),
+              and Anvil's <code>run_module</code> options come from the <strong>live module
+              registry</strong> (a new module appears automatically).
+            </P>
           </Section>
 
           {/* ── Collector ─────────────────────────────────────────────────── */}

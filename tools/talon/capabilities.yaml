@@ -1,0 +1,129 @@
+# Talon — endpoint acquisition agent. Declares, per OS, what it can collect and
+# the options each run needs. Citadel renders these as forms; editing this file
+# changes the Collector UI with no orchestrator code change.
+tool: talon
+kind: collector
+version: "1.0.0"
+description: >
+  Live and dead-box artifact acquisition for Windows, Linux and macOS. Selects
+  artifact categories, packages them, and hands the bundle to Sluice (or an S3
+  triage bucket / local zip).
+
+# Shared option fields reused across the per-OS collect capabilities.
+_option_anchors:
+  - &opt_output
+    name: output
+    type: enum
+    label: Deliver to
+    required: true
+    default: citadel
+    options:
+      - { value: citadel, label: "Citadel (upload to case)", desc: "Bundle → Sluice → timeline" }
+      - { value: s3, label: "S3 triage bucket", desc: "Push to the configured triage bucket" }
+      - { value: local, label: "Local ZIP", desc: "Write output zip for manual transfer" }
+  - &opt_hash
+    name: hash_files
+    type: bool
+    label: Hash collected files (SHA-256)
+    default: true
+  - &opt_compress
+    name: compress
+    type: bool
+    label: Compress bundle
+    default: true
+  - &opt_maxfiles
+    name: max_files_per_category
+    type: int
+    label: Max files per category
+    default: 500
+    min: 1
+    max: 100000
+
+capabilities:
+  - key: collect_windows
+    label: Collect — Windows
+    description: Acquire Windows host artifacts (live or mounted/dead-box).
+    platforms: [windows]
+    output: "bundle → Sluice (or S3 / local zip)"
+    inputs:
+      - name: categories
+        type: multiselect
+        label: Artifact categories
+        required: true
+        help: What to acquire from the Windows host.
+        options:
+          - { value: evtx, label: "Event Logs (EVTX)", desc: "Security, System, Application, PowerShell, Sysmon" }
+          - { value: registry, label: "Registry Hives", desc: "SYSTEM, SOFTWARE, SAM, SECURITY, NTUSER.DAT" }
+          - { value: prefetch, label: "Prefetch", desc: "Program execution evidence" }
+          - { value: mft, label: "Master File Table ($MFT)", desc: "Raw NTFS MFT (admin/dead-box)" }
+          - { value: execution, label: "Execution Evidence", desc: "SRUM, Amcache.hve, Prefetch" }
+          - { value: persistence, label: "Persistence (Tasks + WMI)", desc: "Scheduled Tasks, WMI repository" }
+          - { value: usb_devices, label: "USB Device History", desc: "setupapi device timeline" }
+          - { value: credentials, label: "Credentials (DPAPI)", desc: "SAM, SECURITY, Credential Manager" }
+          - { value: antivirus, label: "Antivirus / EDR", desc: "Defender + third-party logs/quarantine" }
+          - { value: network_cfg, label: "Network Config", desc: "Hosts, WLAN profiles, firewall logs" }
+          - { value: browser, label: "Browser Artifacts", desc: "History, downloads, cookies" }
+      - name: mount_path
+        type: path
+        label: Mounted volume path (dead-box)
+        placeholder: "C:\\  or  /mnt/windows"
+        help: Leave blank for live collection on the running host.
+      - *opt_output
+      - *opt_hash
+      - *opt_compress
+      - *opt_maxfiles
+
+  - key: collect_linux
+    label: Collect — Linux
+    description: Acquire Linux host artifacts (live or mounted).
+    platforms: [linux]
+    output: "bundle → Sluice (or S3 / local zip)"
+    inputs:
+      - name: categories
+        type: multiselect
+        label: Artifact categories
+        required: true
+        options:
+          - { value: logs, label: "System Logs", desc: "/var/log: syslog, auth, kern, journal" }
+          - { value: audit, label: "auditd", desc: "/var/log/audit/audit.log*" }
+          - { value: shell_history, label: "Shell History", desc: "bash/zsh/fish history per user" }
+          - { value: persistence, label: "Persistence", desc: "systemd units, cron, rc.local, profile.d" }
+          - { value: packages, label: "Installed Packages", desc: "dpkg/rpm + apt history" }
+          - { value: network, label: "Network State", desc: "ss/netstat, iptables, hosts, resolv" }
+          - { value: users, label: "Accounts", desc: "passwd, shadow, sudoers, lastlog, wtmp/btmp" }
+          - { value: containers, label: "Containers", desc: "docker/k8s/crictl state + logs" }
+      - name: mount_path
+        type: path
+        label: Mounted root path (dead-box)
+        placeholder: "/mnt/linux"
+      - *opt_output
+      - *opt_hash
+      - *opt_compress
+      - *opt_maxfiles
+
+  - key: collect_macos
+    label: Collect — macOS
+    description: Acquire macOS host artifacts.
+    platforms: [macos]
+    output: "bundle → Sluice (or S3 / local zip)"
+    inputs:
+      - name: categories
+        type: multiselect
+        label: Artifact categories
+        required: true
+        options:
+          - { value: unified_logs, label: "Unified Logs", desc: "log collect / .logarchive" }
+          - { value: plists, label: "Property Lists", desc: "LaunchAgents/Daemons, preferences" }
+          - { value: persistence, label: "Persistence", desc: "Launch items, login items, cron" }
+          - { value: fsevents, label: "FSEvents", desc: "Filesystem change history" }
+          - { value: quarantine, label: "Quarantine / TCC", desc: "Downloads quarantine, TCC.db" }
+          - { value: shell_history, label: "Shell History", desc: "zsh/bash history per user" }
+          - { value: browser, label: "Browser Artifacts", desc: "Safari + Chromium/Firefox" }
+      - name: mount_path
+        type: path
+        label: Mounted volume path (dead-box)
+        placeholder: "/Volumes/Macintosh HD"
+      - *opt_output
+      - *opt_hash
+      - *opt_compress
+      - *opt_maxfiles

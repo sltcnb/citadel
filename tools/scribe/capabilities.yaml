@@ -1,0 +1,29 @@
+tool: scribe
+kind: reporting
+version: "1.0.0"
+description: Notes & reporting — captures investigator notes and renders case reports for handoff.
+capabilities:
+  - key: generate_report
+    label: Generate Report
+    description: Render a case report for export/handoff.
+    platforms: [any]
+    output: "report file (download)"
+    inputs:
+      - name: format
+        type: enum
+        label: Format
+        required: true
+        default: pdf
+        options:
+          - { value: pdf, label: "PDF" }
+          - { value: markdown, label: "Markdown" }
+          - { value: html, label: "HTML" }
+      - name: sections
+        type: multiselect
+        label: Sections
+        options:
+          - { value: timeline, label: "Timeline" }
+          - { value: detections, label: "Detections" }
+          - { value: iocs, label: "IOCs" }
+          - { value: notes, label: "Analyst notes" }
+          - { value: modules, label: "Module results" }

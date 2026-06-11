@@ -173,6 +173,12 @@ export const api = {
     upload: (formData) => request('POST', '/plugins/upload', formData),
   },
 
+  tools: {
+    capabilities: ()      => request('GET', '/tools/capabilities'),
+    capability:   (tool)  => request('GET', `/tools/${tool}/capabilities`),
+    sync:         ()      => request('POST', '/admin/tools/sync-capabilities'),
+  },
+
   health: {
     ready: () => request('GET', '/health/ready'),
   },
