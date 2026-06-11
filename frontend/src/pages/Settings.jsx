@@ -1835,9 +1835,9 @@ resources:
   return (
     <PageShell>
       <PageHeader
-        title="Settings"
+        title="Platform Settings"
         icon={Settings2}
-        subtitle={isAdmin ? 'Platform configuration for administrators.' : 'Manage your personal preferences.'}
+        subtitle={isAdmin ? 'Platform configuration for administrators. Your account & password are under Account.' : 'Administrators only — your account & password are under Account.'}
         actions={(
           <span className={`text-[10px] font-semibold px-2.5 py-1 rounded-full border ${
             license.plan === 'enterprise' ? 'bg-indigo-50 text-indigo-700 border-indigo-200' :
