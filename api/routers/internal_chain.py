@@ -21,6 +21,8 @@ from fastapi import APIRouter, Header, HTTPException
 from config import get_redis
 
 logger = logging.getLogger(__name__)
+# Orchestration choreography → the dedicated "tools" log channel.
+_comms = logging.getLogger("citadel.tools")
 router = APIRouter(tags=["internal"])
 
 _INTERNAL_TOKEN = os.getenv("INTERNAL_SERVICE_TOKEN", "")
@@ -36,6 +38,7 @@ def _require_internal(token: str | None) -> None:
 def finalize_case(case_id: str, x_internal_token: str | None = Header(default=None)):
     """Run the API-side tail of the post-ingestion chain for a case."""
     _require_internal(x_internal_token)
+    _comms.info("[processor → citadel] case %s — post-ingestion finalize requested", case_id)
     result: dict = {"case_id": case_id, "ioc_match": None, "ai_risk": None}
 
     # ── 1. CTI IOC-DB match ──────────────────────────────────────────────────
@@ -43,6 +46,9 @@ def finalize_case(case_id: str, x_internal_token: str | None = Header(default=No
         from routers.cti import match_case_iocs
 
         result["ioc_match"] = match_case_iocs(case_id)
+        n = (result["ioc_match"] or {}).get("matches")
+        _comms.info("[citadel → CTI] case %s — IOC-DB match: %s match(es)",
+                    case_id, len(n) if isinstance(n, list) else n)
     except Exception as exc:  # noqa: BLE001 — never fail the chain
         logger.warning("[finalize] case %s — IOC match failed: %s", case_id, exc)
         result["ioc_match"] = {"error": str(exc)}
@@ -53,7 +59,9 @@ def finalize_case(case_id: str, x_internal_token: str | None = Header(default=No
 
         if not get_license().has_feature("ai_assist"):
             result["ai_risk"] = {"skipped": "ai_assist not enabled in license plan"}
+            _comms.info("[citadel → Pilot] case %s — AI risk skipped (plan lacks ai_assist)", case_id)
         else:
+            _comms.info("[citadel → Pilot] case %s — running AI risk analysis", case_id)
             from routers.llm_config import ai_analyze_case
 
             analysis = ai_analyze_case(case_id)
