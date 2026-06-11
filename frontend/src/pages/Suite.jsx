@@ -1,11 +1,17 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Boxes, PackageOpen, Split, Languages, Replace, Stamp,
-  Hammer, Sparkles, Bot, FileText, ArrowRight, ExternalLink,
+  Hammer, Sparkles, Bot, FileText, ArrowRight, ExternalLink, Play, Terminal, X,
 } from 'lucide-react'
 import { PageShell, PageHeader } from '../components/shared/PageShell'
+import DynamicForm, { defaultsFor, missingRequired } from '../components/DynamicForm'
 import { api } from '../api/client'
+
+const PLATFORM_LABEL = {
+  windows: 'Windows', linux: 'Linux', macos: 'macOS',
+  android: 'Android', ios: 'iOS', cloud: 'Cloud', any: 'Any',
+}
 
 /*
  * The Citadel suite is composed of independent, single-responsibility tools —
@@ -105,25 +111,42 @@ export default function Suite() {
   const [services, setServices] = useState(new Set())
   const [babelCount, setBabelCount] = useState(null)
   const [anvilCount, setAnvilCount] = useState(null)
-  const [capCounts, setCapCounts] = useState({})  // tool -> # advertised capabilities
+  const [manifests, setManifests] = useState({})  // tool key -> manifest
+  const [selected, setSelected]   = useState(null) // tool key whose capabilities are open
+  const [selCap, setSelCap]       = useState(null)
+  const [platform, setPlatform]   = useState(null)
+  const [values, setValues]       = useState({})
+  const [submitted, setSubmitted] = useState(null)
 
   useEffect(() => {
     api.logs.services().then(r => setServices(new Set((r.services || []).map(s => s.service)))).catch(() => {})
     api.plugins.list().then(r => setBabelCount((r.plugins || []).length)).catch(() => {})
     api.modules.list().then(r => setAnvilCount((r.modules || r || []).length ?? null)).catch(() => {})
     api.tools.capabilities()
-      .then(r => setCapCounts(Object.fromEntries((r.tools || []).map(t => [t.tool, t.capabilities.length]))))
+      .then(r => setManifests(Object.fromEntries((r.tools || []).map(t => [t.tool, t]))))
       .catch(() => {})
   }, [])
 
+  const capCounts = useMemo(
+    () => Object.fromEntries(Object.entries(manifests).map(([k, m]) => [k, (m.capabilities || []).length])),
+    [manifests],
+  )
   const ctx = { services, babelCount, anvilCount }
+  const selManifest = selected ? manifests[selected] : null
+
+  function openTool(key) {
+    setSelected(key); setSelCap(null); setSubmitted(null)
+    const m = manifests[key]
+    setPlatform(m && m.platforms && m.platforms.length > 1 ? m.platforms[0] : null)
+  }
+  function openCap(c) { setSelCap(c.key); setValues(defaultsFor(c.inputs)); setSubmitted(null) }
 
   return (
     <PageShell>
       <PageHeader
-        title="Suite"
+        title="Suite & Capabilities"
         icon={Boxes}
-        subtitle="The independent tools that make up Citadel, and where each surfaces in the platform"
+        subtitle="The tools that make up Citadel, where each surfaces, and what each advertises it can do — click Capabilities on a card"
       />
 
       <p className="text-xs text-gray-500 mb-5 max-w-3xl">
@@ -179,13 +202,19 @@ export default function Suite() {
                           {s.label} <ExternalLink size={9} />
                         </Link>
                       ))}
-                      <Link
-                        to="/capabilities"
-                        className="badge bg-indigo-50 text-indigo-700 border border-indigo-200 hover:border-brand-accent inline-flex items-center gap-1"
-                        title="What this tool advertises it can do"
-                      >
-                        Capabilities <ExternalLink size={9} />
-                      </Link>
+                      {manifests[t.key] && (
+                        <button
+                          onClick={() => openTool(t.key)}
+                          className={`badge border inline-flex items-center gap-1 ${
+                            selected === t.key
+                              ? 'bg-brand-accent text-white border-brand-accent'
+                              : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:border-brand-accent'
+                          }`}
+                          title="Show what this tool advertises it can do"
+                        >
+                          Capabilities ›
+                        </button>
+                      )}
                     </div>
                   </div>
                 )
@@ -194,6 +223,80 @@ export default function Suite() {
           </div>
         )
       })}
+
+      {/* ── Inline capability panel for the selected tool ─────────────────── */}
+      {selManifest && (() => {
+        const caps = (selManifest.capabilities || []).filter(
+          c => !platform || c.platforms.includes(platform) || c.platforms.includes('any'),
+        )
+        const cap = caps.find(c => c.key === selCap) || null
+        const missing = cap ? missingRequired(cap.inputs, values) : []
+        return (
+          <div className="card p-4 mt-2 border-brand-accent/40 ring-1 ring-brand-accent/20">
+            <div className="flex items-center gap-2 mb-3">
+              <Boxes size={15} className="text-brand-accent" />
+              <span className="text-sm font-semibold text-brand-text capitalize">{selManifest.tool}</span>
+              <span className="text-[11px] text-gray-400">v{selManifest.version} · {selManifest.kind}</span>
+              <button onClick={() => { setSelected(null); setSelCap(null) }} className="icon-btn h-7 w-7 ml-auto" title="Close">
+                <X size={14} />
+              </button>
+            </div>
+
+            {selManifest.platforms.length > 1 && (
+              <div className="flex gap-1 flex-wrap mb-3">
+                {selManifest.platforms.map(p => (
+                  <button key={p} onClick={() => { setPlatform(p); setSelCap(null) }}
+                    className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
+                      platform === p ? 'border-brand-accent bg-brand-accentlight text-brand-text' : 'border-gray-200 text-gray-500 hover:border-gray-300'
+                    }`}>
+                    {PLATFORM_LABEL[p] || p}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              {caps.map(c => (
+                <button key={c.key} onClick={() => openCap(c)}
+                  className={`text-left card p-3 hover:border-brand-accent transition-colors ${selCap === c.key ? 'border-brand-accent ring-1 ring-brand-accent/30' : ''}`}>
+                  <span className="text-sm font-medium text-brand-text">{c.label}</span>
+                  <p className="text-[11px] text-gray-500 mt-0.5">{c.description}</p>
+                  <div className="flex gap-1 mt-1.5 flex-wrap">
+                    {c.platforms.map(p => <span key={p} className="badge bg-gray-100 text-gray-500 border border-gray-200 text-[9px]">{PLATFORM_LABEL[p] || p}</span>)}
+                  </div>
+                </button>
+              ))}
+            </div>
+
+            {cap && (
+              <div className="mt-3 border-t border-gray-100 pt-3 space-y-3">
+                <div className="flex items-center gap-2">
+                  <Terminal size={14} className="text-brand-accent" />
+                  <span className="text-sm font-semibold text-brand-text">{cap.label}</span>
+                  {cap.output && <span className="text-[10px] text-gray-400 ml-auto">→ {cap.output}</span>}
+                </div>
+                <DynamicForm fields={cap.inputs} values={values} onChange={setValues} />
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setSubmitted({ tool: selManifest.tool, capability: cap.key, platform, inputs: values })}
+                    disabled={missing.length > 0}
+                    className="btn-primary text-xs inline-flex items-center gap-1.5 disabled:opacity-50"
+                    title={missing.length ? `Required: ${missing.join(', ')}` : ''}>
+                    <Play size={13} /> Run
+                  </button>
+                  {missing.length > 0 && <span className="text-[10px] text-amber-600">Required: {missing.join(', ')}</span>}
+                </div>
+                {submitted && (
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wide text-gray-400 mb-1">Input Citadel hands to the tool</p>
+                    <pre className="bg-gray-900 text-gray-100 rounded-lg p-3 text-[11px] overflow-x-auto">{JSON.stringify(submitted, null, 2)}</pre>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )
+      })()}
     </PageShell>
   )
 }

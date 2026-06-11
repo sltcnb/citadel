@@ -267,6 +267,27 @@ def _ioc_dedup_key(ioc_type: str, value: str) -> str:
     return value if ioc_type == "url" else value.lower()
 
 
+# Storage moved from a SET (per-type, JSON members) to a HASH (value→JSON) for
+# real dedup. Old deployments left SET-typed keys; the first touch of each key
+# after upgrade drops the stale SET so HASH ops don't WRONGTYPE. Re-pull
+# repopulates (deduped). Cached so it's one type-check per key per process.
+_IOC_KEY_MIGRATED: set = set()
+
+
+def _ensure_ioc_hash(r: redis_lib.Redis, type_key: str) -> None:
+    if type_key in _IOC_KEY_MIGRATED:
+        return
+    try:
+        t = r.type(type_key)
+        t = t.decode() if isinstance(t, bytes) else t
+        if t not in ("hash", "none"):
+            r.delete(type_key)  # stale SET (or other) — drop; re-pull repopulates
+            logger.warning("Migrated stale IOC key %s (%s → hash)", type_key, t)
+    except Exception:  # noqa: BLE001
+        pass
+    _IOC_KEY_MIGRATED.add(type_key)
+
+
 def _ip_is_private(value: str) -> bool:
     try:
         ip = ipaddress.ip_address(value.split("/")[0])
@@ -343,6 +364,7 @@ def _store_ioc(
     keeps the earliest first_seen, refreshes last_seen, and fills available
     fields (confidence, threat_type, validity, private-IP flag)."""
     type_key = rk.cti_ioc_type(ioc_type)
+    _ensure_ioc_hash(r, type_key)
     dedup = _ioc_dedup_key(ioc_type, value)
     now = datetime.now(UTC).isoformat()
 
@@ -430,6 +452,7 @@ def _count_feed_iocs(r: redis_lib.Redis, feed_id: str) -> int:
     total = 0
     for ioc_type in IOC_TYPES:
         type_key = rk.cti_ioc_type(ioc_type)
+        _ensure_ioc_hash(r, type_key)
         for m in r.hvals(type_key):
             try:
                 if json.loads(m).get("feed_id") == feed_id:
@@ -444,6 +467,7 @@ def _remove_feed_iocs(r: redis_lib.Redis, feed_id: str) -> int:
     removed = 0
     for ioc_type in IOC_TYPES:
         type_key = rk.cti_ioc_type(ioc_type)
+        _ensure_ioc_hash(r, type_key)
         to_remove = []
         for field, m in r.hgetall(type_key).items():
             try:
@@ -922,6 +946,7 @@ def list_iocs(
     all_iocs: list[dict] = []
     for ioc_type in types_to_scan:
         type_key = rk.cti_ioc_type(ioc_type)
+        _ensure_ioc_hash(r, type_key)
         for m in r.hvals(type_key):
             try:
                 obj = json.loads(m)
@@ -962,6 +987,7 @@ def ioc_stats():
     total = 0
     for ioc_type in IOC_TYPES:
         type_key = rk.cti_ioc_type(ioc_type)
+        _ensure_ioc_hash(r, type_key)
         count = r.hlen(type_key)
         stats[ioc_type] = count
         total += count
@@ -976,6 +1002,7 @@ def clear_iocs():
     # Remove all type sets
     for ioc_type in IOC_TYPES:
         type_key = rk.cti_ioc_type(ioc_type)
+        _ensure_ioc_hash(r, type_key)
         # Clean up detail/hash keys
         for m in r.hvals(type_key):
             try:
@@ -1000,6 +1027,7 @@ def _purge_expired_iocs(r: redis_lib.Redis) -> int:
     removed = 0
     for ioc_type in IOC_TYPES:
         type_key = rk.cti_ioc_type(ioc_type)
+        _ensure_ioc_hash(r, type_key)
         stale = []
         for field, m in r.hgetall(type_key).items():
             try:
@@ -1055,6 +1083,7 @@ def set_own_networks(body: dict):
 
     # Re-flag existing IP IOCs against the new own-networks list.
     type_key = rk.cti_ioc_type("ip")
+    _ensure_ioc_hash(r, type_key)
     reflagged = 0
     for field, m in r.hgetall(type_key).items():
         try:
@@ -1126,6 +1155,7 @@ def match_case_iocs(case_id: str):
     ioc_sets: dict[str, dict[str, dict]] = {}  # type -> {value_lower: ioc_obj}
     for ioc_type in IOC_TYPES:
         type_key = rk.cti_ioc_type(ioc_type)
+        _ensure_ioc_hash(r, type_key)
         lookup: dict[str, dict] = {}
         for m in r.hvals(type_key):
             try:
