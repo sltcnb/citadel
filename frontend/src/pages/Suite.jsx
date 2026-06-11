@@ -90,6 +90,11 @@ export default function Suite() {
   )
   const ctx = { services, babelCount, anvilCount }
   const allTools = useMemo(() => toolsFromManifests(manifests), [manifests])
+  // Ordered by pipeline stage so the single grid still reads left→right by flow.
+  const orderedTools = useMemo(() => {
+    const rank = s => { const i = STAGES.indexOf(s); return i === -1 ? 999 : i }
+    return [...allTools].sort((a, b) => rank(a.stage) - rank(b.stage) || a.name.localeCompare(b.name))
+  }, [allTools])
   const selManifest = selected ? manifests[selected] : null
   const panelRef = useRef(null)
 
@@ -121,75 +126,77 @@ export default function Suite() {
         investigation platform. Evidence flows left to right through the pipeline below.
       </p>
 
-      {STAGES.map(stage => {
-        const tools = allTools.filter(t => t.stage === stage)
-        if (!tools.length) return null
-        return (
-          <div key={stage} className="mb-6">
-            <div className="flex items-center gap-2 mb-2">
-              <h2 className="section-title">{stage}</h2>
-              <ArrowRight size={13} className="text-gray-300" />
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-              {tools.map(t => {
-                const status = deriveStatus(t, ctx)
-                const Icon = t.icon
-                return (
-                  <div key={t.key} className="card p-4 flex flex-col">
-                    <div className="flex items-start gap-3">
-                      <div className="w-9 h-9 rounded-lg bg-brand-accentlight border border-brand-accent/20 flex items-center justify-center flex-shrink-0">
-                        <Icon size={16} className="text-brand-accent" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-sm font-semibold text-brand-text">{t.name}</span>
-                          {status && (
-                            <span className={`badge border ${TONE[status.tone]} inline-flex items-center gap-1`}>
-                              <span className="w-1.5 h-1.5 rounded-full bg-green-500" /> {status.text}
-                            </span>
-                          )}
-                          {capCounts[t.key] != null && (
-                            <span className="badge bg-indigo-50 text-indigo-700 border border-indigo-200">
-                              {capCounts[t.key]} capabilit{capCounts[t.key] === 1 ? 'y' : 'ies'}
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-xs text-gray-500">{t.role}</p>
-                      </div>
-                    </div>
-                    <p className="text-xs text-gray-600 mt-2 leading-relaxed flex-1">{t.blurb}</p>
-                    <div className="flex items-center gap-2 mt-3 flex-wrap">
-                      <span className="text-[10px] uppercase tracking-wide text-gray-400">Surfaces in</span>
-                      {t.surfaces.map(s => (
-                        <Link
-                          key={s.label + s.to}
-                          to={s.to}
-                          className="badge bg-gray-100 text-gray-700 border border-gray-200 hover:border-brand-accent hover:text-brand-accent inline-flex items-center gap-1"
-                        >
-                          {s.label} <ExternalLink size={9} />
-                        </Link>
-                      ))}
-                      {manifests[t.key] && (
-                        <button
-                          onClick={() => openTool(t.key)}
-                          className={`badge border inline-flex items-center gap-1 ${
-                            selected === t.key
-                              ? 'bg-brand-accent text-white border-brand-accent'
-                              : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:border-brand-accent'
-                          }`}
-                          title="Show what this tool advertises it can do"
-                        >
-                          Capabilities ›
-                        </button>
-                      )}
-                    </div>
+      {/* Pipeline legend — the order evidence flows through the suite */}
+      <div className="flex items-center gap-1.5 flex-wrap mb-5 text-[11px] text-gray-400">
+        {STAGES.filter(s => allTools.some(t => t.stage === s)).map((s, i, arr) => (
+          <span key={s} className="flex items-center gap-1.5">
+            <span className="font-medium text-gray-500">{s}</span>
+            {i < arr.length - 1 && <ArrowRight size={11} className="text-gray-300" />}
+          </span>
+        ))}
+      </div>
+
+      {/* One full-width grid of every tool, ordered by pipeline stage */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+        {orderedTools.map(t => {
+          const status = deriveStatus(t, ctx)
+          const Icon = t.icon
+          return (
+            <div key={t.key} className="card p-4 flex flex-col">
+              <div className="flex items-start gap-3">
+                <div className="w-9 h-9 rounded-lg bg-brand-accentlight border border-brand-accent/20 flex items-center justify-center flex-shrink-0">
+                  <Icon size={16} className="text-brand-accent" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-semibold text-brand-text">{t.name}</span>
+                    {t.stage && (
+                      <span className="badge bg-gray-100 text-gray-500 border border-gray-200">{t.stage}</span>
+                    )}
+                    {status && (
+                      <span className={`badge border ${TONE[status.tone]} inline-flex items-center gap-1`}>
+                        <span className="w-1.5 h-1.5 rounded-full bg-green-500" /> {status.text}
+                      </span>
+                    )}
+                    {capCounts[t.key] != null && (
+                      <span className="badge bg-indigo-50 text-indigo-700 border border-indigo-200">
+                        {capCounts[t.key]} capabilit{capCounts[t.key] === 1 ? 'y' : 'ies'}
+                      </span>
+                    )}
                   </div>
-                )
-              })}
+                  <p className="text-xs text-gray-500">{t.role}</p>
+                </div>
+              </div>
+              <p className="text-xs text-gray-600 mt-2 leading-relaxed flex-1">{t.blurb}</p>
+              <div className="flex items-center gap-2 mt-3 flex-wrap">
+                <span className="text-[10px] uppercase tracking-wide text-gray-400">Surfaces in</span>
+                {t.surfaces.map(s => (
+                  <Link
+                    key={s.label + s.to}
+                    to={s.to}
+                    className="badge bg-gray-100 text-gray-700 border border-gray-200 hover:border-brand-accent hover:text-brand-accent inline-flex items-center gap-1"
+                  >
+                    {s.label} <ExternalLink size={9} />
+                  </Link>
+                ))}
+                {manifests[t.key] && (
+                  <button
+                    onClick={() => openTool(t.key)}
+                    className={`badge border inline-flex items-center gap-1 ${
+                      selected === t.key
+                        ? 'bg-brand-accent text-white border-brand-accent'
+                        : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:border-brand-accent'
+                    }`}
+                    title="Show what this tool advertises it can do"
+                  >
+                    Capabilities ›
+                  </button>
+                )}
+              </div>
             </div>
-          </div>
-        )
-      })}
+          )
+        })}
+      </div>
 
       {/* ── Inline capability panel for the selected tool ─────────────────── */}
       {selManifest && (() => {
