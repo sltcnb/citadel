@@ -442,16 +442,17 @@ export default function ThreatIntel() {
         subtitle="Manage CTI feeds, import STIX bundles, and match IOCs against case artifacts"
       />
 
+
       {/* ── IOC Stats ────────────────────────────────────────────────────────── */}
       {stats && (
         <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-7 gap-2 mb-6">
           <StatBox icon={Shield}   label="Total"    value={stats.total}    color="bg-brand-accentlight text-brand-accent" />
-          <StatBox icon={Hash}     label="Hashes"   value={stats.hash}     color="bg-amber-100 text-amber-600" />
-          <StatBox icon={Globe}    label="IPs"       value={stats.ip}       color="bg-red-100 text-red-600" />
-          <StatBox icon={Globe}    label="Domains"  value={stats.domain}   color="bg-green-100 text-green-600" />
-          <StatBox icon={Link2}    label="URLs"      value={stats.url}      color="bg-blue-100 text-blue-600" />
-          <StatBox icon={AtSign}   label="Emails"   value={stats.email}    color="bg-purple-100 text-purple-600" />
-          <StatBox icon={FileText} label="Files"    value={stats.filename} color="bg-gray-100 text-gray-600" />
+          <StatBox icon={Hash}     label="Hashes"   value={stats.hash}     color="bg-gray-100 text-gray-500" />
+          <StatBox icon={Globe}    label="IPs"       value={stats.ip}       color="bg-gray-100 text-gray-500" />
+          <StatBox icon={Globe}    label="Domains"  value={stats.domain}   color="bg-gray-100 text-gray-500" />
+          <StatBox icon={Link2}    label="URLs"      value={stats.url}      color="bg-gray-100 text-gray-500" />
+          <StatBox icon={AtSign}   label="Emails"   value={stats.email}    color="bg-gray-100 text-gray-500" />
+          <StatBox icon={FileText} label="Files"    value={stats.filename} color="bg-gray-100 text-gray-500" />
         </div>
       )}
 
@@ -501,7 +502,13 @@ export default function ThreatIntel() {
                       <p className="text-[11px] text-gray-500 font-mono truncate mb-0.5">{feed.url}</p>
                     )}
                     <div className="flex items-center gap-3 text-[10px] text-gray-500 flex-wrap">
-                      <span>Last pull: {fmtDate(feed.last_pull)}</span>
+                      {pullingId === feed.id ? (
+                        <span className="flex items-center gap-1 text-brand-accent font-semibold">
+                          <Loader2 size={9} className="animate-spin" /> Downloading…
+                        </span>
+                      ) : (
+                        <span>Last pull: {fmtDate(feed.last_pull)}</span>
+                      )}
                       <span>{(feed.ioc_count ?? 0).toLocaleString()} IOCs</span>
                       {feed.type !== 'manual' && feed.auto_pull !== false && (
                         <span className="flex items-center gap-1 text-green-600">
@@ -539,44 +546,6 @@ export default function ThreatIntel() {
             ))}
           </div>
         )}
-      </div>
-
-      {/* ── Import STIX Bundle ───────────────────────────────────────────────── */}
-      <div className="mb-8">
-        <h2 className="text-sm font-semibold text-brand-text mb-3">Import STIX Bundle</h2>
-        <div className="card p-4 space-y-3">
-          <p className="text-xs text-gray-500">
-            Paste a STIX 2.1 JSON bundle or upload a <code className="text-brand-accent">.json</code> file to import indicators.
-          </p>
-          <textarea
-            value={bundleText}
-            onChange={e => setBundleText(e.target.value)}
-            placeholder='{"type": "bundle", "id": "bundle--...", "objects": [...]}'
-            rows={5}
-            className="input text-xs font-mono resize-y"
-          />
-          <div className="flex items-center gap-2 flex-wrap">
-            <button onClick={importBundle} disabled={importing || !bundleText.trim()} className="btn-primary text-xs">
-              {importing ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}
-              Import
-            </button>
-            <button onClick={() => fileRef.current?.click()} className="btn-outline text-xs">
-              <FileText size={12} /> Upload .json
-            </button>
-            <input ref={fileRef} type="file" accept=".json" className="hidden"
-              onChange={handleFileUpload} />
-          </div>
-          {importMsg && (
-            <div className={`flex items-center gap-2 text-xs rounded-lg px-3 py-2 ${
-              importMsg.ok
-                ? 'text-green-700 bg-green-50 border border-green-200'
-                : 'text-red-600 bg-red-50 border border-red-200'
-            }`}>
-              {importMsg.ok ? <CheckCircle size={13} /> : <AlertTriangle size={13} />}
-              {importMsg.text}
-            </div>
-          )}
-        </div>
       </div>
 
       {/* ── IOC Browser ──────────────────────────────────────────────────────── */}
@@ -757,6 +726,45 @@ export default function ThreatIntel() {
           )}
         </div>
       </div>
+
+      {/* ── Import STIX Bundle ───────────────────────────────────────────────── */}
+      <div className="mb-8">
+        <h2 className="text-sm font-semibold text-brand-text mb-3">Import STIX Bundle</h2>
+        <div className="card p-4 space-y-3">
+          <p className="text-xs text-gray-500">
+            Paste a STIX 2.1 JSON bundle or upload a <code className="text-brand-accent">.json</code> file to import indicators.
+          </p>
+          <textarea
+            value={bundleText}
+            onChange={e => setBundleText(e.target.value)}
+            placeholder='{"type": "bundle", "id": "bundle--...", "objects": [...]}'
+            rows={5}
+            className="input text-xs font-mono resize-y"
+          />
+          <div className="flex items-center gap-2 flex-wrap">
+            <button onClick={importBundle} disabled={importing || !bundleText.trim()} className="btn-primary text-xs">
+              {importing ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}
+              Import
+            </button>
+            <button onClick={() => fileRef.current?.click()} className="btn-outline text-xs">
+              <FileText size={12} /> Upload .json
+            </button>
+            <input ref={fileRef} type="file" accept=".json" className="hidden"
+              onChange={handleFileUpload} />
+          </div>
+          {importMsg && (
+            <div className={`flex items-center gap-2 text-xs rounded-lg px-3 py-2 ${
+              importMsg.ok
+                ? 'text-green-700 bg-green-50 border border-green-200'
+                : 'text-red-600 bg-red-50 border border-red-200'
+            }`}>
+              {importMsg.ok ? <CheckCircle size={13} /> : <AlertTriangle size={13} />}
+              {importMsg.text}
+            </div>
+          )}
+        </div>
+      </div>
+
     </PageShell>
   )
 }

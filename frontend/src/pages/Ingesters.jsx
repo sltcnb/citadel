@@ -6,7 +6,6 @@ import {
   Code2, BookOpen, Plus, ArrowRight,
 } from 'lucide-react'
 import { PageShell, PageHeader } from '../components/shared/PageShell'
-import { ToolByline } from './Suite'
 import { api } from '../api/client'
 
 // ── UploadZone ────────────────────────────────────────────────────────────────
@@ -177,7 +176,6 @@ export default function Ingesters() {
         }
       />
 
-      <div className="-mt-2 mb-4"><ToolByline tool="babel" /></div>
 
       {/* ── Section 1: All ingesters ────────────────────────────────────────── */}
       <section className="mb-8">

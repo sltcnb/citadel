@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Boxes, PackageOpen, Split, Languages, Replace, Stamp,
@@ -91,6 +91,15 @@ export default function Suite() {
   const ctx = { services, babelCount, anvilCount }
   const allTools = useMemo(() => toolsFromManifests(manifests), [manifests])
   const selManifest = selected ? manifests[selected] : null
+  const panelRef = useRef(null)
+
+  // Panel renders below the stage grid — scroll to it when a tool is opened,
+  // otherwise clicking "Capabilities" looks like it does nothing.
+  useEffect(() => {
+    if (selected && panelRef.current) {
+      panelRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  }, [selected])
 
   function openTool(key) {
     setSelected(key); setSelCap(null); setSubmitted(null)
@@ -102,7 +111,7 @@ export default function Suite() {
   return (
     <PageShell>
       <PageHeader
-        title="Suite & Capabilities"
+        title="Tool Stack"
         icon={Boxes}
         subtitle="The tools that make up Citadel, where each surfaces, and what each advertises it can do — click Capabilities on a card"
       />
@@ -190,7 +199,7 @@ export default function Suite() {
         const cap = caps.find(c => c.key === selCap) || null
         const missing = cap ? missingRequired(cap.inputs, values) : []
         return (
-          <div className="card p-4 mt-2 border-brand-accent/40 ring-1 ring-brand-accent/20">
+          <div ref={panelRef} className="card p-4 mt-2 border-brand-accent/40 ring-1 ring-brand-accent/20 scroll-mt-4">
             <div className="flex items-center gap-2 mb-3">
               <Boxes size={15} className="text-brand-accent" />
               <span className="text-sm font-semibold text-brand-text capitalize">{selManifest.tool}</span>
