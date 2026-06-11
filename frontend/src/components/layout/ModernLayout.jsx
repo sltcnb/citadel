@@ -15,9 +15,15 @@ import { ToolByline } from '../../pages/Suite'
 // Byline tool is DERIVED from the tools' declared surfaces (passed in). Citadel
 // holds no page→tool table — a tool says where it surfaces, the byline follows.
 function PageToolByline({ pathname, surfaceMap }) {
-  const hit = surfaceMap.find(s => pathname === s.to || pathname.startsWith(s.to + '/') || pathname.startsWith(s.to))
-  if (!hit) return null
-  return <div className="px-4 pt-3 -mb-1"><ToolByline tool={hit.tool} /></div>
+  // Longest-prefix match wins (surfaceMap is sorted longest-first); a tool's
+  // "/" surface is the catch-all fallback. If nothing matches at all (no
+  // manifest yet, or a pure-platform page), attribute to Citadel so EVERY page
+  // carries a byline.
+  const hit = surfaceMap.find(s =>
+    s.to === '/' ? pathname === '/' : (pathname === s.to || pathname.startsWith(s.to + '/'))
+  )
+  const tool = hit ? hit.tool : 'citadel'
+  return <div className="px-4 pt-3 pb-1"><ToolByline tool={tool} /></div>
 }
 import { useUpload } from '../../contexts/UploadContext'
 
@@ -148,9 +154,9 @@ export default function ModernLayout({ user, onLogout }) {
       .then(r => {
         const m = (r.tools || []).flatMap(t =>
           (t.surfaces || [])
-            .filter(s => s.to && s.to !== '/')   // "/" is too generic to own
+            .filter(s => s.to)
             .map(s => ({ to: s.to, tool: t.tool })))
-        m.sort((a, b) => b.to.length - a.to.length)  // longest prefix wins
+        m.sort((a, b) => b.to.length - a.to.length)  // longest prefix wins; "/" last
         setSurfaceMap(m)
       })
       .catch(() => {})
@@ -329,17 +335,6 @@ export default function ModernLayout({ user, onLogout }) {
 
           <div className="hidden md:block w-px h-5 bg-gray-200 mx-1.5" />
 
-          <NavLink to="/account"
-            className={({ isActive }) =>
-              `w-8 h-8 flex items-center justify-center rounded-md transition-colors ${
-                isActive ? 'text-brand-text bg-gray-100' : 'text-gray-500 hover:text-brand-text hover:bg-gray-100'
-              }`
-            }
-            title="Account"
-          >
-            <UserCircle size={15} />
-          </NavLink>
-
           <button onClick={cycleTheme}
             className="w-8 h-8 flex items-center justify-center rounded-md text-gray-500 hover:text-brand-text hover:bg-gray-100 transition-colors"
             title={theme === 'light' ? 'Dark mode' : 'Light mode'}
@@ -357,12 +352,18 @@ export default function ModernLayout({ user, onLogout }) {
           {user && (
             <>
               <div className="hidden md:block w-px h-5 bg-gray-200 mx-1.5" />
-              <div className="hidden md:flex items-center gap-2 px-2 py-1 rounded-md">
+              <NavLink to="/account" title="Account"
+                className={({ isActive }) =>
+                  `hidden md:flex items-center gap-2 px-2 py-1 rounded-md transition-colors ${
+                    isActive ? 'bg-gray-100' : 'hover:bg-gray-100'
+                  }`
+                }
+              >
                 <div className="w-6 h-6 rounded-full bg-gray-900 text-white flex items-center justify-center text-[10px] font-semibold uppercase">
                   {(user.username || '?').slice(0, 2)}
                 </div>
                 <span className="text-[12px] text-gray-700 font-medium max-w-[90px] truncate">{user.username}</span>
-              </div>
+              </NavLink>
               <button onClick={onLogout} title="Sign out"
                 className="w-8 h-8 flex items-center justify-center rounded-md text-gray-500 hover:text-brand-text hover:bg-gray-100 transition-colors"
               >
