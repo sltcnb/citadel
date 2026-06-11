@@ -966,18 +966,41 @@ def list_iocs(
     page: int = Query(1, ge=1),
     size: int = Query(50, ge=1, le=500),
 ):
-    """List all IOCs with optional filtering and pagination."""
+    """List IOCs with filtering + pagination.
+
+    Feeds can hold hundreds of thousands of IOCs, so we DON'T load every entry
+    per request. ``total`` comes from O(1) HLEN; the page is collected via HSCAN
+    with an early stop. (Deep, globally-sorted pagination over ~1M IOCs isn't the
+    job here — this is a browser; use search to find a specific value fast.)"""
     r = _redis()
     types_to_scan = [type] if type and type in IOC_TYPES else list(IOC_TYPES)
+    ql = q.lower() if q else None
 
-    all_iocs: list[dict] = []
+    # O(1) total per type.
+    total = 0
     for ioc_type in types_to_scan:
         type_key = rk.cti_ioc_type(ioc_type)
         _ensure_ioc_hash(r, type_key)
-        for m in r.hvals(type_key):
-            try:
-                obj = json.loads(m)
-                if q and q.lower() not in obj.get("value", "").lower():
+        try:
+            total += r.hlen(type_key)
+        except Exception:
+            pass
+
+    need = page * size          # how many filtered rows we must reach
+    collected: list[dict] = []
+    cap = max(need * 4, 2000)    # bound the scan so a huge feed can't stall us
+    scanned = 0
+    for ioc_type in types_to_scan:
+        type_key = rk.cti_ioc_type(ioc_type)
+        cursor = 0
+        while True:
+            cursor, batch = r.hscan(type_key, cursor=cursor, count=500,
+                                    match=(f"*{ql}*" if ql else None))
+            for m in batch.values():
+                scanned += 1
+                try:
+                    obj = json.loads(m)
+                except (json.JSONDecodeError, TypeError):
                     continue
                 if not include_expired and _ioc_expired(obj):
                     continue
@@ -985,17 +1008,15 @@ def list_iocs(
                     continue
                 if visibility == "private" and not obj.get("is_private"):
                     continue
-                all_iocs.append(obj)
-            except (json.JSONDecodeError, TypeError):
-                pass
+                collected.append(obj)
+            if cursor == 0 or len(collected) >= need or scanned >= cap:
+                break
+        if len(collected) >= need or scanned >= cap:
+            break
 
-    # Sort by created desc
-    all_iocs.sort(key=lambda x: x.get("created", ""), reverse=True)
-
-    total = len(all_iocs)
+    collected.sort(key=lambda x: x.get("created", ""), reverse=True)
     start = (page - 1) * size
-    end = start + size
-    page_iocs = all_iocs[start:end]
+    page_iocs = collected[start:start + size]
 
     return {
         "iocs": page_iocs,
@@ -1003,6 +1024,7 @@ def list_iocs(
         "page": page,
         "size": size,
         "pages": (total + size - 1) // size if total > 0 else 0,
+        "sampled": scanned >= cap,  # true → page is a bounded sample, not global sort
     }
 
 
@@ -1189,9 +1211,8 @@ def match_case_iocs(case_id: str):
                 obj = json.loads(m)
                 if _ioc_expired(obj):
                     continue  # don't match against stale intel
-                # Private IPs and the operator's own public IPs are infra noise.
-                if ioc_type == "ip" and (obj.get("is_private") or obj.get("is_own")):
-                    continue
+                # Own/private IPs are kept + tagged (separated), not dropped —
+                # so the timeline can filter them with a checkbox.
                 val = obj.get("value", "").lower()
                 if val:
                     lookup[val] = obj
@@ -1255,6 +1276,8 @@ def match_case_iocs(case_id: str):
                                     "indicator_id": ioc_obj.get("indicator_id", ""),
                                     "feed_name": ioc_obj.get("feed_name", ""),
                                     "matched_field": field,
+                                    "is_own": bool(ioc_obj.get("is_own")),
+                                    "is_private": bool(ioc_obj.get("is_private")),
                                 }
                             )
 

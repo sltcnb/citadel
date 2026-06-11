@@ -358,10 +358,10 @@ async def _on_startup():
         # (announcements, capability requests, finalize chain) in one place.
         import logging as _lg
 
-        from citadel_contracts.logship import RedisLogHandler
+        from citadel_contracts.logship import RedisLogHandler, _async_handler
         _tools_log = _lg.getLogger("citadel.tools")
-        if not any(isinstance(h, RedisLogHandler) for h in _tools_log.handlers):
-            _tools_log.addHandler(RedisLogHandler("tools", get_redis()))
+        if not any(getattr(h, "_listener", None) for h in _tools_log.handlers):
+            _tools_log.addHandler(_async_handler(RedisLogHandler("tools", get_redis())))
         _tools_log.setLevel(_lg.INFO)  # propagates to api stream too
     except Exception as exc:
         logger.warning("admin log shipping unavailable: %s", exc)
