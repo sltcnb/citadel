@@ -1,0 +1,28 @@
+tool: augur
+kind: insight
+version: "1.0.0"
+description: Anomaly & insight — surfaces statistical outliers and notable patterns across the timeline.
+capabilities:
+  - key: anomaly_scan
+    label: Anomaly Scan
+    description: Highlight rare values and timing outliers across case events.
+    platforms: [any]
+    output: "ranked anomalies"
+    inputs:
+      - name: dimension
+        type: enum
+        label: Focus
+        default: all
+        options:
+          - { value: all, label: "All dimensions" }
+          - { value: process, label: "Process execution" }
+          - { value: network, label: "Network activity" }
+          - { value: auth, label: "Authentication" }
+      - name: sensitivity
+        type: enum
+        label: Sensitivity
+        default: medium
+        options:
+          - { value: low, label: "Low" }
+          - { value: medium, label: "Medium" }
+          - { value: high, label: "High" }

@@ -1,0 +1,22 @@
+tool: pilot
+kind: assistant
+version: "1.0.0"
+description: Investigation assistant — optional LLM that summarizes detections, drafts rules, and answers questions over case context.
+capabilities:
+  - key: ask
+    label: Ask Pilot
+    description: Ask a question answered over the case context.
+    platforms: [any]
+    output: "answer (text)"
+    inputs:
+      - name: question
+        type: text
+        label: Question
+        required: true
+        placeholder: "What persistence mechanisms were found?"
+  - key: summarize
+    label: Summarize Case
+    description: Generate a narrative summary of the current findings.
+    platforms: [any]
+    output: "summary (text)"
+    inputs: []

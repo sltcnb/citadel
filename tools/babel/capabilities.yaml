@@ -1,0 +1,26 @@
+tool: babel
+kind: parser
+version: "1.0.0"
+description: >
+  Artifact parsers — turn raw forensic artifacts into timeline events. The live
+  parser set is dynamic (see GET /plugins); custom parsers are authored in Studio.
+capabilities:
+  - key: build_ingester
+    label: Build Custom Ingester
+    description: Author a new parser in Studio for an unsupported artifact.
+    platforms: [any]
+    output: "new parser plugin"
+    inputs:
+      - name: name
+        type: string
+        label: Ingester name
+        required: true
+        placeholder: my_app_log
+      - name: template
+        type: enum
+        label: Starting template
+        default: line_parser
+        options:
+          - { value: line_parser, label: "Line parser", desc: "One event per matched line" }
+          - { value: json_parser, label: "JSON parser", desc: "Map JSON fields to events" }
+          - { value: binary_parser, label: "Binary parser", desc: "struct-based fixed records" }

@@ -28,8 +28,14 @@ def _check_redis() -> bool:
 
 
 @router.get("/health")
-def liveness():
-    """Liveness probe — always returns 200 if the process is alive."""
+async def liveness():
+    """Liveness probe — always 200 if the process is alive.
+
+    Declared async so it runs directly on the event loop and answers instantly
+    even when the sync threadpool is saturated by request load (heavy collab
+    polling). A blocking sync handler here got starved past the probe timeout
+    and the pod was killed despite being healthy.
+    """
     return {"status": "ok"}
 
 

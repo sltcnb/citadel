@@ -1,0 +1,31 @@
+tool: sigil
+kind: detection
+version: "1.0.0"
+description: Detection engine — evaluates Sigma alert rules and YARA signatures against case data.
+capabilities:
+  - key: run_alert_rules
+    label: Run Alert Rules
+    description: Evaluate the Sigma rule library against a case timeline.
+    platforms: [any]
+    output: "detections on the timeline"
+    inputs:
+      - name: scope
+        type: enum
+        label: Rule scope
+        default: library
+        options:
+          - { value: library, label: "Full library" }
+          - { value: enabled, label: "Enabled rules only" }
+  - key: run_yara
+    label: Run YARA Scan
+    description: Match YARA rules against case files.
+    platforms: [any]
+    output: "matches on the timeline"
+    inputs:
+      - name: ruleset
+        type: enum
+        label: Rule set
+        default: all
+        options:
+          - { value: all, label: "All YARA rules" }
+          - { value: malware, label: "Malware family rules" }
