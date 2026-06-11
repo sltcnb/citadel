@@ -261,9 +261,33 @@ const TYPE_TOOLBAR = {
 const TEMPLATE_CATALOG = {
   ingester: [
     {
+      id: 'quick',
+      label: 'Quick (SDK)',
+      desc: 'Minimal — just a parse(ctx) function, no class boilerplate',
+      icon: Zap,
+      color: 'text-green-500',
+      build: (name) => `"""${name}_ingester.py — minimal parser via the authoring SDK.
+
+Same BasePlugin contract under the hood, far less boilerplate. ctx gives
+readers: ctx.lines() · ctx.text() · ctx.json() · ctx.jsonl() · ctx.raw_bytes().
+event(...) builds a contract-compliant event.
+"""
+from citadel_contracts.sdk import parser, event
+
+
+@parser(name="${name.replace(/_/g, '-')}", extensions=[".log"])
+def parse(ctx):
+    for line in ctx.lines():
+        if not line.strip():
+            continue
+        # timestamp accepts ISO / epoch / datetime; it's canonicalized for you.
+        yield event(timestamp=line[:19], message=line)
+`,
+    },
+    {
       id: 'basic',
-      label: 'Text Log',
-      desc: 'Line-by-line log parser with timestamp extraction',
+      label: 'Text Log (class)',
+      desc: 'Full BasePlugin class — line-by-line log parser',
       icon: FileText,
       color: 'text-blue-500',
       build: INGESTER_TEMPLATE,
@@ -1088,12 +1112,15 @@ export default function Studio() {
   const sidebarFileType = sidebarTab === 'ingesters' ? 'ingester' : 'module'
   const existingNames   = sidebarFiles.map(f => f.name)
 
+  // `tool` = the suite tool that runs this artifact (shown as ownership info,
+  // tabs keep their functional names per the contract).
   const SIDEBAR_TABS = [
-    { id: 'ingesters', icon: <Puzzle size={12} />, label: 'Ingest.' },
-    { id: 'modules',   icon: <Cpu    size={12} />, label: 'Modules' },
-    { id: 'alertrule', icon: <Bell   size={12} />, label: 'Rules' },
-    { id: 'yara',      icon: <Shield size={12} />, label: 'YARA' },
+    { id: 'ingesters', icon: <Puzzle size={12} />, label: 'Ingest.', tool: 'Babel' },
+    { id: 'modules',   icon: <Cpu    size={12} />, label: 'Modules', tool: 'Anvil' },
+    { id: 'alertrule', icon: <Bell   size={12} />, label: 'Rules',   tool: 'Sigil' },
+    { id: 'yara',      icon: <Shield size={12} />, label: 'YARA',    tool: 'Sigil' },
   ]
+  const activeTool = (SIDEBAR_TABS.find(t => t.id === sidebarTab) || {}).tool
 
   // ── New button label ───────────────────────────────────────────────────────
 
@@ -1222,11 +1249,11 @@ export default function Studio() {
 
         {/* Panel tab switcher — 4 tabs */}
         <div className="flex border-b border-gray-200 flex-shrink-0">
-          {SIDEBAR_TABS.map(({ id, icon, label }) => (
+          {SIDEBAR_TABS.map(({ id, icon, label, tool }) => (
             <button
               key={id}
               onClick={() => setSidebarTab(id)}
-              title={label}
+              title={tool ? `${label} — run by ${tool}` : label}
               className={`flex-1 flex flex-col items-center justify-center gap-0.5 py-2 text-[10px] font-medium transition-colors ${
                 sidebarTab === id
                   ? 'text-brand-accent border-b-2 border-brand-accent bg-brand-accentlight/40'
@@ -1238,6 +1265,13 @@ export default function Studio() {
             </button>
           ))}
         </div>
+
+        {/* Owning-tool note — tabs keep functional names; this says who runs it. */}
+        {activeTool && (
+          <div className="px-3 pt-1.5 text-[10px] text-gray-400">
+            run by <span className="font-semibold text-brand-accent">{activeTool}</span>
+          </div>
+        )}
 
         {/* New button + filter */}
         <div className="px-3 py-2 space-y-1.5 flex-shrink-0">
