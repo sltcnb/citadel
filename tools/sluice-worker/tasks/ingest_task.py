@@ -563,15 +563,18 @@ def _trigger_finalize_chain(case_id: str) -> None:
         logger.debug("[finalize] no INTERNAL_SERVICE_TOKEN — skipping API chain")
         return
     base = os.getenv("INTERNAL_API_URL", "http://api-service:8000").rstrip("/")
+    import logging as _lg
+    _tlog = _lg.getLogger("citadel.tools")
     try:
         import requests
 
+        _tlog.info("[processor → citadel] case %s — detections done, requesting finalize chain", case_id)
         resp = requests.post(
             f"{base}/api/v1/internal/cases/{case_id}/finalize",
             headers={"X-Internal-Token": token},
             timeout=300,  # the LLM step can be slow; this runs off the ingest path
         )
-        logger.info("[finalize] case %s — API chain returned %d", case_id, resp.status_code)
+        _tlog.info("[citadel → processor] case %s — finalize chain returned %d", case_id, resp.status_code)
     except Exception as exc:  # noqa: BLE001
         logger.warning("[finalize] case %s — could not trigger API chain: %s", case_id, exc)
 

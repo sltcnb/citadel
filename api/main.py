@@ -242,6 +242,36 @@ async def _security_headers(request: Request, call_next):
     return response
 
 
+# High-frequency polling paths — skipped so the access log shows meaningful
+# orchestration, not a flood of heartbeats.
+_ACCESS_LOG_SKIP = (
+    "/health", "/collab/", "/ai/agent/active", "/ai/results",
+    "/metrics/dashboard", "/metrics/history", "/jobs",
+)
+_access_logger = logging.getLogger("citadel.api")
+
+
+@app.middleware("http")
+async def _access_log(request: Request, call_next):
+    """Ship compact API-call metadata to the admin log stream so operators can
+    watch what the frontend/tools ask of Citadel (method · path · status · ms)."""
+    import time as _t
+
+    start = _t.monotonic()
+    response = await call_next(request)
+    try:
+        path = request.url.path
+        if "/api/v1/" in path and not any(s in path for s in _ACCESS_LOG_SKIP):
+            dur_ms = (_t.monotonic() - start) * 1000
+            short = path.split("/api/v1/", 1)[-1]
+            _access_logger.info(
+                "%s /%s → %d (%.0fms)", request.method, short, response.status_code, dur_ms
+            )
+    except Exception:  # noqa: BLE001 — logging must never break a request
+        pass
+    return response
+
+
 # ── Startup hook ─────────────────────────────────────────────────────────────
 
 

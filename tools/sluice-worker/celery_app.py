@@ -15,7 +15,18 @@ try:
 
     _obs.setup_json_logging()
     if os.getenv("CITADEL_LOG_TO_REDIS", "true").lower() != "false":
-        _obs.attach_redis_logs("processor", _redis.Redis.from_url(REDIS_URL, decode_responses=True))
+        _rc = _redis.Redis.from_url(REDIS_URL, decode_responses=True)
+        _obs.attach_redis_logs("processor", _rc)
+        # Mirror the cross-tool orchestration logger to the shared "tools"
+        # channel so the worker's bus emits show alongside the API's in one place.
+        import logging as _lg
+
+        from citadel_contracts.logship import RedisLogHandler as _RLH
+
+        _tl = _lg.getLogger("citadel.tools")
+        if not any(isinstance(h, _RLH) for h in _tl.handlers):
+            _tl.addHandler(_RLH("tools", _rc))
+        _tl.setLevel(_lg.INFO)
 except Exception:  # missing dep / redis down must not stop the worker booting
     pass
 
