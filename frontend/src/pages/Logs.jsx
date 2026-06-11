@@ -136,7 +136,7 @@ export default function Logs() {
     : lines
 
   return (
-    <PageShell>
+    <PageShell className="h-full flex flex-col !space-y-4">
       <PageHeader
         title="Tool Logs"
         subtitle="Recent structured logs shipped by each tool (newest first)"
@@ -213,8 +213,8 @@ export default function Logs() {
         </div>
       )}
 
-      {/* Log viewer */}
-      <div className="bg-gray-900 text-gray-100 rounded-xl border border-gray-800 overflow-auto h-[calc(100vh-18rem)] min-h-[24rem] font-mono text-xs leading-relaxed">
+      {/* Log viewer — fills the remaining height; scrolls internally only */}
+      <div className="bg-gray-900 text-gray-100 rounded-xl border border-gray-800 overflow-auto flex-1 min-h-0 font-mono text-xs leading-relaxed">
         {shown.length === 0 ? (
           <div className="p-6 text-gray-500">
             {service ? 'No log lines (a tool appears here once it emits).' : 'Select a service.'}

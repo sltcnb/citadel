@@ -411,9 +411,12 @@ export default function ModernLayout({ user, onLogout }) {
 
       {/* ── Body ─────────────────────────────────────────────────────────────── */}
       <div className="flex flex-1 min-h-0">
-        <main className="flex-1 overflow-y-auto min-w-0">
-          <div className="w-full h-full fade-in">
-            <PageToolByline pathname={location.pathname} surfaceMap={surfaceMap} />
+        <main className="flex-1 min-w-0 flex flex-col overflow-hidden">
+          {/* Byline is a fixed-height row OUTSIDE the scroll area, so it never
+              eats into a page's viewport-height budget (was causing a spurious
+              scrollbar on fixed-height pages like Logs). */}
+          <PageToolByline pathname={location.pathname} surfaceMap={surfaceMap} />
+          <div className="flex-1 min-h-0 overflow-y-auto fade-in">
             <Outlet context={{ refreshCases, user }} />
           </div>
         </main>
