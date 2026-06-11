@@ -288,9 +288,32 @@ export default function ThreatIntel() {
   // Clear IOCs
   const [clearing, setClearing]     = useState(false)
 
+  // Own networks (operator's public IPs — excluded from IOC matches/enrichment)
+  const [ownNets, setOwnNets]       = useState('')
+  const [ownSaving, setOwnSaving]   = useState(false)
+  const [ownMsg, setOwnMsg]         = useState(null)
+
   // ── Load data ──────────────────────────────────────────────────────────────
 
-  useEffect(() => { loadFeeds(); loadStats(); loadCases() }, [])
+  useEffect(() => { loadFeeds(); loadStats(); loadCases(); loadOwnNets() }, [])
+
+  function loadOwnNets() {
+    api.cti.getOwnNetworks()
+      .then(r => setOwnNets((r.cidrs || []).join('\n')))
+      .catch(() => {})
+  }
+
+  async function saveOwnNets() {
+    setOwnSaving(true); setOwnMsg(null)
+    const cidrs = ownNets.split(/[\s,]+/).map(s => s.trim()).filter(Boolean)
+    try {
+      const r = await api.cti.setOwnNetworks(cidrs)
+      setOwnNets((r.cidrs || []).join('\n'))
+      setOwnMsg({ ok: true, text: `Saved ${r.cidrs?.length ?? 0} network(s); re-flagged ${r.reflagged ?? 0} IOC(s).` })
+    } catch (err) {
+      setOwnMsg({ ok: false, text: err.message })
+    } finally { setOwnSaving(false) }
+  }
   useEffect(() => { loadIOCs() }, [iocPage, iocType, iocSearch])
 
   function loadFeeds() {
@@ -546,6 +569,41 @@ export default function ThreatIntel() {
             ))}
           </div>
         )}
+      </div>
+
+      {/* ── Your Networks (own public IPs) ───────────────────────────────────── */}
+      <div className="mb-8">
+        <h2 className="text-sm font-semibold text-brand-text mb-3">Your Networks</h2>
+        <div className="card p-4 space-y-3">
+          <p className="text-xs text-gray-500">
+            Your organisation's own public IP ranges (CIDR, one per line). IPs in these
+            ranges are flagged <code className="text-brand-accent">own</code> and
+            <strong> excluded from IOC matching</strong> — so your own infrastructure
+            appearing in a feed never raises a false detection.
+            <span className="block mt-1 text-amber-600">
+              Enrichment caveat: own/private IPs are skipped during case matching; they
+              still appear in the IOC browser (filterable) but won't generate hits.
+            </span>
+          </p>
+          <textarea
+            value={ownNets}
+            onChange={e => setOwnNets(e.target.value)}
+            placeholder={"203.0.113.0/24\n198.51.100.5\n2001:db8::/32"}
+            rows={4}
+            className="input text-xs font-mono resize-y"
+          />
+          <div className="flex items-center gap-2 flex-wrap">
+            <button onClick={saveOwnNets} disabled={ownSaving} className="btn-primary text-xs">
+              {ownSaving ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+              Save Networks
+            </button>
+            {ownMsg && (
+              <span className={`text-xs flex items-center gap-1 ${ownMsg.ok ? 'text-green-600' : 'text-red-600'}`}>
+                {ownMsg.ok ? <CheckCircle size={12} /> : <AlertTriangle size={12} />} {ownMsg.text}
+              </span>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* ── IOC Browser ──────────────────────────────────────────────────────── */}
