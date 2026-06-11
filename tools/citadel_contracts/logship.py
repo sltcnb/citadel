@@ -87,3 +87,21 @@ def attach_redis_logs(service: str, redis_client, *, level: int = logging.INFO) 
     """Attach a RedisLogHandler to the root logger (in addition to stdout)."""
     logging.getLogger().addHandler(
         RedisLogHandler(service, redis_client, level=level))
+
+
+# Per-tool log streams: each tool's activity goes to citadel:logs:<tool> so the
+# admin console can show tool-specific logs. Lazy + cached — one handler per
+# tool per process. The logger does NOT propagate to root, so a tool's lines
+# land only in its own stream (not duplicated into api/processor).
+_TOOL_LOGGERS: set = set()
+
+
+def tool_logger(tool: str, redis_client, *, level: int = logging.INFO):
+    """Return a logger whose records ship to citadel:logs:<tool>."""
+    lg = logging.getLogger(f"citadel.tool.{tool}")
+    if tool not in _TOOL_LOGGERS:
+        lg.addHandler(RedisLogHandler(tool, redis_client, level=level))
+        lg.setLevel(level)
+        lg.propagate = True  # also reach stdout/root for cluster logs
+        _TOOL_LOGGERS.add(tool)
+    return lg
