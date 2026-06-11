@@ -185,174 +185,21 @@ def download_collector(
 # Complete ordered list of artifact categories supported by fo-harvester.py.
 # Mode, input source (--path / --disk), and BitLocker key are CLI arguments —
 # they are never stored in config.json.
-_ALL_CATEGORIES: list[str] = [
-    # ── Windows ──────────────────────────────────────────────────────────────
-    "evtx",
-    "registry",
-    "prefetch",
-    "mft",
-    "execution",
-    "persistence",
-    "filesystem",
-    "network_cfg",
-    "usb_devices",
-    "credentials",
-    "antivirus",
-    "sysmon",
-    "wer_crashes",
-    "win_logs",
-    "boot_uefi",
-    "encryption",
-    "etw_diagnostics",
-    "browser",
-    "browser_chrome",
-    "browser_edge",
-    "browser_ie",
-    "email_outlook",
-    "email_thunderbird",
-    "teams",
-    "slack",
-    "discord",
-    "signal",
-    "whatsapp",
-    "telegram",
-    "cloud_onedrive",
-    "cloud_google_drive",
-    "cloud_dropbox",
-    "remote_access",
-    "rdp",
-    "ssh_ftp",
-    "lnk",
-    "tasks",
-    "office",
-    "dev_tools",
-    "password_managers",
-    "database_clients",
-    "gaming",
-    "windows_apps",
-    "wsl",
-    "vpn",
-    "iis_web",
-    "active_directory",
-    "virtualization",
-    "recovery",
-    "printing",
-    "triage",
-    "memory_artifacts",
-    # ── Linux ────────────────────────────────────────────────────────────────
-    "logs",
-    "history",
-    "config",
-    "cron",
-    "ssh",
-    "services",
-    "network",
-    "suricata",
-    "zeek",
-    "edr",
-    "network_config",
-    "audit_logs",
-    "containers",
-    "packages",
-    "user_artifacts",
-    # ── macOS ────────────────────────────────────────────────────────────────
-    "plist",
-    "launchagents",
-    # ── Cross-platform ───────────────────────────────────────────────────────
-    "pe",
-    "documents",
-    "memory",
-    "file_search",
-]
 
-# ── Rich, per-platform artifact catalog (single source of truth for the UI) ───
-# Served by GET /collector/categories so the frontend renders dynamically
-# instead of carrying a hardcoded copy that drifts from the collector.
-# Every `key` here MUST exist in _ALL_CATEGORIES (validated at import below).
 # Per-platform artifact catalog now lives in Talon's capabilities.yaml
 # (the tool owns it). Served via GET /collector/categories, built at request
 # time from the Talon capability manifest — Citadel stays tool-agnostic.
 
-# Section taxonomy for the wizard — keys bucketed under a display group, in the
-# order sections should render. Authoritative here so the UI never invents its
-# own grouping. Dict insertion order == section order.
-_CATEGORY_GROUPS: dict[str, dict[str, list[str]]] = {
-    "win": {
-        "Core System": [
-            "evtx",
-            "registry",
-            "prefetch",
-            "mft",
-            "execution",
-            "persistence",
-            "filesystem",
-        ],
-        "Network & Devices": ["network_cfg", "usb_devices"],
-        "Security & Defense": [
-            "credentials",
-            "antivirus",
-            "sysmon",
-            "wer_crashes",
-            "win_logs",
-            "boot_uefi",
-            "encryption",
-            "etw_diagnostics",
-        ],
-        "Browsers": ["browser", "browser_chrome", "browser_edge", "browser_ie"],
-        "Email": ["email_outlook", "email_thunderbird"],
-        "Messaging": ["teams", "slack", "discord", "signal", "whatsapp", "telegram"],
-        "Cloud Sync": ["cloud_onedrive", "cloud_google_drive", "cloud_dropbox"],
-        "Remote Access": ["remote_access", "rdp", "ssh_ftp"],
-        "Applications & User Data": [
-            "lnk",
-            "tasks",
-            "office",
-            "dev_tools",
-            "password_managers",
-            "database_clients",
-            "gaming",
-            "windows_apps",
-            "wsl",
-        ],
-        "Infrastructure": [
-            "vpn",
-            "iis_web",
-            "active_directory",
-            "virtualization",
-            "recovery",
-            "printing",
-        ],
-        "Live Triage": ["triage"],
-        "Heavy / Opt-in": ["pe", "documents", "memory", "memory_artifacts", "file_search"],
-    },
-    "linux": {
-        "Core System": ["logs", "history", "config"],
-        "Persistence": ["cron", "persistence"],
-        "Network": ["network_config", "ssh", "network", "suricata", "zeek"],
-        "Security & Defense": ["audit_logs", "edr", "antivirus", "sysmon"],
-        "Inventory": ["containers", "packages"],
-        "Live Triage": ["triage"],
-        "Heavy / Opt-in": ["pe", "documents", "memory", "file_search"],
-    },
-    "macos": {
-        "Core System": ["logs", "history", "config"],
-        "Persistence": ["launchagents"],
-        "User Data": ["browser", "plist"],
-        "Network": ["network"],
-        "Live Triage": ["triage"],
-        "Heavy / Opt-in": ["pe", "documents", "memory", "file_search"],
-    },
-}
 
 # Map a capability platform id (windows/linux/macos) → the Collector UI's
-# short key (win/linux/macos) used by _CATEGORY_GROUPS and the frontend.
+# short key (win/linux/macos) the frontend expects.
 _PLATFORM_TO_UI = {"windows": "win", "linux": "linux", "macos": "macos"}
 
 
 def _build_catalog() -> dict[str, list[dict]]:
-    """The per-platform artifact catalog, built from Talon's capability manifest
-    (the tool owns it) + this file's group taxonomy. Citadel adds NO artifact
-    knowledge of its own — it only buckets the tool's categories into sections."""
+    """Per-platform artifact catalog, built ENTIRELY from Talon's capability
+    manifest — categories, labels, descriptions AND their section ``group`` all
+    come from the tool. Citadel holds zero artifact knowledge of its own."""
     catalog: dict[str, list[dict]] = {}
     try:
         from routers.tools import _aggregate
@@ -363,24 +210,41 @@ def _build_catalog() -> dict[str, list[dict]]:
     if not talon:
         return catalog
     for cap in talon.get("capabilities", []):
-        # collect_windows → "windows"; map to the UI short key.
         plat = cap["key"].replace("collect_", "")
         ui_key = _PLATFORM_TO_UI.get(plat, plat)
         cats_field = next((f for f in cap.get("inputs", []) if f.get("name") == "categories"), None)
         if not cats_field:
             continue
-        key2group = {k: g for g, keys in _CATEGORY_GROUPS.get(ui_key, {}).items() for k in keys}
         items = []
         for opt in cats_field.get("options", []):
-            key = opt.get("value", "")
             items.append({
-                "key": key,
-                "label": opt.get("label", key),
+                "key": opt.get("value", ""),
+                "label": opt.get("label", opt.get("value", "")),
                 "desc": opt.get("desc", ""),
-                "group": key2group.get(key, "Other"),
+                "group": opt.get("group", "Other"),  # the tool's own section hint
             })
         catalog[ui_key] = items
     return catalog
+
+
+def _group_order(catalog: dict[str, list[dict]]) -> dict[str, list[str]]:
+    """Section order per platform = order each group first appears in the tool's
+    (already group-ordered) category list. No Citadel-side taxonomy."""
+    out: dict[str, list[str]] = {}
+    for plat, items in catalog.items():
+        seen: list[str] = []
+        for it in items:
+            g = it.get("group", "Other")
+            if g not in seen:
+                seen.append(g)
+        out[plat] = seen
+    return out
+
+
+def _valid_category_keys() -> set[str]:
+    """Accepted category keys = whatever Talon advertises. Replaces the old
+    hardcoded _ALL_CATEGORIES allow-list."""
+    return {it["key"] for items in _build_catalog().values() for it in items}
 
 
 _RUN_BAT = """\
@@ -477,8 +341,8 @@ def list_collector_categories():
     catalog = _build_catalog()
     return {
         "platforms": catalog,
-        "group_order": {plat: list(groups.keys()) for plat, groups in _CATEGORY_GROUPS.items()},
-        "all": sorted({it["key"] for items in catalog.values() for it in items}) or list(_ALL_CATEGORIES),
+        "group_order": _group_order(catalog),
+        "all": sorted({it["key"] for items in catalog.values() for it in items}),
     }
 
 
@@ -1762,7 +1626,7 @@ def download_bundle(
     enabled = (
         [c.strip() for c in categories.split(",") if c.strip()]
         if categories
-        else list(_ALL_CATEGORIES)
+        else sorted(_valid_category_keys())  # all categories Talon advertises
     )
     cfg: dict = {
         "collect": enabled,
