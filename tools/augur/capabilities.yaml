@@ -4,8 +4,10 @@ stage: Insight
 icon: Sparkles
 role: "Anomaly & insight"
 surfaces:
-  - { label: "Case Timeline", to: "/" }
-  - { label: "Cross-Case Search", to: "/cross-search" }
+  - { label: "Threat Intel", to: "/cti", primary: true }
+  - { label: "IOC Watchlist", to: "/watchlist", primary: true }
+  - { label: "Cross-Case Search", to: "/cross-search", primary: true }
+  - { label: "Case Timeline", to: "/cases" }
 version: "1.0.0"
 description: Anomaly & insight — surfaces statistical outliers and notable patterns across the timeline.
 capabilities:

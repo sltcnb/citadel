@@ -4,8 +4,8 @@ stage: Detect
 icon: Stamp
 role: "Detection engine"
 surfaces:
-  - { label: "Alert Rules", to: "/alert-rules" }
-  - { label: "YARA Rules", to: "/yara-rules" }
+  - { label: "Detection Rules", to: "/alert-rules", primary: true }
+  - { label: "YARA Rules", to: "/yara-rules", primary: true }
 version: "1.0.0"
 description: Detection engine — evaluates Sigma alert rules and YARA signatures against case data.
 capabilities:
