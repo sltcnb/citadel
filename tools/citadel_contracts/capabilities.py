@@ -140,6 +140,12 @@ class CapabilityManifest:
     description: str = ""
     platforms: list[str] = field(default_factory=list)  # platforms the tool targets
     capabilities: list[Capability] = field(default_factory=list)
+    # Presentation hints the tool declares so the Suite UI needs no hardcoded
+    # per-tool registry. All optional; Citadel renders generically if absent.
+    stage: str = ""             # pipeline stage label (Collect, Parse, …)
+    icon: str = ""              # icon NAME (frontend maps name → component)
+    role: str = ""              # short one-line role
+    surfaces: list[dict] = field(default_factory=list)  # [{label, to}] UI links
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "CapabilityManifest":
@@ -160,6 +166,10 @@ class CapabilityManifest:
             description=d.get("description", ""),
             platforms=list(platforms),
             capabilities=caps,
+            stage=d.get("stage", ""),
+            icon=d.get("icon", ""),
+            role=d.get("role", ""),
+            surfaces=list(d.get("surfaces", []) or []),
         )
 
     def validate(self) -> list[str]:
@@ -180,6 +190,8 @@ class CapabilityManifest:
         return {
             "tool": self.tool, "kind": self.kind, "version": self.version,
             "description": self.description, "platforms": self.platforms,
+            "stage": self.stage, "icon": self.icon, "role": self.role,
+            "surfaces": self.surfaces,
             "capabilities": [c.to_dict() for c in self.capabilities],
         }
 
