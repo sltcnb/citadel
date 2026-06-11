@@ -30,7 +30,7 @@ export const TOOLS = [
     key: 'sluice', name: 'Sluice', icon: Split, stage: 'Ingest',
     role: 'Intake & routing',
     blurb: 'Receives uploaded evidence, deduplicates, and routes each artifact to the right parser. The front door of the pipeline.',
-    surfaces: [{ label: 'Ingesters', to: '/ingesters' }],
+    surfaces: [{ label: 'Dashboard (upload)', to: '/' }, { label: 'Ingesters', to: '/ingesters' }],
     signal: 'sluice',
   },
   {
@@ -65,14 +65,14 @@ export const TOOLS = [
     key: 'augur', name: 'Augur', icon: Sparkles, stage: 'Insight',
     role: 'Anomaly & insight',
     blurb: 'Surfaces statistical anomalies and notable patterns across the timeline to focus the investigator on what stands out.',
-    surfaces: [{ label: 'Case Timeline', to: '/' }],
+    surfaces: [{ label: 'Case Timeline', to: '/' }, { label: 'Cross-Case Search', to: '/cross-search' }],
     signal: 'augur',
   },
   {
     key: 'pilot', name: 'Pilot', icon: Bot, stage: 'Assist',
     role: 'Investigation assistant',
     blurb: 'Optional LLM assistant: summarizes detections, drafts rules, and answers questions over case context. Configured in Settings.',
-    surfaces: [{ label: 'Settings', to: '/settings' }],
+    surfaces: [{ label: 'Case Timeline', to: '/' }, { label: 'Alert Rules', to: '/alert-rules' }, { label: 'Settings', to: '/settings' }],
     signal: 'pilot',
   },
   {
@@ -105,11 +105,15 @@ export default function Suite() {
   const [services, setServices] = useState(new Set())
   const [babelCount, setBabelCount] = useState(null)
   const [anvilCount, setAnvilCount] = useState(null)
+  const [capCounts, setCapCounts] = useState({})  // tool -> # advertised capabilities
 
   useEffect(() => {
     api.logs.services().then(r => setServices(new Set((r.services || []).map(s => s.service)))).catch(() => {})
     api.plugins.list().then(r => setBabelCount((r.plugins || []).length)).catch(() => {})
     api.modules.list().then(r => setAnvilCount((r.modules || r || []).length ?? null)).catch(() => {})
+    api.tools.capabilities()
+      .then(r => setCapCounts(Object.fromEntries((r.tools || []).map(t => [t.tool, t.capabilities.length]))))
+      .catch(() => {})
   }, [])
 
   const ctx = { services, babelCount, anvilCount }
@@ -154,6 +158,11 @@ export default function Suite() {
                               <span className="w-1.5 h-1.5 rounded-full bg-green-500" /> {status.text}
                             </span>
                           )}
+                          {capCounts[t.key] != null && (
+                            <span className="badge bg-indigo-50 text-indigo-700 border border-indigo-200">
+                              {capCounts[t.key]} capabilit{capCounts[t.key] === 1 ? 'y' : 'ies'}
+                            </span>
+                          )}
                         </div>
                         <p className="text-xs text-gray-500">{t.role}</p>
                       </div>
@@ -170,6 +179,13 @@ export default function Suite() {
                           {s.label} <ExternalLink size={9} />
                         </Link>
                       ))}
+                      <Link
+                        to="/capabilities"
+                        className="badge bg-indigo-50 text-indigo-700 border border-indigo-200 hover:border-brand-accent inline-flex items-center gap-1"
+                        title="What this tool advertises it can do"
+                      >
+                        Capabilities <ExternalLink size={9} />
+                      </Link>
                     </div>
                   </div>
                 )
