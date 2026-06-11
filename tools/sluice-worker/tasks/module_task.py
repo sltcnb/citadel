@@ -360,12 +360,20 @@ def run_module(
         sources_dir = work_dir / "sources"
         sources_dir.mkdir()
 
-        for sf in source_files:
-            _check_cancel(r, run_id)
-            dest = sources_dir / sf["filename"]
-            _push_log(r, run_id, f"Downloading {sf['filename']} …")
-            _minio_op(lambda d=dest, k=sf["minio_key"]: minio.fget_object(MINIO_BUCKET, k, str(d)))
-            _push_log(r, run_id, f"Downloaded {sf['filename']} ({dest.stat().st_size:,} bytes)")
+        # ES-only modules scan Elasticsearch events directly — they never touch
+        # the raw artifacts. Downloading every case file for them was needless
+        # MinIO load (and the source of "too many 503 error responses" on big
+        # cases). Skip staging for them.
+        _ES_ONLY_MODULES = {"cti_match", "browser_report"}
+        if module_id in _ES_ONLY_MODULES:
+            _push_log(r, run_id, f"Module '{module_id}' scans Elasticsearch — skipping source download")
+        else:
+            for sf in source_files:
+                _check_cancel(r, run_id)
+                dest = sources_dir / sf["filename"]
+                _push_log(r, run_id, f"Downloading {sf['filename']} …")
+                _minio_op(lambda d=dest, k=sf["minio_key"]: minio.fget_object(MINIO_BUCKET, k, str(d)))
+                _push_log(r, run_id, f"Downloaded {sf['filename']} ({dest.stat().st_size:,} bytes)")
 
         _check_cancel(r, run_id)
         _push_log(r, run_id, f"Running module '{module_id}' …")
@@ -3152,6 +3160,18 @@ _CTI_MATCH_FIELDS: dict[str, list[str]] = {
 
 _CTI_BATCH_SIZE = 500
 
+# Token extractors for the free-text `message` field. Testing every IOC against
+# each message is O(iocs) per event — at ~1M IOCs that pegs a CPU core for the
+# whole scan. Instead pull type-shaped candidate tokens out and do O(1) lookups.
+_CTI_RX = {
+    "ip": re.compile(r"(?:\d{1,3}\.){3}\d{1,3}|(?:[0-9a-fA-F]{1,4}:){2,}[0-9a-fA-F:]*"),
+    "domain": re.compile(r"(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}"),
+    "url": re.compile(r"https?://[^\s\"'<>]+"),
+    "email": re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+"),
+    "hash": re.compile(r"\b(?:[a-fA-F0-9]{64}|[a-fA-F0-9]{40}|[a-fA-F0-9]{32})\b"),
+    "filename": re.compile(r"[^\s\\/]+\.[A-Za-z0-9]{1,8}"),
+}
+
 
 def _cti_get_nested(doc: dict, dotted_key: str):
     """Safely traverse a nested dict by dotted key path."""
@@ -3254,15 +3274,28 @@ def _run_cti_match(
             hostname = host_obj.get("hostname", "") if isinstance(host_obj, dict) else ""
             events_scanned += 1
 
+            seen: set = set()  # (ioc_type, value) dedupe across fields per event
             for ioc_type, lookup in ioc_sets.items():
                 fields = _CTI_MATCH_FIELDS.get(ioc_type, ["message"])
+                rx = _CTI_RX.get(ioc_type)
                 for field in fields:
                     field_value = _cti_get_nested(source, field)
                     if field_value is None:
                         continue
                     field_str = str(field_value).lower()
-                    for ioc_value, ioc_obj in lookup.items():
-                        if ioc_value in field_str:
+                    # Structured field → exact value; free-text message → tokens.
+                    if field == "message":
+                        if not rx:
+                            continue
+                        candidates = {t.lower() for t in rx.findall(field_str)}
+                    else:
+                        candidates = {field_str}
+                    for ioc_value in candidates:
+                        ioc_obj = lookup.get(ioc_value)
+                        if ioc_obj:
+                            if (ioc_type, ioc_value) in seen:
+                                continue
+                            seen.add((ioc_type, ioc_value))
                             # Own / private IPs are SEPARATED (tagged + lower
                             # severity), not dropped — the timeline can filter
                             # them out with a checkbox.
