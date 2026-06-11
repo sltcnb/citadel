@@ -3177,15 +3177,24 @@ def _run_cti_match(
     """Scan all case events in Elasticsearch against the CTI IOC database."""
     r = redis.from_url(REDIS_URL, decode_responses=True)
 
-    # Load all IOCs into memory grouped by type
+    # Load all IOCs into memory grouped by type. IOCs are stored as a per-type
+    # HASH (value → JSON); older deployments used a SET, so read defensively.
     ioc_sets: dict[str, dict[str, dict]] = {}
     for ioc_type in _CTI_IOC_TYPES:
         type_key = _CTI_TYPE_KEY(ioc_type)
-        members = r.smembers(type_key)
+        try:
+            ktype = r.type(type_key)
+            members = list(r.hvals(type_key)) if ktype == "hash" else (
+                list(r.smembers(type_key)) if ktype == "set" else []
+            )
+        except Exception:
+            members = []
         lookup: dict[str, dict] = {}
         for m in members:
             try:
                 obj = json.loads(m)
+                # Own/private IPs are kept but TAGGED, so the timeline can filter
+                # them out — not dropped here (separation, not exclusion).
                 val = obj.get("value", "").lower()
                 if val:
                     lookup[val] = obj
@@ -3254,13 +3263,22 @@ def _run_cti_match(
                     field_str = str(field_value).lower()
                     for ioc_value, ioc_obj in lookup.items():
                         if ioc_value in field_str:
+                            # Own / private IPs are SEPARATED (tagged + lower
+                            # severity), not dropped — the timeline can filter
+                            # them out with a checkbox.
+                            is_own = bool(ioc_obj.get("is_own"))
+                            is_private = bool(ioc_obj.get("is_private"))
+                            sev = "info" if (is_own or is_private) else "high"
                             results.append(
                                 {
                                     "id": str(uuid.uuid4()),
                                     "timestamp": event_ts,
-                                    "level": "high",
-                                    "level_int": LEVEL_INT.get("high", 4),
-                                    "rule_title": f"CTI Match — {ioc_type}: {ioc_obj.get('value', ioc_value)[:80]}",
+                                    "level": sev,
+                                    "level_int": LEVEL_INT.get(sev, 4),
+                                    "rule_title": (
+                                        f"CTI Match{' (own)' if is_own else ' (private)' if is_private else ''} "
+                                        f"— {ioc_type}: {ioc_obj.get('value', ioc_value)[:80]}"
+                                    ),
                                     "computer": hostname,
                                     "details_raw": json.dumps(
                                         {
@@ -3270,6 +3288,8 @@ def _run_cti_match(
                                             "indicator_id": ioc_obj.get("indicator_id", ""),
                                             "feed_name": ioc_obj.get("feed_name", ""),
                                             "matched_field": field,
+                                            "is_own": is_own,
+                                            "is_private": is_private,
                                         }
                                     ),
                                     "event_fo_id": event_fo_id,
@@ -3277,6 +3297,8 @@ def _run_cti_match(
                                     "ioc_value": ioc_obj.get("value", ioc_value),
                                     "feed_name": ioc_obj.get("feed_name", ""),
                                     "matched_field": field,
+                                    "is_own": is_own,
+                                    "is_private": is_private,
                                 }
                             )
 

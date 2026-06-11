@@ -12,6 +12,34 @@ from config import settings
 
 _oauth2 = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token", auto_error=False)
 
+# Short-TTL identity cache. get_current_user runs on the event loop (async dep)
+# yet the revoke-check + user lookup are SYNCHRONOUS Redis round-trips — two per
+# protected request. Over Tailscale RTT that blocks the loop and serializes every
+# request ("every page slow"). Caching the resolved user by token for a few
+# seconds removes both Redis hits for the common case (a client polling many
+# endpoints with the same token). Trade-off: a revoked/edited account keeps
+# working up to _USER_CACHE_TTL seconds — acceptable for a short window.
+_USER_CACHE: dict[str, tuple[float, dict]] = {}
+_USER_CACHE_TTL = 15.0
+_USER_CACHE_MAX = 2048
+
+
+def _cache_get(token: str) -> dict | None:
+    import time
+
+    hit = _USER_CACHE.get(token)
+    if hit and (time.monotonic() - hit[0]) < _USER_CACHE_TTL:
+        return hit[1]
+    return None
+
+
+def _cache_put(token: str, user: dict) -> None:
+    import time
+
+    if len(_USER_CACHE) > _USER_CACHE_MAX:
+        _USER_CACHE.clear()  # cheap bound; entries are short-lived anyway
+    _USER_CACHE[token] = (time.monotonic(), user)
+
 
 async def get_current_user(
     request: Request,
@@ -41,6 +69,9 @@ async def get_current_user(
             detail="Not authenticated",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    cached = _cache_get(effective_token)
+    if cached is not None:
+        return cached
     try:
         payload = decode_token(effective_token)
         if is_token_revoked(payload):
@@ -66,6 +97,7 @@ async def get_current_user(
                 user["role"] = "admin"
             except Exception:
                 user["role"] = "admin"  # best-effort in memory
+        _cache_put(effective_token, user)
         return user
     except JWTError:
         raise HTTPException(

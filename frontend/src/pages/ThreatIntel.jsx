@@ -577,13 +577,11 @@ export default function ThreatIntel() {
         <div className="card p-4 space-y-3">
           <p className="text-xs text-gray-500">
             Your organisation's own public IP ranges (CIDR, one per line). IPs in these
-            ranges are flagged <code className="text-brand-accent">own</code> and
-            <strong> excluded from IOC matching</strong> — so your own infrastructure
-            appearing in a feed never raises a false detection.
-            <span className="block mt-1 text-amber-600">
-              Enrichment caveat: own/private IPs are skipped during case matching; they
-              still appear in the IOC browser (filterable) but won't generate hits.
-            </span>
+            ranges are flagged <code className="text-brand-accent">own</code>. They still
+            <strong> match</strong> on the case timeline, but as <strong>low-severity
+            "info"</strong> hits labelled <em>CTI Match (own)</em> — separated from real
+            threats (high severity). Filter them out on the timeline with the severity
+            filter. Private IPs (RFC1918) get the same treatment automatically.
           </p>
           <textarea
             value={ownNets}

@@ -83,10 +83,33 @@ class RedisLogHandler(logging.Handler):
             pass  # logging must never break the app
 
 
+def _async_handler(target: logging.Handler) -> logging.Handler:
+    """Wrap a (possibly slow) handler so emission happens on a background thread.
+
+    The Redis ``xadd`` in RedisLogHandler is synchronous; calling it directly
+    from request/event-loop code blocks until the round-trip completes. A
+    QueueHandler just enqueues the record (microseconds, no I/O) and a single
+    QueueListener thread drains the queue into the real handler — so logging
+    never sits in a hot path. One listener per wrapped handler, started once.
+    """
+    import queue
+    from logging.handlers import QueueHandler, QueueListener
+
+    q: queue.Queue = queue.Queue(maxsize=10000)
+    qh = QueueHandler(q)
+    qh.setLevel(target.level)
+    listener = QueueListener(q, target, respect_handler_level=True)
+    listener.daemon = True
+    listener.start()
+    # Keep a ref so the listener thread isn't GC'd.
+    qh._listener = listener  # type: ignore[attr-defined]
+    return qh
+
+
 def attach_redis_logs(service: str, redis_client, *, level: int = logging.INFO) -> None:
-    """Attach a RedisLogHandler to the root logger (in addition to stdout)."""
+    """Attach a non-blocking RedisLogHandler to the root logger (plus stdout)."""
     logging.getLogger().addHandler(
-        RedisLogHandler(service, redis_client, level=level))
+        _async_handler(RedisLogHandler(service, redis_client, level=level)))
 
 
 # Per-tool log streams: each tool's activity goes to citadel:logs:<tool> so the
@@ -100,7 +123,7 @@ def tool_logger(tool: str, redis_client, *, level: int = logging.INFO):
     """Return a logger whose records ship to citadel:logs:<tool>."""
     lg = logging.getLogger(f"citadel.tool.{tool}")
     if tool not in _TOOL_LOGGERS:
-        lg.addHandler(RedisLogHandler(tool, redis_client, level=level))
+        lg.addHandler(_async_handler(RedisLogHandler(tool, redis_client, level=level)))
         lg.setLevel(level)
         lg.propagate = True  # also reach stdout/root for cluster logs
         _TOOL_LOGGERS.add(tool)
