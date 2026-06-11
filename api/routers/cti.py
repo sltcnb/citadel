@@ -147,6 +147,9 @@ def _pull_feed_now(feed: dict, r: redis_lib.Redis, feeds: list[dict]) -> int:
             effective_type = "stix_url"
         else:
             return 0  # pure manual feed — nothing to auto-pull
+    import logging as _lg
+    _tlog = _lg.getLogger("citadel.tools")
+    _tlog.info("[Augur → citadel] downloading IOC feed '%s' (%s)…", feed.get("name", "?"), effective_type)
     try:
         _remove_feed_iocs(r, feed["id"])
         if effective_type == "taxii":
@@ -168,6 +171,7 @@ def _pull_feed_now(feed: dict, r: redis_lib.Redis, feeds: list[dict]) -> int:
         feed["last_pull"] = datetime.now(UTC).isoformat()
         feed["ioc_count"] = count
         _save_feeds(r, feeds)
+        _tlog.info("[Augur → citadel] feed '%s' downloaded: %d IOC(s) (deduped)", feed.get("name", "?"), count)
         return count
     except HTTPException:
         raise

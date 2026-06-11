@@ -7,7 +7,6 @@ import {
   Binary, Bug, Network, FileImage, TextSearch, Tag, ArrowRight,
 } from 'lucide-react'
 import { PageShell, PageHeader } from '../components/shared/PageShell'
-import { ToolByline } from './Suite'
 import { api } from '../api/client'
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts'
 
@@ -243,7 +242,6 @@ export default function Modules() {
         }
       />
 
-      <div className="-mt-2 mb-4"><ToolByline tool="anvil" /></div>
 
       {/* Error */}
       {error && (
