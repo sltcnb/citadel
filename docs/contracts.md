@@ -97,8 +97,8 @@ capabilities:
 
 Field types the generic renderer understands: `string · text · int · float ·
 bool · enum · multiselect · path · host · secret`. Platforms: `windows · linux ·
-macos · android · ios · cloud · any`. Schema + validation live in
-[`citadel_contracts.capabilities`](../tools/citadel_contracts/capabilities.py).
+macos · android · ios · cloud · any`. Schema + validation live in the
+`citadel_contracts.capabilities` module (`tools/citadel_contracts/capabilities.py`).
 
 ### The loop
 
