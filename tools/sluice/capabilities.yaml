@@ -4,7 +4,7 @@ stage: Ingest
 icon: Split
 role: "Intake & routing"
 surfaces:
-  - { label: "Dashboard (upload)", to: "/" }
+  - { label: "Dashboard (upload)", to: "/", primary: true }
   - { label: "Ingesters", to: "/ingesters" }
 version: "1.0.0"
 description: Intake & routing — receives evidence, dedupes, routes each artifact to the right parser.

@@ -155,8 +155,10 @@ export default function ModernLayout({ user, onLogout }) {
         const m = (r.tools || []).flatMap(t =>
           (t.surfaces || [])
             .filter(s => s.to)
-            .map(s => ({ to: s.to, tool: t.tool })))
-        m.sort((a, b) => b.to.length - a.to.length)  // longest prefix wins; "/" last
+            .map(s => ({ to: s.to, tool: t.tool, primary: !!s.primary })))
+        // Longest prefix wins; among equal-length matches the declared primary
+        // owner wins (so /cases → Rosetta, not whoever else also surfaces there).
+        m.sort((a, b) => (b.to.length - a.to.length) || (Number(b.primary) - Number(a.primary)))
         setSurfaceMap(m)
       })
       .catch(() => {})

@@ -214,7 +214,7 @@ export default function Logs() {
       )}
 
       {/* Log viewer */}
-      <div className="bg-gray-900 text-gray-100 rounded-xl border border-gray-800 overflow-auto h-[calc(100vh-15rem)] min-h-[24rem] font-mono text-xs leading-relaxed">
+      <div className="bg-gray-900 text-gray-100 rounded-xl border border-gray-800 overflow-auto h-[calc(100vh-18rem)] min-h-[24rem] font-mono text-xs leading-relaxed">
         {shown.length === 0 ? (
           <div className="p-6 text-gray-500">
             {service ? 'No log lines (a tool appears here once it emits).' : 'Select a service.'}

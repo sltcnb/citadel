@@ -7,7 +7,7 @@ stage: Collect
 icon: PackageOpen
 role: "Endpoint triage collector"
 surfaces:
-  - { label: "Collector", to: "/collector" }
+  - { label: "Collector", to: "/collector", primary: true }
 version: "1.2.0"
 description: >
   Live and dead-box artifact acquisition for Windows, Linux and macOS. Declares

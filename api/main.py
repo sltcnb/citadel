@@ -178,46 +178,110 @@ def _guest_path_allowed(method: str, path: str) -> bool:
     return False
 
 
-@app.middleware("http")
-async def _guest_readonly_guard(request: Request, call_next):
-    """Block non-GET requests from guest accounts at the middleware layer.
+# High-frequency polling paths — skipped so the access log shows meaningful
+# orchestration, not a flood of heartbeats.
+_ACCESS_LOG_SKIP = (
+    "/health", "/collab/", "/ai/agent/active", "/ai/results",
+    "/metrics/dashboard", "/metrics/history", "/jobs",
+    # The log viewer itself + the capability poll — logging these floods the
+    # stream with the viewer's own traffic.
+    "/admin/logs", "/tools/capabilities", "/cti/iocs/stats", "/license/info",
+)
+_access_logger = logging.getLogger("citadel.api")
+_SECURITY_HEADERS = {
+    b"x-content-type-options": b"nosniff",
+    b"x-frame-options": b"DENY",
+    b"referrer-policy": b"strict-origin-when-cross-origin",
+}
 
-    Guests CAN: create cases + work inside them (notes, flags, ingest, modules).
-    Guests CANNOT: touch users, plugins, settings, license, modules library.
+
+class CoreHTTPMiddleware:
+    """One pure-ASGI middleware in place of four BaseHTTPMiddleware layers.
+
+    BaseHTTPMiddleware raises ``RuntimeError("No response returned.")`` when a
+    client disconnects mid-request — the Logs page aborts its poll on every
+    navigation, which spammed that traceback — and each layer adds a per-request
+    anyio task group. Folding the guest read-only guard, security headers,
+    telemetry and access logging into a single ASGI middleware is
+    disconnect-safe and cheaper per request.
     """
-    if request.method in ("GET", "HEAD", "OPTIONS"):
-        return await call_next(request)
-    auth_header = request.headers.get("Authorization", "")
-    if auth_header.startswith("Bearer "):
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        method = scope.get("method", "")
+        path = scope.get("path", "")
+
+        # ── Guest read-only guard (short-circuit before hitting the route) ────
+        if method not in ("GET", "HEAD", "OPTIONS"):
+            denied = self._guest_denied(scope, method, path)
+            if denied is not None:
+                await denied(scope, receive, send)
+                return
+
+        start = time.perf_counter()
+        status = {"code": 0}
+
+        async def send_wrapper(message):
+            if message["type"] == "http.response.start":
+                status["code"] = message["status"]
+                headers = message.setdefault("headers", [])
+                for k, v in _SECURITY_HEADERS.items():
+                    headers.append((k, v))
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_wrapper)
+        finally:
+            ms = round((time.perf_counter() - start) * 1000, 1)
+            code = status["code"]
+            try:
+                _REQUEST_WINDOW.append((ms, code))
+                _REQUEST_TOTALS["count"] += 1
+                if code >= 500:
+                    _REQUEST_TOTALS["errors"] += 1
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                if code and "/api/v1/" in path and not any(s in path for s in _ACCESS_LOG_SKIP):
+                    short = path.split("/api/v1/", 1)[-1]
+                    _access_logger.info("%s /%s → %d (%.0fms)", method, short, code, ms)
+            except Exception:  # noqa: BLE001 — logging must never break a request
+                pass
+
+    @staticmethod
+    def _guest_denied(scope, method, path):
+        auth_header = ""
+        for k, v in scope.get("headers", []):
+            if k == b"authorization":
+                auth_header = v.decode("latin-1")
+                break
+        if not auth_header.startswith("Bearer "):
+            return None
         try:
             from auth.service import decode_token
 
             if settings.AUTH_ENABLED:
                 payload = decode_token(auth_header[7:])
-                if payload.get("role") == "guest":
-                    if not _guest_path_allowed(request.method, request.url.path):
-                        return JSONResponse(
-                            status_code=403,
-                            content={
-                                "detail": "Guest accounts can create cases and work inside them, but cannot touch platform settings."
-                            },
-                        )
-        except Exception as exc:
+                if payload.get("role") == "guest" and not _guest_path_allowed(method, path):
+                    return JSONResponse(
+                        status_code=403,
+                        content={
+                            "detail": "Guest accounts can create cases and work inside them, but cannot touch platform settings."
+                        },
+                    )
+        except Exception as exc:  # noqa: BLE001
             logger.debug("Token decode error in guest guard (ignoring): %s", exc)
-    return await call_next(request)
+        return None
 
 
-@app.middleware("http")
-async def _telemetry_middleware(request: Request, call_next):
-    t0 = time.perf_counter()
-    res = await call_next(request)
-    ms = round((time.perf_counter() - t0) * 1000, 1)
-    _REQUEST_WINDOW.append((ms, res.status_code))
-    _REQUEST_TOTALS["count"] += 1
-    if res.status_code >= 500:
-        _REQUEST_TOTALS["errors"] += 1
-    return res
-
+# Innermost custom layer (added first → GZip/CORS wrap it).
+app.add_middleware(CoreHTTPMiddleware)
 
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 
@@ -233,46 +297,6 @@ app.add_middleware(
 )
 
 
-@app.middleware("http")
-async def _security_headers(request: Request, call_next):
-    response = await call_next(request)
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
-    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    return response
-
-
-# High-frequency polling paths — skipped so the access log shows meaningful
-# orchestration, not a flood of heartbeats.
-_ACCESS_LOG_SKIP = (
-    "/health", "/collab/", "/ai/agent/active", "/ai/results",
-    "/metrics/dashboard", "/metrics/history", "/jobs",
-    # The log viewer itself + the capability poll — logging these floods the
-    # stream with the viewer's own traffic.
-    "/admin/logs", "/tools/capabilities", "/cti/iocs/stats", "/license/info",
-)
-_access_logger = logging.getLogger("citadel.api")
-
-
-@app.middleware("http")
-async def _access_log(request: Request, call_next):
-    """Ship compact API-call metadata to the admin log stream so operators can
-    watch what the frontend/tools ask of Citadel (method · path · status · ms)."""
-    import time as _t
-
-    start = _t.monotonic()
-    response = await call_next(request)
-    try:
-        path = request.url.path
-        if "/api/v1/" in path and not any(s in path for s in _ACCESS_LOG_SKIP):
-            dur_ms = (_t.monotonic() - start) * 1000
-            short = path.split("/api/v1/", 1)[-1]
-            _access_logger.info(
-                "%s /%s → %d (%.0fms)", request.method, short, response.status_code, dur_ms
-            )
-    except Exception:  # noqa: BLE001 — logging must never break a request
-        pass
-    return response
 
 
 # ── Startup hook ─────────────────────────────────────────────────────────────
