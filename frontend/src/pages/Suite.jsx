@@ -2,10 +2,9 @@ import { useState, useEffect, useMemo, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Boxes, PackageOpen, Split, Languages, Replace, Stamp,
-  Hammer, Sparkles, Bot, FileText, ArrowRight, ExternalLink, Play, Terminal, X,
+  Hammer, Sparkles, Bot, FileText, ArrowRight, ExternalLink, X, ChevronRight,
 } from 'lucide-react'
 import { PageShell, PageHeader } from '../components/shared/PageShell'
-import DynamicForm, { defaultsFor, missingRequired } from '../components/DynamicForm'
 import { api } from '../api/client'
 
 const PLATFORM_LABEL = {
@@ -69,11 +68,8 @@ export default function Suite() {
   const [babelCount, setBabelCount] = useState(null)
   const [anvilCount, setAnvilCount] = useState(null)
   const [manifests, setManifests] = useState({})  // tool key -> manifest
-  const [selected, setSelected]   = useState(null) // tool key whose capabilities are open
-  const [selCap, setSelCap]       = useState(null)
+  const [selected, setSelected]   = useState(null) // tool key whose details are open
   const [platform, setPlatform]   = useState(null)
-  const [values, setValues]       = useState({})
-  const [submitted, setSubmitted] = useState(null)
 
   useEffect(() => {
     api.logs.services().then(r => setServices(new Set((r.services || []).map(s => s.service)))).catch(() => {})
@@ -107,18 +103,18 @@ export default function Suite() {
   }, [selected])
 
   function openTool(key) {
-    setSelected(key); setSelCap(null); setSubmitted(null)
+    if (selected === key) { setSelected(null); return }  // toggle
+    setSelected(key)
     const m = manifests[key]
     setPlatform(m && m.platforms && m.platforms.length > 1 ? m.platforms[0] : null)
   }
-  function openCap(c) { setSelCap(c.key); setValues(defaultsFor(c.inputs)); setSubmitted(null) }
 
   return (
     <PageShell>
       <PageHeader
         title="Tool Stack"
         icon={Boxes}
-        subtitle="The tools that make up Citadel, where each surfaces, and what each advertises it can do — click Capabilities on a card"
+        subtitle="The tools that make up Citadel — what each does, where it sits in the pipeline, and which screens to use it from"
       />
 
       <p className="text-xs text-gray-500 mb-5 max-w-3xl">
@@ -187,9 +183,9 @@ export default function Suite() {
                         ? 'bg-brand-accent text-white border-brand-accent'
                         : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:border-brand-accent'
                     }`}
-                    title="Show what this tool advertises it can do"
+                    title="What this tool does + where to use it"
                   >
-                    Capabilities ›
+                    {selected === t.key ? 'Hide details' : 'Details ›'}
                   </button>
                 )}
               </div>
@@ -198,74 +194,85 @@ export default function Suite() {
         })}
       </div>
 
-      {/* ── Inline capability panel for the selected tool ─────────────────── */}
+      {/* ── Read-only detail panel: what the tool does + where to use it ──── */}
       {selManifest && (() => {
         const caps = (selManifest.capabilities || []).filter(
-          c => !platform || c.platforms.includes(platform) || c.platforms.includes('any'),
+          c => !platform || (c.platforms || []).includes(platform) || (c.platforms || []).includes('any'),
         )
-        const cap = caps.find(c => c.key === selCap) || null
-        const missing = cap ? missingRequired(cap.inputs, values) : []
+        const surfaces = selManifest.surfaces || []
         return (
-          <div ref={panelRef} className="card p-4 mt-2 border-brand-accent/40 ring-1 ring-brand-accent/20 scroll-mt-4">
-            <div className="flex items-center gap-2 mb-3">
+          <div ref={panelRef} className="card p-5 mt-2 border-brand-accent/40 ring-1 ring-brand-accent/20 scroll-mt-4">
+            <div className="flex items-center gap-2 mb-1">
               <Boxes size={15} className="text-brand-accent" />
               <span className="text-sm font-semibold text-brand-text capitalize">{selManifest.tool}</span>
               <span className="text-[11px] text-gray-400">v{selManifest.version} · {selManifest.kind}</span>
-              <button onClick={() => { setSelected(null); setSelCap(null) }} className="icon-btn h-7 w-7 ml-auto" title="Close">
+              <button onClick={() => setSelected(null)} className="icon-btn h-7 w-7 ml-auto" title="Close">
                 <X size={14} />
               </button>
             </div>
+            {selManifest.description && (
+              <p className="text-xs text-gray-600 leading-relaxed mb-4 max-w-3xl">{selManifest.description}</p>
+            )}
 
-            {selManifest.platforms.length > 1 && (
-              <div className="flex gap-1 flex-wrap mb-3">
-                {selManifest.platforms.map(p => (
-                  <button key={p} onClick={() => { setPlatform(p); setSelCap(null) }}
-                    className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
-                      platform === p ? 'border-brand-accent bg-brand-accentlight text-brand-text' : 'border-gray-200 text-gray-500 hover:border-gray-300'
-                    }`}>
-                    {PLATFORM_LABEL[p] || p}
-                  </button>
-                ))}
+            {/* The real CTA — jump to the pages where this tool is actually used */}
+            {surfaces.length > 0 && (
+              <div className="mb-4">
+                <p className="text-[10px] uppercase tracking-wide text-gray-400 mb-1.5">Use it in</p>
+                <div className="flex gap-2 flex-wrap">
+                  {surfaces.map(s => (
+                    <Link key={s.label + s.to} to={s.to}
+                      className="btn-outline text-xs inline-flex items-center gap-1.5">
+                      {s.label} <ChevronRight size={12} />
+                    </Link>
+                  ))}
+                </div>
               </div>
             )}
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-              {caps.map(c => (
-                <button key={c.key} onClick={() => openCap(c)}
-                  className={`text-left card p-3 hover:border-brand-accent transition-colors ${selCap === c.key ? 'border-brand-accent ring-1 ring-brand-accent/30' : ''}`}>
-                  <span className="text-sm font-medium text-brand-text">{c.label}</span>
-                  <p className="text-[11px] text-gray-500 mt-0.5">{c.description}</p>
-                  <div className="flex gap-1 mt-1.5 flex-wrap">
-                    {c.platforms.map(p => <span key={p} className="badge bg-gray-100 text-gray-500 border border-gray-200 text-[9px]">{PLATFORM_LABEL[p] || p}</span>)}
-                  </div>
-                </button>
-              ))}
-            </div>
-
-            {cap && (
-              <div className="mt-3 border-t border-gray-100 pt-3 space-y-3">
-                <div className="flex items-center gap-2">
-                  <Terminal size={14} className="text-brand-accent" />
-                  <span className="text-sm font-semibold text-brand-text">{cap.label}</span>
-                  {cap.output && <span className="text-[10px] text-gray-400 ml-auto">→ {cap.output}</span>}
+            {/* Capabilities as documentation — what it advertises, read-only */}
+            {caps.length > 0 && (
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <p className="text-[10px] uppercase tracking-wide text-gray-400">Advertised capabilities</p>
+                  {selManifest.platforms && selManifest.platforms.length > 1 && (
+                    <div className="flex gap-1 flex-wrap">
+                      {selManifest.platforms.map(p => (
+                        <button key={p} onClick={() => setPlatform(p)}
+                          className={`text-[11px] px-2 py-0.5 rounded-full border transition-colors ${
+                            platform === p ? 'border-brand-accent bg-brand-accentlight text-brand-text' : 'border-gray-200 text-gray-500 hover:border-gray-300'
+                          }`}>
+                          {PLATFORM_LABEL[p] || p}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
-                <DynamicForm fields={cap.inputs} values={values} onChange={setValues} />
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setSubmitted({ tool: selManifest.tool, capability: cap.key, platform, inputs: values })}
-                    disabled={missing.length > 0}
-                    className="btn-primary text-xs inline-flex items-center gap-1.5 disabled:opacity-50"
-                    title={missing.length ? `Required: ${missing.join(', ')}` : ''}>
-                    <Play size={13} /> Run
-                  </button>
-                  {missing.length > 0 && <span className="text-[10px] text-amber-600">Required: {missing.join(', ')}</span>}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  {caps.map(c => {
+                    const needs = (c.inputs || []).filter(f => f.required).map(f => f.label || f.name)
+                    return (
+                      <div key={c.key} className="rounded-lg border border-gray-200 p-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-sm font-medium text-brand-text">{c.label}</span>
+                          {c.output && <span className="text-[10px] text-gray-400 shrink-0">→ {c.output}</span>}
+                        </div>
+                        <p className="text-[11px] text-gray-500 mt-0.5">{c.description}</p>
+                        {needs.length > 0 && (
+                          <p className="text-[10px] text-gray-400 mt-1.5">Needs: {needs.join(', ')}</p>
+                        )}
+                        <div className="flex gap-1 mt-1.5 flex-wrap">
+                          {(c.platforms || []).map(p => (
+                            <span key={p} className="badge bg-gray-100 text-gray-500 border border-gray-200 text-[9px]">{PLATFORM_LABEL[p] || p}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )
+                  })}
                 </div>
-                {submitted && (
-                  <div>
-                    <p className="text-[10px] uppercase tracking-wide text-gray-400 mb-1">Input Citadel hands to the tool</p>
-                    <pre className="bg-gray-900 text-gray-100 rounded-lg p-3 text-[11px] overflow-x-auto">{JSON.stringify(submitted, null, 2)}</pre>
-                  </div>
-                )}
+                <p className="text-[11px] text-gray-400 mt-3">
+                  Capabilities run inside a case from the pages above — not from here. This view is the
+                  tool's advertised contract.
+                </p>
               </div>
             )}
           </div>
