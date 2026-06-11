@@ -165,6 +165,8 @@ SECRET_GENERATORS = {
     "minio_secret_key": lambda: _secrets.token_urlsafe(32),
     "jwt_secret":       lambda: _secrets.token_hex(32),
     "admin_password":   lambda: _secrets.token_urlsafe(12),
+    # Shared token for in-cluster service calls (worker → API finalize chain).
+    "internal_service_token": lambda: _secrets.token_hex(32),
 }
 
 
@@ -288,6 +290,7 @@ def build_substitutions(cfg, pull_policy):
         "__FO_MINIO_ACCESS_KEY__": cfg.get("secrets", {}).get("minio_access_key", "minioadmin"),
         "__FO_MINIO_SECRET_KEY__": cfg.get("secrets", {}).get("minio_secret_key", "minioadmin"),
         "__FO_JWT_SECRET__":              cfg["secrets"].get("jwt_secret", "CHANGE_ME_IN_PRODUCTION"),
+        "__FO_INTERNAL_SERVICE_TOKEN__":  cfg["secrets"].get("internal_service_token", ""),
         "__FO_ADMIN_USERNAME__":          cfg["secrets"].get("admin_username", "admin"),
         "__FO_ADMIN_PASSWORD__":          cfg["secrets"].get("admin_password", "CitadelAdmin1!"),
         "__FO_LICENSE_KEY__":             cfg["secrets"].get("license_key", ""),
