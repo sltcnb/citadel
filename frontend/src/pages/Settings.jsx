@@ -68,8 +68,10 @@ const SCALEWAY_REGIONS = [
 // `tool` = the suite tool(s) that own each settings group (shown as a sub-label
 // so config reads tool-wise without restructuring the forms).
 const TABS = [
-  { id: 'ai',           label: 'AI Analysis',  icon: Sparkles, tool: 'Pilot' },
-  { id: 'storage',      label: 'Storage',      icon: Database,  tool: 'Talon · Sluice · Scribe' },
+  { id: 'ai',           label: 'AI Analysis',  icon: Sparkles,  tool: 'Pilot' },
+  { id: 'talon',        label: 'Collector',    icon: Upload,    tool: 'Talon' },
+  { id: 'sluice',       label: 'Import',       icon: HardDrive, tool: 'Sluice' },
+  { id: 'scribe',       label: 'Archive',      icon: Archive,   tool: 'Scribe' },
   { id: 'integrations', label: 'Integrations', icon: Shield,    tool: 'Augur · sandboxes' },
   { id: 'system',       label: 'System',       icon: Server,    tool: 'Platform' },
   { id: 'license',      label: 'License',      icon: Award,     tool: 'Platform' },
@@ -879,21 +881,12 @@ export default function Settings() {
     )
   }
 
-  function renderStorage() {
-    const archiveS3 = {
-      vendor:     archiveForm.s3_vendor,
-      endpoint:   archiveForm.s3_endpoint,
-      access_key: archiveForm.s3_access_key,
-      secret_key: archiveForm.s3_secret_key,
-      bucket:     archiveForm.s3_bucket,
-      region:     archiveForm.s3_region,
-      use_ssl:    archiveForm.s3_use_ssl,
-    }
-    const setArchiveS3 = (k, v) => setArchive(`s3_${k}`, v)
-
+  // Storage is split per owning tool: Sluice (import sources), Talon (collector
+  // dropzone), Scribe (case archive) — one tab each.
+  function renderSluiceStorage() {
     return (
       <div className="space-y-6">
-        {/* Sub-section 1: Evidence Import Sources */}
+        {/* Evidence Import Sources — Sluice */}
         <section className="card p-5 space-y-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -1026,8 +1019,14 @@ export default function Settings() {
             </form>
           )}
         </section>
+      </div>
+    )
+  }
 
-        {/* Sub-section 2: Collector Dropzone */}
+  function renderTalonStorage() {
+    return (
+      <div className="space-y-6">
+        {/* Collector Dropzone — Talon */}
         <section className="card p-5 space-y-4">
           <div className="flex items-center gap-2">
             <Upload size={15} className="text-orange-500" />
@@ -1101,8 +1100,24 @@ export default function Settings() {
             </form>
           )}
         </section>
+      </div>
+    )
+  }
 
-        {/* Sub-section 3: Case Archive */}
+  function renderScribeStorage() {
+    const archiveS3 = {
+      vendor:     archiveForm.s3_vendor,
+      endpoint:   archiveForm.s3_endpoint,
+      access_key: archiveForm.s3_access_key,
+      secret_key: archiveForm.s3_secret_key,
+      bucket:     archiveForm.s3_bucket,
+      region:     archiveForm.s3_region,
+      use_ssl:    archiveForm.s3_use_ssl,
+    }
+    const setArchiveS3 = (k, v) => setArchive(`s3_${k}`, v)
+    return (
+      <div className="space-y-6">
+        {/* Case Archive — Scribe */}
         <section className="card p-5 space-y-4">
           <div className="flex items-center gap-2">
             <Archive size={15} className="text-indigo-500" />
@@ -1867,7 +1882,9 @@ resources:
         </div>
       )}
       {tab === 'ai'           && renderAI()}
-      {tab === 'storage'      && renderStorage()}
+      {tab === 'talon'        && renderTalonStorage()}
+      {tab === 'sluice'       && renderSluiceStorage()}
+      {tab === 'scribe'       && renderScribeStorage()}
       {tab === 'integrations' && renderIntegrations()}
       {tab === 'system'       && renderSystem()}
       {tab === 'license'      && <LicensePanel />}
