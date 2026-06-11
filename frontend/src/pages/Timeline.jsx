@@ -1713,7 +1713,9 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
                 </span>
               )}
             </div>
-            <div className="flex items-end gap-0.5 h-12 overflow-x-auto select-none">
+            {/* Bars fill the width (no scroll) so the axis stays aligned. Each
+                column is a full-height click/drag target — not just the bar. */}
+            <div className="flex items-stretch gap-px h-12 select-none">
               {histogram.map((b, i) => {
                 const h = Math.max(2, Math.round((b.doc_count / maxCount) * 40))
                 const day = fmtBucket(b.key)
@@ -1726,37 +1728,33 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
                 return (
                   <div
                     key={i}
-                    className="flex flex-col items-center group cursor-pointer flex-shrink-0 px-px"
+                    className={`flex-1 min-w-0 flex flex-col justify-end group cursor-pointer rounded-sm ${
+                      inDrag ? 'bg-brand-accent/15' : 'hover:bg-gray-200/60'
+                    }`}
                     onMouseDown={e => histoBarDown(i, e)}
                     onMouseEnter={() => histoBarEnter(i)}
-                    title={`${day}: ${b.doc_count.toLocaleString()} events — click or swipe to filter`}
+                    title={`${day}: ${b.doc_count.toLocaleString()} events — click or drag to filter`}
                   >
                     <div
                       style={{ height: h }}
-                      className={`w-2 rounded-t transition-all ${
+                      className={`w-full rounded-t transition-colors ${
                         inDrag
-                          ? 'bg-brand-accent ring-1 ring-brand-accent/70'
+                          ? 'bg-brand-accent'
                           : active
-                            ? 'bg-brand-accent ring-1 ring-brand-accent/50 scale-x-150'
-                            : 'bg-brand-accent/30 group-hover:bg-brand-accent/60'
+                            ? 'bg-brand-accent ring-1 ring-brand-accent/50'
+                            : 'bg-brand-accent/40 group-hover:bg-brand-accent/70'
                       }`}
                     />
                   </div>
                 )
               })}
             </div>
-            {/* Time axis — evenly spaced ticks across the visible range */}
+            {/* Time axis — start · middle · end, aligned to the bar row width */}
             {histogram.length > 1 && (
-              <div className="flex justify-between text-[9px] text-gray-400 mt-1 tabular-nums px-px">
-                {(() => {
-                  const n = histogram.length
-                  const idxs = [...new Set([0, Math.floor(n / 4), Math.floor(n / 2), Math.floor((3 * n) / 4), n - 1])]
-                  return idxs.map((i, k) => (
-                    <span key={i} className={k === 0 ? 'text-left' : k === idxs.length - 1 ? 'text-right' : 'text-center'}>
-                      {fmtBucket(histogram[i].key)}
-                    </span>
-                  ))
-                })()}
+              <div className="flex justify-between text-[9px] text-gray-400 mt-1 tabular-nums">
+                <span>{fmtBucket(histogram[0].key)}</span>
+                <span>{fmtBucket(histogram[Math.floor((histogram.length - 1) / 2)].key)}</span>
+                <span>{fmtBucket(histogram[histogram.length - 1].key)}</span>
               </div>
             )}
           </div>
