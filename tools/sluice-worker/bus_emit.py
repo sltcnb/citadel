@@ -248,6 +248,12 @@ def emit_events_parsed(
             len(events),
             stream,
         )
+        # Surface the inter-tool data flow in the shared orchestration channel.
+        import logging as _lg
+        _lg.getLogger("citadel.tools").info(
+            "[Babel/Sluice → bus] %d events → %s (case %s) → consumed by Rosetta",
+            len(events), TOPIC_EVENTS_PARSED, case_id,
+        )
     except Exception as exc:
         # Side channel: never break the indexing path. Rosetta can also be fed by
         # replaying ES; a missed emit is recoverable, a failed ingest is not.

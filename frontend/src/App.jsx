@@ -19,7 +19,6 @@ import Login          from './pages/Login'
 import Performance    from './pages/Performance'
 import Logs           from './pages/Logs'
 import Suite          from './pages/Suite'
-import Capabilities   from './pages/Capabilities'
 import UserManagement from './pages/UserManagement'
 import ThreatIntel    from './pages/ThreatIntel'
 import MalwareAnalysis from './pages/MalwareAnalysis'
@@ -103,7 +102,8 @@ export default function App() {
             <Route path="performance"               element={<Performance />} />
             <Route path="logs"                      element={<Logs />} />
             <Route path="suite"                     element={<Suite />} />
-            <Route path="capabilities"              element={<Capabilities />} />
+            {/* Capabilities merged into Suite — keep the path working. */}
+            <Route path="capabilities"              element={<Navigate to="/suite" replace />} />
             <Route path="users"                     element={<UserManagement />} />
             <Route path="cti"                       element={<ThreatIntel />} />
             <Route path="malware"                   element={<MalwareAnalysis />} />
