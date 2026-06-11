@@ -7,6 +7,8 @@ metadata:
 data:
   ELASTICSEARCH_URL: {{ .Values.config.elasticsearchUrl | quote }}
   REDIS_URL: {{ .Values.config.redisUrl | quote }}
+  # In-cluster API URL for the worker's post-ingestion finalize chain.
+  INTERNAL_API_URL: {{ .Values.config.internalApiUrl | default (printf "http://%s-api:8000" (include "citadel.fullname" .)) | quote }}
   MINIO_ENDPOINT: {{ .Values.config.minioEndpoint | quote }}
   MINIO_BUCKET: {{ .Values.config.minioBucket | quote }}
   PLUGINS_DIR: {{ .Values.config.pluginsDir | quote }}

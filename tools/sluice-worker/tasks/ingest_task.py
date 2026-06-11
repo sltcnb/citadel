@@ -546,10 +546,34 @@ def maybe_run_detections(self, case_id: str, _attempts: int = 0):
             _run_watchlist(r, case_id)
         except Exception as exc:
             logger.warning("[watchlist] case %s — sweep failed: %s", case_id, exc)
+        # Chain the API-side tail: CTI IOC-DB match → AI risk (plan-gated).
+        _trigger_finalize_chain(case_id)
     finally:
         # Release the schedule lock so the next ingest cycle can chain again.
         r.delete(rk.case_alert_run_lock(case_id))
     return {"status": "completed"}
+
+
+def _trigger_finalize_chain(case_id: str) -> None:
+    """Signal the API to run its side of the post-ingestion chain (IOC-DB match
+    + AI risk). Best-effort: a missing token / slow LLM never breaks ingestion.
+    api + worker are both Citadel core — this crosses no tool contract."""
+    token = os.getenv("INTERNAL_SERVICE_TOKEN", "")
+    if not token:
+        logger.debug("[finalize] no INTERNAL_SERVICE_TOKEN — skipping API chain")
+        return
+    base = os.getenv("INTERNAL_API_URL", "http://api-service:8000").rstrip("/")
+    try:
+        import requests
+
+        resp = requests.post(
+            f"{base}/api/v1/internal/cases/{case_id}/finalize",
+            headers={"X-Internal-Token": token},
+            timeout=300,  # the LLM step can be slow; this runs off the ingest path
+        )
+        logger.info("[finalize] case %s — API chain returned %d", case_id, resp.status_code)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[finalize] case %s — could not trigger API chain: %s", case_id, exc)
 
 
 def _run_watchlist(r: redis.Redis, case_id: str) -> None:
