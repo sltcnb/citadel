@@ -61,9 +61,14 @@ class InputField:
         opts = []
         for o in d.get("options", []) or []:
             if isinstance(o, dict):
-                opts.append({"value": str(o.get("value", o.get("key", ""))),
-                             "label": o.get("label", str(o.get("value", o.get("key", "")))),
-                             **({"desc": o["desc"]} if o.get("desc") else {})})
+                # Preserve every key the tool attached (value/label/desc + any
+                # presentation hints like `group`). Citadel stays agnostic — it
+                # passes the tool's metadata straight through to the UI.
+                val = str(o.get("value", o.get("key", "")))
+                opt = dict(o)
+                opt["value"] = val
+                opt.setdefault("label", str(o.get("value", o.get("key", val))))
+                opts.append(opt)
             else:
                 opts.append({"value": str(o), "label": str(o)})
         return cls(
