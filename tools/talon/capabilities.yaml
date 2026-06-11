@@ -1,48 +1,16 @@
-# Talon — endpoint acquisition agent. Declares, per OS, what it can collect and
-# the options each run needs. Citadel renders these as forms; editing this file
-# changes the Collector UI with no orchestrator code change.
+# Talon — endpoint acquisition agent. Per-OS artifact catalog is the SOURCE
+# OF TRUTH for what Citadel offers in the Collector UI. Edit here → UI adapts.
 tool: talon
 kind: collector
-version: "1.0.0"
+version: "1.1.0"
 description: >
-  Live and dead-box artifact acquisition for Windows, Linux and macOS. Selects
-  artifact categories, packages them, and hands the bundle to Sluice (or an S3
-  triage bucket / local zip).
-
-# Shared option fields reused across the per-OS collect capabilities.
-_option_anchors:
-  - &opt_output
-    name: output
-    type: enum
-    label: Deliver to
-    required: true
-    default: citadel
-    options:
-      - { value: citadel, label: "Citadel (upload to case)", desc: "Bundle → Sluice → timeline" }
-      - { value: s3, label: "S3 triage bucket", desc: "Push to the configured triage bucket" }
-      - { value: local, label: "Local ZIP", desc: "Write output zip for manual transfer" }
-  - &opt_hash
-    name: hash_files
-    type: bool
-    label: Hash collected files (SHA-256)
-    default: true
-  - &opt_compress
-    name: compress
-    type: bool
-    label: Compress bundle
-    default: true
-  - &opt_maxfiles
-    name: max_files_per_category
-    type: int
-    label: Max files per category
-    default: 500
-    min: 1
-    max: 100000
-
+  Live and dead-box artifact acquisition for Windows, Linux and macOS. Declares
+  every collectable artifact category per OS; Citadel renders the selection UI
+  from this manifest and hands the chosen categories back to Talon.
 capabilities:
   - key: collect_windows
     label: Collect — Windows
-    description: Acquire Windows host artifacts (live or mounted/dead-box).
+    description: Acquire Windows host artifacts (live or mounted/dead-box). 56 categories.
     platforms: [windows]
     output: "bundle → Sluice (or S3 / local zip)"
     inputs:
@@ -50,32 +18,90 @@ capabilities:
         type: multiselect
         label: Artifact categories
         required: true
-        help: What to acquire from the Windows host.
         options:
-          - { value: evtx, label: "Event Logs (EVTX)", desc: "Security, System, Application, PowerShell, Sysmon" }
-          - { value: registry, label: "Registry Hives", desc: "SYSTEM, SOFTWARE, SAM, SECURITY, NTUSER.DAT" }
-          - { value: prefetch, label: "Prefetch", desc: "Program execution evidence" }
-          - { value: mft, label: "Master File Table ($MFT)", desc: "Raw NTFS MFT (admin/dead-box)" }
-          - { value: execution, label: "Execution Evidence", desc: "SRUM, Amcache.hve, Prefetch" }
-          - { value: persistence, label: "Persistence (Tasks + WMI)", desc: "Scheduled Tasks, WMI repository" }
-          - { value: usb_devices, label: "USB Device History", desc: "setupapi device timeline" }
-          - { value: credentials, label: "Credentials (DPAPI)", desc: "SAM, SECURITY, Credential Manager" }
-          - { value: antivirus, label: "Antivirus / EDR", desc: "Defender + third-party logs/quarantine" }
-          - { value: network_cfg, label: "Network Config", desc: "Hosts, WLAN profiles, firewall logs" }
-          - { value: browser, label: "Browser Artifacts", desc: "History, downloads, cookies" }
+          - { value: evtx, label: "Event Logs (EVTX)", desc: "Security, System, Application, PowerShell, Sysmon and more" }
+          - { value: registry, label: "Registry Hives", desc: "SYSTEM, SOFTWARE, SAM, SECURITY, NTUSER.DAT, UsrClass.dat" }
+          - { value: prefetch, label: "Prefetch Files", desc: "Program execution evidence (up to 500 .pf files)" }
+          - { value: mft, label: "Master File Table ($MFT)", desc: "Raw NTFS MFT — requires Administrator or dead-box access" }
+          - { value: execution, label: "Execution Evidence", desc: "SRUM database, Amcache.hve, Prefetch — comprehensive execution history" }
+          - { value: persistence, label: "Persistence (Tasks + WMI)", desc: "Scheduled Tasks XML from System32/SysWOW64, WMI repository (OBJECTS.DATA)" }
+          - { value: filesystem, label: "NTFS Metadata", desc: "$MFT, $LogFile, $Boot — full NTFS journal and boot sector" }
+          - { value: network_cfg, label: "Network Config", desc: "Hosts file, WLAN profiles (.xml), Windows Firewall logs (pfirewall.log)" }
+          - { value: usb_devices, label: "USB Device History", desc: "setupapi.dev.log / setupapi.setup.log — device plug-in timeline" }
+          - { value: credentials, label: "Credentials (DPAPI)", desc: "SAM, SECURITY hives, Credential Manager stores, DPAPI Protect folders" }
+          - { value: antivirus, label: "Antivirus / EDR", desc: "Defender + Trend Micro, Symantec, McAfee/Trellix, Sophos, ESET, Kaspersky, Bitdefender, CrowdStrike, SentinelOne, Carbon Black and more — logs, quarantine, detections" }
+          - { value: sysmon, label: "Sysmon", desc: "Sysmon Operational EVTX, config XMLs, FileDelete archive, SysmonDrv driver rules + service state (live)" }
+          - { value: wer_crashes, label: "WER Crash Dumps", desc: "Windows Error Reporting crash dumps and report archives" }
+          - { value: win_logs, label: "Windows Logs", desc: "CBS.log, DISM, WindowsUpdate.log, Panther setup logs" }
+          - { value: boot_uefi, label: "Boot Config (BCD / EFI)", desc: "BCD store, bootstat.dat — boot persistence indicators" }
+          - { value: encryption, label: "Encryption Metadata", desc: "BitLocker FVE recovery info, EFS metadata" }
+          - { value: etw_diagnostics, label: "ETW Diagnostic Traces", desc: "Windows/System32/LogFiles/WMI — .etl trace files" }
+          - { value: browser, label: "All Browsers", desc: "Chrome, Edge, Firefox, Brave, Opera, Vivaldi — history, cookies, logins" }
+          - { value: browser_chrome, label: "Chrome", desc: "History, Cookies, Login Data, Bookmarks, Web Data for all users" }
+          - { value: browser_edge, label: "Microsoft Edge", desc: "History, Cookies, Login Data, Web Data for all users" }
+          - { value: browser_ie, label: "Internet Explorer", desc: "WebCacheV01.dat / WebCacheV24.dat — legacy IE cache database" }
+          - { value: email_outlook, label: "Outlook Email", desc: ".pst / .ost mailbox databases from Documents/Outlook Files and AppData" }
+          - { value: email_thunderbird, label: "Thunderbird Email", desc: "Thunderbird profile SQLite databases and .msf index files" }
+          - { value: teams, label: "Microsoft Teams", desc: "Teams logs.txt, IndexedDB, Local Storage — chat history traces" }
+          - { value: slack, label: "Slack", desc: "Slack AppData/Roaming/Slack/logs — workspace activity logs" }
+          - { value: discord, label: "Discord", desc: "Discord Local Storage — message and user data artifacts" }
+          - { value: signal, label: "Signal Desktop", desc: "Signal databases/db.sqlite — encrypted message store" }
+          - { value: whatsapp, label: "WhatsApp Desktop", desc: "WhatsApp Desktop UWP package databases" }
+          - { value: telegram, label: "Telegram Desktop", desc: "Telegram tdata folder — session and message cache" }
+          - { value: cloud_onedrive, label: "OneDrive", desc: "OneDrive sync databases and activity logs" }
+          - { value: cloud_google_drive, label: "Google Drive", desc: "Google DriveFS sync databases" }
+          - { value: cloud_dropbox, label: "Dropbox", desc: "Dropbox sync metadata and activity JSON" }
+          - { value: remote_access, label: "Remote Access Tools", desc: "AnyDesk traces/config, TeamViewer logs — lateral movement indicators" }
+          - { value: rdp, label: "RDP / Terminal Services", desc: "Terminal Server Client cache — bitmap tiles from past RDP sessions" }
+          - { value: ssh_ftp, label: "SSH / FTP Clients", desc: "known_hosts, PuTTY sessions, WinSCP.ini — remote connection history" }
+          - { value: lnk, label: "LNK / Recent Items", desc: "Shell link files from all user Recent folders" }
+          - { value: tasks, label: "Scheduled Tasks (legacy key)", desc: "Alias for persistence — kept for backwards compatibility" }
+          - { value: office, label: "Office MRU", desc: "Office Recent Documents list and trusted document registry" }
+          - { value: dev_tools, label: "Dev Tools", desc: ".gitconfig, .git-credentials, PowerShell history, .aws/credentials, .azure tokens" }
+          - { value: password_managers, label: "Password Managers", desc: "KeePass .kdbx databases found in user directories" }
+          - { value: database_clients, label: "Database Clients", desc: "SSMS connection configs, DBeaver workspace files" }
+          - { value: gaming, label: "Gaming Platforms", desc: "Steam .vdf files, Epic Games Launcher logs" }
+          - { value: windows_apps, label: "Windows Apps (UWP)", desc: "Sticky Notes, Cortana — UWP package SQLite stores" }
+          - { value: wsl, label: "WSL", desc: "Ubuntu/Debian WSL rootfs /etc — passwd, shadow, bashrc" }
+          - { value: vpn, label: "VPN Config", desc: "OpenVPN .ovpn profiles, WireGuard .conf files from ProgramData" }
+          - { value: iis_web, label: "IIS Web Server", desc: "inetpub/logs .log files, applicationHost.config — web server forensics" }
+          - { value: active_directory, label: "Active Directory", desc: "Windows/NTDS/ntds.dit + edb.log — full AD database" }
+          - { value: virtualization, label: "Virtualization", desc: "Hyper-V .vhd / .vhdx inventory from ProgramData" }
+          - { value: recovery, label: "Recovery / VSS", desc: "System Volume Information — VSS snapshot metadata" }
+          - { value: printing, label: "Print Spool", desc: "Windows/System32/spool/PRINTERS — spooled print jobs" }
+          - { value: triage, label: "Live System Triage", desc: "systeminfo, netstat, tasklist, services, installed software — live OS only" }
+          - { value: pe, label: "PE / Executable Binaries", desc: "EXE/DLL/PS1 from Temp, Downloads, AppData — feeds PE Analysis, YARA, strings" }
+          - { value: documents, label: "Office Documents & PDFs", desc: "DOCX, XLSX, PPTX, PDF from Documents/Downloads/Desktop — feeds OLE analysis" }
+          - { value: memory, label: "Live Memory Dump", desc: "Physical memory via WinPmem — 4–64 GB, requires winpmem_mini_x64_rc2.exe beside the script" }
+          - { value: memory_artifacts, label: "Memory Artifacts (dead-box)", desc: "pagefile.sys, hiberfil.sys, swapfile.sys — from mounted/external volume" }
+          - { value: file_search, label: "File Search (regex / name)", desc: "Fetch arbitrary files by filename, glob, or re: regex — set patterns below" }
       - name: mount_path
         type: path
         label: Mounted volume path (dead-box)
         placeholder: "C:\\  or  /mnt/windows"
         help: Leave blank for live collection on the running host.
-      - *opt_output
-      - *opt_hash
-      - *opt_compress
-      - *opt_maxfiles
-
+      - name: output
+        type: enum
+        label: Deliver to
+        required: true
+        default: citadel
+        options:
+          - { value: citadel, label: "Citadel (upload to case)" }
+          - { value: s3, label: "S3 triage bucket" }
+          - { value: local, label: "Local ZIP" }
+      - name: hash_files
+        type: bool
+        label: Hash collected files (SHA-256)
+        default: true
+      - name: max_files_per_category
+        type: int
+        label: Max files per category
+        default: 500
+        min: 1
+        max: 100000
   - key: collect_linux
     label: Collect — Linux
-    description: Acquire Linux host artifacts (live or mounted).
+    description: Acquire Linux host artifacts (live or mounted/dead-box). 21 categories.
     platforms: [linux]
     output: "bundle → Sluice (or S3 / local zip)"
     inputs:
@@ -84,26 +110,54 @@ capabilities:
         label: Artifact categories
         required: true
         options:
-          - { value: logs, label: "System Logs", desc: "/var/log: syslog, auth, kern, journal" }
-          - { value: audit, label: "auditd", desc: "/var/log/audit/audit.log*" }
-          - { value: shell_history, label: "Shell History", desc: "bash/zsh/fish history per user" }
-          - { value: persistence, label: "Persistence", desc: "systemd units, cron, rc.local, profile.d" }
-          - { value: packages, label: "Installed Packages", desc: "dpkg/rpm + apt history" }
-          - { value: network, label: "Network State", desc: "ss/netstat, iptables, hosts, resolv" }
-          - { value: users, label: "Accounts", desc: "passwd, shadow, sudoers, lastlog, wtmp/btmp" }
-          - { value: containers, label: "Containers", desc: "docker/k8s/crictl state + logs" }
+          - { value: logs, label: "System Logs", desc: "/var/log — auth.log, syslog, kern.log, audit, journalctl export, wtmp/btmp" }
+          - { value: history, label: "Shell Histories", desc: ".bash_history, .zsh_history for root and all users" }
+          - { value: config, label: "System Configuration", desc: "/etc/passwd, shadow, sudoers, hosts, ssh/sshd_config, PAM" }
+          - { value: cron, label: "Cron Jobs", desc: "cron.d, cron.daily, crontabs, systemd timers" }
+          - { value: ssh, label: "SSH Artifacts", desc: "known_hosts, authorized_keys, config (no private keys)" }
+          - { value: persistence, label: "Persistence", desc: "systemd units, init.d, rc.local, profile.d, LD_PRELOAD, autostart" }
+          - { value: network_config, label: "Network Config", desc: "interfaces, iptables/nftables rules, resolv.conf, hosts.allow/deny" }
+          - { value: audit_logs, label: "Audit Logs", desc: "auditd logs + rules, ausearch summaries, faillock" }
+          - { value: containers, label: "Container Artifacts", desc: "Docker / Podman containers, images, logs, compose files" }
+          - { value: packages, label: "Packages & Tools", desc: "Installed package inventory (dpkg/rpm), suspicious SUID binaries" }
+          - { value: network, label: "Network Captures", desc: "PCAP/PCAPNG from /var/log, /tmp — live tcpdump if none found" }
+          - { value: suricata, label: "Suricata IDS Logs", desc: "EVE JSON alerts from /var/log/suricata" }
+          - { value: zeek, label: "Zeek / Bro Logs", desc: "conn, dns, http, ssl, notice logs from Zeek" }
+          - { value: edr, label: "EDR / AV Logs (legacy)", desc: "auditd, Falco, osquery, Wazuh — superseded by Antivirus / EDR below" }
+          - { value: antivirus, label: "Antivirus / EDR", desc: "ClamAV, Trend Micro ds_agent, Defender (mdatp), Falcon, SentinelOne, Sophos SPL, ESET, Kaspersky, rkhunter/chkrootkit logs" }
+          - { value: sysmon, label: "Sysmon For Linux", desc: "config.xml, /opt/sysmon state, sysmon-tagged journal events" }
+          - { value: triage, label: "Live System Triage", desc: "ps, ss, ip, last, lsmod, installed packages" }
+          - { value: pe, label: "ELF / Binaries", desc: "Suspicious binaries from /tmp, /var/tmp, ~/Downloads — feeds PE Analysis, YARA" }
+          - { value: documents, label: "Office Documents & PDFs", desc: "DOCX, XLSX, PPTX, PDF from home directories — feeds OLE analysis" }
+          - { value: memory, label: "Memory Dump", desc: "Physical memory via avml or /dev/fmem — 4–64 GB, requires root + avml in PATH" }
+          - { value: file_search, label: "File Search (regex / name)", desc: "Fetch arbitrary files by filename, glob, or re: regex — set patterns below" }
       - name: mount_path
         type: path
-        label: Mounted root path (dead-box)
+        label: Mounted volume path (dead-box)
         placeholder: "/mnt/linux"
-      - *opt_output
-      - *opt_hash
-      - *opt_compress
-      - *opt_maxfiles
-
+        help: Leave blank for live collection on the running host.
+      - name: output
+        type: enum
+        label: Deliver to
+        required: true
+        default: citadel
+        options:
+          - { value: citadel, label: "Citadel (upload to case)" }
+          - { value: s3, label: "S3 triage bucket" }
+          - { value: local, label: "Local ZIP" }
+      - name: hash_files
+        type: bool
+        label: Hash collected files (SHA-256)
+        default: true
+      - name: max_files_per_category
+        type: int
+        label: Max files per category
+        default: 500
+        min: 1
+        max: 100000
   - key: collect_macos
     label: Collect — macOS
-    description: Acquire macOS host artifacts.
+    description: Acquire macOS host artifacts (live or mounted/dead-box). 12 categories.
     platforms: [macos]
     output: "bundle → Sluice (or S3 / local zip)"
     inputs:
@@ -112,18 +166,39 @@ capabilities:
         label: Artifact categories
         required: true
         options:
-          - { value: unified_logs, label: "Unified Logs", desc: "log collect / .logarchive" }
-          - { value: plists, label: "Property Lists", desc: "LaunchAgents/Daemons, preferences" }
-          - { value: persistence, label: "Persistence", desc: "Launch items, login items, cron" }
-          - { value: fsevents, label: "FSEvents", desc: "Filesystem change history" }
-          - { value: quarantine, label: "Quarantine / TCC", desc: "Downloads quarantine, TCC.db" }
-          - { value: shell_history, label: "Shell History", desc: "zsh/bash history per user" }
-          - { value: browser, label: "Browser Artifacts", desc: "Safari + Chromium/Firefox" }
+          - { value: logs, label: "System Logs", desc: "/var/log, ASL, Unified Logging export, system.log" }
+          - { value: history, label: "Shell Histories", desc: ".bash_history, .zsh_history, fish_history for root and all users" }
+          - { value: config, label: "System Configuration", desc: "/etc/hosts, sudoers, ssh/sshd_config, /etc/passwd" }
+          - { value: launchagents, label: "LaunchAgents/Daemons", desc: "/Library/LaunchAgents, /Library/LaunchDaemons, ~/Library/LaunchAgents — persistence" }
+          - { value: browser, label: "Browsers", desc: "Safari History.db, Cookies, Bookmarks.plist; Chrome/Firefox if installed" }
+          - { value: plist, label: "Preference Plists", desc: "/Library/Preferences, ~/Library/Preferences — app prefs and hidden settings" }
+          - { value: network, label: "Network Captures", desc: "PCAP/PCAPNG from /var/log, /tmp — live tcpdump if none found" }
+          - { value: triage, label: "Live System Triage", desc: "ps, netstat, launchctl list, system_profiler, sw_vers" }
+          - { value: pe, label: "Mach-O Binaries", desc: "Suspicious binaries from /tmp, ~/Downloads — feeds YARA, strings" }
+          - { value: documents, label: "Office Documents & PDFs", desc: "DOCX, XLSX, PPTX, PDF from home directories" }
+          - { value: memory, label: "Memory Dump", desc: "Physical memory via osxpmem — requires root + osxpmem in PATH" }
+          - { value: file_search, label: "File Search (regex / name)", desc: "Fetch arbitrary files by filename, glob, or re: regex — set patterns below" }
       - name: mount_path
         type: path
         label: Mounted volume path (dead-box)
         placeholder: "/Volumes/Macintosh HD"
-      - *opt_output
-      - *opt_hash
-      - *opt_compress
-      - *opt_maxfiles
+        help: Leave blank for live collection on the running host.
+      - name: output
+        type: enum
+        label: Deliver to
+        required: true
+        default: citadel
+        options:
+          - { value: citadel, label: "Citadel (upload to case)" }
+          - { value: s3, label: "S3 triage bucket" }
+          - { value: local, label: "Local ZIP" }
+      - name: hash_files
+        type: bool
+        label: Hash collected files (SHA-256)
+        default: true
+      - name: max_files_per_category
+        type: int
+        label: Max files per category
+        default: 500
+        min: 1
+        max: 100000
