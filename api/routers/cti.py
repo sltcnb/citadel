@@ -1190,6 +1190,58 @@ def _get_nested(doc: dict, dotted_key: str) -> Any:
     return current
 
 
+# Token extractors for the free-text `message` field. Testing every IOC against
+# each message is O(iocs) per event — at ~1M IOCs that pegs a CPU core for the
+# whole scan and (GIL) stalls the API. Instead we pull type-shaped candidate
+# tokens out of the message and do O(1) dict lookups: O(message length) per
+# event regardless of IOC-DB size.
+_RX_IP = re.compile(r"(?:\d{1,3}\.){3}\d{1,3}|(?:[0-9a-fA-F]{1,4}:){2,}[0-9a-fA-F:]*")
+_RX_DOMAIN = re.compile(r"(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}")
+_RX_URL = re.compile(r"https?://[^\s\"'<>]+")
+_RX_EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+_RX_HASH = re.compile(r"\b(?:[a-fA-F0-9]{64}|[a-fA-F0-9]{40}|[a-fA-F0-9]{32})\b")
+_RX_FILE = re.compile(r"[^\s\\/]+\.[A-Za-z0-9]{1,8}")
+_MSG_EXTRACTORS: dict[str, re.Pattern] = {
+    "ip": _RX_IP, "domain": _RX_DOMAIN, "url": _RX_URL,
+    "email": _RX_EMAIL, "hash": _RX_HASH, "filename": _RX_FILE,
+}
+
+# Parsed-IOC lookup cache. Re-reading + JSON-parsing the whole IOC DB on every
+# match call is itself expensive; the DB changes slowly, so cache briefly.
+_IOC_LOOKUP_CACHE: dict = {"at": 0.0, "data": None}
+_IOC_LOOKUP_TTL = 60.0
+
+
+def _ioc_lookups(r) -> dict[str, dict[str, dict]]:
+    """{type -> {value_lower: ioc_obj}} for all non-expired IOCs, cached 60 s."""
+    import time
+
+    now = time.monotonic()
+    c = _IOC_LOOKUP_CACHE
+    if c["data"] is not None and (now - c["at"]) < _IOC_LOOKUP_TTL:
+        return c["data"]
+    ioc_sets: dict[str, dict[str, dict]] = {}
+    for ioc_type in IOC_TYPES:
+        type_key = rk.cti_ioc_type(ioc_type)
+        _ensure_ioc_hash(r, type_key)
+        lookup: dict[str, dict] = {}
+        for m in r.hvals(type_key):
+            try:
+                obj = json.loads(m)
+                if _ioc_expired(obj):
+                    continue  # don't match against stale intel
+                val = (obj.get("value") or "").lower()
+                if val:
+                    lookup[val] = obj
+            except (json.JSONDecodeError, TypeError):
+                pass
+        if lookup:
+            ioc_sets[ioc_type] = lookup
+    c["data"] = ioc_sets
+    c["at"] = now
+    return ioc_sets
+
+
 @router.post("/cases/{case_id}/cti/match")
 def match_case_iocs(case_id: str):
     """
@@ -1200,26 +1252,9 @@ def match_case_iocs(case_id: str):
     """
     r = _redis()
 
-    # Load all IOCs into memory grouped by type
-    ioc_sets: dict[str, dict[str, dict]] = {}  # type -> {value_lower: ioc_obj}
-    for ioc_type in IOC_TYPES:
-        type_key = rk.cti_ioc_type(ioc_type)
-        _ensure_ioc_hash(r, type_key)
-        lookup: dict[str, dict] = {}
-        for m in r.hvals(type_key):
-            try:
-                obj = json.loads(m)
-                if _ioc_expired(obj):
-                    continue  # don't match against stale intel
-                # Own/private IPs are kept + tagged (separated), not dropped —
-                # so the timeline can filter them with a checkbox.
-                val = obj.get("value", "").lower()
-                if val:
-                    lookup[val] = obj
-            except (json.JSONDecodeError, TypeError):
-                pass
-        if lookup:
-            ioc_sets[ioc_type] = lookup
+    # Parsed IOC lookups grouped by type (cached). Own/private IPs are kept +
+    # tagged (separated), not dropped — so the timeline can filter them.
+    ioc_sets = _ioc_lookups(r)
 
     if not ioc_sets:
         return {"matches": [], "events_scanned": 0, "message": "No IOCs loaded"}
@@ -1254,32 +1289,48 @@ def match_case_iocs(case_id: str):
             source = hit.get("_source", {})
             event_fo_id = source.get("fo_id", hit.get("_id", ""))
             events_scanned += 1
+            seen: set = set()  # (ioc_type, value) dedupe across fields per event
 
             # Check each IOC type against relevant fields
             for ioc_type, lookup in ioc_sets.items():
                 fields = _MATCH_FIELDS.get(ioc_type, ["message"])
+                rx = _MSG_EXTRACTORS.get(ioc_type)
                 for field in fields:
                     field_value = _get_nested(source, field)
                     if field_value is None:
                         continue
-
                     field_str = str(field_value).lower()
 
-                    # For each IOC value, check if it appears in the field
-                    for ioc_value, ioc_obj in lookup.items():
-                        if ioc_value in field_str:
-                            matches.append(
-                                {
-                                    "event_fo_id": event_fo_id,
-                                    "ioc_type": ioc_type,
-                                    "ioc_value": ioc_obj.get("value", ioc_value),
-                                    "indicator_id": ioc_obj.get("indicator_id", ""),
-                                    "feed_name": ioc_obj.get("feed_name", ""),
-                                    "matched_field": field,
-                                    "is_own": bool(ioc_obj.get("is_own")),
-                                    "is_private": bool(ioc_obj.get("is_private")),
-                                }
-                            )
+                    # Build the set of candidate values to look up in O(1):
+                    #  - structured field → the field value itself (exact match)
+                    #  - free-text `message` → type-shaped tokens pulled out by regex
+                    if field == "message":
+                        if not rx:
+                            continue
+                        candidates = {t.lower() for t in rx.findall(field_str)}
+                    else:
+                        candidates = {field_str}
+
+                    for cand in candidates:
+                        ioc_obj = lookup.get(cand)
+                        if not ioc_obj:
+                            continue
+                        key = (ioc_type, cand)
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        matches.append(
+                            {
+                                "event_fo_id": event_fo_id,
+                                "ioc_type": ioc_type,
+                                "ioc_value": ioc_obj.get("value", cand),
+                                "indicator_id": ioc_obj.get("indicator_id", ""),
+                                "feed_name": ioc_obj.get("feed_name", ""),
+                                "matched_field": field,
+                                "is_own": bool(ioc_obj.get("is_own")),
+                                "is_private": bool(ioc_obj.get("is_private")),
+                            }
+                        )
 
         # Prepare next batch
         search_after = hits[-1].get("sort")

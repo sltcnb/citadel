@@ -34,10 +34,27 @@ def _require_internal(token: str | None) -> None:
         raise HTTPException(status_code=403, detail="internal service token required")
 
 
-@router.post("/internal/cases/{case_id}/finalize")
+@router.post("/internal/cases/{case_id}/finalize", status_code=202)
 def finalize_case(case_id: str, x_internal_token: str | None = Header(default=None)):
-    """Run the API-side tail of the post-ingestion chain for a case."""
+    """Accept the post-ingestion finalize and run it OFF the request path.
+
+    The chain (full IOC-DB match + an LLM risk call) can take a while. Running it
+    inline held the worker's HTTP POST and an API thread for the whole duration —
+    a couple of concurrent cases choked the pool and every page stalled. We hand
+    it to a background daemon thread and return 202 immediately; the steps are
+    best-effort and the worker doesn't need the result.
+    """
     _require_internal(x_internal_token)
+    import threading
+
+    t = threading.Thread(target=_run_finalize_chain, args=(case_id,),
+                         name=f"finalize-{case_id}", daemon=True)
+    t.start()
+    return {"case_id": case_id, "status": "accepted"}
+
+
+def _run_finalize_chain(case_id: str) -> dict:
+    """The API-side tail of the post-ingestion chain (runs in a background thread)."""
     _comms.info("[processor → citadel] case %s — post-ingestion finalize requested", case_id)
     result: dict = {"case_id": case_id, "ioc_match": None, "ai_risk": None}
 

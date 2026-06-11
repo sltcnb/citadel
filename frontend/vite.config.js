@@ -24,5 +24,17 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     sourcemap: false,
+    rollupOptions: {
+      output: {
+        // Split heavy/stable deps into their own chunks so the main app bundle
+        // stays small and the big libraries (Monaco especially) are cached
+        // across deploys and loaded in parallel instead of as one ~1 MB blob.
+        manualChunks: {
+          'vendor-monaco': ['@monaco-editor/react'],
+          'vendor-react': ['react', 'react-dom', 'react-router-dom'],
+          'vendor-ui': ['lucide-react', 'dompurify'],
+        },
+      },
+    },
   },
 })
