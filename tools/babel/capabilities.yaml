@@ -1,5 +1,11 @@
 tool: babel
 kind: parser
+stage: Parse
+icon: Languages
+role: "Artifact parsers"
+surfaces:
+  - { label: "Ingesters", to: "/ingesters" }
+  - { label: "Studio", to: "/studio" }
 version: "1.0.0"
 description: >
   Artifact parsers — turn raw forensic artifacts into timeline events. The live

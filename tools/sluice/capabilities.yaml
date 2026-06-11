@@ -1,5 +1,11 @@
 tool: sluice
 kind: intake
+stage: Ingest
+icon: Split
+role: "Intake & routing"
+surfaces:
+  - { label: "Dashboard (upload)", to: "/" }
+  - { label: "Ingesters", to: "/ingesters" }
 version: "1.0.0"
 description: Intake & routing — receives evidence, dedupes, routes each artifact to the right parser.
 capabilities:
