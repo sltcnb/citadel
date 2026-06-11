@@ -392,33 +392,49 @@ async def _on_startup():
     try:
         from routers.tools import _aggregate
 
-        # Seed Redis from the baked-in manifests so the live view has them on a
-        # fresh deploy. foctl pushes the freshest working-tree manifests too;
-        # both write fo:capabilities:<tool> (Redis wins over the image copy).
-        try:
-            from citadel_contracts import register_capability
-            from routers.tools import _from_filesystem
-
-            _r = get_redis()
-            for _doc in _from_filesystem().values():
-                register_capability(_r, _doc)
-        except Exception as _reg_exc:
-            logger.debug("capability self-seed skipped: %s", _reg_exc)
-
+        # Seed Redis from the baked-in manifests. Only LOG an announce when a
+        # tool's manifest is new or changed — otherwise every restart would
+        # repeat the same announcements and spam the orchestration log.
+        import json as _json
         import logging as _lg2
+
+        from citadel_contracts import capabilities_redis_key, register_capability
+        from routers.tools import _from_filesystem
+
         _tlog = _lg2.getLogger("citadel.tools")
-        manifests = _aggregate()
-        _tlog.info("[citadel] %d tool(s) plugged in and advertising capabilities", len(manifests))
-        for m in manifests:
-            caps = ", ".join(c["key"] for c in m.get("capabilities", []))
-            _tlog.info(
-                "[%s → citadel] announced: v%s [%s] → %s",
-                m["tool"], m.get("version", "?"),
-                ",".join(m.get("platforms", [])) or "any",
-                caps or "(none)",
+        _r = get_redis()
+        changed = []
+        for _doc in _from_filesystem().values():
+            tool = _doc.get("tool")
+            new_json = _json.dumps(_doc, sort_keys=True)
+            try:
+                prev = _r.get(capabilities_redis_key(tool))
+                prev = prev.decode() if isinstance(prev, bytes) else prev
+            except Exception:
+                prev = None
+            is_changed = (prev is None) or (
+                _json.dumps(_json.loads(prev), sort_keys=True) != new_json
+                if prev else True
             )
+            register_capability(_r, _doc)
+            if is_changed:
+                changed.append(_doc)
+
+        if changed:
+            _tlog.info("[citadel] %d tool manifest(s) new/updated this boot", len(changed))
+            for m in changed:
+                caps = ", ".join(c.get("key", "") for c in m.get("capabilities", []))
+                _tlog.info(
+                    "[%s → citadel] announced: v%s [%s] → %s",
+                    m["tool"], m.get("version", "?"),
+                    ",".join(m.get("platforms", [])) or "any", caps or "(none)",
+                )
+        else:
+            _tlog.info("[citadel] %d tool(s) already registered (no manifest changes)",
+                       len(_from_filesystem()))
+        for m in _aggregate():
             for w in m.get("warnings", []):
-                logger.warning("  capability manifest warning: %s", w)
+                logger.warning("capability manifest warning: %s", w)
     except Exception as _cap_exc:
         logger.warning("Could not load tool capability manifests: %s", _cap_exc)
 

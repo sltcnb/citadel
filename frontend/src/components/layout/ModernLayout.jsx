@@ -10,6 +10,15 @@ import { api } from '../../api/client'
 import { useKeyboardShortcuts } from '../../hooks/useKeyboardShortcuts'
 import KeyboardShortcutsModal from '../KeyboardShortcutsModal'
 import CommandPalette from '../CommandPalette'
+import { ToolByline } from '../../pages/Suite'
+
+// Byline tool is DERIVED from the tools' declared surfaces (passed in). Citadel
+// holds no page→tool table — a tool says where it surfaces, the byline follows.
+function PageToolByline({ pathname, surfaceMap }) {
+  const hit = surfaceMap.find(s => pathname === s.to || pathname.startsWith(s.to + '/') || pathname.startsWith(s.to))
+  if (!hit) return null
+  return <div className="px-4 pt-3 -mb-1"><ToolByline tool={hit.tool} /></div>
+}
 import { useUpload } from '../../contexts/UploadContext'
 
 const THEMES = ['light', 'dark']
@@ -54,7 +63,7 @@ const DROPDOWN_GROUPS = [
     label: 'Platform',
     adminOnly: true,
     items: [
-      { to: '/suite',         icon: Boxes,     label: 'Suite & Capabilities' },
+      { to: '/suite',         icon: Boxes,     label: 'Stack' },
       { to: '/studio',    icon: Code2,    label: 'Studio' },
       { to: '/ingesters', icon: Puzzle,   label: 'Ingesters' },
       { to: '/docs',      icon: BookOpen, label: 'Docs' },
@@ -130,6 +139,22 @@ export default function ModernLayout({ user, onLogout }) {
   const location  = useLocation()
   const { caseId } = useParams()
   const { uploads } = useUpload()
+
+  // Page → tool is DERIVED from each tool's declared `surfaces` (not hardcoded).
+  // Build a longest-prefix lookup once from the capability manifests.
+  const [surfaceMap, setSurfaceMap] = useState([])
+  useEffect(() => {
+    api.tools.capabilities()
+      .then(r => {
+        const m = (r.tools || []).flatMap(t =>
+          (t.surfaces || [])
+            .filter(s => s.to && s.to !== '/')   // "/" is too generic to own
+            .map(s => ({ to: s.to, tool: t.tool })))
+        m.sort((a, b) => b.to.length - a.to.length)  // longest prefix wins
+        setSurfaceMap(m)
+      })
+      .catch(() => {})
+  }, [])
 
   const [lastCaseId, setLastCaseId] = useState(() => localStorage.getItem('fo-last-case') || null)
   useEffect(() => {
@@ -385,6 +410,7 @@ export default function ModernLayout({ user, onLogout }) {
       <div className="flex flex-1 min-h-0">
         <main className="flex-1 overflow-y-auto min-w-0">
           <div className="w-full h-full fade-in">
+            <PageToolByline pathname={location.pathname} surfaceMap={surfaceMap} />
             <Outlet context={{ refreshCases, user }} />
           </div>
         </main>
