@@ -613,8 +613,13 @@ def _misp_fetch(feed: dict) -> list:
     try:
         while len(all_attrs) < _FEED_MAX_TOTAL:
             payload: dict[str, Any] = {
-                "returnFormat": "json", "limit": per_page, "page": page, "to_ids": 1,
+                "returnFormat": "json", "limit": per_page, "page": page,
             }
+            # Only restrict to IDS-flagged attributes if the feed asks for it —
+            # otherwise pull ALL attributes (a MISP attribute without the to_ids
+            # flag was being dropped, so two IPs showed up as one).
+            if feed.get("to_ids_only"):
+                payload["to_ids"] = 1
             if collection:
                 payload["tags"] = [collection]
             resp = _req.post(
