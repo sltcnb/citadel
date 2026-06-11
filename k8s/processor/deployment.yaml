@@ -88,6 +88,14 @@ spec:
               value: "3600"
             - name: MODULES_DIR
               value: "/app/anvil"
+            # Post-ingestion chain → API (CTI IOC match + AI risk).
+            - name: INTERNAL_API_URL
+              value: "http://api-service:8000"
+            - name: INTERNAL_SERVICE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: api-auth-secret
+                  key: INTERNAL_SERVICE_TOKEN
             - name: MINIO_ACCESS_KEY
               valueFrom:
                 secretKeyRef:

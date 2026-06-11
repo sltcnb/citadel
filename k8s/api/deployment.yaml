@@ -63,6 +63,11 @@ spec:
                 secretKeyRef:
                   name: api-auth-secret
                   key: JWT_SECRET
+            - name: INTERNAL_SERVICE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: api-auth-secret
+                  key: INTERNAL_SERVICE_TOKEN
             - name: ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef:
