@@ -6,8 +6,10 @@ WORKDIR /app
 # (citadel_contracts is COPYed to /app/citadel_contracts below).
 ENV PYTHONPATH=/app
 
+# gcc + libtsk-dev so pytsk3 (The Sleuth Kit bindings) compiles — the disk-image
+# parser is discovered here for the UI, so its import must succeed too.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc libmagic1 \
+    gcc g++ libmagic1 libtsk-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Build context is the repo root — copy api/ sources first

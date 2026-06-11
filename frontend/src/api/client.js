@@ -193,6 +193,10 @@ export const api = {
     deleteUser:         (username)           => request('DELETE', `/auth/users/${username}`),
     changePassword:     (data)               => request('PUT',    '/auth/me/password', data),
     setUserCompanies:   (username, companies) => request('PUT',    `/auth/users/${username}/companies`, { companies }),
+    totpStatus:         ()                   => request('GET',    '/auth/me/totp'),
+    totpSetup:          ()                   => request('POST',   '/auth/me/totp/setup'),
+    totpEnable:         (code)               => request('POST',   '/auth/me/totp/enable', { code }),
+    totpDisable:        (password)           => request('POST',   '/auth/me/totp/disable', { password }),
   },
 
   savedSearches: {
