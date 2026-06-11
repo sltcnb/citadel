@@ -16,7 +16,7 @@ import json
 import logging
 import re
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlparse
 
@@ -44,6 +44,10 @@ _PRIVATE_NETWORKS = [
     ipaddress.ip_network("fc00::/7"),
     ipaddress.ip_network("fe80::/10"),
 ]
+
+# Feed pagination — pull every page, not just the first 10k.
+_FEED_PAGE_SIZE = 10000        # records per request
+_FEED_MAX_TOTAL = 2_000_000    # hard safety ceiling per pull
 
 
 def _validate_feed_url(url: str) -> None:
@@ -178,10 +182,20 @@ async def start_cti_scheduler() -> None:
     Wakes every 60 s and auto-pulls feeds whose interval has elapsed.
     """
     logger.info("CTI scheduler started")
+    _ticks = 0
     while True:
         await asyncio.sleep(60)
         try:
             r = _redis()
+            # Purge expired IOCs roughly hourly (every 60 ticks).
+            _ticks += 1
+            if _ticks % 60 == 0:
+                try:
+                    n = _purge_expired_iocs(r)
+                    if n:
+                        logger.info("CTI scheduler purged %d expired IOC(s)", n)
+                except Exception as exc:
+                    logger.warning("CTI expired-purge error: %s", exc)
             feeds = _load_feeds(r)
             now = datetime.now(UTC)
             for feed in feeds:
@@ -244,6 +258,70 @@ def _parse_stix_pattern(pattern: str) -> list[tuple[str, str]]:
 # ── IOC storage helpers ──────────────────────────────────────────────────────
 
 
+_DEFAULT_IOC_TTL_DAYS = 90
+
+
+def _ioc_dedup_key(ioc_type: str, value: str) -> str:
+    """Identity used for dedup — same value (case-insensitive except URLs)
+    collapses to one IOC regardless of feed or pull time."""
+    return value if ioc_type == "url" else value.lower()
+
+
+def _ip_is_private(value: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(value.split("/")[0])
+    except ValueError:
+        return False
+    return any(ip in net for net in _PRIVATE_NETWORKS)
+
+
+# Operator-defined "own" public networks — their org's egress/hosting IPs. IOCs
+# or events matching these are flagged is_own so they can be filtered out of
+# threat matches (your own infrastructure isn't an indicator).
+_OWN_NETWORKS_KEY = "cti:own_networks"
+_OWN_NETS_CACHE: list | None = None
+
+
+def _own_networks(r: redis_lib.Redis) -> list:
+    global _OWN_NETS_CACHE
+    if _OWN_NETS_CACHE is not None:
+        return _OWN_NETS_CACHE
+    nets = []
+    raw = r.get(_OWN_NETWORKS_KEY)
+    if raw:
+        try:
+            for c in json.loads(raw):
+                try:
+                    nets.append(ipaddress.ip_network(c, strict=False))
+                except ValueError:
+                    continue
+        except (json.JSONDecodeError, TypeError):
+            pass
+    _OWN_NETS_CACHE = nets
+    return nets
+
+
+def _ip_is_own(value: str, r: redis_lib.Redis) -> bool:
+    nets = _own_networks(r)
+    if not nets:
+        return False
+    try:
+        ip = ipaddress.ip_address(value.split("/")[0])
+    except ValueError:
+        return False
+    return any(ip in net for net in nets)
+
+
+def _ioc_expired(obj: dict) -> bool:
+    vu = obj.get("valid_until")
+    if not vu:
+        return False
+    try:
+        return datetime.fromisoformat(str(vu)) < datetime.now(UTC)
+    except ValueError:
+        return False
+
+
 def _store_ioc(
     r: redis_lib.Redis,
     ioc_type: str,
@@ -253,32 +331,60 @@ def _store_ioc(
     feed_name: str = "",
     indicator_name: str = "",
     created: str = "",
+    valid_until: str = "",
+    confidence: int | None = None,
+    threat_type: str = "",
+    tags: list | None = None,
 ) -> None:
-    """Store a single IOC in Redis."""
+    """Store/merge a single IOC in Redis, deduplicated by value.
+
+    Stored in a per-type HASH keyed by the dedup value, so re-pulling or a
+    second feed updates one entry instead of duplicating. Merges feeds/tags,
+    keeps the earliest first_seen, refreshes last_seen, and fills available
+    fields (confidence, threat_type, validity, private-IP flag)."""
+    type_key = rk.cti_ioc_type(ioc_type)
+    dedup = _ioc_dedup_key(ioc_type, value)
+    now = datetime.now(UTC).isoformat()
+
+    existing: dict = {}
+    prev = r.hget(type_key, dedup)
+    if prev:
+        try:
+            existing = json.loads(prev)
+        except (json.JSONDecodeError, TypeError):
+            existing = {}
+
+    merged_tags = sorted(set((tags or []) + (existing.get("tags") or [])))
+    if not valid_until and not existing.get("valid_until"):
+        valid_until = (datetime.now(UTC) + timedelta(days=_DEFAULT_IOC_TTL_DAYS)).isoformat()
+
     ioc_obj = {
         "type": ioc_type,
-        "value": value.lower() if ioc_type != "url" else value,
-        "indicator_id": indicator_id,
-        "feed_id": feed_id,
-        "feed_name": feed_name,
-        "indicator_name": indicator_name,
-        "created": created or datetime.now(UTC).isoformat(),
+        "value": value if ioc_type == "url" else value.lower(),
+        "indicator_id": indicator_id or existing.get("indicator_id", ""),
+        "feed_id": feed_id or existing.get("feed_id", ""),
+        "feed_name": feed_name or existing.get("feed_name", ""),
+        "indicator_name": indicator_name or existing.get("indicator_name", ""),
+        "created": existing.get("created") or created or now,
+        "first_seen": existing.get("first_seen") or created or now,
+        "last_seen": now,
+        "valid_until": valid_until or existing.get("valid_until", ""),
+        "confidence": confidence if confidence is not None else existing.get("confidence"),
+        "threat_type": threat_type or existing.get("threat_type", ""),
+        "tags": merged_tags,
     }
+    if ioc_type == "ip":
+        ioc_obj["is_private"] = _ip_is_private(value)
+        ioc_obj["is_own"] = _ip_is_own(value, r)
     ioc_json = json.dumps(ioc_obj, sort_keys=True)
 
-    # Add to the type-specific set
-    type_key = rk.cti_ioc_type(ioc_type)
-    r.sadd(type_key, ioc_json)
+    # Per-type HASH keyed by value → natural dedup.
+    r.hset(type_key, dedup, ioc_json)
 
-    # Fast lookup keys for hashes
     if ioc_type == "hash":
-        hash_key = rk.cti_ioc_hash(value.lower())
-        r.set(hash_key, ioc_json)
-
-    # Store detail by indicator ID
+        r.set(rk.cti_ioc_hash(value.lower()), ioc_json)
     if indicator_id:
-        detail_key = rk.cti_ioc_detail(indicator_id)
-        r.set(detail_key, ioc_json)
+        r.set(rk.cti_ioc_detail(indicator_id), ioc_json)
 
 
 def _process_stix_bundle(
@@ -320,15 +426,13 @@ def _process_stix_bundle(
 
 
 def _count_feed_iocs(r: redis_lib.Redis, feed_id: str) -> int:
-    """Count total IOCs belonging to a specific feed across all type sets."""
+    """Count total IOCs belonging to a specific feed across all type hashes."""
     total = 0
     for ioc_type in IOC_TYPES:
         type_key = rk.cti_ioc_type(ioc_type)
-        members = r.smembers(type_key)
-        for m in members:
+        for m in r.hvals(type_key):
             try:
-                obj = json.loads(m)
-                if obj.get("feed_id") == feed_id:
+                if json.loads(m).get("feed_id") == feed_id:
                     total += 1
             except (json.JSONDecodeError, TypeError):
                 pass
@@ -340,14 +444,12 @@ def _remove_feed_iocs(r: redis_lib.Redis, feed_id: str) -> int:
     removed = 0
     for ioc_type in IOC_TYPES:
         type_key = rk.cti_ioc_type(ioc_type)
-        members = r.smembers(type_key)
         to_remove = []
-        for m in members:
+        for field, m in r.hgetall(type_key).items():
             try:
                 obj = json.loads(m)
                 if obj.get("feed_id") == feed_id:
-                    to_remove.append(m)
-                    # Clean up detail/hash keys
+                    to_remove.append(field)
                     if obj.get("indicator_id"):
                         r.delete(rk.cti_ioc_detail(obj["indicator_id"]))
                     if ioc_type == "hash":
@@ -355,7 +457,7 @@ def _remove_feed_iocs(r: redis_lib.Redis, feed_id: str) -> int:
             except (json.JSONDecodeError, TypeError):
                 pass
         if to_remove:
-            r.srem(type_key, *to_remove)
+            r.hdel(type_key, *to_remove)
             removed += len(to_remove)
     return removed
 
@@ -476,24 +578,37 @@ def _misp_fetch(feed: dict) -> list:
         "Accept": "application/json",
         "Content-Type": "application/json",
     }
-    payload: dict[str, Any] = {"returnFormat": "json", "limit": 10000, "page": 1, "to_ids": 1}
     collection = feed.get("collection", "").strip()
-    if collection:
-        payload["tags"] = [collection]
+    per_page = int(feed.get("page_size", 0) or _FEED_PAGE_SIZE)
+    all_attrs: list = []
+    page = 1
     try:
-        resp = _req.post(
-            f"{base_url}/attributes/restSearch",
-            json=payload,
-            headers=headers,
-            timeout=60,
-            verify=False,
-        )
-        resp.raise_for_status()
-        attrs = resp.json().get("response", {}).get("Attribute", [])
-        return attrs if isinstance(attrs, list) else []
+        while len(all_attrs) < _FEED_MAX_TOTAL:
+            payload: dict[str, Any] = {
+                "returnFormat": "json", "limit": per_page, "page": page, "to_ids": 1,
+            }
+            if collection:
+                payload["tags"] = [collection]
+            resp = _req.post(
+                f"{base_url}/attributes/restSearch",
+                json=payload, headers=headers, timeout=120, verify=False,
+            )
+            resp.raise_for_status()
+            attrs = resp.json().get("response", {}).get("Attribute", [])
+            if not isinstance(attrs, list) or not attrs:
+                break
+            all_attrs.extend(attrs)
+            if len(attrs) < per_page:
+                break  # last page
+            page += 1
+        return all_attrs
     except HTTPException:
         raise
     except Exception as exc:
+        # Return what we have rather than losing a large partial pull.
+        if all_attrs:
+            logger.warning("MISP fetch stopped at page %d (%d attrs): %s", page, len(all_attrs), exc)
+            return all_attrs
         raise HTTPException(status_code=502, detail=f"MISP fetch failed: {exc}")
 
 
@@ -518,6 +633,7 @@ def _process_misp_attributes(
                 created = datetime.fromtimestamp(int(ts), tz=UTC).isoformat()
             except (ValueError, TypeError):
                 created = str(ts)
+        tag_names = [t.get("name", "") for t in (attr.get("Tag") or []) if t.get("name")]
         _store_ioc(
             r,
             ioc_type,
@@ -527,6 +643,8 @@ def _process_misp_attributes(
             feed_name=feed_name,
             indicator_name=attr.get("comment", ""),
             created=created,
+            threat_type=attr.get("category", ""),
+            tags=tag_names,
         )
         count += 1
     return count
@@ -573,21 +691,32 @@ def _yeti_fetch(feed: dict) -> list:
     headers: dict[str, str] = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
+    per_page = int(feed.get("page_size", 0) or _FEED_PAGE_SIZE)
+    all_obs: list = []
+    page = 0
     try:
-        resp = _req.post(
-            f"{base_url}/api/v2/observables/search",
-            json={"query": {"name": ""}, "type": "all", "count": 10000, "page": 0},
-            headers=headers,
-            timeout=60,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        if isinstance(data, list):
-            return data
-        return data.get("observables", data.get("data", []))
+        while len(all_obs) < _FEED_MAX_TOTAL:
+            resp = _req.post(
+                f"{base_url}/api/v2/observables/search",
+                json={"query": {"name": ""}, "type": "all", "count": per_page, "page": page},
+                headers=headers, timeout=120,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            batch = data if isinstance(data, list) else data.get("observables", data.get("data", []))
+            if not batch:
+                break
+            all_obs.extend(batch)
+            if len(batch) < per_page:
+                break
+            page += 1
+        return all_obs
     except HTTPException:
         raise
     except Exception as exc:
+        if all_obs:
+            logger.warning("YETI fetch stopped at page %d (%d obs): %s", page, len(all_obs), exc)
+            return all_obs
         raise HTTPException(status_code=502, detail=f"YETI fetch failed: {exc}")
 
 
@@ -781,6 +910,8 @@ def import_bundle(body: BundleImport):
 def list_iocs(
     type: str | None = Query(None, description="Filter by IOC type"),
     q: str | None = Query(None, description="Search IOC values"),
+    visibility: str | None = Query(None, description="ip scope: public | private"),
+    include_expired: bool = Query(False, description="include expired IOCs"),
     page: int = Query(1, ge=1),
     size: int = Query(50, ge=1, le=500),
 ):
@@ -791,11 +922,16 @@ def list_iocs(
     all_iocs: list[dict] = []
     for ioc_type in types_to_scan:
         type_key = rk.cti_ioc_type(ioc_type)
-        members = r.smembers(type_key)
-        for m in members:
+        for m in r.hvals(type_key):
             try:
                 obj = json.loads(m)
                 if q and q.lower() not in obj.get("value", "").lower():
+                    continue
+                if not include_expired and _ioc_expired(obj):
+                    continue
+                if visibility == "public" and obj.get("is_private"):
+                    continue
+                if visibility == "private" and not obj.get("is_private"):
                     continue
                 all_iocs.append(obj)
             except (json.JSONDecodeError, TypeError):
@@ -826,7 +962,7 @@ def ioc_stats():
     total = 0
     for ioc_type in IOC_TYPES:
         type_key = rk.cti_ioc_type(ioc_type)
-        count = r.scard(type_key)
+        count = r.hlen(type_key)
         stats[ioc_type] = count
         total += count
     stats["total"] = total
@@ -840,9 +976,8 @@ def clear_iocs():
     # Remove all type sets
     for ioc_type in IOC_TYPES:
         type_key = rk.cti_ioc_type(ioc_type)
-        members = r.smembers(type_key)
         # Clean up detail/hash keys
-        for m in members:
+        for m in r.hvals(type_key):
             try:
                 obj = json.loads(m)
                 if obj.get("indicator_id"):
@@ -858,6 +993,80 @@ def clear_iocs():
     for feed in feeds:
         feed["ioc_count"] = 0
     _save_feeds(r, feeds)
+
+
+def _purge_expired_iocs(r: redis_lib.Redis) -> int:
+    """Drop IOCs past their valid_until across all type hashes. Returns count."""
+    removed = 0
+    for ioc_type in IOC_TYPES:
+        type_key = rk.cti_ioc_type(ioc_type)
+        stale = []
+        for field, m in r.hgetall(type_key).items():
+            try:
+                obj = json.loads(m)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if _ioc_expired(obj):
+                stale.append(field)
+                if obj.get("indicator_id"):
+                    r.delete(rk.cti_ioc_detail(obj["indicator_id"]))
+                if ioc_type == "hash":
+                    r.delete(rk.cti_ioc_hash(obj["value"]))
+        if stale:
+            r.hdel(type_key, *stale)
+            removed += len(stale)
+    return removed
+
+
+@router.post("/cti/iocs/purge-expired")
+def purge_expired_iocs():
+    """Remove all expired IOCs now (also runs periodically in the scheduler)."""
+    removed = _purge_expired_iocs(_redis())
+    return {"removed": removed}
+
+
+@router.get("/cti/own-networks")
+def get_own_networks():
+    """The operator's own public networks (CIDRs) used to flag/ filter own infra."""
+    r = _redis()
+    raw = r.get(_OWN_NETWORKS_KEY)
+    try:
+        cidrs = json.loads(raw) if raw else []
+    except (json.JSONDecodeError, TypeError):
+        cidrs = []
+    return {"cidrs": cidrs}
+
+
+@router.put("/cti/own-networks")
+def set_own_networks(body: dict):
+    """Set the operator's own public networks. Validates CIDRs, refreshes cache,
+    and re-flags existing IP IOCs so the public/private/own split stays correct."""
+    global _OWN_NETS_CACHE
+    raw_cidrs = body.get("cidrs", [])
+    valid: list[str] = []
+    for c in raw_cidrs:
+        try:
+            valid.append(str(ipaddress.ip_network(str(c).strip(), strict=False)))
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"invalid CIDR: {c}")
+    r = _redis()
+    r.set(_OWN_NETWORKS_KEY, json.dumps(valid))
+    _OWN_NETS_CACHE = None  # force reload
+
+    # Re-flag existing IP IOCs against the new own-networks list.
+    type_key = rk.cti_ioc_type("ip")
+    reflagged = 0
+    for field, m in r.hgetall(type_key).items():
+        try:
+            obj = json.loads(m)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        own = _ip_is_own(obj.get("value", ""), r)
+        if obj.get("is_own") != own:
+            obj["is_own"] = own
+            r.hset(type_key, field, json.dumps(obj, sort_keys=True))
+            reflagged += 1
+    return {"cidrs": valid, "reflagged": reflagged}
 
 
 # ── Case IOC matching ────────────────────────────────────────────────────────
@@ -917,11 +1126,15 @@ def match_case_iocs(case_id: str):
     ioc_sets: dict[str, dict[str, dict]] = {}  # type -> {value_lower: ioc_obj}
     for ioc_type in IOC_TYPES:
         type_key = rk.cti_ioc_type(ioc_type)
-        members = r.smembers(type_key)
         lookup: dict[str, dict] = {}
-        for m in members:
+        for m in r.hvals(type_key):
             try:
                 obj = json.loads(m)
+                if _ioc_expired(obj):
+                    continue  # don't match against stale intel
+                # Private IPs and the operator's own public IPs are infra noise.
+                if ioc_type == "ip" and (obj.get("is_private") or obj.get("is_own")):
+                    continue
                 val = obj.get("value", "").lower()
                 if val:
                     lookup[val] = obj

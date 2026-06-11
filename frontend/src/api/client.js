@@ -411,7 +411,10 @@ export const api = {
     listIOCs:     (params = {}) => request('GET', withParams('/cti/iocs', params)),
     iocStats:     () => request('GET', '/cti/iocs/stats'),
     clearIOCs:    () => request('DELETE', '/cti/iocs'),
+    purgeExpired: () => request('POST', '/cti/iocs/purge-expired'),
     matchCase:    (caseId) => request('POST', `/cases/${caseId}/cti/match`),
+    getOwnNetworks: () => request('GET', '/cti/own-networks'),
+    setOwnNetworks: (cidrs) => request('PUT', '/cti/own-networks', { cidrs }),
   },
 
   malware: {
