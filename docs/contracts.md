@@ -69,3 +69,68 @@ artifacts.received → events.parsed → events.normalized → {events.indexed, 
 | `intel.enriched` | Augur | Citadel |
 
 **Guarantees**: at-least-once delivery; consumers must be idempotent (dedup by event sha256 / doc id). Replay by reading from an earlier stream id. Per-tenant isolation: topic keys carry the company id.
+
+## Capability advertisement
+
+Tools don't just exchange data — they declare **what they can do**, and Citadel
+renders the UI from that declaration. Change a tool, the UI changes; touch no
+orchestrator code. This is the operator-facing half of standalone-first.
+
+### The manifest
+
+Each tool ships `capabilities.yaml` in its own repo, declaring per-platform
+operations and the inputs each needs:
+
+```yaml
+tool: talon
+kind: collector
+version: "1.0.0"
+capabilities:
+  - key: collect_windows
+    label: Collect — Windows
+    platforms: [windows]
+    output: "bundle → Sluice"
+    inputs:
+      - { name: categories, type: multiselect, required: true, options: [...] }
+      - { name: output, type: enum, default: citadel, options: [...] }
+```
+
+Field types the generic renderer understands: `string · text · int · float ·
+bool · enum · multiselect · path · host · secret`. Platforms: `windows · linux ·
+macos · android · ios · cloud · any`. Schema + validation live in
+[`citadel_contracts.capabilities`](../tools/citadel_contracts/capabilities.py).
+
+### The loop
+
+```
+tool declares (capabilities.yaml)  →  Citadel reads (GET /tools/capabilities)
+  →  renders inputs (generic form)  →  user enters  →  Citadel hands input to
+  the tool  →  tool runs  →  output back to Citadel  →  shown to the user
+```
+
+### Self-registration (elastic, no rebuild)
+
+Citadel reads manifests from three sources, later wins:
+
+1. **Baked-in** — `capabilities.yaml` collected into the API image at build.
+2. **Redis** — `fo:capabilities:<tool>` (JSON). **Wins** over baked-in.
+3. **Dev** — the repo's `tools/*/capabilities.yaml` in place.
+
+`foctl deploy` pushes the freshest working-tree manifests straight to Redis, so a
+tool-only change (e.g. a new Talon collection feature) appears in the UI with **no
+API image rebuild** — just redeploy. `POST /admin/tools/sync-capabilities` (or the
+**Re-sync** button) refreshes on demand. The API also logs each tool's advertised
+capabilities at startup, visible in the admin **Tool Logs**.
+
+### Custom parsers & modules (dynamic)
+
+Runtime-added units don't need a manifest edit. The aggregator injects the **live**
+registry into the relevant manifests:
+
+- **Babel** → an `active_parsers` capability reflecting the live parser set, so an
+  ingester uploaded in Studio shows up immediately.
+- **Anvil** → `run_module` options filled from the live module registry, so a new
+  `modules_registry/*.yaml` (or custom module) appears automatically.
+
+So the rule holds for every unit of work: **the tool defines its surface; Citadel
+builds the form, routes the input, returns the output.**

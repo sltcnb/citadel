@@ -1,0 +1,22 @@
+tool: anvil
+kind: analyzer
+version: "1.0.0"
+description: >
+  Analysis runner — runs analysis modules over case evidence. The live module
+  set is dynamic (see GET /modules); each module declares its own parameters.
+capabilities:
+  - key: run_module
+    label: Run Analysis Module
+    description: Execute an analysis module against a case's ingested files.
+    platforms: [any]
+    output: "analysis results → timeline / report"
+    inputs:
+      - name: module
+        type: enum
+        label: Module
+        required: true
+        help: Modules are discovered at runtime; choices come from GET /modules.
+        options:
+          - { value: process_tree, label: "Process Tree" }
+          - { value: persistence_sweep, label: "Persistence Sweep" }
+          - { value: yara_scan, label: "YARA Scan" }

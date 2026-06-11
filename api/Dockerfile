@@ -33,6 +33,19 @@ COPY tools/talon/collect.py /app/collector/collect.py
 COPY tools/talon/fo_uploader.py /app/collector/fo_uploader.py
 
 
+# Tool capability manifests — each tool repo ships capabilities.yaml; collect
+# them into /app/capabilities/<tool>.yaml so GET /tools/capabilities can render
+# the UI from each tool's own declaration (true tool/orchestrator separation).
+COPY tools/ /tmp/tools/
+RUN mkdir -p /app/capabilities \
+    && for d in /tmp/tools/*/; do \
+         f="${d}capabilities.yaml"; \
+         [ -f "$f" ] && cp "$f" "/app/capabilities/$(basename "$d").yaml" || true; \
+       done \
+    && rm -rf /tmp/tools \
+    && ls -1 /app/capabilities/ || true
+ENV CAPABILITIES_DIR=/app/capabilities
+
 # Built-in analysis modules — seeded into modules-pvc by the seed-modules init container.
 COPY tools/anvil/ /app/anvil_builtin/
 RUN mkdir -p /app/anvil /app/static

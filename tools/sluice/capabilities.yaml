@@ -1,0 +1,21 @@
+tool: sluice
+kind: intake
+version: "1.0.0"
+description: Intake & routing — receives evidence, dedupes, routes each artifact to the right parser.
+capabilities:
+  - key: ingest_upload
+    label: Ingest Evidence
+    description: Upload one or more artifacts; Sluice routes each to its parser.
+    platforms: [any]
+    output: "events → timeline"
+    inputs:
+      - name: files
+        type: path
+        label: Files / archive
+        required: true
+        help: Upload artifacts, triage ZIPs, disk images, or a .citadel bundle.
+      - name: artifact_type
+        type: string
+        label: Force artifact type (optional)
+        placeholder: auto-detect
+        help: Override parser auto-detection for ambiguous files.
