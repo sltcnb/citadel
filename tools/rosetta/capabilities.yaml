@@ -1,5 +1,10 @@
 tool: rosetta
 kind: canonicalizer
+stage: Normalize
+icon: Replace
+role: "Canonicalizer"
+surfaces:
+  - { label: "Case Timeline", to: "/" }
 version: "1.0.0"
 description: Canonicalizer — maps parsed events onto the ECS schema. Runs automatically in the pipeline; no operator input.
 capabilities:

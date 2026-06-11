@@ -3,6 +3,11 @@
 # this; it holds no artifact knowledge of its own.
 tool: talon
 kind: collector
+stage: Collect
+icon: PackageOpen
+role: "Endpoint triage collector"
+surfaces:
+  - { label: "Collector", to: "/collector" }
 version: "1.2.0"
 description: >
   Live and dead-box artifact acquisition for Windows, Linux and macOS. Declares

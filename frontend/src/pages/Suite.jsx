@@ -21,85 +21,42 @@ const PLATFORM_LABEL = {
  * on each feature page.
  */
 
-// Pipeline order → groups the cards left-to-right by where work flows.
+// Pipeline order → groups the cards left-to-right by where work flows. The
+// platform's pipeline definition; each tool declares which stage it's in.
 const STAGES = ['Collect', 'Ingest', 'Parse', 'Normalize', 'Detect', 'Analyze', 'Insight', 'Assist', 'Report']
 
-export const TOOLS = [
-  {
-    key: 'talon', name: 'Talon', icon: PackageOpen, stage: 'Collect',
-    role: 'Endpoint triage collector',
-    blurb: 'Captures triage packages, memory and disk images from endpoints and pushes them to object storage over gRPC + mTLS.',
-    surfaces: [{ label: 'Collector', to: '/collector' }],
-    signal: 'collector',
-  },
-  {
-    key: 'sluice', name: 'Sluice', icon: Split, stage: 'Ingest',
-    role: 'Intake & routing',
-    blurb: 'Receives uploaded evidence, deduplicates, and routes each artifact to the right parser. The front door of the pipeline.',
-    surfaces: [{ label: 'Dashboard (upload)', to: '/' }, { label: 'Ingesters', to: '/ingesters' }],
-    signal: 'sluice',
-  },
-  {
-    key: 'babel', name: 'Babel', icon: Languages, stage: 'Parse',
-    role: 'Artifact parsers',
-    blurb: 'Turns raw forensic artifacts (EVTX, registry, browser, $MFT, …) into structured timeline events. Extensible via plugins.',
-    surfaces: [{ label: 'Ingesters', to: '/ingesters' }, { label: 'Studio', to: '/studio' }],
-    signal: 'babel',
-  },
-  {
-    key: 'rosetta', name: 'Rosetta', icon: Replace, stage: 'Normalize',
-    role: 'Canonicalizer',
-    blurb: 'Maps parsed events onto the canonical schema (ECS) so every artifact type shares one queryable timeline shape.',
-    surfaces: [{ label: 'Case Timeline', to: '/' }],
-    signal: 'rosetta',
-  },
-  {
-    key: 'sigil', name: 'Sigil', icon: Stamp, stage: 'Detect',
-    role: 'Detection engine',
-    blurb: 'Evaluates alert rules (Sigma) and YARA signatures against case data to raise detections on the timeline.',
-    surfaces: [{ label: 'Alert Rules', to: '/alert-rules' }, { label: 'YARA Rules', to: '/yara-rules' }],
-    signal: 'sigil',
-  },
-  {
-    key: 'anvil', name: 'Anvil', icon: Hammer, stage: 'Analyze',
-    role: 'Analysis runner',
-    blurb: 'Runs analysis modules over case evidence — process trees, persistence sweeps, custom analyzers. Extensible via Studio.',
-    surfaces: [{ label: 'Modules', to: '/modules' }, { label: 'Studio', to: '/studio' }],
-    signal: 'anvil',
-  },
-  {
-    key: 'augur', name: 'Augur', icon: Sparkles, stage: 'Insight',
-    role: 'Anomaly & insight',
-    blurb: 'Surfaces statistical anomalies and notable patterns across the timeline to focus the investigator on what stands out.',
-    surfaces: [{ label: 'Case Timeline', to: '/' }, { label: 'Cross-Case Search', to: '/cross-search' }],
-    signal: 'augur',
-  },
-  {
-    key: 'pilot', name: 'Pilot', icon: Bot, stage: 'Assist',
-    role: 'Investigation assistant',
-    blurb: 'Optional LLM assistant: summarizes detections, drafts rules, and answers questions over case context. Configured in Settings.',
-    surfaces: [{ label: 'Case Timeline', to: '/' }, { label: 'Alert Rules', to: '/alert-rules' }, { label: 'Settings', to: '/settings' }],
-    signal: 'pilot',
-  },
-  {
-    key: 'scribe', name: 'Scribe', icon: FileText, stage: 'Report',
-    role: 'Notes & reporting',
-    blurb: 'Captures investigator notes and renders case reports and exports for handoff and archival.',
-    surfaces: [{ label: 'Case Notes', to: '/' }],
-    signal: 'scribe',
-  },
-]
+// Icon NAME → component. The only frontend-side mapping (you can't ship React
+// components in YAML); WHICH icon a tool uses is declared in its manifest.
+const ICONS = {
+  PackageOpen, Split, Languages, Replace, Stamp, Hammer, Sparkles, Bot, FileText, Boxes,
+}
+const iconFor = (name) => ICONS[name] || Boxes
 
-// Map a tool to a lightweight live signal. Honest: only tools with a real
-// backend signal show a status; the rest show their pipeline stage.
+// Build the Suite tool list entirely from the fetched capability manifests —
+// no hardcoded per-tool registry. icon/stage/role/blurb/surfaces all come from
+// each tool's capabilities.yaml.
+function toolsFromManifests(manifests) {
+  return Object.values(manifests)
+    .map(m => ({
+      key: m.tool,
+      name: m.tool.charAt(0).toUpperCase() + m.tool.slice(1),
+      icon: iconFor(m.icon),
+      stage: m.stage || '',
+      role: m.role || m.kind || '',
+      blurb: m.description || '',
+      surfaces: m.surfaces || [],
+    }))
+}
+
+// Lightweight live status — honest: only tools with a real backend signal show one.
 function deriveStatus(tool, { services, babelCount, anvilCount }) {
-  if (tool.signal === 'babel') {
+  if (tool.key === 'babel') {
     return babelCount != null ? { tone: 'active', text: `${babelCount} parser${babelCount === 1 ? '' : 's'}` } : null
   }
-  if (tool.signal === 'anvil') {
+  if (tool.key === 'anvil') {
     return anvilCount != null ? { tone: 'active', text: `${anvilCount} module${anvilCount === 1 ? '' : 's'}` } : null
   }
-  if (services.has(tool.signal)) return { tone: 'active', text: 'reporting' }
+  if (services.has(tool.key)) return { tone: 'active', text: 'reporting' }
   return null
 }
 
@@ -132,6 +89,7 @@ export default function Suite() {
     [manifests],
   )
   const ctx = { services, babelCount, anvilCount }
+  const allTools = useMemo(() => toolsFromManifests(manifests), [manifests])
   const selManifest = selected ? manifests[selected] : null
 
   function openTool(key) {
@@ -155,7 +113,7 @@ export default function Suite() {
       </p>
 
       {STAGES.map(stage => {
-        const tools = TOOLS.filter(t => t.stage === stage)
+        const tools = allTools.filter(t => t.stage === stage)
         if (!tools.length) return null
         return (
           <div key={stage} className="mb-6">
@@ -306,17 +264,18 @@ export default function Suite() {
  * suite tool powers it, with a link back to the Suite overview.
  */
 export function ToolByline({ tool, className = '' }) {
-  const t = TOOLS.find(x => x.key === tool)
-  if (!t) return null
-  const Icon = t.icon
+  if (!tool) return null
+  // Derive from the key — no static registry. (Bylines are tiny labels; the
+  // rich per-tool data lives in the manifest, shown on the Suite page.)
+  const name = tool.charAt(0).toUpperCase() + tool.slice(1)
   return (
     <Link
       to="/suite"
-      title={`${t.role} — see the full suite`}
+      title={`${name} — see the full suite`}
       className={`inline-flex items-center gap-1.5 text-[11px] text-gray-500 hover:text-brand-accent border border-gray-200 hover:border-brand-accent rounded-full pl-1.5 pr-2 py-0.5 ${className}`}
     >
-      <Icon size={11} className="text-brand-accent" />
-      <span>Powered by <span className="font-semibold">{t.name}</span></span>
+      <Boxes size={11} className="text-brand-accent" />
+      <span>Powered by <span className="font-semibold">{name}</span></span>
     </Link>
   )
 }

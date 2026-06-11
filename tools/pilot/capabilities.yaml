@@ -1,5 +1,12 @@
 tool: pilot
 kind: assistant
+stage: Assist
+icon: Bot
+role: "Investigation assistant"
+surfaces:
+  - { label: "Case Timeline", to: "/" }
+  - { label: "Alert Rules", to: "/alert-rules" }
+  - { label: "Settings", to: "/settings" }
 version: "1.0.0"
 description: Investigation assistant — optional LLM that summarizes detections, drafts rules, and answers questions over case context.
 capabilities:

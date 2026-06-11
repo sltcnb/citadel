@@ -1,5 +1,11 @@
 tool: augur
 kind: insight
+stage: Insight
+icon: Sparkles
+role: "Anomaly & insight"
+surfaces:
+  - { label: "Case Timeline", to: "/" }
+  - { label: "Cross-Case Search", to: "/cross-search" }
 version: "1.0.0"
 description: Anomaly & insight — surfaces statistical outliers and notable patterns across the timeline.
 capabilities:

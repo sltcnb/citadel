@@ -1,5 +1,10 @@
 tool: scribe
 kind: reporting
+stage: Report
+icon: FileText
+role: "Notes & reporting"
+surfaces:
+  - { label: "Case Notes", to: "/" }
 version: "1.0.0"
 description: Notes & reporting — captures investigator notes and renders case reports for handoff.
 capabilities:
