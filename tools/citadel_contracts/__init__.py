@@ -30,6 +30,7 @@ from .logship import (  # noqa: F401
     attach_redis_logs,
     log_stream_key,
     setup_json_logging,
+    tool_logger,
 )
 from .mapping import (  # noqa: F401
     MappingSpec,

@@ -187,23 +187,35 @@ def _aggregate() -> list[dict[str, Any]]:
 _comms = logging.getLogger("citadel.tools")
 
 
+_AGG_CACHE: dict = {"at": 0.0, "data": None}
+_AGG_TTL = 30.0  # seconds — the live parser/module enrichment is the slow part
+
+
+def _aggregate_cached() -> list[dict[str, Any]]:
+    """Cached _aggregate — the frontend polls this; rebuilding (filesystem +
+    Redis + live plugin/module enrichment) every call was 6–15s."""
+    import time
+
+    now = time.time()
+    if _AGG_CACHE["data"] is not None and (now - _AGG_CACHE["at"]) < _AGG_TTL:
+        return _AGG_CACHE["data"]
+    data = _aggregate()
+    _AGG_CACHE["data"] = data
+    _AGG_CACHE["at"] = now
+    return data
+
+
 @router.get("/tools/capabilities")
 def list_tool_capabilities():
     """Every tool's advertised capabilities — drives the dynamic UI."""
-    manifests = _aggregate()
-    _comms.info(
-        "[frontend → citadel] requested all capabilities → %d tool(s): %s",
-        len(manifests), ", ".join(m["tool"] for m in manifests),
-    )
+    manifests = _aggregate_cached()
     return {"tools": manifests, "count": len(manifests)}
 
 
 @router.get("/tools/{tool}/capabilities")
 def get_tool_capabilities(tool: str):
-    for m in _aggregate():
+    for m in _aggregate_cached():
         if m["tool"] == tool:
-            caps = ", ".join(c["key"] for c in m.get("capabilities", []))
-            _comms.info("[frontend → citadel] requested '%s' capabilities → %s", tool, caps)
             return m
     raise HTTPException(status_code=404, detail=f"no capability manifest for '{tool}'")
 
@@ -235,4 +247,5 @@ def sync_capabilities():
         except Exception as exc:  # noqa: BLE001
             logger.warning("sync failed for %s: %s", doc.get("tool"), exc)
     _comms.info("[citadel] registered %d tool manifest(s)", len(synced))
+    _AGG_CACHE["data"] = None  # bust cache so the refresh is reflected
     return {"synced": sorted(synced), "count": len(synced)}

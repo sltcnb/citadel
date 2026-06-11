@@ -4570,10 +4570,13 @@ def _call_llm_with_system(
     api_key = cfg.get("api_key", "")
     base_url = cfg.get("base_url", "").rstrip("/")
 
-    import logging as _lg
-    _lg.getLogger("citadel.tools").info(
-        "[Pilot → citadel] thinking… (%s/%s)", provider or "?", model or "?"
-    )
+    try:
+        from citadel_contracts.logship import tool_logger
+        tool_logger("pilot", _redis()).info(
+            "[Pilot] thinking… (%s/%s)", provider or "?", model or "?"
+        )
+    except Exception:
+        pass
 
     import urllib.request as _ur
 

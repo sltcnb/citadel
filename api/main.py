@@ -247,6 +247,9 @@ async def _security_headers(request: Request, call_next):
 _ACCESS_LOG_SKIP = (
     "/health", "/collab/", "/ai/agent/active", "/ai/results",
     "/metrics/dashboard", "/metrics/history", "/jobs",
+    # The log viewer itself + the capability poll — logging these floods the
+    # stream with the viewer's own traffic.
+    "/admin/logs", "/tools/capabilities", "/cti/iocs/stats", "/license/info",
 )
 _access_logger = logging.getLogger("citadel.api")
 

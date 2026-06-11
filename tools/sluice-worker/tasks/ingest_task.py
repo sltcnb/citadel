@@ -815,11 +815,14 @@ def process_artifact(
             return
 
         update_job_status(r, job_id, plugin_used=plugin_class.PLUGIN_NAME)
-        import logging as _lg
-        _lg.getLogger("citadel.tools").info(
-            "[Babel → citadel] ingesting '%s' with parser '%s'…",
-            original_filename, plugin_class.PLUGIN_NAME,
-        )
+        try:
+            from citadel_contracts.logship import tool_logger
+            tool_logger("babel", r).info(
+                "[Babel] ingesting '%s' with parser '%s'…",
+                original_filename, plugin_class.PLUGIN_NAME,
+            )
+        except Exception:
+            pass
 
         # ── 4. Run plugin ────────────────────────────────────────────────────
         from citadel_contracts import PluginContext
