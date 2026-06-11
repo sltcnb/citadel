@@ -98,6 +98,10 @@
     @apply btn bg-white hover:bg-gray-50 text-gray-700 border border-gray-200
            focus-visible:ring-gray-300;
   }
+  .btn-secondary {
+    @apply btn bg-gray-100 hover:bg-gray-200 text-gray-700 border border-gray-200
+           focus-visible:ring-gray-300;
+  }
 
   /* ─ Cards — soft 1px shadow, gentle lift on hover ─ */
   .card {
@@ -309,6 +313,12 @@
 
 .dark .btn-ghost { color: #94A3B8; }
 .dark .btn-ghost:hover { background-color: #1F2A3B; color: #F1F5F9; }
+.dark .btn-secondary {
+  background-color: #1F2A3B;
+  color: #E2E8F0;
+  border-color: #334155;
+}
+.dark .btn-secondary:hover { background-color: #273449; }
 .dark .btn-outline {
   background-color: #131A2A; border-color: #1F2A3B; color: #E2E8F0;
 }
