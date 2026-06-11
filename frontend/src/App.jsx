@@ -14,6 +14,7 @@ import Collector      from './pages/Collector'
 import Studio         from './pages/Studio'
 import Docs           from './pages/Docs'
 import Settings       from './pages/Settings'
+import Account        from './pages/Account'
 import Login          from './pages/Login'
 import Performance    from './pages/Performance'
 import Logs           from './pages/Logs'
@@ -109,6 +110,7 @@ export default function App() {
             <Route path="cross-search"              element={<CrossCaseSearch />} />
             <Route path="watchlist"                 element={<Watchlist />} />
             <Route path="settings"                  element={<Settings />} />
+            <Route path="account"                   element={<Account />} />
             <Route path="*"       element={<Navigate to="/" replace />} />
           </Route>
         </Routes>
