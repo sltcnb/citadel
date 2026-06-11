@@ -269,474 +269,9 @@ _ALL_CATEGORIES: list[str] = [
 # Served by GET /collector/categories so the frontend renders dynamically
 # instead of carrying a hardcoded copy that drifts from the collector.
 # Every `key` here MUST exist in _ALL_CATEGORIES (validated at import below).
-_CATEGORY_CATALOG: dict[str, list[dict]] = {
-    "win": [
-        {
-            "key": "evtx",
-            "label": "Event Logs (EVTX)",
-            "desc": "Security, System, Application, PowerShell, Sysmon and more",
-        },
-        {
-            "key": "registry",
-            "label": "Registry Hives",
-            "desc": "SYSTEM, SOFTWARE, SAM, SECURITY, NTUSER.DAT, UsrClass.dat",
-        },
-        {
-            "key": "prefetch",
-            "label": "Prefetch Files",
-            "desc": "Program execution evidence (up to 500 .pf files)",
-        },
-        {
-            "key": "mft",
-            "label": "Master File Table ($MFT)",
-            "desc": "Raw NTFS MFT — requires Administrator or dead-box access",
-        },
-        {
-            "key": "execution",
-            "label": "Execution Evidence",
-            "desc": "SRUM database, Amcache.hve, Prefetch — comprehensive execution history",
-        },
-        {
-            "key": "persistence",
-            "label": "Persistence (Tasks + WMI)",
-            "desc": "Scheduled Tasks XML from System32/SysWOW64, WMI repository (OBJECTS.DATA)",
-        },
-        {
-            "key": "filesystem",
-            "label": "NTFS Metadata",
-            "desc": "$MFT, $LogFile, $Boot — full NTFS journal and boot sector",
-        },
-        {
-            "key": "network_cfg",
-            "label": "Network Config",
-            "desc": "Hosts file, WLAN profiles (.xml), Windows Firewall logs (pfirewall.log)",
-        },
-        {
-            "key": "usb_devices",
-            "label": "USB Device History",
-            "desc": "setupapi.dev.log / setupapi.setup.log — device plug-in timeline",
-        },
-        {
-            "key": "credentials",
-            "label": "Credentials (DPAPI)",
-            "desc": "SAM, SECURITY hives, Credential Manager stores, DPAPI Protect folders",
-        },
-        {
-            "key": "antivirus",
-            "label": "Antivirus / EDR",
-            "desc": "Defender + Trend Micro, Symantec, McAfee/Trellix, Sophos, ESET, Kaspersky, Bitdefender, CrowdStrike, SentinelOne, Carbon Black and more — logs, quarantine, detections",
-        },
-        {
-            "key": "sysmon",
-            "label": "Sysmon",
-            "desc": "Sysmon Operational EVTX, config XMLs, FileDelete archive, SysmonDrv driver rules + service state (live)",
-        },
-        {
-            "key": "wer_crashes",
-            "label": "WER Crash Dumps",
-            "desc": "Windows Error Reporting crash dumps and report archives",
-        },
-        {
-            "key": "win_logs",
-            "label": "Windows Logs",
-            "desc": "CBS.log, DISM, WindowsUpdate.log, Panther setup logs",
-        },
-        {
-            "key": "boot_uefi",
-            "label": "Boot Config (BCD / EFI)",
-            "desc": "BCD store, bootstat.dat — boot persistence indicators",
-        },
-        {
-            "key": "encryption",
-            "label": "Encryption Metadata",
-            "desc": "BitLocker FVE recovery info, EFS metadata",
-        },
-        {
-            "key": "etw_diagnostics",
-            "label": "ETW Diagnostic Traces",
-            "desc": "Windows/System32/LogFiles/WMI — .etl trace files",
-        },
-        {
-            "key": "browser",
-            "label": "All Browsers",
-            "desc": "Chrome, Edge, Firefox, Brave, Opera, Vivaldi — history, cookies, logins",
-        },
-        {
-            "key": "browser_chrome",
-            "label": "Chrome",
-            "desc": "History, Cookies, Login Data, Bookmarks, Web Data for all users",
-        },
-        {
-            "key": "browser_edge",
-            "label": "Microsoft Edge",
-            "desc": "History, Cookies, Login Data, Web Data for all users",
-        },
-        {
-            "key": "browser_ie",
-            "label": "Internet Explorer",
-            "desc": "WebCacheV01.dat / WebCacheV24.dat — legacy IE cache database",
-        },
-        {
-            "key": "email_outlook",
-            "label": "Outlook Email",
-            "desc": ".pst / .ost mailbox databases from Documents/Outlook Files and AppData",
-            "warn": True,
-        },
-        {
-            "key": "email_thunderbird",
-            "label": "Thunderbird Email",
-            "desc": "Thunderbird profile SQLite databases and .msf index files",
-        },
-        {
-            "key": "teams",
-            "label": "Microsoft Teams",
-            "desc": "Teams logs.txt, IndexedDB, Local Storage — chat history traces",
-        },
-        {
-            "key": "slack",
-            "label": "Slack",
-            "desc": "Slack AppData/Roaming/Slack/logs — workspace activity logs",
-        },
-        {
-            "key": "discord",
-            "label": "Discord",
-            "desc": "Discord Local Storage — message and user data artifacts",
-        },
-        {
-            "key": "signal",
-            "label": "Signal Desktop",
-            "desc": "Signal databases/db.sqlite — encrypted message store",
-        },
-        {
-            "key": "whatsapp",
-            "label": "WhatsApp Desktop",
-            "desc": "WhatsApp Desktop UWP package databases",
-        },
-        {
-            "key": "telegram",
-            "label": "Telegram Desktop",
-            "desc": "Telegram tdata folder — session and message cache",
-        },
-        {
-            "key": "cloud_onedrive",
-            "label": "OneDrive",
-            "desc": "OneDrive sync databases and activity logs",
-        },
-        {
-            "key": "cloud_google_drive",
-            "label": "Google Drive",
-            "desc": "Google DriveFS sync databases",
-        },
-        {
-            "key": "cloud_dropbox",
-            "label": "Dropbox",
-            "desc": "Dropbox sync metadata and activity JSON",
-        },
-        {
-            "key": "remote_access",
-            "label": "Remote Access Tools",
-            "desc": "AnyDesk traces/config, TeamViewer logs — lateral movement indicators",
-        },
-        {
-            "key": "rdp",
-            "label": "RDP / Terminal Services",
-            "desc": "Terminal Server Client cache — bitmap tiles from past RDP sessions",
-        },
-        {
-            "key": "ssh_ftp",
-            "label": "SSH / FTP Clients",
-            "desc": "known_hosts, PuTTY sessions, WinSCP.ini — remote connection history",
-        },
-        {
-            "key": "lnk",
-            "label": "LNK / Recent Items",
-            "desc": "Shell link files from all user Recent folders",
-        },
-        {
-            "key": "tasks",
-            "label": "Scheduled Tasks (legacy key)",
-            "desc": "Alias for persistence — kept for backwards compatibility",
-        },
-        {
-            "key": "office",
-            "label": "Office MRU",
-            "desc": "Office Recent Documents list and trusted document registry",
-        },
-        {
-            "key": "dev_tools",
-            "label": "Dev Tools",
-            "desc": ".gitconfig, .git-credentials, PowerShell history, .aws/credentials, .azure tokens",
-        },
-        {
-            "key": "password_managers",
-            "label": "Password Managers",
-            "desc": "KeePass .kdbx databases found in user directories",
-        },
-        {
-            "key": "database_clients",
-            "label": "Database Clients",
-            "desc": "SSMS connection configs, DBeaver workspace files",
-        },
-        {
-            "key": "gaming",
-            "label": "Gaming Platforms",
-            "desc": "Steam .vdf files, Epic Games Launcher logs",
-        },
-        {
-            "key": "windows_apps",
-            "label": "Windows Apps (UWP)",
-            "desc": "Sticky Notes, Cortana — UWP package SQLite stores",
-        },
-        {
-            "key": "wsl",
-            "label": "WSL",
-            "desc": "Ubuntu/Debian WSL rootfs /etc — passwd, shadow, bashrc",
-        },
-        {
-            "key": "vpn",
-            "label": "VPN Config",
-            "desc": "OpenVPN .ovpn profiles, WireGuard .conf files from ProgramData",
-        },
-        {
-            "key": "iis_web",
-            "label": "IIS Web Server",
-            "desc": "inetpub/logs .log files, applicationHost.config — web server forensics",
-        },
-        {
-            "key": "active_directory",
-            "label": "Active Directory",
-            "desc": "Windows/NTDS/ntds.dit + edb.log — full AD database",
-            "warn": True,
-        },
-        {
-            "key": "virtualization",
-            "label": "Virtualization",
-            "desc": "Hyper-V .vhd / .vhdx inventory from ProgramData",
-        },
-        {
-            "key": "recovery",
-            "label": "Recovery / VSS",
-            "desc": "System Volume Information — VSS snapshot metadata",
-        },
-        {
-            "key": "printing",
-            "label": "Print Spool",
-            "desc": "Windows/System32/spool/PRINTERS — spooled print jobs",
-        },
-        {
-            "key": "triage",
-            "label": "Live System Triage",
-            "desc": "systeminfo, netstat, tasklist, services, installed software — live OS only",
-        },
-        {
-            "key": "pe",
-            "label": "PE / Executable Binaries",
-            "desc": "EXE/DLL/PS1 from Temp, Downloads, AppData — feeds PE Analysis, YARA, strings",
-            "warn": True,
-        },
-        {
-            "key": "documents",
-            "label": "Office Documents & PDFs",
-            "desc": "DOCX, XLSX, PPTX, PDF from Documents/Downloads/Desktop — feeds OLE analysis",
-            "warn": True,
-        },
-        {
-            "key": "memory",
-            "label": "Live Memory Dump",
-            "desc": "Physical memory via WinPmem — 4–64 GB, requires winpmem_mini_x64_rc2.exe beside the script",
-            "warn": True,
-        },
-        {
-            "key": "memory_artifacts",
-            "label": "Memory Artifacts (dead-box)",
-            "desc": "pagefile.sys, hiberfil.sys, swapfile.sys — from mounted/external volume",
-            "warn": True,
-        },
-        {
-            "key": "file_search",
-            "label": "File Search (regex / name)",
-            "desc": "Fetch arbitrary files by filename, glob, or re: regex — set patterns below",
-            "warn": True,
-        },
-    ],
-    "linux": [
-        {
-            "key": "logs",
-            "label": "System Logs",
-            "desc": "/var/log — auth.log, syslog, kern.log, audit, journalctl export, wtmp/btmp",
-        },
-        {
-            "key": "history",
-            "label": "Shell Histories",
-            "desc": ".bash_history, .zsh_history for root and all users",
-        },
-        {
-            "key": "config",
-            "label": "System Configuration",
-            "desc": "/etc/passwd, shadow, sudoers, hosts, ssh/sshd_config, PAM",
-        },
-        {
-            "key": "cron",
-            "label": "Cron Jobs",
-            "desc": "cron.d, cron.daily, crontabs, systemd timers",
-        },
-        {
-            "key": "ssh",
-            "label": "SSH Artifacts",
-            "desc": "known_hosts, authorized_keys, config (no private keys)",
-        },
-        {
-            "key": "persistence",
-            "label": "Persistence",
-            "desc": "systemd units, init.d, rc.local, profile.d, LD_PRELOAD, autostart",
-        },
-        {
-            "key": "network_config",
-            "label": "Network Config",
-            "desc": "interfaces, iptables/nftables rules, resolv.conf, hosts.allow/deny",
-        },
-        {
-            "key": "audit_logs",
-            "label": "Audit Logs",
-            "desc": "auditd logs + rules, ausearch summaries, faillock",
-        },
-        {
-            "key": "containers",
-            "label": "Container Artifacts",
-            "desc": "Docker / Podman containers, images, logs, compose files",
-        },
-        {
-            "key": "packages",
-            "label": "Packages & Tools",
-            "desc": "Installed package inventory (dpkg/rpm), suspicious SUID binaries",
-        },
-        {
-            "key": "network",
-            "label": "Network Captures",
-            "desc": "PCAP/PCAPNG from /var/log, /tmp — live tcpdump if none found",
-        },
-        {
-            "key": "suricata",
-            "label": "Suricata IDS Logs",
-            "desc": "EVE JSON alerts from /var/log/suricata",
-        },
-        {
-            "key": "zeek",
-            "label": "Zeek / Bro Logs",
-            "desc": "conn, dns, http, ssl, notice logs from Zeek",
-        },
-        {
-            "key": "edr",
-            "label": "EDR / AV Logs (legacy)",
-            "desc": "auditd, Falco, osquery, Wazuh — superseded by Antivirus / EDR below",
-        },
-        {
-            "key": "antivirus",
-            "label": "Antivirus / EDR",
-            "desc": "ClamAV, Trend Micro ds_agent, Defender (mdatp), Falcon, SentinelOne, Sophos SPL, ESET, Kaspersky, rkhunter/chkrootkit logs",
-        },
-        {
-            "key": "sysmon",
-            "label": "Sysmon For Linux",
-            "desc": "config.xml, /opt/sysmon state, sysmon-tagged journal events",
-        },
-        {
-            "key": "triage",
-            "label": "Live System Triage",
-            "desc": "ps, ss, ip, last, lsmod, installed packages",
-        },
-        {
-            "key": "pe",
-            "label": "ELF / Binaries",
-            "desc": "Suspicious binaries from /tmp, /var/tmp, ~/Downloads — feeds PE Analysis, YARA",
-            "warn": True,
-        },
-        {
-            "key": "documents",
-            "label": "Office Documents & PDFs",
-            "desc": "DOCX, XLSX, PPTX, PDF from home directories — feeds OLE analysis",
-            "warn": True,
-        },
-        {
-            "key": "memory",
-            "label": "Memory Dump",
-            "desc": "Physical memory via avml or /dev/fmem — 4–64 GB, requires root + avml in PATH",
-            "warn": True,
-        },
-        {
-            "key": "file_search",
-            "label": "File Search (regex / name)",
-            "desc": "Fetch arbitrary files by filename, glob, or re: regex — set patterns below",
-            "warn": True,
-        },
-    ],
-    "macos": [
-        {
-            "key": "logs",
-            "label": "System Logs",
-            "desc": "/var/log, ASL, Unified Logging export, system.log",
-        },
-        {
-            "key": "history",
-            "label": "Shell Histories",
-            "desc": ".bash_history, .zsh_history, fish_history for root and all users",
-        },
-        {
-            "key": "config",
-            "label": "System Configuration",
-            "desc": "/etc/hosts, sudoers, ssh/sshd_config, /etc/passwd",
-        },
-        {
-            "key": "launchagents",
-            "label": "LaunchAgents/Daemons",
-            "desc": "/Library/LaunchAgents, /Library/LaunchDaemons, ~/Library/LaunchAgents — persistence",
-        },
-        {
-            "key": "browser",
-            "label": "Browsers",
-            "desc": "Safari History.db, Cookies, Bookmarks.plist; Chrome/Firefox if installed",
-        },
-        {
-            "key": "plist",
-            "label": "Preference Plists",
-            "desc": "/Library/Preferences, ~/Library/Preferences — app prefs and hidden settings",
-        },
-        {
-            "key": "network",
-            "label": "Network Captures",
-            "desc": "PCAP/PCAPNG from /var/log, /tmp — live tcpdump if none found",
-        },
-        {
-            "key": "triage",
-            "label": "Live System Triage",
-            "desc": "ps, netstat, launchctl list, system_profiler, sw_vers",
-        },
-        {
-            "key": "pe",
-            "label": "Mach-O Binaries",
-            "desc": "Suspicious binaries from /tmp, ~/Downloads — feeds YARA, strings",
-            "warn": True,
-        },
-        {
-            "key": "documents",
-            "label": "Office Documents & PDFs",
-            "desc": "DOCX, XLSX, PPTX, PDF from home directories",
-            "warn": True,
-        },
-        {
-            "key": "memory",
-            "label": "Memory Dump",
-            "desc": "Physical memory via osxpmem — requires root + osxpmem in PATH",
-            "warn": True,
-        },
-        {
-            "key": "file_search",
-            "label": "File Search (regex / name)",
-            "desc": "Fetch arbitrary files by filename, glob, or re: regex — set patterns below",
-            "warn": True,
-        },
-    ],
-}
+# Per-platform artifact catalog now lives in Talon's capabilities.yaml
+# (the tool owns it). Served via GET /collector/categories, built at request
+# time from the Talon capability manifest — Citadel stays tool-agnostic.
 
 # Section taxonomy for the wizard — keys bucketed under a display group, in the
 # order sections should render. Authoritative here so the UI never invents its
@@ -809,31 +344,43 @@ _CATEGORY_GROUPS: dict[str, dict[str, list[str]]] = {
     },
 }
 
-# Inject the `group` field into every catalog entry from _CATEGORY_GROUPS.
-for _plat, _items in _CATEGORY_CATALOG.items():
-    _key2group = {k: g for g, keys in _CATEGORY_GROUPS.get(_plat, {}).items() for k in keys}
-    for _item in _items:
-        _item["group"] = _key2group.get(_item["key"], "Other")
+# Map a capability platform id (windows/linux/macos) → the Collector UI's
+# short key (win/linux/macos) used by _CATEGORY_GROUPS and the frontend.
+_PLATFORM_TO_UI = {"windows": "win", "linux": "linux", "macos": "macos"}
 
-# Fail fast at import if the catalog references an unknown category, or an entry
-# was never assigned a group — keeps the UI catalog, the section taxonomy, and
-# the validation allow-list from silently diverging.
-_catalog_unknown = {
-    item["key"]
-    for plat in _CATEGORY_CATALOG.values()
-    for item in plat
-    if item["key"] not in set(_ALL_CATEGORIES)
-}
-if _catalog_unknown:
-    raise RuntimeError(f"_CATEGORY_CATALOG keys not in _ALL_CATEGORIES: {sorted(_catalog_unknown)}")
-_catalog_ungrouped = {
-    f"{plat}:{item['key']}"
-    for plat, items in _CATEGORY_CATALOG.items()
-    for item in items
-    if item.get("group", "Other") == "Other"
-}
-if _catalog_ungrouped:
-    raise RuntimeError(f"_CATEGORY_CATALOG entries missing a group: {sorted(_catalog_ungrouped)}")
+
+def _build_catalog() -> dict[str, list[dict]]:
+    """The per-platform artifact catalog, built from Talon's capability manifest
+    (the tool owns it) + this file's group taxonomy. Citadel adds NO artifact
+    knowledge of its own — it only buckets the tool's categories into sections."""
+    catalog: dict[str, list[dict]] = {}
+    try:
+        from routers.tools import _aggregate
+
+        talon = next((m for m in _aggregate() if m["tool"] == "talon"), None)
+    except Exception:
+        talon = None
+    if not talon:
+        return catalog
+    for cap in talon.get("capabilities", []):
+        # collect_windows → "windows"; map to the UI short key.
+        plat = cap["key"].replace("collect_", "")
+        ui_key = _PLATFORM_TO_UI.get(plat, plat)
+        cats_field = next((f for f in cap.get("inputs", []) if f.get("name") == "categories"), None)
+        if not cats_field:
+            continue
+        key2group = {k: g for g, keys in _CATEGORY_GROUPS.get(ui_key, {}).items() for k in keys}
+        items = []
+        for opt in cats_field.get("options", []):
+            key = opt.get("value", "")
+            items.append({
+                "key": key,
+                "label": opt.get("label", key),
+                "desc": opt.get("desc", ""),
+                "group": key2group.get(key, "Other"),
+            })
+        catalog[ui_key] = items
+    return catalog
 
 
 _RUN_BAT = """\
@@ -922,15 +469,16 @@ def list_collector_categories():
     """
     Authoritative artifact catalog for the collector wizard.
 
-    Returns the per-platform list of selectable categories with display labels,
-    descriptions, and a `warn` flag for large/expensive items. The frontend
-    renders from this so it never drifts from what the collector supports.
+    Built from Talon's capability manifest (the tool owns the catalog) + this
+    file's section taxonomy. The frontend renders from this, so it always
+    reflects what Talon declares — no hardcoded copy to drift.
     Read-only; auth-gated to analyst/admin. No user input → no injection surface.
     """
+    catalog = _build_catalog()
     return {
-        "platforms": _CATEGORY_CATALOG,
+        "platforms": catalog,
         "group_order": {plat: list(groups.keys()) for plat, groups in _CATEGORY_GROUPS.items()},
-        "all": list(_ALL_CATEGORIES),
+        "all": sorted({it["key"] for items in catalog.values() for it in items}) or list(_ALL_CATEGORIES),
     }
 
 
