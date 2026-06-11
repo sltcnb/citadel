@@ -65,6 +65,7 @@ const DROPDOWN_GROUPS = [
     label: 'Admin',
     adminOnly: true,
     items: [
+      { to: '/settings',    icon: Settings2,   label: 'Platform Settings' },
       { to: '/performance', icon: Activity,    label: 'Performance' },
       { to: '/logs',        icon: ScrollText,  label: 'Tool Logs' },
       { to: '/users',       icon: Users,       label: 'Users' },
@@ -304,15 +305,15 @@ export default function ModernLayout({ user, onLogout }) {
 
           <div className="hidden md:block w-px h-5 bg-gray-200 mx-1.5" />
 
-          <NavLink to="/settings"
+          <NavLink to="/account"
             className={({ isActive }) =>
               `w-8 h-8 flex items-center justify-center rounded-md transition-colors ${
                 isActive ? 'text-brand-text bg-gray-100' : 'text-gray-500 hover:text-brand-text hover:bg-gray-100'
               }`
             }
-            title="Settings"
+            title="Account"
           >
-            <Settings2 size={15} />
+            <UserCircle size={15} />
           </NavLink>
 
           <button onClick={cycleTheme}
@@ -361,7 +362,7 @@ export default function ModernLayout({ user, onLogout }) {
             HOME_ITEM,
             ...(lastCaseId ? [{ to: `/cases/${lastCaseId}`, icon: FolderOpen, label: 'Case' }] : []),
             ...DROPDOWN_GROUPS.filter(g => !g.adminOnly || isAdmin(user)).flatMap(g => g.items),
-            { to: '/settings', icon: Settings2, label: 'Settings' },
+            { to: '/account', icon: UserCircle, label: 'Account' },
           ].map(item => (
             <NavLink
               key={item.to}
