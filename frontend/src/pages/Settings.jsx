@@ -65,12 +65,14 @@ const SCALEWAY_REGIONS = [
   { region: 'pl-waw', endpoint: 's3.pl-waw.scw.cloud', label: 'Warsaw (pl-waw)' },
 ]
 
+// `tool` = the suite tool(s) that own each settings group (shown as a sub-label
+// so config reads tool-wise without restructuring the forms).
 const TABS = [
-  { id: 'ai',           label: 'AI Analysis',  icon: Sparkles },
-  { id: 'storage',      label: 'Storage',      icon: Database },
-  { id: 'integrations', label: 'Integrations', icon: Shield },
-  { id: 'system',       label: 'System',       icon: Server },
-  { id: 'license',      label: 'License',      icon: Award },
+  { id: 'ai',           label: 'AI Analysis',  icon: Sparkles, tool: 'Pilot' },
+  { id: 'storage',      label: 'Storage',      icon: Database,  tool: 'Talon · Sluice · Scribe' },
+  { id: 'integrations', label: 'Integrations', icon: Shield,    tool: 'Augur · sandboxes' },
+  { id: 'system',       label: 'System',       icon: Server,    tool: 'Platform' },
+  { id: 'license',      label: 'License',      icon: Award,     tool: 'Platform' },
 ]
 
 /* ── Helpers ──────────────────────────────────────────────────────────────── */
@@ -1841,14 +1843,18 @@ resources:
             <button
               key={t.id}
               onClick={() => setTab(t.id)}
-              className={`flex items-center gap-1.5 px-4 py-2.5 text-xs font-medium whitespace-nowrap border-b-2 transition-colors -mb-px ${
+              title={t.tool ? `${t.label} — ${t.tool}` : t.label}
+              className={`flex items-center gap-1.5 px-4 py-2 text-xs font-medium whitespace-nowrap border-b-2 transition-colors -mb-px ${
                 tab === t.id
                   ? 'border-brand-accent text-brand-accent'
                   : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
               }`}
             >
               <Icon size={13} />
-              {t.label}
+              <span className="flex flex-col items-start leading-tight">
+                {t.label}
+                {t.tool && <span className="text-[9px] text-gray-400 font-normal">{t.tool}</span>}
+              </span>
             </button>
           )
         })}
