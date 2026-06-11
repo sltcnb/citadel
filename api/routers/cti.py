@@ -147,22 +147,26 @@ def _pull_feed_now(feed: dict, r: redis_lib.Redis, feeds: list[dict]) -> int:
             effective_type = "stix_url"
         else:
             return 0  # pure manual feed — nothing to auto-pull
-    import logging as _lg
-    _tlog = _lg.getLogger("citadel.tools")
-    _tlog.info("[Augur → citadel] downloading IOC feed '%s' (%s)…", feed.get("name", "?"), effective_type)
+    from citadel_contracts.logship import tool_logger
+    aug = tool_logger("augur", r)
+    aug.info("[Augur] auto-pull: downloading feed '%s' (%s)…", feed.get("name", "?"), effective_type)
     try:
-        _remove_feed_iocs(r, feed["id"])
+        # Fetch first; replace only on success so a failure can't wipe IOCs.
         if effective_type == "taxii":
-            bundle = _taxii_fetch(feed)
-            count = _process_stix_bundle(r, bundle, feed_id=feed["id"], feed_name=feed["name"])
+            data = _taxii_fetch(feed)
+            _remove_feed_iocs(r, feed["id"])
+            count = _process_stix_bundle(r, data, feed_id=feed["id"], feed_name=feed["name"])
         elif effective_type == "stix_url":
-            bundle = _stix_url_fetch(feed)
-            count = _process_stix_bundle(r, bundle, feed_id=feed["id"], feed_name=feed["name"])
+            data = _stix_url_fetch(feed)
+            _remove_feed_iocs(r, feed["id"])
+            count = _process_stix_bundle(r, data, feed_id=feed["id"], feed_name=feed["name"])
         elif effective_type == "misp":
             attrs = _misp_fetch(feed)
+            _remove_feed_iocs(r, feed["id"])
             count = _process_misp_attributes(r, attrs, feed_id=feed["id"], feed_name=feed["name"])
         elif effective_type == "yeti":
             observables = _yeti_fetch(feed)
+            _remove_feed_iocs(r, feed["id"])
             count = _process_yeti_observables(
                 r, observables, feed_id=feed["id"], feed_name=feed["name"]
             )
@@ -171,12 +175,10 @@ def _pull_feed_now(feed: dict, r: redis_lib.Redis, feeds: list[dict]) -> int:
         feed["last_pull"] = datetime.now(UTC).isoformat()
         feed["ioc_count"] = count
         _save_feeds(r, feeds)
-        _tlog.info("[Augur → citadel] feed '%s' downloaded: %d IOC(s) (deduped)", feed.get("name", "?"), count)
+        aug.info("[Augur] feed '%s' downloaded: %d IOC(s) (deduped)", feed.get("name", "?"), count)
         return count
-    except HTTPException:
-        raise
     except Exception as exc:
-        logger.error("Auto-pull failed for feed %s: %s", feed["id"], exc)
+        aug.error("[Augur] auto-pull FAILED for feed '%s': %s", feed.get("name", "?"), exc)
         return 0
 
 
@@ -890,28 +892,44 @@ def pull_feed(feed_id: str):
                 detail="Pure manual feeds have no URL to pull from. Use POST /cti/import instead, or set a URL to enable periodic re-import.",
             )
 
-    # Remove old IOCs from this feed before re-importing
-    _remove_feed_iocs(r, feed_id)
+    from citadel_contracts.logship import tool_logger
+    aug = tool_logger("augur", r)
+    aug.info("[Augur] downloading IOC feed '%s' (%s) from %s…",
+             feed["name"], effective_type, feed.get("url", "?"))
 
-    if effective_type == "taxii":
-        bundle = _taxii_fetch(feed)
-        count = _process_stix_bundle(r, bundle, feed_id=feed_id, feed_name=feed["name"])
-    elif effective_type == "stix_url":
-        bundle = _stix_url_fetch(feed)
-        count = _process_stix_bundle(r, bundle, feed_id=feed_id, feed_name=feed["name"])
-    elif effective_type == "misp":
-        attrs = _misp_fetch(feed)
-        count = _process_misp_attributes(r, attrs, feed_id=feed_id, feed_name=feed["name"])
-    elif effective_type == "yeti":
-        observables = _yeti_fetch(feed)
-        count = _process_yeti_observables(r, observables, feed_id=feed_id, feed_name=feed["name"])
-    else:
-        raise HTTPException(status_code=400, detail=f"Unknown feed type: {feed_type}")
+    # Fetch FIRST — only replace existing IOCs once the new pull succeeds, so a
+    # failed fetch never wipes the IOCs already loaded.
+    try:
+        if effective_type == "taxii":
+            bundle = _taxii_fetch(feed)
+            _remove_feed_iocs(r, feed_id)
+            count = _process_stix_bundle(r, bundle, feed_id=feed_id, feed_name=feed["name"])
+        elif effective_type == "stix_url":
+            bundle = _stix_url_fetch(feed)
+            _remove_feed_iocs(r, feed_id)
+            count = _process_stix_bundle(r, bundle, feed_id=feed_id, feed_name=feed["name"])
+        elif effective_type == "misp":
+            attrs = _misp_fetch(feed)
+            aug.info("[Augur] MISP returned %d attribute(s) for '%s'", len(attrs), feed["name"])
+            _remove_feed_iocs(r, feed_id)
+            count = _process_misp_attributes(r, attrs, feed_id=feed_id, feed_name=feed["name"])
+        elif effective_type == "yeti":
+            observables = _yeti_fetch(feed)
+            _remove_feed_iocs(r, feed_id)
+            count = _process_yeti_observables(r, observables, feed_id=feed_id, feed_name=feed["name"])
+        else:
+            raise HTTPException(status_code=400, detail=f"Unknown feed type: {feed_type}")
+    except HTTPException as exc:
+        aug.error("[Augur] feed '%s' download FAILED: %s", feed["name"], exc.detail)
+        raise
+    except Exception as exc:  # noqa: BLE001
+        aug.error("[Augur] feed '%s' download FAILED: %s", feed["name"], exc)
+        raise HTTPException(status_code=502, detail=f"Feed pull failed: {exc}")
 
-    # Update feed metadata
     feed["last_pull"] = datetime.now(UTC).isoformat()
     feed["ioc_count"] = count
     _save_feeds(r, feeds)
+    aug.info("[Augur] feed '%s' done: %d IOC(s) stored (deduped)", feed["name"], count)
 
     return {"feed_id": feed_id, "iocs_imported": count, "last_pull": feed["last_pull"]}
 
