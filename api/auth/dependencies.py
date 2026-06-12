@@ -155,13 +155,18 @@ async def require_analyst_plus(current_user: dict = Depends(get_current_user)) -
     return current_user
 
 
-async def require_case_access(
+def require_case_access(
     case_id: str, current_user: dict = Depends(get_current_user)
 ) -> dict:
     """Load a case and enforce the caller's company restriction. Inject into any
     case-scoped data route (timeline/search/aggregate/events/export/...) so a
     company-restricted analyst cannot read or mutate another company's case.
-    Returns the case dict."""
+    Returns the case dict.
+
+    SYNC on purpose: it does a blocking Redis read (get_case). As an `async def`
+    it ran on the event loop and — on the heavily-polled timeline/search routes —
+    starved the loop until even /health timed out and the pod was SIGKILLed
+    (CrashLoop). As a plain `def`, FastAPI runs it in the threadpool, off-loop."""
     from services.cases import get_case as _get_case
 
     case = _get_case(case_id)
