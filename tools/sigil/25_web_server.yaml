@@ -1,0 +1,115 @@
+category: Web Server Attacks
+# Detections for parsed web access logs (artifact_type: access_log).
+# Fields available: http.request_path, http.method, http.status_code,
+# http.user_agent, http.referer, network.src_ip, user.name, message.
+# Queries are Elasticsearch query_string (default operator AND); special
+# characters like ( ) { } are avoided in favour of wildcard tokens.
+rules:
+  - name: Web — Path Traversal Attempt
+    description: >-
+      A request path contains directory-traversal sequences (../, ..%2f, %2e%2e).
+      Used to escape the web root and read arbitrary files (e.g. /etc/passwd).
+    artifact_type: access_log
+    query: 'http.request_path:*..%2f* OR http.request_path:*../* OR http.request_path:*..%5c* OR http.request_path:*%2e%2e%2f* OR http.request_path:*etc%2fpasswd* OR http.request_path:*etc/passwd*'
+    threshold: 1
+
+  - name: Web — SQL Injection Attempt
+    description: >-
+      Request contains SQL-injection signatures (UNION SELECT, information_schema,
+      1=1, time-based sleep/benchmark/waitfor). Indicates probing or exploitation
+      of a database-backed endpoint.
+    artifact_type: access_log
+    query: 'http.request_path:*union*select* OR http.request_path:*information_schema* OR http.request_path:*1=1* OR http.request_path:*sleep* OR http.request_path:*benchmark* OR http.request_path:*waitfor*delay* OR message:*union%20select*'
+    threshold: 1
+
+  - name: Web — Cross-Site Scripting (XSS) Attempt
+    description: >-
+      Request contains script-injection markers (<script>, %3cscript, javascript:,
+      onerror=). Reflected/stored XSS probing.
+    artifact_type: access_log
+    query: 'http.request_path:*%3cscript* OR http.request_path:*<script* OR http.request_path:*javascript%3a* OR http.request_path:*onerror=* OR http.request_path:*onload=*'
+    threshold: 1
+
+  - name: Web — Command Injection Attempt
+    description: >-
+      Request contains OS-command-injection markers (;, |, backtick-encoded,
+      wget/curl pulls). Attempts to run shell commands via a vulnerable parameter.
+    artifact_type: access_log
+    query: 'http.request_path:*%3bcat* OR http.request_path:*;cat* OR http.request_path:*%7cwhoami* OR http.request_path:*;id* OR http.request_path:*wget%20* OR http.request_path:*curl%20* OR http.request_path:*%24%28*'
+    threshold: 1
+
+  - name: Web — Local/Remote File Inclusion (LFI/RFI)
+    description: >-
+      Request includes PHP wrappers (php://, data://) or a remote URL passed as a
+      parameter (=http://) — local or remote file inclusion.
+    artifact_type: access_log
+    query: 'http.request_path:*php%3a%2f%2f* OR http.request_path:*php://* OR http.request_path:*data%3a%2f%2f* OR http.request_path:*=http%3a%2f%2f* OR http.request_path:*=http://* OR http.request_path:*=https://*'
+    threshold: 1
+
+  - name: Web — Log4Shell (JNDI) Exploitation Attempt
+    description: >-
+      A JNDI lookup string (jndi:ldap, jndi:rmi) appears in the request or
+      user-agent — CVE-2021-44228 (Log4Shell) exploitation attempt.
+    artifact_type: access_log
+    query: 'http.request_path:*jndi%3a* OR http.request_path:*jndi:* OR http.user_agent:*jndi:* OR message:*jndi%3a* OR message:*jndi:ldap*'
+    threshold: 1
+
+  - name: Web — Sensitive File / Path Access
+    description: >-
+      Request targets a sensitive path commonly probed by attackers (.git, .env,
+      wp-config, phpMyAdmin, .ssh, backup files). Often reconnaissance for
+      credentials or source disclosure.
+    artifact_type: access_log
+    query: 'http.request_path:*.git%2f* OR http.request_path:*/.git* OR http.request_path:*/.env* OR http.request_path:*wp-config* OR http.request_path:*phpmyadmin* OR http.request_path:*/.ssh* OR http.request_path:*.bak* OR http.request_path:*.sql*'
+    threshold: 1
+
+  - name: Web — Webshell Access
+    description: >-
+      Request targets a path matching known webshell names (c99, r57, wso,
+      shell.php, cmd.php) or generic command parameters. Suggests an uploaded
+      backdoor is being used.
+    artifact_type: access_log
+    query: 'http.request_path:*shell.php* OR http.request_path:*cmd.php* OR http.request_path:*c99* OR http.request_path:*r57* OR http.request_path:*wso* OR http.request_path:*eval-stdin* OR http.request_path:*=whoami*'
+    threshold: 1
+
+  - name: Web — Scanner / Recon Tool User-Agent
+    description: >-
+      The request user-agent matches an automated scanner or exploitation tool
+      (sqlmap, nikto, nmap, masscan, acunetix, nuclei, gobuster, dirbuster,
+      wpscan). Active scanning of the host.
+    artifact_type: access_log
+    query: 'http.user_agent:*sqlmap* OR http.user_agent:*nikto* OR http.user_agent:*nmap* OR http.user_agent:*masscan* OR http.user_agent:*acunetix* OR http.user_agent:*nuclei* OR http.user_agent:*gobuster* OR http.user_agent:*dirbuster* OR http.user_agent:*wpscan* OR http.user_agent:*zgrab*'
+    threshold: 1
+
+  - name: Web — Suspicious HTTP Method
+    description: >-
+      Use of TRACE, TRACK or CONNECT methods — rarely legitimate; associated with
+      cross-site tracing and proxy abuse.
+    artifact_type: access_log
+    query: 'http.method:TRACE OR http.method:TRACK OR http.method:CONNECT'
+    threshold: 1
+
+  - name: Web — High Volume of 404s (Directory/Content Scanning)
+    description: >-
+      A large number of 404 responses, characteristic of directory brute-forcing
+      or content discovery. Tune the threshold to your traffic baseline.
+    artifact_type: access_log
+    query: 'http.status_code:404'
+    threshold: 100
+
+  - name: Web — Repeated Authentication Failures (401)
+    description: >-
+      Many 401 Unauthorized responses — brute-force or credential stuffing
+      against an HTTP-authenticated endpoint.
+    artifact_type: access_log
+    query: 'http.status_code:401'
+    threshold: 20
+
+  - name: Web — Server Error Burst (5xx)
+    description: >-
+      A burst of 5xx responses can indicate successful exploitation (crashes,
+      payload errors) or a denial-of-service condition. Investigate alongside the
+      requests that triggered them.
+    artifact_type: access_log
+    query: 'http.status_code:500 OR http.status_code:502 OR http.status_code:503'
+    threshold: 50

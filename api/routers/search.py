@@ -65,6 +65,11 @@ def search(
     username: str | None = None,
     event_id: int | None = None,
     channel: str | None = None,
+    src_ip: str | None = None,
+    dest_ip: str | None = None,
+    status_code: int | None = None,
+    http_method: str | None = None,
+    domain: str | None = None,
     flagged: bool | None = None,
     tags: list[str] | None = Query(None),
     regexp: bool = False,
@@ -86,6 +91,16 @@ def search(
         extra_filters.append({"term": {"evtx.event_id": event_id}})
     if channel:
         extra_filters.append({"term": {"evtx.channel.keyword": channel}})
+    if src_ip:
+        extra_filters.append({"term": {"network.src_ip": src_ip}})
+    if dest_ip:
+        extra_filters.append({"term": {"network.dst_ip": dest_ip}})
+    if status_code is not None:
+        extra_filters.append({"term": {"http.status_code": status_code}})
+    if http_method:
+        extra_filters.append({"term": {"http.method.keyword": http_method}})
+    if domain:
+        extra_filters.append({"term": {"dns.question.name.keyword": domain}})
     if flagged is not None:
         extra_filters.append({"term": {"is_flagged": flagged}})
     if tags:
