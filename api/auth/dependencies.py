@@ -71,6 +71,17 @@ async def get_current_user(
         )
     cached = _cache_get(effective_token)
     if cached is not None:
+        # Still enforce revocation on a cache hit so logout/revoke takes effect
+        # immediately (one cheap Redis EXISTS; the user lookup stays cached).
+        try:
+            if is_token_revoked(decode_token(effective_token)):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Token has been revoked",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+        except JWTError:
+            pass
         return cached
     try:
         payload = decode_token(effective_token)

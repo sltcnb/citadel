@@ -201,6 +201,25 @@ def _ingest_one_async(
 
 # ── ZIP extraction ─────────────────────────────────────────────────────────────
 
+# Decompression-bomb caps — a small zip can expand to fill the disk / MinIO.
+_MAX_UNCOMPRESSED_PER_FILE = int(os.getenv("MAX_ZIP_ENTRY_BYTES", str(10 * 1024**3)))   # 10 GiB
+_MAX_UNCOMPRESSED_TOTAL = int(os.getenv("MAX_ZIP_TOTAL_BYTES", str(100 * 1024**3)))     # 100 GiB
+
+
+def _bounded_copy(src, dst, limit: int) -> int:
+    """Stream src→dst, aborting if more than `limit` uncompressed bytes are read
+    (defends against lying ZIP headers / decompression bombs)."""
+    written = 0
+    while True:
+        chunk = src.read(1024 * 1024)
+        if not chunk:
+            break
+        written += len(chunk)
+        if written > limit:
+            raise ValueError(f"entry exceeds uncompressed size cap ({limit} bytes)")
+        dst.write(chunk)
+    return written
+
 
 def _extract_and_dispatch_bg(
     case_id: str,
@@ -229,15 +248,23 @@ def _extract_and_dispatch_bg(
             pass
         return
 
+    total_uncompressed = 0
     with zf:
         for zip_entry, entry_name, job_id, minio_key in entries:
             tmp_path = None
             base_name = entry_name.split("/")[-1]  # safe basename for temp file suffix
             try:
+                # Reject obviously huge entries by declared size before extracting.
+                declared = getattr(zip_entry, "file_size", 0) or 0
+                if declared > _MAX_UNCOMPRESSED_PER_FILE:
+                    raise ValueError(f"entry too large: {declared} bytes (cap {_MAX_UNCOMPRESSED_PER_FILE})")
                 tmp_fd, tmp_path = tempfile.mkstemp(prefix="fo_zip_", suffix=f"_{base_name}")
                 os.close(tmp_fd)
                 with zf.open(zip_entry) as src, open(tmp_path, "wb") as dst:
-                    shutil.copyfileobj(src, dst)
+                    written = _bounded_copy(src, dst, _MAX_UNCOMPRESSED_PER_FILE)
+                total_uncompressed += written
+                if total_uncompressed > _MAX_UNCOMPRESSED_TOTAL:
+                    raise ValueError(f"archive exceeds total uncompressed cap ({_MAX_UNCOMPRESSED_TOTAL} bytes)")
 
                 size = os.path.getsize(tmp_path)
                 sha256 = _compute_sha256(tmp_path)
