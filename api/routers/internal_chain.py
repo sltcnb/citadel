@@ -63,9 +63,9 @@ def _run_finalize_chain(case_id: str) -> dict:
         from routers.cti import match_case_iocs
 
         result["ioc_match"] = match_case_iocs(case_id)
-        n = (result["ioc_match"] or {}).get("matches")
-        _comms.info("[citadel → CTI] case %s — IOC-DB match: %s match(es)",
-                    case_id, len(n) if isinstance(n, list) else n)
+        m = result["ioc_match"] or {}
+        _comms.info("[citadel → CTI] case %s — IOC-DB match: %s distinct indicator(s), %s external",
+                    case_id, m.get("indicator_count", 0), m.get("real_count", 0))
     except Exception as exc:  # noqa: BLE001 — never fail the chain
         logger.warning("[finalize] case %s — IOC match failed: %s", case_id, exc)
         result["ioc_match"] = {"error": str(exc)}
