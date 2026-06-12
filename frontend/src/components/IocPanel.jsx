@@ -52,7 +52,12 @@ function ThreatMatch({ caseId, onSearch }) {
                   className={`badge text-[10px] border ${on ? 'bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200' : 'bg-gray-100 text-gray-400 border-gray-200'}`}>{t}</button>
               )
             })}
-            <button onClick={run} disabled={status === 'running'} className="btn-primary text-[11px] py-0.5 ml-auto">
+            <button onClick={() => onSearch('artifact_type:cti_match')}
+              className="text-[11px] text-fuchsia-600 hover:text-fuchsia-700 inline-flex items-center gap-1 ml-auto"
+              title="Show CTI matches in the timeline">
+              <Search size={10} /> View in timeline
+            </button>
+            <button onClick={run} disabled={status === 'running'} className="btn-primary text-[11px] py-0.5">
               {status === 'running' ? <Loader2 size={11} className="animate-spin" /> : <Play size={11} />} Run match
             </button>
           </div>
@@ -75,10 +80,6 @@ function ThreatMatch({ caseId, onSearch }) {
               <CheckCircle size={11} /> Match started — results appear in the timeline + Module Runs shortly.
             </p>
           )}
-          <button onClick={() => onSearch('artifact_type:cti_match')}
-            className="text-[11px] text-fuchsia-600 hover:underline inline-flex items-center gap-1">
-            <Search size={10} /> View matches in timeline
-          </button>
         </div>
       )}
     </div>
