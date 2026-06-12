@@ -480,7 +480,9 @@ def create_module_run(case_id: str, req: CreateModuleRunRequest):
             kept.append(sf)
         else:
             missing.append(key)
-    if not kept:
+    # ES-only modules (run_on_events) legitimately have zero source files —
+    # they query Elasticsearch, not the object store. Don't 422 them.
+    if not kept and not module.get("run_on_events"):
         raise HTTPException(
             status_code=422,
             detail={
