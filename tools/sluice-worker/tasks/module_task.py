@@ -3186,6 +3186,62 @@ def _cti_get_nested(doc: dict, dotted_key: str):
     return cur
 
 
+# Structured fields per type for aggregation (message excluded — can't aggregate
+# free text at scale, and per-event substring scanning is what made this unusable).
+_CTI_AGG_FIELDS = {t: [f for f in fields if f != "message"] for t, fields in _CTI_MATCH_FIELDS.items()}
+_CTI_AGG_SIZE = 20000
+
+
+def _cti_es_search(index: str, body: dict, timeout: int = 120) -> dict:
+    url = f"{ELASTICSEARCH_URL.rstrip('/')}/{index}/_search"
+    data = json.dumps(body).encode("utf-8")
+    req = urllib.request.Request(
+        url, data=data, headers={"Content-Type": "application/json"}, method="POST"
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read())
+
+
+def _cti_terms_agg(index: str, field: str, size: int = _CTI_AGG_SIZE) -> list[tuple]:
+    """Distinct values of a structured field + event count + latest event,
+    computed server-side (one query, no event scan). Falls back to .keyword.
+    Returns [(value, doc_count, {timestamp, host, fo_id}), …]."""
+    for fld in (field, f"{field}.keyword"):
+        body = {
+            "size": 0,
+            "aggs": {"v": {
+                "terms": {"field": fld, "size": size},
+                "aggs": {"latest": {"top_hits": {
+                    "size": 1,
+                    "sort": [{"timestamp": {"order": "desc"}}],
+                    "_source": ["timestamp", "host", "fo_id"],
+                }}},
+            }},
+        }
+        try:
+            resp = _cti_es_search(index, body)
+        except Exception:
+            continue
+        buckets = resp.get("aggregations", {}).get("v", {}).get("buckets")
+        if buckets is None:
+            continue
+        out = []
+        for b in buckets:
+            key = b.get("key")
+            if key is None:
+                continue
+            hh = b.get("latest", {}).get("hits", {}).get("hits", [])
+            src = hh[0].get("_source", {}) if hh else {}
+            host = src.get("host", {})
+            out.append((str(key), int(b.get("doc_count", 0)), {
+                "timestamp": src.get("timestamp", ""),
+                "host": host.get("hostname", "") if isinstance(host, dict) else "",
+                "fo_id": src.get("fo_id", ""),
+            }))
+        return out
+    return []
+
+
 def _run_cti_match(
     run_id: str,
     case_id: str,
@@ -3194,7 +3250,12 @@ def _run_cti_match(
     params: dict,
     tool_meta: dict,
 ) -> list[dict]:
-    """Scan all case events in Elasticsearch against the CTI IOC database."""
+    """Match case events against the IOC DB via Elasticsearch aggregations.
+
+    Returns ONE enriched record per distinct indicator present (value, event
+    count, latest event, feed/threat metadata) — not one row per matching event.
+    At 10M+ events the old per-event scan produced millions of rows and timed
+    out; aggregation runs in a handful of queries regardless of event count."""
     r = redis.from_url(REDIS_URL, decode_responses=True)
 
     # Load all IOCs into memory grouped by type. IOCs are stored as a per-type
@@ -3230,120 +3291,100 @@ def _run_cti_match(
         tool_meta["stdout"] += "No IOCs loaded — ingest CTI feeds first.\n"
         return []
 
-    # Scan ES events in batches via search_after (no scroll TTL issues)
     index = f"fo-case-{case_id}-*"
+
+    # Optional type narrowing (params.types / params.ioc_types).
+    sel_types = list(ioc_sets.keys())
+    raw_types = params.get("types") or params.get("ioc_types")
+    if raw_types:
+        wanted = {t.strip() for t in (raw_types if isinstance(raw_types, list) else str(raw_types).split(","))}
+        sel_types = [t for t in sel_types if t in wanted]
+
+    # value_lower -> aggregated indicator
+    indicators: dict[str, dict] = {}
+    fields_checked = 0
+    for ioc_type in sel_types:
+        lookup = ioc_sets[ioc_type]
+        for field in _CTI_AGG_FIELDS.get(ioc_type, []):
+            fields_checked += 1
+            for value, count, latest in _cti_terms_agg(index, field):
+                obj = lookup.get(value.lower())
+                if not obj:
+                    continue
+                key = f"{ioc_type}:{value.lower()}"
+                ind = indicators.get(key)
+                if ind:
+                    ind["event_count"] += count
+                    if latest.get("timestamp", "") > ind["timestamp"]:
+                        ind["timestamp"] = latest.get("timestamp", "")
+                        ind["computer"] = latest.get("host", "")
+                        ind["event_fo_id"] = latest.get("fo_id", "")
+                    continue
+                is_own = bool(obj.get("is_own"))
+                is_private = bool(obj.get("is_private"))
+                indicators[key] = {
+                    "ioc_type": ioc_type,
+                    "ioc_value": obj.get("value", value),
+                    "event_count": count,
+                    "timestamp": latest.get("timestamp", ""),
+                    "computer": latest.get("host", ""),
+                    "event_fo_id": latest.get("fo_id", ""),
+                    "matched_field": field,
+                    "obj": obj,
+                    "is_own": is_own,
+                    "is_private": is_private,
+                    "sev": "info" if (is_own or is_private) else "high",
+                }
+
     results: list[dict] = []
-    events_scanned = 0
-    search_after = None
+    for ind in indicators.values():
+        obj = ind["obj"]
+        sev = ind["sev"]
+        qualifier = " (own)" if ind["is_own"] else " (private)" if ind["is_private"] else ""
+        n = ind["event_count"]
+        results.append({
+            "id": str(uuid.uuid4()),
+            "timestamp": ind["timestamp"],
+            "level": sev,
+            "level_int": LEVEL_INT.get(sev, 4),
+            "rule_title": (
+                f"CTI Match{qualifier} — {ind['ioc_type']}: {ind['ioc_value'][:80]} "
+                f"({n} event{'s' if n != 1 else ''})"
+            ),
+            "computer": ind["computer"],
+            "details_raw": json.dumps({
+                "ioc_type": ind["ioc_type"],
+                "ioc_value": ind["ioc_value"],
+                "event_count": n,
+                "matched_field": ind["matched_field"],
+                "indicator_id": obj.get("indicator_id", ""),
+                "feed_name": obj.get("feed_name", ""),
+                "threat_type": obj.get("threat_type", ""),
+                "confidence": obj.get("confidence", ""),
+                "tags": obj.get("tags", ""),
+                "event_fo_id": ind["event_fo_id"],
+                "is_own": ind["is_own"],
+                "is_private": ind["is_private"],
+            }),
+            "event_fo_id": ind["event_fo_id"],
+            "ioc_type": ind["ioc_type"],
+            "ioc_value": ind["ioc_value"],
+            "event_count": n,
+            "feed_name": obj.get("feed_name", ""),
+            "matched_field": ind["matched_field"],
+            "is_own": ind["is_own"],
+            "is_private": ind["is_private"],
+        })
 
-    while True:
-        body: dict = {
-            "query": {"match_all": {}},
-            "size": _CTI_BATCH_SIZE,
-            "sort": [{"_doc": "asc"}],
-            "_source": True,
-        }
-        if search_after:
-            body["search_after"] = search_after
-
-        try:
-            url = f"{ELASTICSEARCH_URL.rstrip('/')}/{index}/_search"
-            data = json.dumps(body).encode("utf-8")
-            req = urllib.request.Request(
-                url,
-                data=data,
-                headers={"Content-Type": "application/json"},
-                method="POST",
-            )
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                es_resp = json.loads(resp.read())
-        except Exception as exc:
-            logger.error("[%s] CTI match ES query failed: %s", run_id, exc)
-            tool_meta["stderr"] += f"ES query failed: {exc}\n"
-            break
-
-        hits = es_resp.get("hits", {}).get("hits", [])
-        if not hits:
-            break
-
-        for hit in hits:
-            source = hit.get("_source", {})
-            event_fo_id = source.get("fo_id", hit.get("_id", ""))
-            event_ts = source.get("timestamp", "")
-            host_obj = source.get("host", {})
-            hostname = host_obj.get("hostname", "") if isinstance(host_obj, dict) else ""
-            events_scanned += 1
-
-            seen: set = set()  # (ioc_type, value) dedupe across fields per event
-            for ioc_type, lookup in ioc_sets.items():
-                fields = _CTI_MATCH_FIELDS.get(ioc_type, ["message"])
-                rx = _CTI_RX.get(ioc_type)
-                for field in fields:
-                    field_value = _cti_get_nested(source, field)
-                    if field_value is None:
-                        continue
-                    field_str = str(field_value).lower()
-                    # Structured field → exact value; free-text message → tokens.
-                    if field == "message":
-                        if not rx:
-                            continue
-                        candidates = {t.lower() for t in rx.findall(field_str)}
-                    else:
-                        candidates = {field_str}
-                    for ioc_value in candidates:
-                        ioc_obj = lookup.get(ioc_value)
-                        if ioc_obj:
-                            if (ioc_type, ioc_value) in seen:
-                                continue
-                            seen.add((ioc_type, ioc_value))
-                            # Own / private IPs are SEPARATED (tagged + lower
-                            # severity), not dropped — the timeline can filter
-                            # them out with a checkbox.
-                            is_own = bool(ioc_obj.get("is_own"))
-                            is_private = bool(ioc_obj.get("is_private"))
-                            sev = "info" if (is_own or is_private) else "high"
-                            results.append(
-                                {
-                                    "id": str(uuid.uuid4()),
-                                    "timestamp": event_ts,
-                                    "level": sev,
-                                    "level_int": LEVEL_INT.get(sev, 4),
-                                    "rule_title": (
-                                        f"CTI Match{' (own)' if is_own else ' (private)' if is_private else ''} "
-                                        f"— {ioc_type}: {ioc_obj.get('value', ioc_value)[:80]}"
-                                    ),
-                                    "computer": hostname,
-                                    "details_raw": json.dumps(
-                                        {
-                                            "event_fo_id": event_fo_id,
-                                            "ioc_type": ioc_type,
-                                            "ioc_value": ioc_obj.get("value", ioc_value),
-                                            "indicator_id": ioc_obj.get("indicator_id", ""),
-                                            "feed_name": ioc_obj.get("feed_name", ""),
-                                            "matched_field": field,
-                                            "is_own": is_own,
-                                            "is_private": is_private,
-                                        }
-                                    ),
-                                    "event_fo_id": event_fo_id,
-                                    "ioc_type": ioc_type,
-                                    "ioc_value": ioc_obj.get("value", ioc_value),
-                                    "feed_name": ioc_obj.get("feed_name", ""),
-                                    "matched_field": field,
-                                    "is_own": is_own,
-                                    "is_private": is_private,
-                                }
-                            )
-
-        search_after = hits[-1].get("sort")
-        if not search_after:
-            break
-
-    tool_meta["log"] += f"Scanned {events_scanned} event(s), {len(results)} IOC match(es)\n"
+    real = sum(1 for i in indicators.values() if i["sev"] == "high")
+    total_hits = sum(i["event_count"] for i in indicators.values())
+    tool_meta["log"] += (
+        f"Aggregated {fields_checked} field(s) — {len(results)} distinct indicator(s)\n"
+    )
     tool_meta["stdout"] += (
-        f"Events scanned : {events_scanned}\n"
-        f"IOCs checked   : {total_iocs}\n"
-        f"Matches found  : {len(results)}\n"
+        f"IOCs in DB         : {total_iocs}\n"
+        f"Distinct indicators: {len(results)} ({real} external, {len(results) - real} own/private)\n"
+        f"Total event hits   : {total_hits}\n"
     )
     return results
 

@@ -1242,103 +1242,157 @@ def _ioc_lookups(r) -> dict[str, dict[str, dict]]:
     return ioc_sets
 
 
-@router.post("/cases/{case_id}/cti/match")
-def match_case_iocs(case_id: str):
+# Structured (exact-value) fields per IOC type — the `message` free-text field
+# is intentionally excluded from aggregation matching: at 10M+ events it cannot
+# be aggregated, and substring scanning every event is what made matching
+# unusable. Structured fields cover the real signal (the actual IP/host/hash).
+_AGG_FIELDS: dict[str, list[str]] = {
+    t: [f for f in fields if f != "message"] for t, fields in _MATCH_FIELDS.items()
+}
+_AGG_MAX_TERMS = 20000  # distinct values pulled per field (top-N by frequency)
+
+
+def _es_terms_agg(index: str, field: str, size: int = _AGG_MAX_TERMS) -> list[tuple[str, int]]:
+    """Distinct values of a structured field present in the case, with event
+    counts — computed server-side by Elasticsearch (one query, no event scan).
+
+    Returns [(value, doc_count), …]. Falls back to the ``.keyword`` subfield for
+    analyzed text fields; returns [] if the field is absent or non-aggregatable.
     """
-    Scan all events in a case against the IOC database.
-
-    Queries Elasticsearch for all events in the case, then checks relevant
-    fields against loaded IOCs. Returns a list of matches.
-    """
-    r = _redis()
-
-    # Parsed IOC lookups grouped by type (cached). Own/private IPs are kept +
-    # tagged (separated), not dropped — so the timeline can filter them.
-    ioc_sets = _ioc_lookups(r)
-
-    if not ioc_sets:
-        return {"matches": [], "events_scanned": 0, "message": "No IOCs loaded"}
-
-    # Scan ES events in batches using search_after
-    index = f"fo-case-{case_id}-*"
-    matches: list[dict] = []
-    events_scanned = 0
-    search_after: list | None = None
-
-    while True:
-        body: dict[str, Any] = {
-            "query": {"match_all": {}},
-            "size": _MATCH_BATCH_SIZE,
-            "sort": [{"_doc": "asc"}],
-            "_source": True,
-        }
-        if search_after:
-            body["search_after"] = search_after
-
+    for fld in (field, f"{field}.keyword"):
+        body = {"size": 0, "aggs": {"v": {"terms": {"field": fld, "size": size}}}}
         try:
             resp = es_req("POST", f"/{index}/_search", body)
-        except Exception as exc:
-            logger.error("ES query failed during CTI match for case %s: %s", case_id, exc)
-            break
+        except Exception:
+            continue  # text field w/o fielddata → try .keyword
+        buckets = resp.get("aggregations", {}).get("v", {}).get("buckets")
+        if buckets is not None:
+            return [(str(b["key"]), int(b.get("doc_count", 0))) for b in buckets if b.get("key") is not None]
+    return []
 
-        hits = resp.get("hits", {}).get("hits", [])
-        if not hits:
-            break
 
-        for hit in hits:
-            source = hit.get("_source", {})
-            event_fo_id = source.get("fo_id", hit.get("_id", ""))
-            events_scanned += 1
-            seen: set = set()  # (ioc_type, value) dedupe across fields per event
+@router.post("/cases/{case_id}/cti/match")
+def match_case_iocs(case_id: str, types: str | None = Query(None)):
+    """Match a case's events against the IOC DB — FAST, via aggregation.
 
-            # Check each IOC type against relevant fields
-            for ioc_type, lookup in ioc_sets.items():
-                fields = _MATCH_FIELDS.get(ioc_type, ["message"])
-                rx = _MSG_EXTRACTORS.get(ioc_type)
-                for field in fields:
-                    field_value = _get_nested(source, field)
-                    if field_value is None:
-                        continue
-                    field_str = str(field_value).lower()
+    Instead of scanning every event (hopeless at 10M+ events), Elasticsearch
+    returns the distinct structured values present in the case (IPs, hostnames,
+    hashes, domains, …) with their event counts; we intersect those with the IOC
+    database. The result is a short list of *distinct enriched indicators* —
+    value, how many events it touched, the feed it came from, threat type,
+    confidence, severity — not millions of per-event rows.
 
-                    # Build the set of candidate values to look up in O(1):
-                    #  - structured field → the field value itself (exact match)
-                    #  - free-text `message` → type-shaped tokens pulled out by regex
-                    if field == "message":
-                        if not rx:
-                            continue
-                        candidates = {t.lower() for t in rx.findall(field_str)}
-                    else:
-                        candidates = {field_str}
+    `types` (comma-separated, e.g. ``ip,domain``) narrows which IOC types to
+    check. Own/private indicators are tagged (``severity: info``) so the real
+    external hits stand out.
+    """
+    r = _redis()
+    ioc_sets = _ioc_lookups(r)
+    if not ioc_sets:
+        return {"indicators": [], "indicator_count": 0, "message": "No IOCs loaded"}
 
-                    for cand in candidates:
-                        ioc_obj = lookup.get(cand)
-                        if not ioc_obj:
-                            continue
-                        key = (ioc_type, cand)
-                        if key in seen:
-                            continue
-                        seen.add(key)
-                        matches.append(
-                            {
-                                "event_fo_id": event_fo_id,
-                                "ioc_type": ioc_type,
-                                "ioc_value": ioc_obj.get("value", cand),
-                                "indicator_id": ioc_obj.get("indicator_id", ""),
-                                "feed_name": ioc_obj.get("feed_name", ""),
-                                "matched_field": field,
-                                "is_own": bool(ioc_obj.get("is_own")),
-                                "is_private": bool(ioc_obj.get("is_private")),
-                            }
-                        )
+    requested = [t.strip() for t in types.split(",")] if types else list(IOC_TYPES)
+    sel_types = [t for t in requested if t in ioc_sets]
+    index = f"fo-case-{case_id}-*"
 
-        # Prepare next batch
-        search_after = hits[-1].get("sort")
-        if not search_after:
-            break
+    # value_lower -> aggregated indicator
+    indicators: dict[str, dict] = {}
+    truncated: list[str] = []
 
+    for ioc_type in sel_types:
+        lookup = ioc_sets[ioc_type]
+        for field in _AGG_FIELDS.get(ioc_type, []):
+            buckets = _es_terms_agg(index, field)
+            if len(buckets) >= _AGG_MAX_TERMS:
+                truncated.append(field)
+            for value, count in buckets:
+                obj = lookup.get(value.lower())
+                if not obj:
+                    continue
+                key = f"{ioc_type}:{value.lower()}"
+                ind = indicators.get(key)
+                if ind:
+                    ind["event_count"] += count
+                    if field not in ind["matched_fields"]:
+                        ind["matched_fields"].append(field)
+                else:
+                    is_own = bool(obj.get("is_own"))
+                    is_private = bool(obj.get("is_private"))
+                    indicators[key] = {
+                        "ioc_type": ioc_type,
+                        "ioc_value": obj.get("value", value),
+                        "event_count": count,
+                        "matched_fields": [field],
+                        "indicator_id": obj.get("indicator_id", ""),
+                        "feed_name": obj.get("feed_name", ""),
+                        "threat_type": obj.get("threat_type", ""),
+                        "confidence": obj.get("confidence", ""),
+                        "tags": obj.get("tags", ""),
+                        "first_seen": obj.get("first_seen", ""),
+                        "last_seen": obj.get("last_seen", ""),
+                        "severity": "info" if (is_own or is_private) else "high",
+                        "is_own": is_own,
+                        "is_private": is_private,
+                    }
+
+    out = sorted(
+        indicators.values(),
+        key=lambda i: (i["severity"] != "high", -i["event_count"]),
+    )
+    real = [i for i in out if i["severity"] == "high"]
     return {
-        "matches": matches,
-        "events_scanned": events_scanned,
-        "iocs_checked": sum(len(v) for v in ioc_sets.values()),
+        "indicators": out,
+        "indicator_count": len(out),
+        "real_count": len(real),
+        "own_or_private_count": len(out) - len(real),
+        "total_event_hits": sum(i["event_count"] for i in out),
+        "iocs_in_db": sum(len(v) for v in ioc_sets.values()),
+        "types": sel_types,
+        "method": "aggregation",
+        "truncated_fields": sorted(set(truncated)),
+    }
+
+
+@router.get("/cases/{case_id}/cti/indicator-events")
+def cti_indicator_events(
+    case_id: str,
+    type: str = Query(...),
+    value: str = Query(...),
+    limit: int = Query(25),
+):
+    """Drill-down: the events in a case that contain one matched indicator.
+
+    Targeted query (only the matching events) — used when an analyst clicks an
+    indicator in the match results, so the heavy work never happens up front.
+    """
+    fields = _AGG_FIELDS.get(type, [])
+    if not fields:
+        raise HTTPException(status_code=400, detail=f"unknown IOC type '{type}'")
+    index = f"fo-case-{case_id}-*"
+    should = [{"term": {f: value}} for f in fields] + [{"term": {f"{f}.keyword": value}} for f in fields]
+    body = {
+        "query": {"bool": {"should": should, "minimum_should_match": 1}},
+        "size": max(1, min(limit, 200)),
+        "_source": ["fo_id", "timestamp", "message", "host", "artifact_type"],
+        "sort": [{"timestamp": {"order": "desc"}}],
+    }
+    try:
+        resp = es_req("POST", f"/{index}/_search", body)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"ES query failed: {exc}")
+    hits = resp.get("hits", {}).get("hits", [])
+    total = resp.get("hits", {}).get("total", {})
+    return {
+        "events": [
+            {
+                "fo_id": h["_source"].get("fo_id", h.get("_id", "")),
+                "timestamp": h["_source"].get("timestamp", ""),
+                "message": h["_source"].get("message", ""),
+                "artifact_type": h["_source"].get("artifact_type", ""),
+                "host": (h["_source"].get("host") or {}).get("hostname", "")
+                if isinstance(h["_source"].get("host"), dict) else "",
+            }
+            for h in hits
+        ],
+        "total": total.get("value", len(hits)) if isinstance(total, dict) else len(hits),
     }

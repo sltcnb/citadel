@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Shield, Plus, Trash2, RefreshCw, Download, Upload, Search, Globe, Hash, AtSign, Link2, FileText, Loader2, Check, X, AlertTriangle, CheckCircle, ExternalLink, Play } from 'lucide-react'
+import { Shield, Plus, Trash2, RefreshCw, Download, Upload, Search, Globe, Hash, AtSign, Link2, FileText, Loader2, Check, X, AlertTriangle, CheckCircle, ExternalLink, Play, ChevronRight } from 'lucide-react'
 import { PageShell, PageHeader } from '../components/shared/PageShell'
 import { api } from '../api/client'
 
@@ -284,6 +284,9 @@ export default function ThreatIntel() {
   const [matchCaseId, setMatchCaseId] = useState('')
   const [matching, setMatching]     = useState(false)
   const [matchResult, setMatchResult] = useState(null)
+  const [matchTypes, setMatchTypes] = useState([])      // [] = all types
+  const [showOwn, setShowOwn]       = useState(false)   // show own/private indicators
+  const [drill, setDrill]           = useState({})      // indicator key -> {loading, events, total}
 
   // Clear IOCs
   const [clearing, setClearing]     = useState(false)
@@ -431,13 +434,30 @@ export default function ThreatIntel() {
     if (!matchCaseId) return
     setMatching(true)
     setMatchResult(null)
+    setDrill({})
     try {
-      const r = await api.cti.matchCase(matchCaseId)
+      const r = await api.cti.matchCase(matchCaseId, matchTypes.length ? matchTypes.join(',') : undefined)
       setMatchResult(r)
     } catch (err) {
       alert('Match failed: ' + err.message)
     } finally {
       setMatching(false)
+    }
+  }
+
+  function toggleMatchType(t) {
+    setMatchTypes(prev => prev.includes(t) ? prev.filter(x => x !== t) : [...prev, t])
+  }
+
+  async function toggleDrill(ind) {
+    const key = `${ind.ioc_type}:${ind.ioc_value}`
+    if (drill[key]) { setDrill(d => { const n = { ...d }; delete n[key]; return n }) ; return }
+    setDrill(d => ({ ...d, [key]: { loading: true, events: [] } }))
+    try {
+      const r = await api.cti.indicatorEvents(matchCaseId, ind.ioc_type, ind.ioc_value)
+      setDrill(d => ({ ...d, [key]: { loading: false, events: r.events || [], total: r.total } }))
+    } catch (err) {
+      setDrill(d => ({ ...d, [key]: { loading: false, events: [], error: err.message } }))
     }
   }
 
@@ -716,12 +736,13 @@ export default function ThreatIntel() {
         <h2 className="text-sm font-semibold text-brand-text mb-3">Case IOC Matching</h2>
         <div className="card p-4 space-y-3">
           <p className="text-xs text-gray-500">
-            Select a case to scan its indexed artifacts against all known IOCs.
+            Match a case against the IOC database. Uses Elasticsearch aggregations — returns the
+            distinct indicators present (with event counts + feed context), not millions of rows.
           </p>
           <div className="flex items-center gap-2 flex-wrap">
             <select
               value={matchCaseId}
-              onChange={e => { setMatchCaseId(e.target.value); setMatchResult(null) }}
+              onChange={e => { setMatchCaseId(e.target.value); setMatchResult(null); setDrill({}) }}
               className="input text-xs w-auto max-w-[280px]"
             >
               <option value="">Select a case...</option>
@@ -735,51 +756,105 @@ export default function ThreatIntel() {
             </button>
           </div>
 
-          {/* Match results */}
-          {matchResult && (
-            <div className="space-y-2 pt-2">
-              {(matchResult.matches || []).length === 0 ? (
+          {/* Type filter — narrow which IOC types to check (faster) */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-[10px] uppercase tracking-wide text-gray-400 mr-1">Types</span>
+            {['ip', 'domain', 'url', 'hash', 'email', 'filename'].map(t => {
+              const on = matchTypes.length === 0 || matchTypes.includes(t)
+              return (
+                <button key={t} onClick={() => toggleMatchType(t)}
+                  className={`badge text-[10px] border ${on
+                    ? 'bg-brand-accentlight text-brand-text border-brand-accent/40'
+                    : 'bg-gray-100 text-gray-400 border-gray-200'}`}>
+                  {t}
+                </button>
+              )
+            })}
+            {matchTypes.length > 0 && (
+              <button onClick={() => setMatchTypes([])} className="text-[10px] text-gray-400 hover:text-brand-text">all</button>
+            )}
+          </div>
+
+          {/* Match results — distinct indicators */}
+          {matchResult && (() => {
+            const inds = matchResult.indicators || []
+            if (inds.length === 0) {
+              return (
                 <div className="flex items-center gap-2 text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
-                  <CheckCircle size={13} />
-                  No IOC matches found in this case.
+                  <CheckCircle size={13} /> No IOC matches found in this case.
                 </div>
-              ) : (
-                <>
-                  <div className="flex items-center gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              )
+            }
+            const shown = showOwn ? inds : inds.filter(i => i.severity === 'high')
+            return (
+              <div className="space-y-2 pt-1">
+                <div className="flex items-center gap-3 flex-wrap text-xs">
+                  <span className="flex items-center gap-1.5 text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5">
                     <AlertTriangle size={13} />
-                    {matchResult.matches.length} IOC match{matchResult.matches.length !== 1 ? 'es' : ''} found
-                  </div>
-                  <div className="space-y-1">
-                    {matchResult.matches.map((m, i) => {
-                      const MIcon = IOC_ICONS[m.ioc_type] || Shield
-                      return (
-                        <div key={i} className="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-lg text-xs">
+                    {matchResult.real_count} external indicator{matchResult.real_count !== 1 ? 's' : ''}
+                  </span>
+                  <span className="text-gray-500">{matchResult.total_event_hits?.toLocaleString()} event hits</span>
+                  {matchResult.own_or_private_count > 0 && (
+                    <label className="flex items-center gap-1.5 text-gray-500 cursor-pointer ml-auto">
+                      <input type="checkbox" checked={showOwn} onChange={e => setShowOwn(e.target.checked)} />
+                      show {matchResult.own_or_private_count} own/private
+                    </label>
+                  )}
+                </div>
+                {matchResult.truncated_fields?.length > 0 && (
+                  <p className="text-[10px] text-amber-600">
+                    Note: very high-cardinality fields were sampled (top {(20000).toLocaleString()} values): {matchResult.truncated_fields.join(', ')}.
+                  </p>
+                )}
+                <div className="space-y-1">
+                  {shown.map((m) => {
+                    const key = `${m.ioc_type}:${m.ioc_value}`
+                    const MIcon = IOC_ICONS[m.ioc_type] || Shield
+                    const d = drill[key]
+                    const sevCls = m.severity === 'high'
+                      ? 'border-l-2 border-red-400' : 'border-l-2 border-gray-300'
+                    return (
+                      <div key={key} className={`bg-gray-50 rounded-lg ${sevCls}`}>
+                        <button onClick={() => toggleDrill(m)}
+                          className="w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-gray-100 rounded-lg">
                           <span className={`badge text-[10px] ${IOC_BADGE_COLORS[m.ioc_type] || 'bg-gray-100 text-gray-600 border border-gray-200'}`}>
-                            <MIcon size={9} className="mr-0.5" />
-                            {m.ioc_type}
+                            <MIcon size={9} className="mr-0.5" />{m.ioc_type}
                           </span>
-                          <span className="font-mono text-brand-text truncate" title={m.ioc_value}>
-                            {m.ioc_value}
+                          <span className="font-mono text-brand-text truncate" title={m.ioc_value}>{m.ioc_value}</span>
+                          {m.is_own && <span className="badge text-[9px] bg-blue-50 text-blue-600 border border-blue-200">own</span>}
+                          {m.is_private && <span className="badge text-[9px] bg-gray-100 text-gray-500 border border-gray-200">private</span>}
+                          {m.threat_type && <span className="text-[10px] text-gray-400">{m.threat_type}</span>}
+                          {m.feed_name && <span className="text-[10px] text-gray-400 hidden sm:inline">· {m.feed_name}</span>}
+                          <span className="text-gray-500 ml-auto flex-shrink-0 tabular-nums">
+                            {m.event_count?.toLocaleString()} event{m.event_count !== 1 ? 's' : ''}
                           </span>
-                          <span className="text-gray-500 ml-auto flex-shrink-0">
-                            {m.event_count ?? 1} event{(m.event_count ?? 1) !== 1 ? 's' : ''}
-                          </span>
-                          {m.event_id && (
-                            <a
-                              href={`/cases/${matchCaseId}?event=${m.event_id}`}
-                              className="text-brand-accent hover:underline flex items-center gap-0.5 flex-shrink-0"
-                            >
-                              <ExternalLink size={10} /> View
-                            </a>
-                          )}
-                        </div>
-                      )
-                    })}
-                  </div>
-                </>
-              )}
-            </div>
-          )}
+                          <ChevronRight size={12} className={`text-gray-400 transition-transform ${d ? 'rotate-90' : ''}`} />
+                        </button>
+                        {d && (
+                          <div className="px-3 pb-2 space-y-1">
+                            {d.loading && <p className="text-[11px] text-gray-400 flex items-center gap-1"><Loader2 size={11} className="animate-spin" /> loading events…</p>}
+                            {d.error && <p className="text-[11px] text-red-500">{d.error}</p>}
+                            {!d.loading && d.events?.length === 0 && <p className="text-[11px] text-gray-400">no events</p>}
+                            {(d.events || []).map((ev, i) => (
+                              <a key={i} href={`/cases/${matchCaseId}?event=${ev.fo_id}`}
+                                className="flex items-center gap-2 text-[11px] text-gray-600 hover:text-brand-accent px-2 py-1 rounded hover:bg-white">
+                                <span className="text-gray-400 tabular-nums flex-shrink-0">{(ev.timestamp || '').slice(0, 19).replace('T', ' ')}</span>
+                                <span className="truncate">{ev.message || ev.artifact_type}</span>
+                                <ExternalLink size={9} className="ml-auto flex-shrink-0" />
+                              </a>
+                            ))}
+                            {d.total > (d.events?.length || 0) && (
+                              <p className="text-[10px] text-gray-400">showing {d.events.length} of {d.total.toLocaleString()} — refine in the case timeline</p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )
+          })()}
         </div>
       </div>
 
