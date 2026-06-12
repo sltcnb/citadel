@@ -53,9 +53,17 @@ def _validate(body: WebhookIn) -> None:
         raise HTTPException(422, "name must not be empty")
     if not body.url.startswith(("http://", "https://")):
         raise HTTPException(422, "url must start with http:// or https://")
+    _ssrf_guard(body.url)
     bad = [e for e in body.events if e not in _ALLOWED_EVENTS]
     if bad:
         raise HTTPException(422, f"unknown events: {', '.join(bad)}")
+
+
+def _ssrf_guard(url: str) -> None:
+    """Reject webhook URLs that resolve to internal/private/metadata addresses
+    (reuses the CTI feed SSRF validator)."""
+    from routers.cti import _validate_feed_url
+    _validate_feed_url(url)
 
 
 def _redact(hook: dict) -> dict:
@@ -133,6 +141,7 @@ def test_webhook(hook_id: str):
     if not raw:
         raise HTTPException(404, "Webhook not found")
     hook = json.loads(raw)
+    _ssrf_guard(hook["url"])  # re-check at delivery (DNS may have changed since create)
     payload = {
         "text": "Citadel webhook test — configuration is working.",
         "case_id": "test",
