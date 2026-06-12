@@ -3245,6 +3245,49 @@ def _cti_terms_agg(index: str, field: str, size: int = _CTI_AGG_SIZE) -> list[tu
     return []
 
 
+_CTI_PER_INDICATOR_CAP = 2000  # max per-event detections emitted per indicator
+
+
+def _cti_es_delete_index(index: str) -> None:
+    """Best-effort delete of an index (clean slate so re-runs don't pile up)."""
+    url = f"{ELASTICSEARCH_URL.rstrip('/')}/{index}"
+    try:
+        req = urllib.request.Request(url, method="DELETE")
+        with urllib.request.urlopen(req, timeout=30):
+            pass
+    except Exception:
+        pass
+
+
+def _cti_fetch_events(index: str, field: str, value: str, cap: int) -> list[dict]:
+    """Up to `cap` events whose structured `field` equals `value`
+    (fo_id, timestamp, host) — the actual matching events for an indicator."""
+    for fld in (field, f"{field}.keyword"):
+        body = {
+            "size": cap,
+            "query": {"term": {fld: value}},
+            "_source": ["fo_id", "timestamp", "host"],
+            "sort": [{"timestamp": {"order": "desc"}}],
+        }
+        try:
+            resp = _cti_es_search(index, body)
+        except Exception:
+            continue
+        hits = resp.get("hits", {}).get("hits", [])
+        if hits:
+            out = []
+            for h in hits:
+                s = h.get("_source", {})
+                host = s.get("host", {})
+                out.append({
+                    "fo_id": s.get("fo_id", h.get("_id", "")),
+                    "timestamp": s.get("timestamp", ""),
+                    "host": host.get("hostname", "") if isinstance(host, dict) else "",
+                })
+            return out
+    return []
+
+
 def _run_cti_match(
     run_id: str,
     case_id: str,
@@ -3315,6 +3358,10 @@ def _run_cti_match(
         if vals:
             allow[t] = vals
 
+    # Clean slate: drop prior cti_match detections so re-runs don't pile up
+    # (and old summary-style events don't linger alongside new per-event ones).
+    _cti_es_delete_index(f"fo-case-{case_id}-cti_match")
+
     # value_lower -> aggregated indicator
     indicators: dict[str, dict] = {}
     fields_checked = 0
@@ -3354,53 +3401,69 @@ def _run_cti_match(
                 }
 
     results: list[dict] = []
-    for ind in indicators.values():
-        obj = ind["obj"]
-        sev = ind["sev"]
-        qualifier = " (own)" if ind["is_own"] else " (private)" if ind["is_private"] else ""
-        n = ind["event_count"]
-        results.append({
+    capped_indicators = 0
+
+    def _record(ind, obj, ev, title):
+        return {
             "id": str(uuid.uuid4()),
-            "timestamp": ind["timestamp"],
-            "level": sev,
-            "level_int": LEVEL_INT.get(sev, 4),
-            "rule_title": (
-                f"CTI Match{qualifier} — {ind['ioc_type']}: {ind['ioc_value'][:80]} "
-                f"({n} event{'s' if n != 1 else ''})"
-            ),
-            "computer": ind["computer"],
+            "timestamp": ev.get("timestamp") or ind["timestamp"],
+            "level": ind["sev"],
+            "level_int": LEVEL_INT.get(ind["sev"], 4),
+            "rule_title": title,
+            "computer": ev.get("host") or ind["computer"],
             "details_raw": json.dumps({
                 "ioc_type": ind["ioc_type"],
                 "ioc_value": ind["ioc_value"],
-                "event_count": n,
                 "matched_field": ind["matched_field"],
                 "indicator_id": obj.get("indicator_id", ""),
                 "feed_name": obj.get("feed_name", ""),
                 "threat_type": obj.get("threat_type", ""),
                 "confidence": obj.get("confidence", ""),
                 "tags": obj.get("tags", ""),
-                "event_fo_id": ind["event_fo_id"],
+                "event_fo_id": ev.get("fo_id", ""),
                 "is_own": ind["is_own"],
                 "is_private": ind["is_private"],
             }),
-            "event_fo_id": ind["event_fo_id"],
+            "event_fo_id": ev.get("fo_id", ""),
             "ioc_type": ind["ioc_type"],
             "ioc_value": ind["ioc_value"],
-            "event_count": n,
             "feed_name": obj.get("feed_name", ""),
             "matched_field": ind["matched_field"],
             "is_own": ind["is_own"],
             "is_private": ind["is_private"],
-        })
+        }
+
+    for ind in indicators.values():
+        obj = ind["obj"]
+        qualifier = " (own)" if ind["is_own"] else " (private)" if ind["is_private"] else ""
+        base_title = f"CTI Match{qualifier} — {ind['ioc_type']}: {ind['ioc_value'][:80]}"
+        if ind["sev"] == "high":
+            # One detection per matching event (capped) — so each hit shows on the
+            # timeline at its own time, not a single "(N events)" summary.
+            evs = _cti_fetch_events(index, ind["matched_field"], ind["ioc_value"], _CTI_PER_INDICATOR_CAP)
+            if not evs:
+                evs = [{"fo_id": ind["event_fo_id"], "timestamp": ind["timestamp"], "host": ind["computer"]}]
+            if len(evs) >= _CTI_PER_INDICATOR_CAP:
+                capped_indicators += 1
+            for ev in evs:
+                results.append(_record(ind, obj, ev, base_title))
+        else:
+            # own/private/allowlisted → a single summary (don't explode noise).
+            n = ind["event_count"]
+            ev = {"fo_id": ind["event_fo_id"], "timestamp": ind["timestamp"], "host": ind["computer"]}
+            results.append(_record(ind, obj, ev, f"{base_title} ({n} event{'s' if n != 1 else ''})"))
 
     real = sum(1 for i in indicators.values() if i["sev"] == "high")
     total_hits = sum(i["event_count"] for i in indicators.values())
+    if capped_indicators:
+        tool_meta["log"] += f"{capped_indicators} indicator(s) capped at {_CTI_PER_INDICATOR_CAP} events\n"
     tool_meta["log"] += (
-        f"Aggregated {fields_checked} field(s) — {len(results)} distinct indicator(s)\n"
+        f"{len(indicators)} distinct indicator(s) ({real} external) → {len(results)} timeline detection(s)\n"
     )
     tool_meta["stdout"] += (
         f"IOCs in DB         : {total_iocs}\n"
-        f"Distinct indicators: {len(results)} ({real} external, {len(results) - real} own/private)\n"
+        f"Distinct indicators: {len(indicators)} ({real} external, {len(indicators) - real} own/private)\n"
+        f"Timeline detections: {len(results)} (one per matching event)\n"
         f"Total event hits   : {total_hits}\n"
     )
     return results
