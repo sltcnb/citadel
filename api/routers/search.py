@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import agg_rules
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
@@ -21,13 +23,23 @@ def get_timeline(
     sort_order: str = "asc",
     page: int = 0,
     size: int = Query(100, le=1000),
+    search_after: str | None = None,
 ):
     """
     Paginated cross-artifact timeline for a case.
     Use artifact_type to filter to a specific index (e.g. evtx, prefetch).
+    Pass ``search_after`` (the prior page's ``next_search_after``) to page past
+    the 10k window on large cases.
     """
     if not get_case(case_id):
         raise HTTPException(status_code=404, detail="Case not found")
+
+    sa = None
+    if search_after:
+        try:
+            sa = json.loads(search_after)
+        except (json.JSONDecodeError, ValueError):
+            sa = None
 
     result = es.search_events(
         case_id=case_id,
@@ -38,11 +50,14 @@ def get_timeline(
         size=size,
         sort_field=sort_field,
         sort_order=sort_order,
+        search_after=sa,
     )
 
     hits = result.get("hits", {})
     total = hits.get("total", {}).get("value", 0)
-    events = [h["_source"] for h in hits.get("hits", [])]
+    raw_hits = hits.get("hits", [])
+    events = [h["_source"] for h in raw_hits]
+    next_cursor = raw_hits[-1].get("sort") if raw_hits else None
 
     return {
         "case_id": case_id,
@@ -51,6 +66,7 @@ def get_timeline(
         "size": size,
         "artifact_type": artifact_type,
         "events": events,
+        "next_search_after": json.dumps(next_cursor) if next_cursor else None,
     }
 
 
@@ -77,10 +93,23 @@ def search(
     sort_order: str = "asc",
     page: int = 0,
     size: int = Query(50, le=1000),
+    search_after: str | None = None,
 ):
-    """Full-text + field-level search within a case."""
+    """Full-text + field-level search within a case.
+
+    Pass ``search_after`` (the ``next_search_after`` cursor from a prior page) to
+    page past the 10k window — shallow ``page`` paging only works for the first
+    pages, which matters on multi-million-event cases.
+    """
     if not get_case(case_id):
         raise HTTPException(status_code=404, detail="Case not found")
+
+    sa = None
+    if search_after:
+        try:
+            sa = json.loads(search_after)
+        except (json.JSONDecodeError, ValueError):
+            sa = None
 
     extra_filters = []
     if hostname:
@@ -118,13 +147,15 @@ def search(
         regexp=regexp,
         sort_field=sort_field,
         sort_order=sort_order,
+        search_after=sa,
     )
 
     hits = result.get("hits", {})
     total = hits.get("total", {}).get("value", 0)
-    events = [
-        {"_id": h["_id"], "_index": h["_index"], **h["_source"]} for h in hits.get("hits", [])
-    ]
+    raw_hits = hits.get("hits", [])
+    events = [{"_id": h["_id"], "_index": h["_index"], **h["_source"]} for h in raw_hits]
+    # Cursor for the next page (deep pagination beyond the 10k window).
+    next_cursor = raw_hits[-1].get("sort") if raw_hits else None
 
     return {
         "case_id": case_id,
@@ -133,6 +164,7 @@ def search(
         "page": page,
         "size": size,
         "events": events,
+        "next_search_after": json.dumps(next_cursor) if next_cursor else None,
     }
 
 

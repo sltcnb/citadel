@@ -29,6 +29,12 @@ class CaseUpdate(BaseModel):
     bitlocker_recovery_key: str | None = None
 
 
+class AutoRunUpdate(BaseModel):
+    auto_detections: bool | None = None
+    auto_ioc_match: bool | None = None
+    auto_ai: bool | None = None
+
+
 def _check_company_access(case: dict, company_filter: list[str] | None) -> None:
     """Raise 403 if the user's company filter does not include this case's company."""
     if company_filter is None:
@@ -78,6 +84,23 @@ def get_case(case_id: str, current_user: dict = Depends(get_current_user)):
     case["event_count"] = count_case_events(case_id)
     case["artifact_types"] = list_artifact_types(case_id)
     return case
+
+
+@router.get("/cases/{case_id}/auto-run")
+def get_auto_run(case_id: str, current_user: dict = Depends(get_current_user)):
+    """Which post-ingestion stages auto-run for this case (detections, IOC match, AI)."""
+    if not case_svc.get_case(case_id):
+        raise HTTPException(status_code=404, detail="Case not found")
+    return case_svc.get_auto_run(case_id)
+
+
+@router.put("/cases/{case_id}/auto-run")
+def set_auto_run(case_id: str, body: AutoRunUpdate, current_user: dict = Depends(get_current_user)):
+    """Enable/disable auto-run stages per case. Disabled stages are skipped after
+    each ingest (they can still be run on demand)."""
+    if not case_svc.get_case(case_id):
+        raise HTTPException(status_code=404, detail="Case not found")
+    return case_svc.set_auto_run(case_id, body.model_dump(exclude_none=True))
 
 
 @router.put("/cases/{case_id}")

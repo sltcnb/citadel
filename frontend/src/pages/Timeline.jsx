@@ -340,6 +340,7 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
   const [events, setEvents]               = useState([])
   const [total, setTotal]                 = useState(0)
   const [page, setPage]                   = useState(0)
+  const [hasMore, setHasMore]             = useState(true)  // last page was full → more to load
   const [loading, setLoading]             = useState(false)
   const [selectedTypesStr, setSelectedTypesStr] = useState(_urlTypes || (_hasTypesFilter ? (_sf.selectedTypesStr || '') : ''))
   const [typeDropdownOpen, setTypeDropdownOpen] = useState(false)
@@ -372,6 +373,7 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
   const [showColPicker, setShowColPicker] = useState(false)
   const colPickerRef                      = useRef(null)
   const pageResetRef                      = useRef(true)  // true = next events update is a full reset
+  const searchAfterRef                    = useRef(null)  // cursor for deep pagination (>10k)
 
   const [checkedFoIds, setCheckedFoIds]     = useState(new Set())
   const [refreshing, setRefreshing]         = useState(false)
@@ -585,6 +587,10 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
       const params = { page: pg, size: PAGE_SIZE, sort_field: esSortField, sort_order: sortOrder }
       if (fromTs) params.from = fromTs
       if (toTs)   params.to   = toTs
+      // Deep pagination: past the 10k window, `from` is capped server-side — use
+      // the search_after cursor returned by the previous page instead.
+      if (reset) searchAfterRef.current = null
+      if (!reset && searchAfterRef.current) params.search_after = searchAfterRef.current
       Object.assign(params, facetFilters)
       let effectiveQ = query
       const typesArr = selectedTypesStr ? selectedTypesStr.split(',') : []
@@ -609,6 +615,8 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
         ? await api.search.search(caseId, { ...params, q: effectiveQ })
         : await api.search.timeline(caseId, params)
       setTotal(r.total || 0)
+      searchAfterRef.current = r.next_search_after || null
+      setHasMore((r.events || []).length >= PAGE_SIZE && !!r.next_search_after)
       const incoming = deduplicateEvents(r.events || [])
       if (reset) pageResetRef.current = true
       setEvents(prev => {
@@ -654,12 +662,12 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
   useEffect(() => {
     if (!loaderRef.current) return
     const obs = new IntersectionObserver(entries => {
-      if (entries[0].isIntersecting && !loading && events.length < total)
+      if (entries[0].isIntersecting && !loading && hasMore)
         load(page + 1, false)
     }, { threshold: 0.1 })
     obs.observe(loaderRef.current)
     return () => obs.disconnect()
-  }, [loaderRef.current, loading, events.length, total, page, load])
+  }, [loaderRef.current, loading, hasMore, page, load])
 
   // Close col picker on outside click
   useEffect(() => {

@@ -1,0 +1,11 @@
+id: rare_process
+name: Rare Processes
+description: >-
+  Least-frequently-seen process names/commands in the case — rare execution is a
+  classic lead for malware and living-off-the-land binaries. ES terms
+  aggregation ordered ascending by count (tune with max_count).
+input_extensions: ["*"]
+available: true
+run_on_events: true
+category: Triage
+tags: [process, anomaly, rare, aggregation, triage]

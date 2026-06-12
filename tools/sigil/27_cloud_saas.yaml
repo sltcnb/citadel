@@ -1,0 +1,119 @@
+category: Cloud and SaaS
+# Detections for cloud/SaaS audit logs. The cloud_audit parser emits per-source
+# artifact_types and a rich `message` that embeds the key signal:
+#   aws_cloudtrail   "{eventName} on {eventSource} by {arn} from {ip}"
+#   azure_signin     "Sign-in: {upn} to {app} from {ip} ({failureReason})"
+#   gcp_audit        "{methodName} by {principal} on {resource} from {ip}"
+#   o365_audit       "{Operation} by {UserId} ({Workload}) from {ClientIP}"
+#   okta_system_log  "{displayMessage} — {actor} from {ip} ({outcome})"
+# Matching on message tokens is therefore reliable. Also available top-level:
+# user.name, network.src_ip.
+rules:
+  # ── AWS CloudTrail ──────────────────────────────────────────────────────────
+  - name: AWS — CloudTrail Logging Disabled
+    description: >-
+      CloudTrail was stopped or deleted (StopLogging, DeleteTrail, UpdateTrail) —
+      a classic defense-evasion move to blind logging before further activity.
+    artifact_type: aws_cloudtrail
+    query: 'message:*StopLogging* OR message:*DeleteTrail* OR message:*UpdateTrail*'
+    threshold: 1
+
+  - name: AWS — IAM Credential / User Creation
+    description: >-
+      New IAM user, access key, or login profile created, or a policy attached —
+      persistence / privilege escalation in the account.
+    artifact_type: aws_cloudtrail
+    query: 'message:*CreateUser* OR message:*CreateAccessKey* OR message:*CreateLoginProfile* OR message:*AttachUserPolicy* OR message:*PutUserPolicy*'
+    threshold: 1
+
+  - name: AWS — Security Group Opened to the Internet
+    description: >-
+      Inbound security-group rule authorized (AuthorizeSecurityGroupIngress) —
+      review for 0.0.0.0/0 exposure of sensitive ports.
+    artifact_type: aws_cloudtrail
+    query: 'message:*AuthorizeSecurityGroupIngress*'
+    threshold: 1
+
+  - name: AWS — S3 Bucket Made Public / Policy Changed
+    description: >-
+      Bucket ACL or policy modified (PutBucketAcl, PutBucketPolicy,
+      PutBucketPublicAccessBlock) — potential data-exposure path.
+    artifact_type: aws_cloudtrail
+    query: 'message:*PutBucketPolicy* OR message:*PutBucketAcl* OR message:*PutBucketPublicAccessBlock* OR message:*DeleteBucketPolicy*'
+    threshold: 1
+
+  - name: AWS — Detective Controls Disabled
+    description: >-
+      GuardDuty, Config or CloudWatch detective controls disabled
+      (DeleteDetector, StopConfigurationRecorder, DeleteFlowLogs).
+    artifact_type: aws_cloudtrail
+    query: 'message:*DeleteDetector* OR message:*StopConfigurationRecorder* OR message:*DeleteFlowLogs* OR message:*DeleteTrail*'
+    threshold: 1
+
+  # ── Microsoft 365 ───────────────────────────────────────────────────────────
+  - name: M365 — Suspicious Inbox Rule Created
+    description: >-
+      A mailbox/inbox rule was created or modified (New-InboxRule, Set-InboxRule)
+      — frequently used in BEC to auto-forward or hide attacker replies.
+    artifact_type: o365_audit
+    query: 'message:*New-InboxRule* OR message:*Set-InboxRule* OR message:*New-TransportRule*'
+    threshold: 1
+
+  - name: M365 — Mailbox Delegation / Permission Added
+    description: >-
+      Mailbox permissions granted (Add-MailboxPermission, Add-RecipientPermission)
+      — potential mailbox takeover / persistence.
+    artifact_type: o365_audit
+    query: 'message:*Add-MailboxPermission* OR message:*Add-RecipientPermission*'
+    threshold: 1
+
+  - name: M365 — Audit Logging Changed
+    description: >-
+      Tenant or mailbox audit configuration changed (Set-AdminAuditLogConfig,
+      Set-MailboxAuditBypassAssociation) — defense evasion.
+    artifact_type: o365_audit
+    query: 'message:*Set-AdminAuditLogConfig* OR message:*MailboxAuditBypass*'
+    threshold: 1
+
+  # ── Microsoft Entra / Azure AD ──────────────────────────────────────────────
+  - name: Azure — Sign-in Failure Burst
+    description: >-
+      A burst of failed Entra ID sign-ins (the message carries the failureReason)
+      — password spray / brute force against cloud identities.
+    artifact_type: azure_signin
+    query: 'message:*Sign-in* AND (message:*Invalid* OR message:*failed* OR message:*denied* OR message:*blocked*)'
+    threshold: 10
+
+  # ── Google Cloud ────────────────────────────────────────────────────────────
+  - name: GCP — Service Account Key Created
+    description: >-
+      A service-account key was created (CreateServiceAccountKey) — long-lived
+      credential often used for persistence / exfiltration.
+    artifact_type: gcp_audit
+    query: 'message:*CreateServiceAccountKey* OR message:*CreateServiceAccount*'
+    threshold: 1
+
+  - name: GCP — IAM Policy or Firewall Changed
+    description: >-
+      IAM policy binding or firewall rule modified (SetIamPolicy,
+      firewalls.insert) — privilege grant or network exposure.
+    artifact_type: gcp_audit
+    query: 'message:*SetIamPolicy* OR message:*firewalls.insert* OR message:*firewalls.patch*'
+    threshold: 1
+
+  # ── Okta ────────────────────────────────────────────────────────────────────
+  - name: Okta — MFA Factor Reset or Deactivated
+    description: >-
+      An MFA factor was reset or deactivated (often a precursor to account
+      takeover or attacker-controlled MFA enrollment).
+    artifact_type: okta_system_log
+    query: 'message:*factor* AND (message:*reset* OR message:*deactivate* OR message:*deactivated*)'
+    threshold: 1
+
+  - name: Okta — Authentication Failure Burst
+    description: >-
+      Repeated failed Okta authentication outcomes — credential stuffing /
+      spraying against the IdP.
+    artifact_type: okta_system_log
+    query: 'message:*FAILURE* OR message:*DENIED*'
+    threshold: 10

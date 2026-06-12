@@ -58,19 +58,30 @@ def _run_finalize_chain(case_id: str) -> dict:
     _comms.info("[processor → citadel] case %s — post-ingestion finalize requested", case_id)
     result: dict = {"case_id": case_id, "ioc_match": None, "ai_risk": None}
 
-    # ── 1. CTI IOC-DB match ──────────────────────────────────────────────────
-    try:
-        from routers.cti import match_case_iocs
+    # Per-case auto-run flags — operator can disable heavy stages per case.
+    from services.cases import auto_run_enabled
 
-        result["ioc_match"] = match_case_iocs(case_id)
-        m = result["ioc_match"] or {}
-        _comms.info("[citadel → CTI] case %s — IOC-DB match: %s distinct indicator(s), %s external",
-                    case_id, m.get("indicator_count", 0), m.get("real_count", 0))
-    except Exception as exc:  # noqa: BLE001 — never fail the chain
-        logger.warning("[finalize] case %s — IOC match failed: %s", case_id, exc)
-        result["ioc_match"] = {"error": str(exc)}
+    # ── 1. CTI IOC-DB match ──────────────────────────────────────────────────
+    if not auto_run_enabled(case_id, "auto_ioc_match"):
+        result["ioc_match"] = {"skipped": "auto_ioc_match disabled for this case"}
+        _comms.info("[citadel → CTI] case %s — IOC match skipped (disabled)", case_id)
+    else:
+        try:
+            from routers.cti import match_case_iocs
+
+            result["ioc_match"] = match_case_iocs(case_id)
+            m = result["ioc_match"] or {}
+            _comms.info("[citadel → CTI] case %s — IOC-DB match: %s distinct indicator(s), %s external",
+                        case_id, m.get("indicator_count", 0), m.get("real_count", 0))
+        except Exception as exc:  # noqa: BLE001 — never fail the chain
+            logger.warning("[finalize] case %s — IOC match failed: %s", case_id, exc)
+            result["ioc_match"] = {"error": str(exc)}
 
     # ── 2. AI risk analysis (plan-gated by the ai_assist feature) ────────────
+    if not auto_run_enabled(case_id, "auto_ai"):
+        result["ai_risk"] = {"skipped": "auto_ai disabled for this case"}
+        logger.info("[finalize] case %s — AI risk skipped (disabled)", case_id)
+        return result
     try:
         from license import get_license
 
