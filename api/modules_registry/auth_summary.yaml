@@ -1,0 +1,12 @@
+id: auth_summary
+name: Authentication Summary
+description: >-
+  Aggregate authentication events across the case (Windows 4624/4625, Linux
+  ssh/PAM) to surface brute-force and password-spray — by source IP and by
+  targeted account — plus overall success/failure totals. Runs server-side via
+  Elasticsearch aggregations, so it is fast regardless of event volume.
+input_extensions: ["*"]
+available: true
+run_on_events: true
+category: Triage
+tags: [authentication, brute-force, logon, aggregation, triage]

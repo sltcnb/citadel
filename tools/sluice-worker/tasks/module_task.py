@@ -364,7 +364,7 @@ def run_module(
         # the raw artifacts. Downloading every case file for them was needless
         # MinIO load (and the source of "too many 503 error responses" on big
         # cases). Skip staging for them.
-        _ES_ONLY_MODULES = {"cti_match", "browser_report"}
+        _ES_ONLY_MODULES = {"cti_match", "browser_report", "auth_summary"}
         if module_id in _ES_ONLY_MODULES:
             _push_log(r, run_id, f"Module '{module_id}' scans Elasticsearch — skipping source download")
         else:
@@ -396,14 +396,14 @@ def run_module(
         runner = RUNNERS.get(module_id)
         _mod_meta = {}  # populated for custom modules; holds ARTIFACT_TYPE / INDEX_SKIP
 
-        if module_id in ("cti_match", "browser_report"):
-            # Special runners: query ES events directly — need case_id
-            if module_id == "cti_match":
-                results = _run_cti_match(run_id, case_id, work_dir, sources_dir, params, tool_meta)
-            else:
-                results = _run_browser_report(
-                    run_id, case_id, work_dir, sources_dir, params, tool_meta
-                )
+        _ES_RUNNERS = {
+            "cti_match": _run_cti_match,
+            "browser_report": _run_browser_report,
+            "auth_summary": _run_auth_summary,
+        }
+        if module_id in _ES_RUNNERS:
+            # Special runners: query ES events directly — uniform signature.
+            results = _ES_RUNNERS[module_id](run_id, case_id, work_dir, sources_dir, params, tool_meta)
         elif runner is not None:
             # Built-in module — run directly in this process
             # Inject case_company so modules can apply company-scoped filtering (e.g. YARA)
@@ -3385,6 +3385,121 @@ def _run_cti_match(
         f"IOCs in DB         : {total_iocs}\n"
         f"Distinct indicators: {len(results)} ({real} external, {len(results) - real} own/private)\n"
         f"Total event hits   : {total_hits}\n"
+    )
+    return results
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Authentication Summary (ES-aggregation triage — brute force / password spray)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_AUTH_FAILED_QUERY = {"bool": {"should": [
+    {"term": {"evtx.event_id": 4625}},
+    {"match_phrase": {"message": "failed password"}},
+    {"match_phrase": {"message": "authentication failure"}},
+    {"match_phrase": {"message": "failed login"}},
+    {"match_phrase": {"message": "invalid user"}},
+], "minimum_should_match": 1}}
+
+_AUTH_SUCCESS_QUERY = {"bool": {"should": [
+    {"term": {"evtx.event_id": 4624}},
+    {"match_phrase": {"message": "accepted password"}},
+    {"match_phrase": {"message": "session opened"}},
+], "minimum_should_match": 1}}
+
+
+def _auth_agg(index: str, query: dict, field: str, size: int = 100) -> list[tuple]:
+    """Terms aggregation of a field filtered by `query`, with latest event.
+    Returns [(value, count, latest_ts, latest_host), …]; falls back to .keyword."""
+    for fld in (field, f"{field}.keyword"):
+        body = {"size": 0, "query": query, "aggs": {"v": {
+            "terms": {"field": fld, "size": size},
+            "aggs": {"latest": {"top_hits": {"size": 1,
+                "sort": [{"timestamp": {"order": "desc"}}], "_source": ["timestamp", "host"]}}},
+        }}}
+        try:
+            resp = _cti_es_search(index, body)
+        except Exception:
+            continue
+        buckets = resp.get("aggregations", {}).get("v", {}).get("buckets")
+        if buckets is None:
+            continue
+        out = []
+        for b in buckets:
+            k = b.get("key")
+            if k is None or k == "":
+                continue
+            hh = b.get("latest", {}).get("hits", {}).get("hits", [])
+            src = hh[0].get("_source", {}) if hh else {}
+            host = src.get("host", {})
+            out.append((str(k), int(b.get("doc_count", 0)), src.get("timestamp", ""),
+                        host.get("hostname", "") if isinstance(host, dict) else ""))
+        return out
+    return []
+
+
+def _auth_total(index: str, query: dict) -> int:
+    try:
+        resp = _cti_es_search(index, {"size": 0, "track_total_hits": True, "query": query})
+        t = resp.get("hits", {}).get("total", {})
+        return t.get("value", 0) if isinstance(t, dict) else int(t or 0)
+    except Exception:
+        return 0
+
+
+def _run_auth_summary(run_id, case_id, work_dir, sources_dir, params, tool_meta):
+    """Aggregate authentication events (Windows 4624/4625 + Linux ssh/PAM) to
+    surface brute-force / password-spray — by source IP and by targeted account.
+    ES-side aggregation, so it is fast regardless of event volume."""
+    index = f"fo-case-{case_id}-*"
+    try:
+        min_fail = int(params.get("min_failures", 10))
+    except Exception:
+        min_fail = 10
+
+    by_src = _auth_agg(index, _AUTH_FAILED_QUERY, "network.src_ip")
+    by_user = _auth_agg(index, _AUTH_FAILED_QUERY, "user.name")
+    total_fail = _auth_total(index, _AUTH_FAILED_QUERY)
+    total_ok = _auth_total(index, _AUTH_SUCCESS_QUERY)
+
+    results: list[dict] = []
+    for ip, cnt, ts, host in by_src:
+        if cnt >= min_fail:
+            results.append({
+                "id": str(uuid.uuid4()), "timestamp": ts,
+                "level": "high", "level_int": LEVEL_INT.get("high", 4),
+                "rule_title": f"Possible brute force from {ip} ({cnt} failed logons)",
+                "computer": host,
+                "details_raw": json.dumps({"source_ip": ip, "failed_count": cnt, "kind": "brute_force_source"}),
+            })
+    for user, cnt, ts, host in by_user:
+        if cnt >= min_fail:
+            results.append({
+                "id": str(uuid.uuid4()), "timestamp": ts,
+                "level": "medium", "level_int": LEVEL_INT.get("medium", 3),
+                "rule_title": f"Account targeted: {user} ({cnt} failed logons)",
+                "computer": host,
+                "details_raw": json.dumps({"user": user, "failed_count": cnt, "kind": "brute_force_user"}),
+            })
+    results.append({
+        "id": str(uuid.uuid4()), "timestamp": "",
+        "level": "informational", "level_int": LEVEL_INT.get("informational", 1),
+        "rule_title": f"Authentication summary — {total_fail} failed, {total_ok} successful logon(s)",
+        "computer": "",
+        "details_raw": json.dumps({
+            "failed_total": total_fail, "success_total": total_ok,
+            "top_failed_sources": [{"ip": i, "count": c} for i, c, _, _ in by_src[:10]],
+            "top_failed_users": [{"user": u, "count": c} for u, c, _, _ in by_user[:10]],
+            "kind": "summary",
+        }),
+    })
+
+    bf = sum(1 for r in results if r["level"] in ("high", "medium"))
+    tool_meta["log"] += f"Auth summary: {total_fail} failed / {total_ok} ok; {bf} brute-force finding(s)\n"
+    tool_meta["stdout"] += (
+        f"Failed logons       : {total_fail}\n"
+        f"Successful logons   : {total_ok}\n"
+        f"Brute-force findings: {bf}\n"
     )
     return results
 

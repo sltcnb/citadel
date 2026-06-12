@@ -1302,9 +1302,9 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
           </div>
 
           {/* ── Facet chips ──────────────────────────── */}
-          {['by_hostname','by_username','by_event_id','by_channel'].map(facetKey => {
-            const filterKey = { by_hostname:'hostname', by_username:'username', by_event_id:'event_id', by_channel:'channel' }[facetKey]
-            const label     = { by_hostname:'Host',    by_username:'User',     by_event_id:'Event ID', by_channel:'Channel' }[facetKey]
+          {['by_hostname','by_username','by_event_id','by_channel','by_src_ip','by_dest_ip','by_status_code','by_http_method','by_domain'].map(facetKey => {
+            const filterKey = { by_hostname:'hostname', by_username:'username', by_event_id:'event_id', by_channel:'channel', by_src_ip:'src_ip', by_dest_ip:'dest_ip', by_status_code:'status_code', by_http_method:'http_method', by_domain:'domain' }[facetKey]
+            const label     = { by_hostname:'Host',    by_username:'User',     by_event_id:'Event ID', by_channel:'Channel', by_src_ip:'Source IP', by_dest_ip:'Dest IP', by_status_code:'HTTP Status', by_http_method:'Method', by_domain:'Domain' }[facetKey]
             const buckets   = facets[facetKey]?.buckets || []
             if (!buckets.length) return null
             return (

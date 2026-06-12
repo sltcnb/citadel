@@ -377,6 +377,13 @@ def get_search_facets(
             "by_username": {"terms": {"field": "user.name.keyword", "size": 20}},
             "by_event_id": {"terms": {"field": "evtx.event_id", "size": 30}},
             "by_channel": {"terms": {"field": "evtx.channel.keyword", "size": 20}},
+            # Network / web facets — empty (and hidden) for evtx-only cases, but
+            # make the filter panel useful for access-log / network data.
+            "by_src_ip": {"terms": {"field": "network.src_ip", "size": 20}},
+            "by_dest_ip": {"terms": {"field": "network.dst_ip", "size": 20}},
+            "by_status_code": {"terms": {"field": "http.status_code", "size": 20}},
+            "by_http_method": {"terms": {"field": "http.method.keyword", "size": 10}},
+            "by_domain": {"terms": {"field": "dns.question.name.keyword", "size": 20}},
             "events_over_time": events_over_time,
         },
     }
