@@ -2597,6 +2597,11 @@ function AggregatePanel({ caseId, query, fieldMap, state, setState, result, load
             <p className="font-mono break-words">{result.error}</p>
           </div>
         )}
+        {result?.timed_out && !result.error && (
+          <div className="border border-amber-200 bg-amber-50 rounded-md p-2 text-[11px] text-amber-700 mb-2">
+            Partial results — the aggregation hit the time limit on this case's volume. Narrow with a search filter or a date range for a complete answer.
+          </div>
+        )}
         {result && !result.error && <AggResult result={result} />}
       </div>
     </div>
