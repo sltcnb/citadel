@@ -297,9 +297,11 @@ def search_events(
             {"_doc": {"order": "asc"}},
         ],
         "_source": {"excludes": ["raw.xml"]},
-        # Exact hit count for the current query — counting is cheap in ES (no
-        # fetch), and an accurate "N results" matters more than the marginal cost.
-        "track_total_hits": True,
+        # Exact hit count when there's a real query/filter (bounded result set —
+        # the user wants the true "N results"). For an unfiltered whole-case view
+        # (match_all over millions of events), an exact count would force ES to
+        # count everything on every page → cap it to stay fast.
+        "track_total_hits": True if (must_clauses or filter_clauses) else 100000,
     }
     # search_after = cursor pagination (deep, O(1)) — required past the 10k
     # max_result_window. Falls back to shallow `from` only for the first pages.

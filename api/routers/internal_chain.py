@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Header, HTTPException
 
@@ -83,7 +84,33 @@ def _run_finalize_chain(case_id: str) -> dict:
 
             analysis = ai_analyze_case(case_id)
             result["ai_risk"] = analysis
-            # Persist so the timeline/dashboard can show the auto-computed risk.
+            # Index the AI risk as a timeline event (artifact_type: ai_risk) so it
+            # appears in the timeline like everything else. Deterministic _id →
+            # the latest analysis upserts instead of stacking duplicates.
+            try:
+                from services.elasticsearch import _request as _esr
+                lvl = (analysis.get("risk_level") or "info").lower()
+                _esr("POST", f"/fo-case-{case_id}-ai_risk/_doc/ai_risk-{case_id}?refresh=true", {
+                    "fo_id": f"ai_risk-{case_id}",
+                    "case_id": case_id,
+                    "artifact_type": "ai_risk",
+                    "timestamp": datetime.now(UTC).isoformat(),
+                    "timestamp_desc": "AI Risk Analysis",
+                    "message": f"AI risk {analysis.get('risk_score', '?')}/100 "
+                               f"({analysis.get('risk_level', 'unknown')}) — "
+                               f"{(analysis.get('executive_summary') or '')[:200]}",
+                    "ai_risk": {
+                        "level": lvl,
+                        "risk_score": analysis.get("risk_score"),
+                        "risk_level": analysis.get("risk_level"),
+                        "rule_title": "AI Risk Analysis",
+                        "executive_summary": analysis.get("executive_summary", ""),
+                    },
+                    "tags": [], "is_flagged": False,
+                })
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("[finalize] case %s — AI risk indexing failed: %s", case_id, exc)
+            # Persist so the dashboard can show the auto-computed risk.
             try:
                 get_redis().set(
                     f"fo:case_ai_risk:{case_id}",

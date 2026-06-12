@@ -1305,7 +1305,7 @@ function ModuleRunCard({
     hindsight:           'browser',
     ole_analysis:        'oletools',
     volatility3:         'volatility',
-    cti_match:           null,    // not indexed in ES
+    cti_match:           'cti_match',  // now indexed as cti_match events
     strings:             null,    // too noisy, not indexed
     strings_analysis:    null,    // too noisy, not indexed
   }

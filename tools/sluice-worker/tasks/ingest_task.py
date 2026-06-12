@@ -218,6 +218,41 @@ def _run_library_rules(r: redis.Redis, case_id: str) -> None:
     }
     r.set(rk.case_alert_run(case_id), json.dumps(run))
     r.expire(rk.case_alert_run(case_id), 7 * 86400)
+
+    # Index each fired rule as a `detection` timeline event so detections are
+    # searchable in the timeline like everything else. Deterministic _id
+    # (det-<case>-<rule>) → re-runs upsert instead of duplicating.
+    if matches:
+        det_events = []
+        for m in matches:
+            rule = m["rule"]
+            rid = rule.get("id") or rule.get("name", "")
+            sev = (rule.get("sigma_level") or "medium").lower()
+            ts = ""
+            if m.get("sample_events"):
+                ts = m["sample_events"][0].get("timestamp", "")
+            det_events.append({
+                "fo_id": f"det-{case_id}-{rid}",
+                "case_id": case_id,
+                "artifact_type": "detection",
+                "timestamp": ts or datetime.now(UTC).isoformat(),
+                "timestamp_desc": "Detection Rule",
+                "message": f"{rule.get('name', 'rule')} — {m['match_count']} match(es)",
+                "detection": {
+                    "rule_name": rule.get("name", ""),
+                    "rule_title": rule.get("name", ""),
+                    "category": rule.get("category", ""),
+                    "level": sev,
+                    "match_count": m["match_count"],
+                    "query": rule.get("query", ""),
+                },
+                "tags": [], "is_flagged": False,
+            })
+        try:
+            ESBulkIndexer(ELASTICSEARCH_URL).bulk_index(case_id, det_events)
+        except Exception as exc:
+            logger.warning("[detections] case %s — indexing detections failed: %s", case_id, exc)
+
     logger.info(
         "[detections] case %s — auto-ran %d rules, %d matches", case_id, len(rules), len(matches)
     )
