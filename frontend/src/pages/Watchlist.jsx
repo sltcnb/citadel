@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Plus, X, Eye, Loader2, AlertTriangle, ExternalLink, ListChecks,
-  Info, Globe, Hash, Terminal, Code, Network, ShieldAlert,
+  Info, Globe, Hash, Terminal, Code, Network, ShieldAlert, Check, ShieldCheck,
 } from 'lucide-react'
 import { api } from '../api/client'
 import { PageShell, PageHeader } from '../components/shared/PageShell'
@@ -71,6 +71,10 @@ export default function Watchlist() {
   const [adding,    setAdding]   = useState(false)
   const [running,   setRunning]  = useState(false)
   const [lastSweep, setLastSweep] = useState(null)
+  const [wlHosts, setWlHosts]    = useState('')
+  const [wlIps, setWlIps]        = useState('')
+  const [wlSaving, setWlSaving]  = useState(false)
+  const [wlMsg, setWlMsg]        = useState(null)
   const navigate = useNavigate()
 
   const draftKind = useMemo(
@@ -86,7 +90,23 @@ export default function Watchlist() {
     } catch { setEntries([]) }
     finally { setLoading(false) }
   }
-  useEffect(() => { load() }, [])
+  useEffect(() => { load(); loadWhitelist() }, [])
+
+  function loadWhitelist() {
+    api.watchlist.getWhitelist()
+      .then(w => { setWlHosts((w.hostnames || []).join('\n')); setWlIps((w.ips || []).join('\n')) })
+      .catch(() => {})
+  }
+  async function saveWhitelist() {
+    setWlSaving(true); setWlMsg(null)
+    const split = s => s.split(/[\s,]+/).map(x => x.trim()).filter(Boolean)
+    try {
+      const w = await api.watchlist.setWhitelist(split(wlHosts), split(wlIps))
+      setWlHosts((w.hostnames || []).join('\n')); setWlIps((w.ips || []).join('\n'))
+      setWlMsg({ ok: true, text: `Saved ${(w.hostnames?.length || 0) + (w.ips?.length || 0)} asset(s).` })
+    } catch (e) { setWlMsg({ ok: false, text: e.message }) }
+    finally { setWlSaving(false) }
+  }
 
   async function add(e) {
     e.preventDefault()
@@ -236,6 +256,42 @@ export default function Watchlist() {
           </div>
         )}
       </form>
+
+      {/* ── Company asset whitelist ───────────────────────────────────────── */}
+      <div className="card p-4 space-y-3">
+        <div className="flex items-center gap-2">
+          <ShieldCheck size={15} className="text-brand-accent" />
+          <h2 className="font-semibold text-brand-text text-sm">Company Asset Whitelist</h2>
+        </div>
+        <p className="text-xs text-gray-500">
+          Your organisation's own hostnames and IP addresses. Watchlist sweeps exclude events
+          on these assets, so your own infrastructure never generates watchlist noise.
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-1 block">Hostnames</label>
+            <textarea value={wlHosts} onChange={e => setWlHosts(e.target.value)}
+              placeholder={"DC01\nWEB-PROD-01\nfileserver.corp.local"} rows={4}
+              className="input text-xs font-mono resize-y w-full" />
+          </div>
+          <div>
+            <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-1 block">IP addresses</label>
+            <textarea value={wlIps} onChange={e => setWlIps(e.target.value)}
+              placeholder={"10.0.0.5\n192.168.1.10\n203.0.113.7"} rows={4}
+              className="input text-xs font-mono resize-y w-full" />
+          </div>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <button onClick={saveWhitelist} disabled={wlSaving} className="btn-primary text-xs">
+            {wlSaving ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Save Whitelist
+          </button>
+          {wlMsg && (
+            <span className={`text-xs flex items-center gap-1 ${wlMsg.ok ? 'text-green-600' : 'text-red-600'}`}>
+              {wlMsg.ok ? <Check size={12} /> : <AlertTriangle size={12} />} {wlMsg.text}
+            </span>
+          )}
+        </div>
+      </div>
 
       {/* ── Sweep status banner ───────────────────────────────────────────── */}
       {hotCount > 0 && (

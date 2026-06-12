@@ -597,13 +597,34 @@ def _run_watchlist(r: redis.Redis, case_id: str) -> None:
             continue
     if not entries:
         return
+    # Company asset whitelist — exclude own hostnames/IPs so auto-sweep matches
+    # the manual sweep (no watchlist noise on our own infra).
+    not_clause = ""
+    try:
+        wlraw = r.get("fo:watchlist:whitelist")
+        wl = json.loads(wlraw) if wlraw else {}
+        hosts = [str(h).strip() for h in wl.get("hostnames", []) if str(h).strip()]
+        ips = [str(i).strip() for i in wl.get("ips", []) if str(i).strip()]
+        parts = []
+        if hosts:
+            parts.append("host.hostname:(" + " ".join(f'"{h}"' for h in hosts) + ")")
+        if ips:
+            j = " ".join(f'"{i}"' for i in ips)
+            parts += [f"network.src_ip:({j})", f"network.dst_ip:({j})", f"host.ip:({j})"]
+        if parts:
+            not_clause = "NOT (" + " OR ".join(parts) + ")"
+    except Exception:
+        not_clause = ""
     hits = []
     for e in entries:
+        _q = e.get("query", "")
+        if not_clause and _q:
+            _q = f"({_q}) AND {not_clause}"
         body = {
             "size": 0,
             "query": {
                 "query_string": {
-                    "query": e.get("query", ""),
+                    "query": _q,
                     "default_operator": "AND",
                     "fields": ["*"],
                     "allow_leading_wildcard": True,
