@@ -1,0 +1,11 @@
+id: network_summary
+name: Network Summary
+description: >-
+  Top network talkers — source IPs, destination IPs and destination ports —
+  computed via Elasticsearch aggregations. Fast 'who talked to whom' triage,
+  independent of event volume.
+input_extensions: ["*"]
+available: true
+run_on_events: true
+category: Triage
+tags: [network, top-talkers, aggregation, triage]

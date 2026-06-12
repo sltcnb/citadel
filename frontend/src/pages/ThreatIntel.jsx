@@ -287,6 +287,7 @@ export default function ThreatIntel() {
   const [matchTypes, setMatchTypes] = useState([])      // [] = all types
   const [showOwn, setShowOwn]       = useState(false)   // show own/private indicators
   const [drill, setDrill]           = useState({})      // indicator key -> {loading, events, total}
+  const [autoRun, setAutoRun]       = useState(null)    // per-case auto-run stage flags
 
   // Clear IOCs
   const [clearing, setClearing]     = useState(false)
@@ -296,9 +297,32 @@ export default function ThreatIntel() {
   const [ownSaving, setOwnSaving]   = useState(false)
   const [ownMsg, setOwnMsg]         = useState(null)
 
+  // Allowlist (known-good values suppressed from matches)
+  const [allowlist, setAllowlist]   = useState('')
+  const [allowSaving, setAllowSaving] = useState(false)
+  const [allowMsg, setAllowMsg]     = useState(null)
+
   // ── Load data ──────────────────────────────────────────────────────────────
 
-  useEffect(() => { loadFeeds(); loadStats(); loadCases(); loadOwnNets() }, [])
+  useEffect(() => { loadFeeds(); loadStats(); loadCases(); loadOwnNets(); loadAllowlist() }, [])
+
+  function loadAllowlist() {
+    api.cti.getAllowlist()
+      .then(r => setAllowlist(Object.values(r.allowlist || {}).flat().join('\n')))
+      .catch(() => {})
+  }
+
+  async function saveAllowlist() {
+    setAllowSaving(true); setAllowMsg(null)
+    const values = allowlist.split(/[\s,]+/).map(s => s.trim()).filter(Boolean)
+    try {
+      const r = await api.cti.setAllowlist(values)
+      setAllowlist(Object.values(r.allowlist || {}).flat().join('\n'))
+      setAllowMsg({ ok: true, text: `Saved ${r.count ?? 0} known-good value(s).` })
+    } catch (err) {
+      setAllowMsg({ ok: false, text: err.message })
+    } finally { setAllowSaving(false) }
+  }
 
   function loadOwnNets() {
     api.cti.getOwnNetworks()
@@ -447,6 +471,17 @@ export default function ThreatIntel() {
 
   function toggleMatchType(t) {
     setMatchTypes(prev => prev.includes(t) ? prev.filter(x => x !== t) : [...prev, t])
+  }
+
+  useEffect(() => {
+    if (!matchCaseId) { setAutoRun(null); return }
+    api.cases.getAutoRun(matchCaseId).then(setAutoRun).catch(() => setAutoRun(null))
+  }, [matchCaseId])
+
+  async function toggleAuto(k) {
+    const next = { ...autoRun, [k]: !autoRun[k] }
+    setAutoRun(next)
+    try { await api.cases.setAutoRun(matchCaseId, { [k]: next[k] }) } catch { /* ignore */ }
   }
 
   async function toggleDrill(ind) {
@@ -624,6 +659,38 @@ export default function ThreatIntel() {
         </div>
       </div>
 
+      {/* ── Allowlist (known-good values) ────────────────────────────────────── */}
+      <div className="mb-8">
+        <h2 className="text-sm font-semibold text-brand-text mb-3">Allowlist (Known-Good)</h2>
+        <div className="card p-4 space-y-3">
+          <p className="text-xs text-gray-500">
+            Known-good values to suppress from IOC matches — one per line. IPs, domains,
+            URLs, hashes, emails, filenames or process names (auto-classified). Matches on
+            these are kept but downgraded to <strong>"info"</strong> (like own/private), so
+            real threats stand out. Use it to mute baseline noise (your own infra,
+            monitoring agents, common false positives).
+          </p>
+          <textarea
+            value={allowlist}
+            onChange={e => setAllowlist(e.target.value)}
+            placeholder={"8.8.8.8\nmonitoring.example.com\nd41d8cd98f00b204e9800998ecf8427e\nMsMpEng.exe"}
+            rows={4}
+            className="input text-xs font-mono resize-y"
+          />
+          <div className="flex items-center gap-2 flex-wrap">
+            <button onClick={saveAllowlist} disabled={allowSaving} className="btn-primary text-xs">
+              {allowSaving ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+              Save Allowlist
+            </button>
+            {allowMsg && (
+              <span className={`text-xs flex items-center gap-1 ${allowMsg.ok ? 'text-green-600' : 'text-red-600'}`}>
+                {allowMsg.ok ? <CheckCircle size={12} /> : <AlertTriangle size={12} />} {allowMsg.text}
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+
       {/* ── IOC Browser ──────────────────────────────────────────────────────── */}
       <div className="mb-8">
         <div className="flex items-center justify-between mb-3">
@@ -755,6 +822,22 @@ export default function ThreatIntel() {
               Run IOC Match
             </button>
           </div>
+
+          {/* Per-case auto-run: which post-ingestion stages run automatically */}
+          {autoRun && (
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-[10px] uppercase tracking-wide text-gray-400 mr-1">Auto-run on ingest</span>
+              {[['auto_detections', 'Detections'], ['auto_ioc_match', 'IOC match'], ['auto_ai', 'AI risk']].map(([k, lbl]) => (
+                <button key={k} onClick={() => toggleAuto(k)}
+                  className={`badge text-[10px] border ${autoRun[k]
+                    ? 'bg-green-50 text-green-700 border-green-200'
+                    : 'bg-gray-100 text-gray-400 border-gray-200'}`}
+                  title="Toggle whether this stage runs automatically after each ingest for this case">
+                  {autoRun[k] ? '✓ ' : '✕ '}{lbl}
+                </button>
+              ))}
+            </div>
+          )}
 
           {/* Type filter — narrow which IOC types to check (faster) */}
           <div className="flex items-center gap-1.5 flex-wrap">

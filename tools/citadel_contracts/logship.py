@@ -107,9 +107,17 @@ def _async_handler(target: logging.Handler) -> logging.Handler:
 
 
 def attach_redis_logs(service: str, redis_client, *, level: int = logging.INFO) -> None:
-    """Attach a non-blocking RedisLogHandler to the root logger (plus stdout)."""
-    logging.getLogger().addHandler(
-        _async_handler(RedisLogHandler(service, redis_client, level=level)))
+    """Attach a non-blocking RedisLogHandler to the root logger (plus stdout).
+
+    Also lowers the root logger level to `level` when it is currently higher
+    (e.g. uvicorn's default WARNING) — otherwise INFO records are filtered at the
+    logger before ever reaching the handler, so the api/processor streams stay
+    empty while a tool's own dedicated logger (set to INFO) still ships.
+    """
+    root = logging.getLogger()
+    if root.level == logging.NOTSET or root.level > level:
+        root.setLevel(level)
+    root.addHandler(_async_handler(RedisLogHandler(service, redis_client, level=level)))
 
 
 # Per-tool log streams: each tool's activity goes to citadel:logs:<tool> so the

@@ -1,0 +1,100 @@
+category: Linux / Unix
+# Detections for Linux/Unix artifacts: syslog (auth.log), shell_history,
+# audit_event (auditd), linux_triage, package_event.
+# Fields: message, process.command_line, process.name, network.src_ip, user.name.
+# NOTE: Elasticsearch query_string splits on whitespace, so signature tokens are
+# kept space-free (single tokens / wildcards) to match reliably.
+rules:
+  - name: Linux — SSH Brute Force (Failed Passwords)
+    description: >-
+      Repeated "Failed password" entries from sshd — password brute-force or
+      spraying against SSH. Tune threshold to the host's baseline.
+    artifact_type: syslog
+    query: 'message:*Failed*password* OR message:*authentication*failure*'
+    threshold: 10
+
+  - name: Linux — SSH Login From Many Invalid Users
+    description: >-
+      Many "invalid user" sshd entries — username enumeration / spraying.
+    artifact_type: syslog
+    query: 'message:*invalid*user*'
+    threshold: 10
+
+  - name: Linux — Sudo Authentication Failure
+    description: >-
+      Failed sudo authentication — a user attempting privilege escalation
+      without valid credentials.
+    artifact_type: ""
+    query: 'message:*sudo* AND message:*authentication*failure*'
+    threshold: 3
+
+  - name: Linux — Reverse Shell Indicator
+    description: >-
+      Command line contains a reverse-shell primitive (/dev/tcp, /dev/udp,
+      mkfifo, pty.spawn). Strong indicator of interactive C2.
+    artifact_type: ""
+    query: 'process.command_line:*/dev/tcp/* OR process.command_line:*/dev/udp/* OR process.command_line:*mkfifo* OR process.command_line:*pty.spawn* OR message:*/dev/tcp/*'
+    threshold: 1
+
+  - name: Linux — Download and Execute (curl/wget piped to shell)
+    description: >-
+      A download piped straight into a shell (|sh, |bash) — common dropper /
+      install-script execution pattern.
+    artifact_type: ""
+    query: 'process.command_line:*|sh* OR process.command_line:*|bash* OR process.command_line:*curl*|* OR process.command_line:*wget*|*'
+    threshold: 1
+
+  - name: Linux — Shell History Tampering
+    description: >-
+      Shell history disabled or wiped (history -c, unset HISTFILE, removing or
+      truncating .bash_history) — anti-forensics.
+    artifact_type: ""
+    query: 'process.command_line:*history*-c* OR process.command_line:*HISTFILE* OR process.command_line:*.bash_history* OR message:*.bash_history*'
+    threshold: 1
+
+  - name: Linux — Security Tooling Disabled
+    description: >-
+      SELinux/AppArmor/firewall/auditd disabled (setenforce 0, ufw disable,
+      iptables flush, stopping auditd/firewalld) — defense evasion.
+    artifact_type: ""
+    query: 'process.command_line:*setenforce*0* OR process.command_line:*ufw*disable* OR process.command_line:*iptables*-F* OR process.command_line:*auditd*stop* OR process.command_line:*firewalld*stop*'
+    threshold: 1
+
+  - name: Linux — SUID Privilege Escalation
+    description: >-
+      A setuid bit set on a file via chmod (4755/6755/2755) — a common
+      privilege-escalation / persistence technique.
+    artifact_type: ""
+    query: 'process.command_line:*chmod*4755* OR process.command_line:*chmod*6755* OR process.command_line:*chmod*4777* OR process.command_line:*chmod*2755*'
+    threshold: 1
+
+  - name: Linux — Sensitive Credential File Access
+    description: >-
+      Reading /etc/shadow or copying SSH keys — credential access.
+    artifact_type: ""
+    query: 'process.command_line:*/etc/shadow* OR process.command_line:*id_rsa* OR process.command_line:*/.ssh/* OR message:*/etc/shadow*'
+    threshold: 1
+
+  - name: Linux — Cron / Scheduled Task Persistence
+    description: >-
+      Modifying cron (crontab edits, writes under /etc/cron*, /var/spool/cron) —
+      scheduled-task persistence.
+    artifact_type: ""
+    query: 'process.command_line:*crontab* OR process.command_line:*/etc/cron* OR process.command_line:*/var/spool/cron* OR message:*/etc/cron.d/*'
+    threshold: 1
+
+  - name: Linux — User or Group Account Created
+    description: >-
+      A new local account or group was created (useradd, adduser, groupadd) —
+      potential persistence / backdoor account.
+    artifact_type: ""
+    query: 'process.command_line:*useradd* OR process.command_line:*adduser* OR process.command_line:*groupadd* OR message:*new*user* OR message:*useradd*'
+    threshold: 1
+
+  - name: Linux — Kernel Module Loaded
+    description: >-
+      A kernel module was inserted (insmod/modprobe) — can indicate a rootkit or
+      tampering with kernel-level controls.
+    artifact_type: ""
+    query: 'process.command_line:*insmod* OR process.command_line:*modprobe* OR message:*insmod*'
+    threshold: 1

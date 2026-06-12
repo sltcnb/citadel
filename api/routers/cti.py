@@ -1147,6 +1147,43 @@ def set_own_networks(body: dict):
     return {"cidrs": valid, "reflagged": reflagged}
 
 
+# ── Allowlist endpoints (known-good values suppressed from IOC matches) ──────
+
+@router.get("/cti/allowlist")
+def get_allowlist(case_id: str | None = Query(None)):
+    """Allowlisted known-good values, grouped by type. Merges global + case scope."""
+    r = _redis()
+    merged = _load_allowlist(r, case_id)
+    return {"allowlist": {t: sorted(merged.get(t, [])) for t in _ALLOWLIST_TYPES if merged.get(t)},
+            "scope": case_id or "_global"}
+
+
+@router.put("/cti/allowlist")
+def set_allowlist(body: dict):
+    """Replace the allowlist for a scope. Body: {values: ["8.8.8.8", "evil-but-known.com", ...],
+    case_id?: "..."}. Each value is auto-classified by type. Use case_id to scope to one case;
+    omit for the global allowlist."""
+    r = _redis()
+    case_id = body.get("case_id")
+    scope = case_id or "_global"
+    values = body.get("values") or []
+    grouped: dict[str, list[str]] = {}
+    for v in values:
+        v = str(v).strip()
+        if not v:
+            continue
+        grouped.setdefault(_classify_allowlist_value(v), []).append(v.lower())
+    # Replace every type set for this scope (so removals take effect).
+    for t in _ALLOWLIST_TYPES:
+        key = _allowlist_key(scope, t)
+        r.delete(key)
+        if grouped.get(t):
+            r.sadd(key, *set(grouped[t]))
+    total = sum(len(set(v)) for v in grouped.values())
+    return {"scope": scope, "count": total,
+            "allowlist": {t: sorted(set(v)) for t, v in grouped.items()}}
+
+
 # ── Case IOC matching ────────────────────────────────────────────────────────
 
 # Fields to check against each IOC type when scanning case events
@@ -1210,6 +1247,50 @@ _MSG_EXTRACTORS: dict[str, re.Pattern] = {
 # match call is itself expensive; the DB changes slowly, so cache briefly.
 _IOC_LOOKUP_CACHE: dict = {"at": 0.0, "data": None}
 _IOC_LOOKUP_TTL = 60.0
+
+
+# ── Allowlists (known-good values suppressed from matches) ───────────────────
+_ALLOWLIST_TYPES = ("ip", "domain", "url", "hash", "email", "filename", "process")
+
+
+def _allowlist_key(scope: str, t: str) -> str:
+    return f"fo:allowlist:{scope}:{t}"
+
+
+def _classify_allowlist_value(v: str) -> str:
+    """Best-effort type for a free-form allowlist entry (so the UI can stay one box)."""
+    v = v.strip()
+    low = v.lower()
+    try:
+        ipaddress.ip_address(v)
+        return "ip"
+    except ValueError:
+        pass
+    if "@" in v:
+        return "email"
+    if re.fullmatch(r"[a-f0-9]{32}|[a-f0-9]{40}|[a-f0-9]{64}", low):
+        return "hash"
+    if low.startswith(("http://", "https://")):
+        return "url"
+    if "." in v and "/" not in v and " " not in v:
+        return "domain"
+    return "process"
+
+
+def _load_allowlist(r, case_id: str | None = None) -> dict[str, set]:
+    """{type -> set(lowercased values)} merged from the global + case scope."""
+    out: dict[str, set] = {}
+    scopes = ["_global"] + ([case_id] if case_id else [])
+    for t in _ALLOWLIST_TYPES:
+        vals: set = set()
+        for scope in scopes:
+            try:
+                vals |= {str(v).lower() for v in r.smembers(_allowlist_key(scope, t))}
+            except Exception:
+                pass
+        if vals:
+            out[t] = vals
+    return out
 
 
 def _ioc_lookups(r) -> dict[str, dict[str, dict]]:
@@ -1294,6 +1375,7 @@ def match_case_iocs(case_id: str, types: str | None = Query(None)):
     requested = [t.strip() for t in types.split(",")] if types else list(IOC_TYPES)
     sel_types = [t for t in requested if t in ioc_sets]
     index = f"fo-case-{case_id}-*"
+    allow = _load_allowlist(r, case_id)  # known-good → suppressed (severity info)
 
     # value_lower -> aggregated indicator
     indicators: dict[str, dict] = {}
@@ -1318,6 +1400,7 @@ def match_case_iocs(case_id: str, types: str | None = Query(None)):
                 else:
                     is_own = bool(obj.get("is_own"))
                     is_private = bool(obj.get("is_private"))
+                    is_allow = value.lower() in allow.get(ioc_type, ())
                     indicators[key] = {
                         "ioc_type": ioc_type,
                         "ioc_value": obj.get("value", value),
@@ -1330,9 +1413,10 @@ def match_case_iocs(case_id: str, types: str | None = Query(None)):
                         "tags": obj.get("tags", ""),
                         "first_seen": obj.get("first_seen", ""),
                         "last_seen": obj.get("last_seen", ""),
-                        "severity": "info" if (is_own or is_private) else "high",
+                        "severity": "info" if (is_own or is_private or is_allow) else "high",
                         "is_own": is_own,
                         "is_private": is_private,
+                        "allowlisted": is_allow,
                     }
 
     out = sorted(

@@ -364,7 +364,8 @@ def run_module(
         # the raw artifacts. Downloading every case file for them was needless
         # MinIO load (and the source of "too many 503 error responses" on big
         # cases). Skip staging for them.
-        _ES_ONLY_MODULES = {"cti_match", "browser_report", "auth_summary"}
+        _ES_ONLY_MODULES = {"cti_match", "browser_report", "auth_summary",
+                            "network_summary", "rare_process"}
         if module_id in _ES_ONLY_MODULES:
             _push_log(r, run_id, f"Module '{module_id}' scans Elasticsearch — skipping source download")
         else:
@@ -400,6 +401,8 @@ def run_module(
             "cti_match": _run_cti_match,
             "browser_report": _run_browser_report,
             "auth_summary": _run_auth_summary,
+            "network_summary": _run_network_summary,
+            "rare_process": _run_rare_process,
         }
         if module_id in _ES_RUNNERS:
             # Special runners: query ES events directly — uniform signature.
@@ -3300,6 +3303,18 @@ def _run_cti_match(
         wanted = {t.strip() for t in (raw_types if isinstance(raw_types, list) else str(raw_types).split(","))}
         sel_types = [t for t in sel_types if t in wanted]
 
+    # Allowlist (known-good values) — global + case scope; suppressed to "info".
+    allow: dict[str, set] = {}
+    for t in _CTI_IOC_TYPES:
+        vals: set = set()
+        for scope in ("_global", case_id):
+            try:
+                vals |= {str(v).lower() for v in r.smembers(f"fo:allowlist:{scope}:{t}")}
+            except Exception:
+                pass
+        if vals:
+            allow[t] = vals
+
     # value_lower -> aggregated indicator
     indicators: dict[str, dict] = {}
     fields_checked = 0
@@ -3322,6 +3337,7 @@ def _run_cti_match(
                     continue
                 is_own = bool(obj.get("is_own"))
                 is_private = bool(obj.get("is_private"))
+                is_allow = value.lower() in allow.get(ioc_type, ())
                 indicators[key] = {
                     "ioc_type": ioc_type,
                     "ioc_value": obj.get("value", value),
@@ -3333,7 +3349,8 @@ def _run_cti_match(
                     "obj": obj,
                     "is_own": is_own,
                     "is_private": is_private,
-                    "sev": "info" if (is_own or is_private) else "high",
+                    "allowlisted": is_allow,
+                    "sev": "info" if (is_own or is_private or is_allow) else "high",
                 }
 
     results: list[dict] = []
@@ -3501,6 +3518,95 @@ def _run_auth_summary(run_id, case_id, work_dir, sources_dir, params, tool_meta)
         f"Successful logons   : {total_ok}\n"
         f"Brute-force findings: {bf}\n"
     )
+    return results
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Network Summary & Rare Process (ES-aggregation triage modules)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _es_top_terms(index: str, field: str, size: int = 15, order_asc: bool = False) -> list[tuple]:
+    """Top (or rarest, if order_asc) distinct values of a field, with counts.
+    Falls back to .keyword for analyzed text fields."""
+    order = {"_count": "asc"} if order_asc else {"_count": "desc"}
+    for fld in (field, f"{field}.keyword"):
+        body = {"size": 0, "query": {"exists": {"field": fld}},
+                "aggs": {"v": {"terms": {"field": fld, "size": size, "order": order}}}}
+        try:
+            resp = _cti_es_search(index, body)
+        except Exception:
+            continue
+        buckets = resp.get("aggregations", {}).get("v", {}).get("buckets")
+        if buckets:
+            return [(str(b["key"]), int(b.get("doc_count", 0))) for b in buckets if b.get("key") not in (None, "")]
+    return []
+
+
+def _es_doc_count(index: str, field: str) -> int:
+    try:
+        resp = _cti_es_search(index, {"size": 0, "track_total_hits": True,
+                                      "query": {"exists": {"field": field}}})
+        t = resp.get("hits", {}).get("total", {})
+        return t.get("value", 0) if isinstance(t, dict) else int(t or 0)
+    except Exception:
+        return 0
+
+
+def _run_network_summary(run_id, case_id, work_dir, sources_dir, params, tool_meta):
+    """Top network talkers — source IPs, destination IPs and destination ports —
+    via ES aggregations. Fast triage for 'who talked to whom' at any scale."""
+    index = f"fo-case-{case_id}-*"
+    src = _es_top_terms(index, "network.src_ip", size=15)
+    dst = _es_top_terms(index, "network.dst_ip", size=15)
+    dport = _es_top_terms(index, "network.dst_port", size=15)
+
+    results: list[dict] = []
+    for ip, c in src[:10]:
+        results.append({"id": str(uuid.uuid4()), "timestamp": "", "level": "informational",
+            "level_int": LEVEL_INT.get("informational", 1),
+            "rule_title": f"Top source IP: {ip} ({c} events)", "computer": "",
+            "details_raw": json.dumps({"ip": ip, "count": c, "kind": "top_src"})})
+    for ip, c in dst[:10]:
+        results.append({"id": str(uuid.uuid4()), "timestamp": "", "level": "informational",
+            "level_int": LEVEL_INT.get("informational", 1),
+            "rule_title": f"Top destination IP: {ip} ({c} events)", "computer": "",
+            "details_raw": json.dumps({"ip": ip, "count": c, "kind": "top_dst"})})
+    results.append({"id": str(uuid.uuid4()), "timestamp": "", "level": "informational",
+        "level_int": LEVEL_INT.get("informational", 1),
+        "rule_title": f"Network summary — {len(src)} source / {len(dst)} dest IP(s)", "computer": "",
+        "details_raw": json.dumps({"kind": "summary",
+            "top_sources": [{"ip": i, "count": c} for i, c in src[:15]],
+            "top_dests": [{"ip": i, "count": c} for i, c in dst[:15]],
+            "top_dest_ports": [{"port": p, "count": c} for p, c in dport[:15]]})})
+
+    tool_meta["log"] += f"Network summary: {len(src)} src, {len(dst)} dst, {len(dport)} dport\n"
+    tool_meta["stdout"] += f"Source IPs : {len(src)}\nDest IPs   : {len(dst)}\nDest ports : {len(dport)}\n"
+    return results
+
+
+def _run_rare_process(run_id, case_id, work_dir, sources_dir, params, tool_meta):
+    """Least-frequent process names/commands — rare execution is a classic lead
+    for malware / living-off-the-land. ES terms agg ordered ascending by count."""
+    index = f"fo-case-{case_id}-*"
+    try:
+        max_count = int(params.get("max_count", 5))  # 'rare' = seen <= N times
+    except Exception:
+        max_count = 5
+    rare = _es_top_terms(index, "process.name", size=50, order_asc=True)
+    if not rare:
+        rare = _es_top_terms(index, "process.executable", size=50, order_asc=True)
+
+    results: list[dict] = []
+    for name, c in rare:
+        if c > max_count:
+            continue
+        results.append({"id": str(uuid.uuid4()), "timestamp": "", "level": "low",
+            "level_int": LEVEL_INT.get("low", 2),
+            "rule_title": f"Rare process: {name} ({c} occurrence{'s' if c != 1 else ''})",
+            "computer": "",
+            "details_raw": json.dumps({"process": name, "count": c, "kind": "rare_process"})})
+    tool_meta["log"] += f"Rare process: {len(results)} process(es) seen <= {max_count} time(s)\n"
+    tool_meta["stdout"] += f"Rare processes (<= {max_count}): {len(results)}\n"
     return results
 
 

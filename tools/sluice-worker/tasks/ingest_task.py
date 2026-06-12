@@ -541,7 +541,11 @@ def maybe_run_detections(self, case_id: str, _attempts: int = 0):
         return {"status": "deferred", "attempt": _attempts + 1}
     # Idle — fire library rules + watchlist sweep in one pass.
     try:
-        _run_library_rules(r, case_id)
+        # Per-case auto-run flag: operator can disable detection auto-run.
+        if r.hget(f"case:{case_id}", "auto_detections") == "0":
+            logger.info("[detections] case %s — auto-detections disabled, skipping", case_id)
+        else:
+            _run_library_rules(r, case_id)
         try:
             _run_watchlist(r, case_id)
         except Exception as exc:
