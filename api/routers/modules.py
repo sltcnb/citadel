@@ -120,6 +120,8 @@ def _load_modules_from_registry() -> list[dict]:
                 "available": bool(data.get("available", True)),
                 "category": data.get("category", ""),
                 "tags": data.get("tags") or [],
+                # ES-only modules query Elasticsearch directly (no source files).
+                "run_on_events": bool(data.get("run_on_events", False)),
             }
             if not module["available"]:
                 module["unavailable_reason"] = data.get("unavailable_reason", "Unavailable")
