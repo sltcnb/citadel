@@ -35,8 +35,10 @@ class Settings:
     # ── CORS ───────────────────────────────────────────────────────────────
     # Comma-separated list of allowed origins, or * for wildcard.
     # Example: ALLOWED_ORIGINS=https://citadel.example.com,https://citadel-dev.example.com
+    # Default CLOSED: the UI is served same-origin (behind Traefik), so no CORS
+    # is needed. Set ALLOWED_ORIGINS explicitly only for a separate-origin UI.
     ALLOWED_ORIGINS: list = [
-        o.strip() for o in os.getenv("ALLOWED_ORIGINS", "*").split(",") if o.strip()
+        o.strip() for o in os.getenv("ALLOWED_ORIGINS", "").split(",") if o.strip()
     ]
 
     # ── Licensing ──────────────────────────────────────────────────────────

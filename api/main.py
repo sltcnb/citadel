@@ -132,10 +132,14 @@ app = FastAPI(
 
 @app.exception_handler(Exception)
 async def _unhandled_exception(request: Request, exc: Exception) -> JSONResponse:
-    logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+    # Log full detail server-side; return only a generic message + correlation id
+    # to the client (don't leak stack traces, paths, dependency versions).
+    import uuid as _uuid
+    corr = _uuid.uuid4().hex[:12]
+    logger.exception("Unhandled exception [%s] on %s %s", corr, request.method, request.url.path)
     return JSONResponse(
         status_code=500,
-        content={"detail": f"Internal server error: {type(exc).__name__}: {exc}"},
+        content={"detail": "Internal server error", "correlation_id": corr},
     )
 
 
@@ -409,6 +413,11 @@ async def _on_startup():
                 "SECURITY: ADMIN_PASSWORD is set to the default value. "
                 "Change it immediately after first login."
             )
+    if settings.MINIO_ACCESS_KEY == "minioadmin" and settings.MINIO_SECRET_KEY == "minioadmin":
+        logger.warning(
+            "SECURITY: MinIO is using default credentials (minioadmin/minioadmin). "
+            "Set MINIO_ACCESS_KEY / MINIO_SECRET_KEY to protect evidence storage."
+        )
     _bootstrap_admin()
     asyncio.create_task(cti.start_cti_scheduler())
     asyncio.create_task(_metrics_background_loop())

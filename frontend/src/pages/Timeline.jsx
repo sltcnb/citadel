@@ -1804,15 +1804,23 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
 
         {/* Events table */}
         <div className="flex-1 overflow-y-auto overflow-x-auto">
-          {events.length === 0 && !loading && (
+          {events.length === 0 && !loading && query && (
             <div className="flex flex-col items-center justify-center h-48 text-center">
               <Search size={28} className="text-gray-500 mb-3" />
-              <p className="text-gray-500 text-sm">
-                {query ? 'No events match your search.' : 'No events yet.'}
-              </p>
-              <p className="text-gray-500 text-xs mt-1">
-                {query ? 'Try a different query.' : 'Upload forensics files using the Ingest button.'}
-              </p>
+              <p className="text-gray-500 text-sm">No events match your search.</p>
+              <p className="text-gray-500 text-xs mt-1">Try a broader query, or clear filters.</p>
+            </div>
+          )}
+          {events.length === 0 && !loading && !query && (
+            <div className="flex flex-col items-center justify-center py-12 text-center max-w-md mx-auto">
+              <Search size={28} className="text-brand-accent mb-3" />
+              <p className="text-brand-text text-sm font-semibold">No events yet — here's the workflow</p>
+              <ol className="text-left text-xs text-gray-600 mt-3 space-y-2">
+                <li><span className="font-semibold text-brand-text">1. Ingest</span> — upload evidence (EVTX, PCAP, logs, disk/memory images) with the <span className="font-medium">Ingest</span> button. Parsing starts automatically.</li>
+                <li><span className="font-semibold text-brand-text">2. Detect</span> — detections, IOC matches and AI risk run automatically after ingest (toggle per case in the Threat Intel panel).</li>
+                <li><span className="font-semibold text-brand-text">3. Explore</span> — filter with facet chips (no Lucene needed), or use the <span className="font-medium">Aggregate</span> presets (Top hosts, Activity over time…).</li>
+                <li><span className="font-semibold text-brand-text">4. Triage &amp; report</span> — flag/pin events, then build a report.</li>
+              </ol>
             </div>
           )}
 
@@ -2432,6 +2440,28 @@ function AggregatePanel({ caseId, query, fieldMap, state, setState, result, load
     <div className="mt-2 border border-gray-200 rounded-xl bg-white shadow-card-md overflow-hidden fade-in">
       {/* Controls */}
       <div className="px-3 py-2.5 border-b border-gray-100 bg-gray-50 space-y-2">
+        {/* One-click presets — fill the form, then hit Run. No field knowledge needed. */}
+        <div className="flex items-center gap-1 flex-wrap">
+          <span className="text-[10px] uppercase tracking-wide text-gray-400 mr-0.5">Quick</span>
+          {[
+            { label: 'Top hosts',       fields: ['host.hostname'],  agg: 'terms', size: 20 },
+            { label: 'Top users',       fields: ['user.name'],      agg: 'terms', size: 20 },
+            { label: 'Top source IPs',  fields: ['network.src_ip'], agg: 'terms', size: 20 },
+            { label: 'Top processes',   fields: ['process.name'],   agg: 'terms', size: 20 },
+            { label: 'By artifact',     fields: ['artifact_type'],  agg: 'terms', size: 20 },
+            { label: 'Activity / time', fields: ['timestamp'],      agg: 'date_histogram', interval: '1d' },
+            { label: 'Distinct users',  fields: ['user.name'],      agg: 'cardinality' },
+            { label: 'Distinct IPs',    fields: ['network.src_ip'], agg: 'cardinality' },
+          ].map(p => (
+            <button key={p.label}
+              onClick={() => setState(s => ({ ...s, fields: p.fields, agg: p.agg, subCard: [],
+                size: p.size || s.size, interval: p.interval || s.interval }))}
+              className="text-[10px] px-1.5 py-0.5 rounded border border-gray-200 bg-white text-gray-600 hover:border-brand-accent hover:text-brand-accent"
+              title="Fill the aggregation, then press Run">
+              {p.label}
+            </button>
+          ))}
+        </div>
         <div className="flex items-center gap-2 flex-wrap">
           <Sigma size={13} className="text-gray-500" />
           <span className="text-xs font-semibold text-brand-text">Aggregate</span>

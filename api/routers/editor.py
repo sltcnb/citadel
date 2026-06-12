@@ -18,8 +18,16 @@ import re
 import tempfile
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+
+from auth.dependencies import require_admin
+
+# Writing built-in processor/ingester/module source = arbitrary code that the
+# worker imports and executes (RCE). The router is developer-or-admin, but these
+# specific writes are admin-only — `developer` can edit custom modules, not the
+# engine itself.
+_admin_write = [Depends(require_admin)]
 
 router = APIRouter(tags=["editor"])
 
@@ -255,7 +263,7 @@ def get_builtin_ingester(name: str):
     return {"name": name, "content": _read(path), "builtin": True}
 
 
-@router.put("/editor/builtin-ingesters/{name:path}")
+@router.put("/editor/builtin-ingesters/{name:path}", dependencies=_admin_write)
 def save_builtin_ingester(name: str, body: FileWrite):
     """Overwrite a built-in plugin file on the plugins PVC."""
     path = _safe_plugin(PLUGINS_DIR, name, PLUGIN_SUFFIX)
@@ -307,7 +315,7 @@ def get_builtin_module_file(name: str):
     return {"name": name, "content": path.read_text(encoding="utf-8"), "builtin": True}
 
 
-@router.put("/editor/builtin-modules/{name}")
+@router.put("/editor/builtin-modules/{name}", dependencies=_admin_write)
 def save_builtin_module_file(name: str, body: FileWrite):
     """Overwrite a module YAML registry file."""
     _ensure(MODULES_REG_DIR)
@@ -368,7 +376,7 @@ def get_processor_file(name: str):
     return {"name": name, "content": path.read_text(encoding="utf-8"), "builtin": True}
 
 
-@router.put("/editor/processor-files/{name:path}")
+@router.put("/editor/processor-files/{name:path}", dependencies=_admin_write)
 def save_processor_file(name: str, body: FileWrite):
     """Overwrite a processor Python file."""
     path = _safe_processor(name)
