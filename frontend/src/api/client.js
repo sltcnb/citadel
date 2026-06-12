@@ -225,6 +225,8 @@ export const api = {
     delete:   (id) => request('DELETE', `/watchlist/${id}`),
     evaluate: () => request('POST',   '/watchlist/evaluate'),
     caseAutoRun: (caseId) => request('GET', `/cases/${caseId}/watchlist/auto-run`),
+    getWhitelist: () => request('GET', '/watchlist/whitelist'),
+    setWhitelist: (hostnames, ips) => request('PUT', '/watchlist/whitelist', { hostnames, ips }),
   },
 
   notes: {
