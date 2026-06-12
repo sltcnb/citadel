@@ -26,6 +26,12 @@ class Settings:
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRE_HOURS: int = int(os.getenv("JWT_EXPIRE_HOURS", "8"))
 
+    # ── Sigma integration (opt-in) ─────────────────────────────────────────
+    # When false: Sigma HQ community rules are not auto-seeded and the Sigma
+    # parse/import/sync endpoints return 503. Native + custom rules are
+    # unaffected — the platform works fully without Sigma.
+    SIGMA_ENABLED: bool = os.getenv("SIGMA_ENABLED", "true").lower() not in ("false", "0", "no")
+
     # ── CORS ───────────────────────────────────────────────────────────────
     # Comma-separated list of allowed origins, or * for wildcard.
     # Example: ALLOWED_ORIGINS=https://citadel.example.com,https://citadel-dev.example.com

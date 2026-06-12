@@ -51,23 +51,36 @@ _FEED_MAX_TOTAL = 2_000_000    # hard safety ceiling per pull
 
 
 def _validate_feed_url(url: str) -> None:
-    """Raise HTTPException if URL scheme is not http/https or resolves to a private IP."""
+    """Block SSRF: refuse non-http(s), localhost/.local, and any hostname that
+    RESOLVES to a private/reserved/loopback/link-local address (not just literal
+    IPs). Defeats internal-service / cloud-metadata (169.254.169.254) targeting."""
+    import socket
+
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
         raise HTTPException(
             status_code=400, detail=f"Feed URL must use http or https, got '{parsed.scheme}'"
         )
-    hostname = parsed.hostname or ""
+    hostname = (parsed.hostname or "").strip().lower()
+    if not hostname or hostname in ("localhost",) or hostname.endswith(".local") or hostname.endswith(".internal"):
+        raise HTTPException(status_code=400, detail="Feed URL host is not allowed")
+    # Resolve every address the host maps to and reject if ANY is non-public.
     try:
-        addr = ipaddress.ip_address(hostname)
-        for net in _PRIVATE_NETWORKS:
-            if addr in net:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Feed URL must not point to a private/reserved IP address",
-                )
-    except ValueError:
-        pass
+        infos = socket.getaddrinfo(hostname, None)
+    except OSError:
+        raise HTTPException(status_code=400, detail=f"Feed URL host does not resolve: {hostname}")
+    for info in infos:
+        ip = info[4][0]
+        try:
+            addr = ipaddress.ip_address(ip)
+        except ValueError:
+            continue
+        if (addr.is_private or addr.is_loopback or addr.is_link_local
+                or addr.is_reserved or addr.is_multicast or addr.is_unspecified):
+            raise HTTPException(
+                status_code=400,
+                detail="Feed URL must not resolve to a private/reserved/internal address",
+            )
 
 
 # ── Redis key layout ─────────────────────────────────────────────────────────
@@ -602,6 +615,7 @@ def _misp_fetch(feed: dict) -> list:
     except ImportError:
         raise HTTPException(status_code=500, detail="'requests' package not installed")
     base_url = feed.get("url", "").rstrip("/")
+    _validate_feed_url(base_url)  # SSRF guard
     api_key = feed.get("api_key", "")
     headers: dict[str, str] = {
         "Authorization": api_key,
@@ -626,7 +640,7 @@ def _misp_fetch(feed: dict) -> list:
                 payload["tags"] = [collection]
             resp = _req.post(
                 f"{base_url}/attributes/restSearch",
-                json=payload, headers=headers, timeout=120, verify=False,
+                json=payload, headers=headers, timeout=120,
             )
             resp.raise_for_status()
             attrs = resp.json().get("response", {}).get("Attribute", [])
@@ -722,6 +736,7 @@ def _yeti_fetch(feed: dict) -> list:
     except ImportError:
         raise HTTPException(status_code=500, detail="'requests' package not installed")
     base_url = feed.get("url", "").rstrip("/")
+    _validate_feed_url(base_url)  # SSRF guard
     api_key = feed.get("api_key", "")
     headers: dict[str, str] = {"Content-Type": "application/json"}
     if api_key:
