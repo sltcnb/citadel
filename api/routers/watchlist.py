@@ -28,6 +28,34 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["watchlist"])
 
 _KEY = "fo:watchlist"  # Redis hash: id → JSON entry
+_WL_KEY = "fo:watchlist:whitelist"  # JSON {hostnames:[], ips:[]} — company's own assets
+
+
+def _get_whitelist(r) -> dict:
+    raw = r.get(_WL_KEY)
+    try:
+        d = json.loads(raw) if raw else {}
+    except (json.JSONDecodeError, TypeError):
+        d = {}
+    return {"hostnames": d.get("hostnames", []), "ips": d.get("ips", [])}
+
+
+def _whitelist_not_clause(r) -> str:
+    """A Lucene NOT clause excluding the company's own hostnames/IPs, so watchlist
+    hits never fire on known-good company assets. Empty when no whitelist set."""
+    wl = _get_whitelist(r)
+    parts = []
+    hosts = [h.strip() for h in wl.get("hostnames", []) if h.strip()]
+    ips = [i.strip() for i in wl.get("ips", []) if i.strip()]
+    if hosts:
+        joined = " ".join(f'"{h}"' for h in hosts)
+        parts.append(f"host.hostname:({joined})")
+    if ips:
+        joined = " ".join(f'"{i}"' for i in ips)
+        parts.append(f"network.src_ip:({joined})")
+        parts.append(f"network.dst_ip:({joined})")
+        parts.append(f"host.ip:({joined})")
+    return f"NOT ({' OR '.join(parts)})" if parts else ""
 
 
 def _build_query(kind: str, value: str) -> str:
@@ -108,6 +136,26 @@ def get_case_watchlist_run(case_id: str, _: dict = Depends(get_current_user)):
     return json.loads(raw.decode() if isinstance(raw, bytes) else raw)
 
 
+@router.get("/watchlist/whitelist")
+def get_watchlist_whitelist(_: dict = Depends(get_current_user)):
+    """The company's own hostnames + IPs, excluded from watchlist matching."""
+    return _get_whitelist(get_redis())
+
+
+@router.put("/watchlist/whitelist", dependencies=[Depends(require_analyst_or_admin)])
+def set_watchlist_whitelist(body: dict, _: dict = Depends(get_current_user)):
+    """Set the company asset whitelist. Body: {hostnames: [...], ips: [...]}.
+    Watchlist evaluation excludes events on these assets so your own infra
+    never generates watchlist noise."""
+    r = get_redis()
+    wl = {
+        "hostnames": [str(h).strip() for h in (body.get("hostnames") or []) if str(h).strip()],
+        "ips": [str(i).strip() for i in (body.get("ips") or []) if str(i).strip()],
+    }
+    r.set(_WL_KEY, json.dumps(wl))
+    return wl
+
+
 @router.post("/watchlist/evaluate", dependencies=[Depends(require_analyst_or_admin)])
 def evaluate_watchlist(_: dict = Depends(get_current_user)):
     """Run every watchlist entry against every case. Returns per-IOC hit counts."""
@@ -130,14 +178,16 @@ def evaluate_watchlist(_: dict = Depends(get_current_user)):
     cases = case_svc.list_cases()
     case_id_set = {c["case_id"] for c in cases}
     by_id = {c["case_id"]: c for c in cases}
+    not_clause = _whitelist_not_clause(r)  # exclude company's own assets
 
     results = []
     for e in entries:
+        q = f'({e["query"]}) AND {not_clause}' if not_clause else e["query"]
         agg = {
             "size": 0,
             "query": {
                 "query_string": {
-                    "query": e["query"],
+                    "query": q,
                     "default_operator": "AND",
                     "fields": ["*"],
                     "allow_leading_wildcard": True,
