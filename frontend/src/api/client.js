@@ -416,7 +416,9 @@ export const api = {
     iocStats:     () => request('GET', '/cti/iocs/stats'),
     clearIOCs:    () => request('DELETE', '/cti/iocs'),
     purgeExpired: () => request('POST', '/cti/iocs/purge-expired'),
-    matchCase:    (caseId) => request('POST', `/cases/${caseId}/cti/match`),
+    matchCase:    (caseId, types) => request('POST', withParams(`/cases/${caseId}/cti/match`, types ? { types } : {})),
+    indicatorEvents: (caseId, type, value, limit = 25) =>
+      request('GET', withParams(`/cases/${caseId}/cti/indicator-events`, { type, value, limit })),
     getOwnNetworks: () => request('GET', '/cti/own-networks'),
     setOwnNetworks: (cidrs) => request('PUT', '/cti/own-networks', { cidrs }),
   },
