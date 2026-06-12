@@ -2,17 +2,15 @@ import { useState, useEffect } from 'react'
 import { Loader2, Search, Copy, ChevronDown, ChevronRight, Download, Globe, X, Play, AlertTriangle, CheckCircle, ShieldCheck } from 'lucide-react'
 import { api } from '../api/client'
 
-// ── Threat-intel matching (aggregation-based; moved here from the CTI page) ───
-// Matches the case against the IOC database via ES aggregations → distinct
-// enriched indicators (value, event count, feed, severity). Clicking an
-// indicator pivots the timeline to that value via onSearch (reliable nav).
+// ── Threat-intel matching ─────────────────────────────────────────────────────
+// Runs the cti_match MODULE (one matching path) — results are indexed as
+// `cti_match` timeline events, so they PERSIST and are searchable. The button
+// launches the module; "View in timeline" pivots to artifact_type:cti_match.
 function ThreatMatch({ caseId, onSearch }) {
-  const [matching, setMatching] = useState(false)
-  const [result, setResult]     = useState(null)
-  const [types, setTypes]       = useState([])
-  const [showOwn, setShowOwn]   = useState(false)
-  const [autoRun, setAutoRun]   = useState(null)
-  const [open, setOpen]         = useState(true)
+  const [status, setStatus]   = useState(null)   // null | 'running' | 'started' | {error}
+  const [types, setTypes]     = useState([])
+  const [autoRun, setAutoRun] = useState(null)
+  const [open, setOpen]       = useState(true)
 
   useEffect(() => {
     api.cases.getAutoRun(caseId).then(setAutoRun).catch(() => setAutoRun(null))
@@ -25,26 +23,27 @@ function ThreatMatch({ caseId, onSearch }) {
   }
 
   async function run() {
-    setMatching(true); setResult(null)
+    setStatus('running')
     try {
-      const r = await api.cti.matchCase(caseId, types.length ? types.join(',') : undefined)
-      setResult(r)
-    } catch (e) { setResult({ error: e.message }) }
-    finally { setMatching(false) }
+      const params = types.length ? { types: types.join(',') } : {}
+      await api.modules.createRun(caseId, { module_id: 'cti_match', source_files: [], params })
+      setStatus('started')
+    } catch (e) { setStatus({ error: e.message }) }
   }
-
-  const inds = result?.indicators || []
-  const shown = showOwn ? inds : inds.filter(i => i.severity === 'high')
 
   return (
     <div className="border border-gray-100 rounded-lg overflow-hidden">
       <button onClick={() => setOpen(v => !v)}
         className="w-full flex items-center justify-between px-3 py-2 bg-gray-50 hover:bg-gray-100 text-xs">
-        <span className="font-semibold text-fuchsia-600 flex items-center gap-1.5"><ShieldCheck size={11} /> Threat Intel Matches</span>
+        <span className="font-semibold text-fuchsia-600 flex items-center gap-1.5"><ShieldCheck size={11} /> Threat Intel Matching</span>
         {open ? <ChevronDown size={11} className="text-gray-400" /> : <ChevronRight size={11} className="text-gray-400" />}
       </button>
       {open && (
         <div className="p-3 space-y-2">
+          <p className="text-[10px] text-gray-500">
+            Matches the case against the IOC database. Results are indexed as
+            <span className="font-mono text-fuchsia-600"> cti_match</span> events — persistent and searchable in the timeline.
+          </p>
           <div className="flex items-center gap-1.5 flex-wrap">
             {['ip', 'domain', 'url', 'hash', 'email', 'filename'].map(t => {
               const on = types.length === 0 || types.includes(t)
@@ -53,14 +52,14 @@ function ThreatMatch({ caseId, onSearch }) {
                   className={`badge text-[10px] border ${on ? 'bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200' : 'bg-gray-100 text-gray-400 border-gray-200'}`}>{t}</button>
               )
             })}
-            <button onClick={run} disabled={matching} className="btn-primary text-[11px] py-0.5 ml-auto">
-              {matching ? <Loader2 size={11} className="animate-spin" /> : <Play size={11} />} Match
+            <button onClick={run} disabled={status === 'running'} className="btn-primary text-[11px] py-0.5 ml-auto">
+              {status === 'running' ? <Loader2 size={11} className="animate-spin" /> : <Play size={11} />} Run match
             </button>
           </div>
 
           {autoRun && (
             <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-[9px] uppercase tracking-wide text-gray-400">Auto-run</span>
+              <span className="text-[9px] uppercase tracking-wide text-gray-400">Auto-run on ingest</span>
               {[['auto_detections', 'Detections'], ['auto_ioc_match', 'IOC'], ['auto_ai', 'AI']].map(([k, lbl]) => (
                 <button key={k} onClick={() => toggleAuto(k)}
                   className={`badge text-[9px] border ${autoRun[k] ? 'bg-green-50 text-green-700 border-green-200' : 'bg-gray-100 text-gray-400 border-gray-200'}`}>
@@ -70,37 +69,16 @@ function ThreatMatch({ caseId, onSearch }) {
             </div>
           )}
 
-          {result?.error && <p className="text-[11px] text-red-500">{result.error}</p>}
-          {result && !result.error && inds.length === 0 && (
-            <p className="text-[11px] text-green-700 flex items-center gap-1"><CheckCircle size={11} /> No IOC matches.</p>
+          {status?.error && <p className="text-[11px] text-red-500 flex items-center gap-1"><AlertTriangle size={11} /> {status.error}</p>}
+          {status === 'started' && (
+            <p className="text-[11px] text-green-700 flex items-center gap-1">
+              <CheckCircle size={11} /> Match started — results appear in the timeline + Module Runs shortly.
+            </p>
           )}
-          {result && shown.length > 0 && (
-            <>
-              <div className="flex items-center gap-2 text-[11px]">
-                <span className="text-amber-700 flex items-center gap-1"><AlertTriangle size={11} />{result.real_count} external</span>
-                <span className="text-gray-400">{result.total_event_hits?.toLocaleString()} hits</span>
-                {result.own_or_private_count > 0 && (
-                  <label className="flex items-center gap-1 text-gray-500 ml-auto cursor-pointer">
-                    <input type="checkbox" checked={showOwn} onChange={e => setShowOwn(e.target.checked)} />
-                    +{result.own_or_private_count} own/private
-                  </label>
-                )}
-              </div>
-              <div className="space-y-0.5 max-h-72 overflow-y-auto">
-                {shown.map(m => (
-                  <button key={`${m.ioc_type}:${m.ioc_value}`} onClick={() => onSearch(`"${m.ioc_value}"`)}
-                    title="Pivot the timeline to this indicator"
-                    className={`w-full flex items-center gap-1.5 px-2 py-1 text-[11px] text-left rounded hover:bg-fuchsia-50 ${m.severity === 'high' ? 'border-l-2 border-red-400' : 'border-l-2 border-gray-200'}`}>
-                    <span className="badge text-[9px] bg-gray-100 text-gray-500 border border-gray-200">{m.ioc_type}</span>
-                    <span className="font-mono text-gray-800 truncate" title={m.ioc_value}>{m.ioc_value}</span>
-                    {m.threat_type && <span className="text-[9px] text-gray-400">{m.threat_type}</span>}
-                    <span className="ml-auto text-gray-500 tabular-nums flex-shrink-0">×{m.event_count?.toLocaleString()}</span>
-                    <Search size={9} className="text-gray-400 flex-shrink-0" />
-                  </button>
-                ))}
-              </div>
-            </>
-          )}
+          <button onClick={() => onSearch('artifact_type:cti_match')}
+            className="text-[11px] text-fuchsia-600 hover:underline inline-flex items-center gap-1">
+            <Search size={10} /> View matches in timeline
+          </button>
         </div>
       )}
     </div>

@@ -61,23 +61,12 @@ def _run_finalize_chain(case_id: str) -> dict:
     # Per-case auto-run flags — operator can disable heavy stages per case.
     from services.cases import auto_run_enabled
 
-    # ── 1. CTI IOC-DB match ──────────────────────────────────────────────────
-    if not auto_run_enabled(case_id, "auto_ioc_match"):
-        result["ioc_match"] = {"skipped": "auto_ioc_match disabled for this case"}
-        _comms.info("[citadel → CTI] case %s — IOC match skipped (disabled)", case_id)
-    else:
-        try:
-            from routers.cti import match_case_iocs
+    # NB: CTI IOC matching now runs as the cti_match MODULE in the worker chain
+    # (persistent — indexed as cti_match timeline events), BEFORE this finalize is
+    # triggered. One matching path; the AI step below sees those indexed matches.
+    result["ioc_match"] = {"note": "runs as the cti_match module (persisted to timeline)"}
 
-            result["ioc_match"] = match_case_iocs(case_id)
-            m = result["ioc_match"] or {}
-            _comms.info("[citadel → CTI] case %s — IOC-DB match: %s distinct indicator(s), %s external",
-                        case_id, m.get("indicator_count", 0), m.get("real_count", 0))
-        except Exception as exc:  # noqa: BLE001 — never fail the chain
-            logger.warning("[finalize] case %s — IOC match failed: %s", case_id, exc)
-            result["ioc_match"] = {"error": str(exc)}
-
-    # ── 2. AI risk analysis (plan-gated by the ai_assist feature) ────────────
+    # ── AI risk analysis (plan-gated by the ai_assist feature) ───────────────
     if not auto_run_enabled(case_id, "auto_ai"):
         result["ai_risk"] = {"skipped": "auto_ai disabled for this case"}
         logger.info("[finalize] case %s — AI risk skipped (disabled)", case_id)

@@ -1668,6 +1668,32 @@ def _gather_case_context(case_id: str) -> dict:
     except Exception:
         pass
 
+    # Concrete threat signal — high/critical detections + external CTI matches,
+    # read from the INDEXED events (cti_match, hayabusa, etc.). Without this the
+    # LLM only saw raw event counts and always returned a near-zero risk score.
+    findings = {"high_severity": 0, "cti_high": 0, "by_artifact": []}
+    try:
+        from services.elasticsearch import _request as _esf
+        hi_q = ("hayabusa.level:high OR hayabusa.level:critical OR evtx.level:high "
+                "OR evtx.level:critical OR level:high OR level:critical OR cti_match.level:high")
+        res = _esf("POST", f"/fo-case-{case_id}-*/_search", {
+            "size": 0, "track_total_hits": True,
+            "query": {"query_string": {"query": hi_q, "analyze_wildcard": True}},
+            "aggs": {"by_artifact": {"terms": {"field": "artifact_type", "size": 15}}},
+        })
+        findings["high_severity"] = (res.get("hits", {}).get("total", {}) or {}).get("value", 0)
+        findings["by_artifact"] = [
+            {"type": b["key"], "count": b["doc_count"]}
+            for b in (res.get("aggregations", {}).get("by_artifact", {}) or {}).get("buckets", [])
+        ]
+        res2 = _esf("POST", f"/fo-case-{case_id}-*/_search", {
+            "size": 0, "track_total_hits": True,
+            "query": {"query_string": {"query": "artifact_type:cti_match AND cti_match.level:high"}},
+        })
+        findings["cti_high"] = (res2.get("hits", {}).get("total", {}) or {}).get("value", 0)
+    except Exception:
+        pass
+
     return {
         "case_name": case.get("name", case_id),
         "status": case.get("status", "unknown"),
@@ -1678,6 +1704,7 @@ def _gather_case_context(case_id: str) -> dict:
         "field_density": field_density,
         "mitre_summary": mitre_summary,
         "alert_run": alert_run,
+        "findings": findings,
         "notes_body": notes_body,
     }
 
@@ -1689,15 +1716,25 @@ def _build_case_analysis_prompt(ctx: dict) -> str:
         f"- Rule '{m.get('rule', {}).get('name', m.get('rule_name', '?'))}': {m.get('match_count', 0)} matches\n"
         for m in matches[:20]
     )
+    fnd = ctx.get("findings", {}) or {}
+    by_art = "".join(f"    - {a['type']}: {a['count']}\n" for a in fnd.get("by_artifact", [])[:8])
+    findings_text = (
+        f"High/critical detections (indexed): {fnd.get('high_severity', 0)}\n"
+        f"External CTI matches (high severity): {fnd.get('cti_high', 0)}\n"
+        f"{by_art}"
+    )
     return (
         f"Case: {ctx['case_name']} (status: {ctx['status']})\n"
         f"Total events: {ctx['event_count']:,}\n"
         f"Artifact types: {', '.join(ctx['artifact_types']) or 'none'}\n"
         f"Tags: {', '.join(ctx['tags']) or 'none'}\n\n"
+        f"CONCRETE FINDINGS (weigh these heavily for risk_score):\n{findings_text}\n"
         f"Alert detection ({rules_checked} rules, {len(matches)} triggered):\n"
         f"{alert_text or '  No alert matches.'}\n"
         f"Notes excerpt:\n{ctx['notes_body'] or '  (none)'}\n\n"
-        "Provide a comprehensive risk assessment."
+        "Provide a comprehensive risk assessment. Base risk_score primarily on the "
+        "concrete findings above: high/critical detections and external CTI matches mean "
+        "elevated-to-high risk; a clean case with only informational events is low risk."
     )
 
 
