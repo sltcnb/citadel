@@ -5,10 +5,12 @@ from __future__ import annotations
 import json
 
 import agg_rules
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
+
+from auth.dependencies import get_company_filter, get_current_user, require_case_access
 from services import elasticsearch as es
-from services.cases import get_case
+from services.cases import get_case, list_cases
 
 router = APIRouter(tags=["search"])
 
@@ -16,6 +18,7 @@ router = APIRouter(tags=["search"])
 @router.get("/cases/{case_id}/timeline")
 def get_timeline(
     case_id: str,
+    _acl: dict = Depends(require_case_access),
     artifact_type: str | None = None,
     from_ts: str | None = Query(None, alias="from"),
     to_ts: str | None = Query(None, alias="to"),
@@ -73,6 +76,7 @@ def get_timeline(
 @router.get("/cases/{case_id}/search")
 def search(
     case_id: str,
+    _acl: dict = Depends(require_case_access),
     q: str = "",
     artifact_type: str | None = None,
     from_ts: str | None = Query(None, alias="from"),
@@ -171,6 +175,7 @@ def search(
 @router.get("/cases/{case_id}/search/facets")
 def get_facets(
     case_id: str,
+    _acl: dict = Depends(require_case_access),
     q: str = "",
     artifact_type: str | None = None,
     from_ts: str | None = None,
@@ -191,7 +196,7 @@ def get_facets(
 
 
 @router.get("/cases/{case_id}/events/{fo_id}")
-def get_event(case_id: str, fo_id: str):
+def get_event(case_id: str, fo_id: str, _acl: dict = Depends(require_case_access)):
     """Fetch a single event by ID (full document including raw)."""
     event = es.get_event_by_id(case_id, fo_id)
     if not event:
@@ -500,7 +505,7 @@ def mitre_coverage(case_id: str):
 
 
 @router.post("/search/cross")
-def search_cross_case(body: dict):
+def search_cross_case(body: dict, current_user: dict = Depends(get_current_user)):
     """
     Run a single Lucene query across ALL accessible cases.
 
@@ -541,6 +546,11 @@ def search_cross_case(body: dict):
     size = max(0, min(size, 25))
 
     cases = case_svc.list_cases()
+    # RBAC: drop cases outside the caller's company filter BEFORE querying, so a
+    # restricted analyst never sees another company's events.
+    flt = get_company_filter(current_user)
+    if flt is not None:
+        cases = [c for c in cases if c.get("company", "") in flt]
     if not cases:
         return {"query": query, "total_cases": 0, "matching_cases": 0, "results": []}
 
@@ -603,6 +613,7 @@ def search_cross_case(body: dict):
 @router.get("/cases/{case_id}/aggregate")
 def aggregate(
     case_id: str,
+    _acl: dict = Depends(require_case_access),
     field: str = Query(..., min_length=1),
     agg: str = Query(
         "terms",

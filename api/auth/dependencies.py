@@ -144,6 +144,27 @@ async def require_analyst_plus(current_user: dict = Depends(get_current_user)) -
     return current_user
 
 
+async def require_case_access(
+    case_id: str, current_user: dict = Depends(get_current_user)
+) -> dict:
+    """Load a case and enforce the caller's company restriction. Inject into any
+    case-scoped data route (timeline/search/aggregate/events/export/...) so a
+    company-restricted analyst cannot read or mutate another company's case.
+    Returns the case dict."""
+    from services.cases import get_case as _get_case
+
+    case = _get_case(case_id)
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+    flt = get_company_filter(current_user)
+    if flt is not None and case.get("company", "") not in flt:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: case belongs to a different company",
+        )
+    return case
+
+
 def get_company_filter(user: dict) -> list[str] | None:
     """
     Return the list of companies this user is restricted to, or None (unrestricted).
