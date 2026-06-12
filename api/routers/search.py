@@ -745,7 +745,11 @@ def aggregate(
     else:
         raise HTTPException(status_code=400, detail=f"Unknown agg type: {agg}")
 
-    body = {"size": 0, "query": {"bool": {"must": must}}, "aggs": aggs}
+    # ES-side soft timeout → returns partial buckets + timed_out flag instead of
+    # blowing the HTTP timeout and hard-failing. track_total_hits=True gives the
+    # real query hit count (not the misleading 10k cap).
+    body = {"size": 0, "query": {"bool": {"must": must}}, "aggs": aggs,
+            "timeout": "25s", "track_total_hits": True}
 
     try:
         result = es_req("POST", f"/fo-case-{case_id}-*/_search", body)
@@ -768,6 +772,7 @@ def aggregate(
     try:
         out = (result.get("aggregations") or {}).get("out") or {}
         total = result.get("hits", {}).get("total", {}).get("value", 0)
+        timed_out = bool(result.get("timed_out"))
         # Normalize response shapes
         if agg == "terms":
 
@@ -795,6 +800,7 @@ def aggregate(
                 "sub_card_fields": sub_card_list,
                 "buckets": buckets,
                 "total": total,
+                "timed_out": timed_out,
                 "sum_other_doc_count": out.get("sum_other_doc_count", 0),
             }
         if agg in ("histogram", "date_histogram"):

@@ -297,7 +297,9 @@ def search_events(
             {"_doc": {"order": "asc"}},
         ],
         "_source": {"excludes": ["raw.xml"]},
-        "track_total_hits": 10000,  # exact up to 10k, then "10000+"; avoids full count cost
+        # Exact hit count for the current query — counting is cheap in ES (no
+        # fetch), and an accurate "N results" matters more than the marginal cost.
+        "track_total_hits": True,
     }
     # search_after = cursor pagination (deep, O(1)) — required past the 10k
     # max_result_window. Falls back to shallow `from` only for the first pages.
