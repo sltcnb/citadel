@@ -224,6 +224,7 @@ def search_events(
     sort_field: str = "timestamp",
     sort_order: str = "asc",
     regexp: bool = False,  # kept for API compat, ignored — use /regex/ in query instead
+    search_after: list | None = None,
 ) -> dict[str, Any]:
     """
     Search events in a case with full-text query and field filters.
@@ -290,14 +291,20 @@ def search_events(
 
     body = {
         "query": es_query,
-        "from": page * size,
         "size": size,
         "sort": [
             {sort_field: {"order": sort_order, "unmapped_type": "keyword", "missing": "_last"}},
             {"_doc": {"order": "asc"}},
         ],
         "_source": {"excludes": ["raw.xml"]},
+        "track_total_hits": 10000,  # exact up to 10k, then "10000+"; avoids full count cost
     }
+    # search_after = cursor pagination (deep, O(1)) — required past the 10k
+    # max_result_window. Falls back to shallow `from` only for the first pages.
+    if search_after:
+        body["search_after"] = search_after
+    else:
+        body["from"] = min(page * size, 9500)
 
     try:
         result = _request("POST", f"/{index}/_search", body)

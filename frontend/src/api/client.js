@@ -62,6 +62,8 @@ export const api = {
     create:      (data)       => request('POST',   '/cases', data),
     update:      (id, data)   => request('PUT',    `/cases/${id}`, data),
     delete:      (id)         => request('DELETE', `/cases/${id}`),
+    getAutoRun:  (id)         => request('GET',    `/cases/${id}/auto-run`),
+    setAutoRun:  (id, flags)  => request('PUT',    `/cases/${id}/auto-run`, flags),
     aiAnalyze:   (id)         => request('POST',   `/cases/${id}/ai/analyze`),
     aiInvestigate: (id, circumstance) => request('POST', `/cases/${id}/ai/investigate`, { circumstance }),
     aiAgent:       (id, circumstance, maxSteps) => request('POST', `/cases/${id}/ai/agent`, { circumstance, max_steps: maxSteps }),
@@ -421,6 +423,8 @@ export const api = {
       request('GET', withParams(`/cases/${caseId}/cti/indicator-events`, { type, value, limit })),
     getOwnNetworks: () => request('GET', '/cti/own-networks'),
     setOwnNetworks: (cidrs) => request('PUT', '/cti/own-networks', { cidrs }),
+    getAllowlist: (caseId) => request('GET', withParams('/cti/allowlist', caseId ? { case_id: caseId } : {})),
+    setAllowlist: (values, caseId) => request('PUT', '/cti/allowlist', caseId ? { values, case_id: caseId } : { values }),
   },
 
   malware: {
