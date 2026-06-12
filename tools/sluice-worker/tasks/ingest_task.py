@@ -550,7 +550,18 @@ def maybe_run_detections(self, case_id: str, _attempts: int = 0):
             _run_watchlist(r, case_id)
         except Exception as exc:
             logger.warning("[watchlist] case %s — sweep failed: %s", case_id, exc)
-        # Chain the API-side tail: CTI IOC-DB match → AI risk (plan-gated).
+        # Persistent CTI IOC match — runs the cti_match module synchronously so
+        # its matches are indexed as cti_match timeline events (searchable) BEFORE
+        # the AI risk step, so the analysis actually sees them. One matching path.
+        if r.hget(f"case:{case_id}", "auto_ioc_match") != "0":
+            try:
+                import uuid as _uuid
+
+                from tasks.module_task import run_module
+                run_module.apply(args=[_uuid.uuid4().hex, case_id, "cti_match", [], {}])
+            except Exception as exc:
+                logger.warning("[cti_match] case %s — auto match failed: %s", case_id, exc)
+        # Chain the API-side tail: AI risk analysis (plan-gated).
         _trigger_finalize_chain(case_id)
     finally:
         # Release the schedule lock so the next ingest cycle can chain again.

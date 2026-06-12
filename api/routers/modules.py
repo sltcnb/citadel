@@ -423,7 +423,9 @@ def create_module_run(case_id: str, req: CreateModuleRunRequest):
     if not module.get("available"):
         reason = module.get("unavailable_reason", "Module unavailable")
         raise HTTPException(status_code=400, detail=reason)
-    if not req.source_files and not req.job_ids:
+    # ES-only modules (run_on_events) query Elasticsearch directly — no source
+    # files needed (e.g. cti_match, auth_summary, network_summary, rare_process).
+    if not module.get("run_on_events") and not req.source_files and not req.job_ids:
         raise HTTPException(status_code=400, detail="At least one source job is required")
 
     source_files: list[dict] = []
