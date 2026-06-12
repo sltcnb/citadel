@@ -4,6 +4,7 @@ import asyncio
 import collections
 import json
 import logging
+import os
 import time
 
 from fastapi import Depends, FastAPI, Request
@@ -391,11 +392,17 @@ async def _on_startup():
         logger.warning("admin log shipping unavailable: %s", exc)
 
     if settings.AUTH_ENABLED:
-        if settings.JWT_SECRET == "CHANGE_ME_IN_PRODUCTION":
+        if settings.JWT_SECRET in ("CHANGE_ME_IN_PRODUCTION", ""):
+            # Never run with the KNOWN default (anyone could forge an admin token).
+            # But don't hard-crash a running deploy either — generate a strong
+            # RANDOM ephemeral secret for this process. Tokens reset on restart
+            # (users re-login); set JWT_SECRET in the env to persist sessions.
+            import secrets as _secrets
+            settings.JWT_SECRET = _secrets.token_hex(32)
             logger.critical(
-                "SECURITY: JWT_SECRET is set to the default value. "
-                "All tokens can be forged. Set a strong random secret: "
-                'python -c "import secrets; print(secrets.token_hex(32))"'
+                "SECURITY: JWT_SECRET was unset/default — generated a random ephemeral "
+                "secret for this process. Tokens will not survive a restart. Set a "
+                "persistent JWT_SECRET env var in production."
             )
         if settings.ADMIN_PASSWORD == "CitadelAdmin1!":
             logger.warning(

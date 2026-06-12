@@ -64,6 +64,7 @@ export const api = {
     delete:      (id)         => request('DELETE', `/cases/${id}`),
     getAutoRun:  (id)         => request('GET',    `/cases/${id}/auto-run`),
     setAutoRun:  (id, flags)  => request('PUT',    `/cases/${id}/auto-run`, flags),
+    aiAggregate: (id, question) => request('POST', `/cases/${id}/ai/aggregate`, { question }),
     aiAnalyze:   (id)         => request('POST',   `/cases/${id}/ai/analyze`),
     aiInvestigate: (id, circumstance) => request('POST', `/cases/${id}/ai/investigate`, { circumstance }),
     aiAgent:       (id, circumstance, maxSteps) => request('POST', `/cases/${id}/ai/agent`, { circumstance, max_steps: maxSteps }),

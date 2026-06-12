@@ -80,8 +80,14 @@ def _load_default_rules() -> list[dict]:
         logger.warning("Alert rules directory %s not found", _RULES_DIR)
         return []
 
+    from config import settings as _settings
+
     rules: list[dict] = []
     for path in sorted(_RULES_DIR.glob("**/*.yaml")):
+        # Sigma is opt-in — skip the bulky Sigma HQ community rule packs unless
+        # enabled. Native/custom rule files still load.
+        if not _settings.SIGMA_ENABLED and "sigma_hq" in path.parts:
+            continue
         try:
             with path.open() as fh:
                 data = yaml.safe_load(fh)
@@ -306,6 +312,9 @@ def parse_sigma_rule(body: dict):
     Used by the frontend edit modal to preview / validate the ES query.
     Returns { name, description, category, artifact_type, query, sigma_level, sigma_tags, sigma_status }.
     """
+    from config import settings as _settings
+    if not _settings.SIGMA_ENABLED:
+        raise HTTPException(status_code=503, detail="Sigma integration is disabled on this instance.")
     if not _YAML_AVAILABLE:
         raise HTTPException(status_code=500, detail="PyYAML is not installed on the server.")
     raw_yaml = body.get("yaml", "")
@@ -344,6 +353,9 @@ def import_sigma_rules(body: dict):
 
     Returns { "imported": N, "skipped": N, "rules": [...] }
     """
+    from config import settings as _settings
+    if not _settings.SIGMA_ENABLED:
+        raise HTTPException(status_code=503, detail="Sigma integration is disabled on this instance.")
     if not _YAML_AVAILABLE:
         raise HTTPException(status_code=500, detail="PyYAML is not installed on the server.")
 

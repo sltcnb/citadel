@@ -47,6 +47,9 @@ def sync_sigma_rules(request: SigmaSyncRequest, current_user: dict = Depends(req
     - levels: ["critical"] (only critical severity rules)
     - levels: ["high", "critical"] (high and critical)
     """
+    from config import settings as _settings
+    if not _settings.SIGMA_ENABLED:
+        raise HTTPException(status_code=503, detail="Sigma integration is disabled on this instance.")
     service = SigmaSyncService()
 
     # Default to critical only if no filters specified

@@ -26,7 +26,7 @@ from typing import Any
 
 import redis
 import redis_keys as rk
-from auth.dependencies import require_admin
+from auth.dependencies import get_current_user, require_admin, require_case_access
 from fastapi import APIRouter, Depends, HTTPException
 from license.gate import require_feature
 from pydantic import BaseModel
@@ -4828,4 +4828,89 @@ def analyze_module_code(req: AnalyzeModuleRequest) -> Any:
     return {
         "review": review,
         "model_used": f"{cfg.get('provider', '?')}/{cfg.get('model', '?')}",
+    }
+
+
+# ── AI-generated aggregations ─────────────────────────────────────────────────
+# Translate a plain-language question ("which hosts have the most failed logons?")
+# into an Elasticsearch aggregation and run it. Lets analysts use the powerful
+# /aggregate engine without knowing field names or agg types.
+
+_AGG_SYSTEM_PROMPT = (
+    "You translate a DFIR analyst's plain-language question into ONE Elasticsearch "
+    "aggregation over case events. Reply with STRICT JSON only, no prose:\n"
+    '{"field": "<ecs field>", "agg": "terms|cardinality|date_histogram|stats|percentiles|histogram", '
+    '"q": "<optional Lucene filter, empty if none>", "size": 20, "interval": "1d", '
+    '"explanation": "<one sentence: what this shows>"}\n'
+    "Rules: pick `field` from the AVAILABLE FIELDS list (use the exact name). "
+    "Use `terms` for 'top/most/by X', `cardinality` for 'how many distinct/unique X', "
+    "`date_histogram` for 'over time/timeline' (set interval like 1h/1d), "
+    "`stats`/`percentiles` for numeric fields. Put any narrowing condition in `q` as "
+    "Lucene (e.g. evtx.event_id:4625). Keep size 10-50."
+)
+
+
+class AiAggRequest(BaseModel):
+    question: str
+
+
+@router.post("/cases/{case_id}/ai/aggregate")
+def ai_aggregate(case_id: str, body: AiAggRequest,
+                 case: dict = Depends(require_case_access)):
+    """Natural language → aggregation. The LLM picks the field/agg/filter, then we
+    run it through the normal aggregate engine and return both the query and the
+    result so the analyst sees (and can tweak) what was run."""
+    from license.gate import require_feature as _rf
+    _rf("ai_assist")
+    q = (body.question or "").strip()
+    if not q:
+        raise HTTPException(status_code=422, detail="question is required")
+
+    cfg = _get_config(_redis())
+    ctx = _gather_case_context(case_id)
+    # Offer the model the fields that actually have data, plus the full list.
+    dense = [f["field"] for f in (ctx.get("field_density") or [])][:40]
+    other = [f for f in (ctx.get("searchable_fields") or []) if f not in dense][:120]
+    user_msg = (
+        f"Question: {q}\n\n"
+        f"AVAILABLE FIELDS (with data, prefer these): {', '.join(dense) or 'none'}\n"
+        f"OTHER FIELDS: {', '.join(other) or 'none'}\n"
+        f"Artifact types: {', '.join(ctx.get('artifact_types', [])) or 'none'}"
+    )
+    try:
+        raw = _call_llm_with_system(cfg, _AGG_SYSTEM_PROMPT, user_msg, max_tokens=300)
+        clean = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
+        spec = json.loads(clean)
+    except (json.JSONDecodeError, ValueError, Exception) as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"AI could not build an aggregation: {exc}")
+
+    field = str(spec.get("field", "")).strip()
+    agg = str(spec.get("agg", "terms")).strip()
+    if not field:
+        raise HTTPException(status_code=422, detail="AI did not return a field to aggregate")
+    if agg not in ("terms", "cardinality", "date_histogram", "stats", "percentiles", "histogram"):
+        agg = "terms"
+    try:
+        size = max(1, min(int(spec.get("size", 20)), 200))
+    except Exception:
+        size = 20
+
+    from routers.search import aggregate as _aggregate
+    try:
+        result = _aggregate(
+            case_id, _acl=case, field=field, agg=agg,
+            q=str(spec.get("q", "") or ""), size=size,
+            interval=str(spec.get("interval", "1d") or "1d"),
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Aggregation failed: {exc}")
+
+    return {
+        "question": q,
+        "explanation": spec.get("explanation", ""),
+        "query": {"field": field, "agg": agg, "q": spec.get("q", ""), "size": size,
+                  "interval": spec.get("interval", "1d")},
+        "result": result,
     }
