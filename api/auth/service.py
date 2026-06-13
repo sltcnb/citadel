@@ -75,6 +75,45 @@ def is_token_revoked(payload: dict) -> bool:
         return False
 
 
+# ── Forced password change ──────────────────────────────────────────────────
+# A user flagged must_change_password cannot obtain a full access token until
+# they rotate their password. Used to retire the default bootstrap-admin
+# password (and reusable for admin-provisioned "change on first login").
+
+
+def must_change_password(username: str) -> bool:
+    u = get_user(username)
+    return bool(u and u.get("must_change_password") == "1")
+
+
+def set_must_change_password(username: str, value: bool = True) -> None:
+    r = _redis()
+    key = rk.user_key(username)
+    if value:
+        r.hset(key, "must_change_password", "1")
+    else:
+        r.hdel(key, "must_change_password")
+
+
+def create_pw_change_challenge(username: str) -> str:
+    """Short-lived token proving the password step passed; only usable to set a
+    new password (NOT an access token)."""
+    expire = datetime.now(UTC) + timedelta(minutes=_MFA_CHALLENGE_MINUTES)
+    payload = {"sub": username, "pwc": True, "exp": expire, "jti": str(uuid.uuid4())}
+    return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
+
+
+def decode_pw_change_challenge(token: str) -> Optional[str]:
+    """Return the username if ``token`` is a valid password-change challenge."""
+    try:
+        payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
+    except Exception:
+        return None
+    if payload.get("pwc") and payload.get("sub"):
+        return payload["sub"]
+    return None
+
+
 # ── MFA / TOTP ─────────────────────────────────────────────────────────────────
 #
 # Login is two-step when a user has TOTP enabled: password is checked first; on
@@ -281,6 +320,7 @@ def update_user(
         r.hset(key, "role", role)
     if password is not None:
         r.hset(key, "hashed_password", hash_password(password))
+        r.hdel(key, "must_change_password")  # rotating the password clears the force-change flag
     if companies is not None:
         r.hset(key, "companies", json.dumps(companies))
     return _public(r.hgetall(key))
@@ -292,6 +332,7 @@ def update_password(username: str, new_password: str) -> bool:
     if not r.exists(key):
         return False
     r.hset(key, "hashed_password", hash_password(new_password))
+    r.hdel(key, "must_change_password")
     return True
 
 
