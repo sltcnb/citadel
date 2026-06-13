@@ -37,6 +37,11 @@ def case_alert_rule_run(case_id: str) -> str:
     return f"fo:alert_rule_run:{case_id}"
 
 
+def case_alert_triage(case_id: str) -> str:
+    """Map of fired-rule-id → spawned Pilot investigation (auto-triage)."""
+    return f"fo:alert_triage:{case_id}"
+
+
 def case_notes(case_id: str) -> str:
     return f"fo:notes:{case_id}"
 

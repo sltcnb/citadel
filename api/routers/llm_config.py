@@ -3967,12 +3967,21 @@ def ai_agent_case_stream(case_id: str, req: CaseAgentRequest):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-@router.post(
-    "/cases/{case_id}/ai/agent/start", dependencies=[Depends(require_feature("ai_assist"))]
-)
-def ai_agent_start(case_id: str, req: CaseAgentRequest):
-    """Kick off an agent run in the background. Returns {run_id}; poll
-    /ai/agent/active and /ai/agent/progress/{run_id} to watch it."""
+def launch_agent_run(
+    case_id: str,
+    circumstance: str,
+    max_steps: int | None = None,
+    language: str = "en",
+    parent_run_idx: int | None = None,
+    meta: dict | None = None,
+) -> dict:
+    """Start a background Pilot agent run and return {run_id, status}.
+
+    Shared core of the /ai/agent/start endpoint — also called by alert auto-triage
+    so a fired detection can spawn its own scoped investigation. `meta` is merged
+    into the active-run record so callers can tag the run's origin (e.g. the rule
+    that triggered it). Raises HTTPException if the LLM isn't configured or the
+    circumstance is empty."""
     import threading
     import uuid as _uuid
 
@@ -3980,15 +3989,17 @@ def ai_agent_start(case_id: str, req: CaseAgentRequest):
     cfg = _get_config(r)
     if not cfg or not cfg.get("enabled"):
         raise HTTPException(400, "LLM not configured. Go to Settings → AI Analysis.")
-    if not req.circumstance.strip():
+    circ = (circumstance or "").strip()
+    if not circ:
         raise HTTPException(400, "circumstance must not be empty")
-    max_steps = min(AGENT_MAX_STEPS, max(1, req.max_steps or AGENT_MAX_STEPS))
-    parent_t = _parent_transcript_or_none(case_id, req.parent_run_idx)
-    circ = req.circumstance.strip()
+    max_steps = min(AGENT_MAX_STEPS, max(1, max_steps or AGENT_MAX_STEPS))
+    parent_t = _parent_transcript_or_none(case_id, parent_run_idx)
     run_id = _uuid.uuid4().hex
-    lang = (req.language or "en").lower()
+    lang = (language or "en").lower()
 
-    _register_active_run(case_id, run_id, circ, max_steps, req.parent_run_idx)
+    _register_active_run(case_id, run_id, circ, max_steps, parent_run_idx)
+    if meta:
+        _update_active_run(case_id, run_id, **meta)
 
     def worker():
         try:
@@ -4008,6 +4019,21 @@ def ai_agent_start(case_id: str, req: CaseAgentRequest):
 
     threading.Thread(target=worker, name=f"agent-{run_id[:8]}", daemon=True).start()
     return {"run_id": run_id, "status": "running"}
+
+
+@router.post(
+    "/cases/{case_id}/ai/agent/start", dependencies=[Depends(require_feature("ai_assist"))]
+)
+def ai_agent_start(case_id: str, req: CaseAgentRequest):
+    """Kick off an agent run in the background. Returns {run_id}; poll
+    /ai/agent/active and /ai/agent/progress/{run_id} to watch it."""
+    return launch_agent_run(
+        case_id,
+        req.circumstance,
+        max_steps=req.max_steps,
+        language=req.language,
+        parent_run_idx=req.parent_run_idx,
+    )
 
 
 @router.get(

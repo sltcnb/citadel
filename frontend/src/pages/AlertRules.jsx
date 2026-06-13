@@ -247,6 +247,59 @@ function LibraryRulesList({ rules, caseId, onSearchQuery }) {
   )
 }
 
+// ── Auto-triage item — polls the spawned Pilot run for live status + verdict ────
+
+function TriageItem({ caseId, entry }) {
+  const [status, setStatus]   = useState(entry.error ? 'error' : (entry.status || 'running'))
+  const [verdict, setVerdict] = useState('')
+
+  useEffect(() => {
+    if (entry.error || !entry.run_id) return
+    let stop = false
+    async function poll() {
+      try {
+        const r = await api.cases.aiAgentProgress(caseId, entry.run_id, 0)
+        const st = r.meta?.status || 'running'
+        if (!stop) setStatus(st)
+        const concl = (r.steps || []).slice().reverse().find(s => s.action === 'conclude')
+        if (concl?.verdict && !stop) setVerdict(concl.verdict)
+        if (!['running', 'stalled'].includes(st)) return  // terminal — stop polling
+      } catch { /* keep polling */ }
+      if (!stop) setTimeout(poll, 4000)
+    }
+    poll()
+    return () => { stop = true }
+  }, [caseId, entry.run_id, entry.error])
+
+  const done    = status === 'done' || status === 'complete' || status === 'completed'
+  const errored = status === 'error' || !!entry.error
+  return (
+    <div className="flex items-start gap-2 text-xs bg-white rounded border border-fuchsia-100 px-2.5 py-1.5">
+      <span className="mt-0.5 flex-shrink-0">
+        {errored ? <AlertTriangle size={12} className="text-red-500" />
+          : done ? <CheckCircle size={12} className="text-green-600" />
+          : <Loader2 size={12} className="animate-spin text-fuchsia-500" />}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-1.5">
+          <span className="font-medium text-gray-800 truncate">{entry.rule_name || entry.rule_id}</span>
+          {entry.severity && <span className="text-[9px] uppercase text-gray-400">{entry.severity}</span>}
+          {typeof entry.match_count === 'number' && (
+            <span className="text-[9px] text-gray-400">·{entry.match_count} hits</span>
+          )}
+        </div>
+        {errored ? (
+          <p className="text-[11px] text-red-500">{entry.error || 'investigation failed'}</p>
+        ) : verdict ? (
+          <p className="text-[11px] text-gray-600 line-clamp-2">{verdict}</p>
+        ) : (
+          <p className="text-[11px] text-gray-400">{done ? 'concluded — open the AI panel for the full verdict' : 'investigating…'}</p>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function AlertRules({ caseId, onSearchQuery }) {
@@ -272,6 +325,8 @@ export default function AlertRules({ caseId, onSearchQuery }) {
   const [aiDesc, setAiDesc]             = useState('')
   const [generating, setGenerating]     = useState(false)
   const [showAiForm, setShowAiForm]     = useState(false)
+  const [triaging, setTriaging]         = useState(false)
+  const [triage, setTriage]             = useState([])
 
   // ── Load on mount ─────────────────────────────────────────────────────────
 
@@ -292,6 +347,10 @@ export default function AlertRules({ caseId, onSearchQuery }) {
           setAnalyses(saved.analyses || {})
         }
       })
+      .catch(() => {})
+
+    api.alertRules.getTriage(caseId)
+      .then(r => setTriage(r.triaged || []))
       .catch(() => {})
   }, [caseId])
 
@@ -363,6 +422,19 @@ export default function AlertRules({ caseId, onSearchQuery }) {
 
   async function analyzeAll(matches) {
     await Promise.allSettled(matches.map(m => runAnalysis(m.rule.id, m.rule, m)))
+  }
+
+  // ── AI auto-triage — spawn a scoped Pilot investigation per fired rule ──────
+  async function runTriage() {
+    setTriaging(true)
+    try {
+      const res = await api.alertRules.triage(caseId, 3)
+      setTriage(res.triaged || [])
+    } catch (e) {
+      alert('Triage failed: ' + e.message)
+    } finally {
+      setTriaging(false)
+    }
   }
 
   async function runAnalysis(ruleId, rule, match) {
@@ -492,8 +564,27 @@ export default function AlertRules({ caseId, onSearchQuery }) {
               ? <><Loader2 size={12} className="animate-spin" /> Checking…</>
               : <><Play size={12} /> {ruleTypeFilter !== 'all' ? `Check ${ruleTypeFilter.charAt(0).toUpperCase() + ruleTypeFilter.slice(1)}` : 'Check All'} ({filteredLibraryRules.length})</>}
           </button>
+          <button onClick={runTriage} disabled={triaging || !run?.matches?.length}
+            className="btn-ghost text-xs text-fuchsia-600 hover:text-fuchsia-700"
+            title="Spawn a scoped Pilot investigation for the top fired rules — opens pre-triaged alerts with verdicts instead of raw hits">
+            {triaging
+              ? <><Loader2 size={12} className="animate-spin" /> Triaging…</>
+              : <><Sparkles size={12} /> AI Triage</>}
+          </button>
         </div>
       </div>
+
+      {/* AI auto-triage results — one scoped Pilot investigation per fired rule */}
+      {triage.length > 0 && (
+        <div className="mb-4 rounded-lg border border-fuchsia-200 bg-fuchsia-50/40 p-3">
+          <p className="text-xs font-semibold text-fuchsia-700 flex items-center gap-1.5 mb-2">
+            <Sparkles size={12} /> AI auto-triage — {triage.length} investigation{triage.length !== 1 ? 's' : ''}
+          </p>
+          <div className="space-y-1.5">
+            {triage.map(t => <TriageItem key={t.rule_id} caseId={caseId} entry={t} />)}
+          </div>
+        </div>
+      )}
 
       {/* AI generate form */}
       {showAiForm && (
