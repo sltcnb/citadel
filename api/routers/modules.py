@@ -611,19 +611,50 @@ class StandaloneRunRequest(BaseModel):
     params: dict[str, Any] = {}
 
 
+_MAX_MALWARE_UPLOAD = int(os.getenv("MAX_MALWARE_UPLOAD_BYTES", str(2 * 1024**3)))  # 2 GiB
+
+
 @router.post("/malware-analysis/upload", status_code=201)
 async def upload_malware_file(file: UploadFile = File(...)):
     """
     Upload a file directly for standalone malware analysis.
     Returns the MinIO key so it can be referenced in a subsequent /malware-analysis/runs call.
+
+    Streams to a bounded temp file (cap: MAX_MALWARE_UPLOAD_BYTES) instead of
+    reading the whole body into RAM, and offloads the blocking MinIO PUT to a
+    worker thread so neither a huge sample nor a slow upload stalls the event loop.
     """
+    import tempfile
+
     upload_id = uuid.uuid4().hex
     filename = file.filename or "upload"
     minio_key = f"malware_analysis/uploads/{upload_id}/{filename}"
 
-    content = await file.read()
-    size = len(content)
-    storage.upload_file(minio_key, content)
+    size = 0
+    tmp = tempfile.NamedTemporaryFile(delete=False)
+    tmp_path = tmp.name
+    try:
+        while True:
+            chunk = await file.read(8 * 1024 * 1024)
+            if not chunk:
+                break
+            size += len(chunk)
+            if size > _MAX_MALWARE_UPLOAD:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"File exceeds the {_MAX_MALWARE_UPLOAD // 1024**3} GiB upload limit",
+                )
+            tmp.write(chunk)
+        tmp.close()
+        loop = asyncio.get_event_loop()
+        with open(tmp_path, "rb") as fh:
+            await loop.run_in_executor(None, storage.upload_fileobj, minio_key, fh, size)
+    finally:
+        tmp.close()
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
 
     logger.info("Malware upload: %s → %s (%d bytes)", filename, minio_key, size)
     return {"upload_id": upload_id, "filename": filename, "minio_key": minio_key, "size": size}
@@ -815,22 +846,31 @@ async def stream_module_log(run_id: str):
 
     async def event_generator():
         r = get_redis()
+        loop = asyncio.get_event_loop()
         cursor = 0
         idle_ticks = 0
         max_idle_ticks = 120  # 120 × 1s = 2 min max wait with no progress
 
+        def _poll(cur: int):
+            """All Redis reads for one tick, batched so they run in a worker
+            thread — synchronous Redis here would block the event loop (and every
+            other request) once enough SSE clients are connected."""
+            entries = r.lrange(rk.module_log(run_id), cur, -1)
+            status = r.hget(rk.module_run(run_id), "status")
+            tool_log = None
+            if status in ("COMPLETED", "FAILED", "CANCELLED") and not entries:
+                tool_log = r.hget(rk.module_run(run_id), "tool_log") or ""
+            return entries, status, tool_log
+
         while idle_ticks < max_idle_ticks:
-            entries = r.lrange(rk.module_log(run_id), cursor, -1)
+            entries, status, tool_log = await loop.run_in_executor(None, _poll, cursor)
             if entries:
                 idle_ticks = 0
                 for entry in entries:
                     cursor += 1
                     yield f"data: {_json.dumps({'text': entry})}\n\n"
 
-            status = r.hget(rk.module_run(run_id), "status")
             if status in ("COMPLETED", "FAILED", "CANCELLED") and not entries:
-                # Also send any remaining tool_log lines from the run hash
-                tool_log = r.hget(rk.module_run(run_id), "tool_log") or ""
                 if tool_log:
                     yield f"data: {_json.dumps({'text': tool_log, 'type': 'summary'})}\n\n"
                 yield f"data: {_json.dumps({'done': True, 'status': status})}\n\n"

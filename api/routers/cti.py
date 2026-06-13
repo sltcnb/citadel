@@ -258,7 +258,12 @@ async def start_cti_scheduler() -> None:
                 feeds_fresh = _load_feeds(r)
                 feed_fresh = _find_feed(feeds_fresh, feed["id"])
                 if feed_fresh:
-                    _pull_feed_now(feed_fresh, r, feeds_fresh)
+                    # _pull_feed_now does blocking network I/O (urlopen, up to 60s
+                    # per request) + Redis writes — running it inline would stall
+                    # the event loop and every API request with it. Offload to a
+                    # worker thread.
+                    loop = asyncio.get_event_loop()
+                    await loop.run_in_executor(None, _pull_feed_now, feed_fresh, r, feeds_fresh)
         except Exception as exc:
             logger.warning("CTI scheduler tick error: %s", exc)
 

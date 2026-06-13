@@ -15,6 +15,7 @@ Status lifecycle: UPLOADING → PENDING → RUNNING → COMPLETED | FAILED
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import os
@@ -421,11 +422,16 @@ async def ingest_chunk(
     safe_name = re.sub(r"[^\w.\-]", "_", filename)[:200]
     tmp_path = str(_CHUNK_DIR / f"{upload_id}_{safe_name}")
 
+    loop = asyncio.get_event_loop()
     try:
         data = await chunk.read()
-        # Append mode so chunks accumulate in order
-        with open(tmp_path, "ab") as f:
-            f.write(data)
+
+        # Blocking disk write (chunks can be tens of MB) — keep it off the loop.
+        def _append():
+            with open(tmp_path, "ab") as f:
+                f.write(data)
+
+        await loop.run_in_executor(None, _append)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to store chunk: {exc}")
 
@@ -438,7 +444,10 @@ async def ingest_chunk(
     dispatched: list = []
     errors: list = []
 
-    try:
+    # The handoff reads the zip central directory and creates a job stub per
+    # entry (2 Redis ops × N entries) — synchronous work that would stall the
+    # loop for large archives. Run it in a worker thread.
+    def _handoff():
         if filename.lower().endswith(".zip"):
             _handle_zip_async(
                 case_id, filename, tmp_path, dispatched, errors, background_tasks, keep_raw=keep_raw
@@ -454,6 +463,9 @@ async def ingest_chunk(
                 background_tasks,
                 keep_raw=keep_raw,
             )
+
+    try:
+        await loop.run_in_executor(None, _handoff)
     except Exception as exc:
         logger.error("Failed to register chunked ingest for '%s': %s", filename, exc)
         try:
