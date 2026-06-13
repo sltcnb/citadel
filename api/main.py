@@ -395,6 +395,18 @@ async def _on_startup():
     except Exception as exc:
         logger.warning("admin log shipping unavailable: %s", exc)
 
+    if not settings.AUTH_ENABLED and not settings.ALLOW_NO_AUTH:
+        # AUTH_ENABLED=false makes every request a synthetic unrestricted admin.
+        # That's only acceptable behind an explicit second opt-in. Fail CLOSED:
+        # re-enable auth for this process rather than silently serving wide open.
+        settings.AUTH_ENABLED = True
+        logger.critical(
+            "SECURITY: AUTH_ENABLED=false but CITADEL_ALLOW_NO_AUTH is not set — "
+            "refusing to run without authentication. Auth has been force-enabled "
+            "for this process. Set CITADEL_ALLOW_NO_AUTH=true to intentionally "
+            "disable auth (dev / trusted-LAN only)."
+        )
+
     if settings.AUTH_ENABLED:
         if settings.JWT_SECRET in ("CHANGE_ME_IN_PRODUCTION", ""):
             # Never run with the KNOWN default (anyone could forge an admin token).
