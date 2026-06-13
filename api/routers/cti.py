@@ -22,7 +22,8 @@ from urllib.parse import urlparse
 
 import redis as redis_lib
 import redis_keys as rk
-from fastapi import APIRouter, HTTPException, Query
+from auth.dependencies import require_case_access
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from services.elasticsearch import _request as es_req
 
@@ -811,10 +812,17 @@ def _process_yeti_observables(
 
 @router.get("/cti/feeds")
 def list_feeds():
-    """List all configured CTI feeds."""
+    """List all configured CTI feeds (api_key redacted — never returned raw)."""
     r = _redis()
     feeds = _load_feeds(r)
-    return {"feeds": feeds}
+    # Redact secrets in the response only; the stored feed records keep their keys.
+    redacted = []
+    for feed in feeds:
+        f = dict(feed)
+        if "api_key" in f:
+            f["api_key_set"] = bool(f.pop("api_key"))
+        redacted.append(f)
+    return {"feeds": redacted}
 
 
 @router.post("/cti/feeds", status_code=201)
@@ -1368,7 +1376,11 @@ def _es_terms_agg(index: str, field: str, size: int = _AGG_MAX_TERMS) -> list[tu
 
 
 @router.post("/cases/{case_id}/cti/match")
-def match_case_iocs(case_id: str, types: str | None = Query(None)):
+def match_case_iocs(
+    case_id: str,
+    types: str | None = Query(None),
+    _case: dict = Depends(require_case_access),
+):
     """Match a case's events against the IOC DB — FAST, via aggregation.
 
     Instead of scanning every event (hopeless at 10M+ events), Elasticsearch
@@ -1458,6 +1470,7 @@ def cti_indicator_events(
     type: str = Query(...),
     value: str = Query(...),
     limit: int = Query(25),
+    _case: dict = Depends(require_case_access),
 ):
     """Drill-down: the events in a case that contain one matched indicator.
 

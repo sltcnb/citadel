@@ -26,9 +26,8 @@ import urllib.request
 from collections import defaultdict
 from datetime import UTC, datetime
 
-from auth.dependencies import get_current_user
+from auth.dependencies import require_case_access
 from fastapi import APIRouter, Depends, HTTPException, Query
-from services.cases import get_case
 from services.elasticsearch import _request as es_req
 
 from config import settings
@@ -45,10 +44,11 @@ def _es_index(case_id: str) -> str:
 
 @router.get("/cases/{case_id}/anomaly")
 def list_anomalies(
-    case_id: str, _: dict = Depends(get_current_user), size: int = Query(200, le=1000)
+    case_id: str, _acl: dict = Depends(require_case_access), size: int = Query(200, le=1000)
 ):
     body = {
         "size": size,
+        "track_total_hits": True,
         "query": {"match_all": {}},
         "sort": [{"anomaly.z_score": {"order": "desc"}}],
     }
@@ -66,14 +66,11 @@ def list_anomalies(
 @router.post("/cases/{case_id}/anomaly/scan")
 def scan_anomalies(
     case_id: str,
-    _: dict = Depends(get_current_user),
+    case: dict = Depends(require_case_access),
     days: int = Query(14, ge=3, le=90),
     threshold: float = Query(3.0, ge=1.5, le=10.0),
 ):
     """Compute z-score anomalies over the last `days` of case data."""
-    case = get_case(case_id)
-    if not case:
-        raise HTTPException(status_code=404, detail="Case not found")
 
     # Pull (day, host, event_id) histogram from ES in one composite agg
     body = {

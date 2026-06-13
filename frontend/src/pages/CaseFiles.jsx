@@ -486,6 +486,7 @@ export default function CaseFiles({ caseId }) {
   const [bkHasKey, setBkHasKey] = useState(false)
   const [bkSaved, setBkSaved]   = useState(false)
   const [bkSaving, setBkSaving] = useState(false)
+  const [bkError, setBkError]   = useState('')
 
   function loadFiles() {
     api.caseFiles.list(caseId)
@@ -525,12 +526,15 @@ export default function CaseFiles({ caseId }) {
   async function saveBkKey() {
     if (!bkKey.trim()) return
     setBkSaving(true)
+    setBkError('')
     try {
       await api.cases.update(caseId, { bitlocker_recovery_key: bkKey.trim() })
       setBkHasKey(true)
       setBkSaved(true)
       setBkKey('')
       setTimeout(() => setBkSaved(false), 2500)
+    } catch (err) {
+      setBkError(err.message || 'Failed to save key')
     } finally {
       setBkSaving(false)
     }
@@ -630,10 +634,13 @@ export default function CaseFiles({ caseId }) {
               {bkHasKey ? 'Key configured — paste below to update' : 'Required to extract encrypted partitions (e.g. 000000-000000-…)'}
             </p>
           </div>
-          {bkSaved && (
+          {bkSaved && !bkError && (
             <span className="flex items-center gap-1 text-[11px] text-green-700 font-medium flex-shrink-0">
               <CheckCircle size={12} /> Saved
             </span>
+          )}
+          {bkError && (
+            <span className="text-[11px] text-red-600 font-medium flex-shrink-0">{bkError}</span>
           )}
           <input
             type="password"

@@ -77,6 +77,74 @@ const TABS = [
   { id: 'license',      label: 'License',      icon: Award,     tool: 'Platform' },
 ]
 
+/* ── Sigma detection rules (global opt-out) ──────────────────────────────────── */
+
+function SigmaSettingsSection() {
+  const [enabled, setEnabled] = useState(null)   // null = loading
+  const [saving, setSaving]   = useState(false)
+  const [error, setError]     = useState('')
+
+  useEffect(() => {
+    api.alertRules.getSigmaSettings()
+      .then(cfg => setEnabled(!!cfg.sigma_enabled))
+      .catch(err => setError(err.message || 'Failed to load Sigma settings'))
+  }, [])
+
+  async function toggle() {
+    const next = !enabled
+    setSaving(true)
+    setError('')
+    try {
+      const res = await api.alertRules.setSigmaSettings(next)
+      setEnabled(!!res.sigma_enabled)
+    } catch (err) {
+      setError(err.message || 'Failed to update')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <section className="card p-5 space-y-4">
+      <div className="flex items-center gap-2">
+        <Shield size={15} className="text-rose-500" />
+        <h2 className="font-semibold text-brand-text">Sigma Detection Rules</h2>
+      </div>
+      <p className="text-xs text-gray-500">
+        Sigma community detection rules run against case data alongside native and
+        custom rules. Disable this to stop Sigma rules platform-wide — the Sigma
+        sync/import endpoints return 503 and Sigma rules are skipped when running
+        the library. Native and custom rules are unaffected. Individual cases can
+        override this default from the case IOC panel.
+      </p>
+      {enabled === null && !error ? (
+        <div className="flex items-center gap-2 text-gray-500 py-2">
+          <Loader2 size={14} className="animate-spin" /> Loading…
+        </div>
+      ) : (
+        <label className="flex items-center gap-3 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={!!enabled}
+            disabled={saving || enabled === null}
+            onChange={toggle}
+            className="h-4 w-4"
+          />
+          <span className="text-sm text-gray-700">
+            {enabled ? 'Sigma detection rules enabled' : 'Sigma detection rules disabled'}
+          </span>
+          {saving && <Loader2 size={13} className="animate-spin text-gray-400" />}
+        </label>
+      )}
+      {error && (
+        <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-center gap-1.5">
+          <AlertCircle size={12} /> {error}
+        </p>
+      )}
+    </section>
+  )
+}
+
 /* ── Helpers ──────────────────────────────────────────────────────────────── */
 
 function endpointPlaceholder(vendor) {
@@ -1555,6 +1623,9 @@ export default function Settings() {
   function renderSystem() {
     return (
       <div className="space-y-6">
+        {/* Sigma detection rules global opt-out */}
+        <SigmaSettingsSection />
+
         {/* Report template */}
         <section className="card p-5 space-y-4">
           <div className="flex items-center gap-2">

@@ -127,8 +127,12 @@ export default function Watchlist() {
 
   async function remove(id) {
     if (!confirm('Delete this watchlist entry? It will stop being evaluated against future cases.')) return
-    await api.watchlist.delete(id)
-    load()
+    try {
+      await api.watchlist.delete(id)
+      load()
+    } catch (err) {
+      alert(err.message || 'Delete failed')
+    }
   }
 
   async function sweep() {

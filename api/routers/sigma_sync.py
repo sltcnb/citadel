@@ -5,14 +5,38 @@ from __future__ import annotations
 import json
 
 import redis_keys as rk
-from auth.dependencies import require_admin
+from auth.dependencies import get_current_user, require_admin
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from services.sigma_settings import get_global_sigma_enabled, set_global_sigma_enabled
 from services.sigma_sync import SigmaSyncService
 
 from config import get_redis
 
 router = APIRouter(tags=["sigma-sync"])
+
+
+class SigmaSettings(BaseModel):
+    enabled: bool
+
+
+@router.get("/sigma/settings")
+def get_sigma_settings(current_user: dict = Depends(get_current_user)):
+    """Effective global Sigma opt-out state. Readable by any authenticated user
+    so the UI can hide Sigma controls when disabled."""
+    return {"sigma_enabled": get_global_sigma_enabled()}
+
+
+@router.put("/sigma/settings")
+def update_sigma_settings(body: SigmaSettings, current_user: dict = Depends(require_admin)):
+    """Enable/disable Sigma detection rules platform-wide (admin only).
+
+    Disabling stops Sigma rules from running against cases and returns 503 from
+    the Sigma sync/parse/import endpoints. Native + custom rules are unaffected.
+    Per-case overrides still take precedence over this global default.
+    """
+    set_global_sigma_enabled(body.enabled)
+    return {"sigma_enabled": body.enabled}
 
 
 class SigmaSyncRequest(BaseModel):
@@ -47,8 +71,7 @@ def sync_sigma_rules(request: SigmaSyncRequest, current_user: dict = Depends(req
     - levels: ["critical"] (only critical severity rules)
     - levels: ["high", "critical"] (high and critical)
     """
-    from config import settings as _settings
-    if not _settings.SIGMA_ENABLED:
+    if not get_global_sigma_enabled():
         raise HTTPException(status_code=503, detail="Sigma integration is disabled on this instance.")
     service = SigmaSyncService()
 

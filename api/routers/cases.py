@@ -35,6 +35,11 @@ class AutoRunUpdate(BaseModel):
     auto_ai: bool | None = None
 
 
+class CaseSigmaUpdate(BaseModel):
+    # True/False = explicit per-case override; null = inherit the global default.
+    enabled: bool | None = None
+
+
 def _check_company_access(case: dict, company_filter: list[str] | None) -> None:
     """Raise 403 if the user's company filter does not include this case's company."""
     if company_filter is None:
@@ -89,8 +94,10 @@ def get_case(case_id: str, current_user: dict = Depends(get_current_user)):
 @router.get("/cases/{case_id}/auto-run")
 def get_auto_run(case_id: str, current_user: dict = Depends(get_current_user)):
     """Which post-ingestion stages auto-run for this case (detections, IOC match, AI)."""
-    if not case_svc.get_case(case_id):
+    case = case_svc.get_case(case_id)
+    if not case:
         raise HTTPException(status_code=404, detail="Case not found")
+    _check_company_access(case, get_company_filter(current_user))
     return case_svc.get_auto_run(case_id)
 
 
@@ -98,9 +105,48 @@ def get_auto_run(case_id: str, current_user: dict = Depends(get_current_user)):
 def set_auto_run(case_id: str, body: AutoRunUpdate, current_user: dict = Depends(get_current_user)):
     """Enable/disable auto-run stages per case. Disabled stages are skipped after
     each ingest (they can still be run on demand)."""
-    if not case_svc.get_case(case_id):
+    case = case_svc.get_case(case_id)
+    if not case:
         raise HTTPException(status_code=404, detail="Case not found")
+    _check_company_access(case, get_company_filter(current_user))
     return case_svc.set_auto_run(case_id, body.model_dump(exclude_none=True))
+
+
+def _sigma_state(case_id: str) -> dict:
+    from services import sigma_settings as ss
+
+    return {
+        "sigma_enabled": ss.sigma_enabled_for_case(case_id),
+        "override": ss.get_case_sigma_override(case_id),
+        "global_default": ss.get_global_sigma_enabled(),
+    }
+
+
+@router.get("/cases/{case_id}/sigma")
+def get_case_sigma(case_id: str, current_user: dict = Depends(get_current_user)):
+    """Effective Sigma state for this case: resolved value, the per-case override
+    (null = inherit), and the global default it inherits from."""
+    case = case_svc.get_case(case_id)
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+    _check_company_access(case, get_company_filter(current_user))
+    return _sigma_state(case_id)
+
+
+@router.put("/cases/{case_id}/sigma")
+def set_case_sigma(
+    case_id: str, body: CaseSigmaUpdate, current_user: dict = Depends(get_current_user)
+):
+    """Set or clear the per-case Sigma override. enabled=null inherits the global
+    default; true/false force-enable/disable Sigma rules for this case only."""
+    from services import sigma_settings as ss
+
+    case = case_svc.get_case(case_id)
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+    _check_company_access(case, get_company_filter(current_user))
+    ss.set_case_sigma_override(case_id, body.enabled)
+    return _sigma_state(case_id)
 
 
 @router.put("/cases/{case_id}")

@@ -57,6 +57,11 @@ GLOBAL_ALERT_RULES_MIGRATED = "fo:alert_rules:migrated_v2"
 GLOBAL_SIGMA_RULES = "fo:alert_rules:_global:sigma"
 GLOBAL_SIGMA_LAST_SYNC = "fo:alert_rules:_global:sigma:last_sync"
 
+# Global runtime opt-out for Sigma detection rules. Unset → fall back to the
+# SIGMA_ENABLED env default; "1"/"0" → admin override. Per-case overrides live
+# on the case hash field "sigma_enabled" (see services/sigma_settings.py).
+GLOBAL_SIGMA_ENABLED = "fo:settings:sigma_enabled"
+
 # ── Module runs ───────────────────────────────────────────────────────────────
 MALWARE_RUNS = "fo:malware_runs"
 
