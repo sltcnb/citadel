@@ -177,13 +177,13 @@ export default function Dashboard() {
   async function doArchive(caseId) {
     setBusy(true)
     try { await api.cases.update(caseId, { status: 'archived' }); load() }
-    catch { /* ignore */ }
+    catch (err) { showToast(err.message || 'Archive failed', 'error') }
     finally { setBusy(false); setConfirm(null) }
   }
   async function doDelete(caseId) {
     setBusy(true)
     try { await api.cases.delete(caseId); load() }
-    catch { /* ignore */ }
+    catch (err) { showToast(err.message || 'Delete failed', 'error') }
     finally { setBusy(false); setConfirm(null) }
   }
 

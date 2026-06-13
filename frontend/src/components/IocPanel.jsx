@@ -10,16 +10,24 @@ function ThreatMatch({ caseId, onSearch }) {
   const [status, setStatus]   = useState(null)   // null | 'running' | 'started' | {error}
   const [types, setTypes]     = useState([])
   const [autoRun, setAutoRun] = useState(null)
+  const [sigma, setSigma]     = useState(null)   // { sigma_enabled, override, global_default }
   const [open, setOpen]       = useState(true)
 
   useEffect(() => {
     api.cases.getAutoRun(caseId).then(setAutoRun).catch(() => setAutoRun(null))
+    api.cases.getSigma(caseId).then(setSigma).catch(() => setSigma(null))
   }, [caseId])
 
   const toggleType = t => setTypes(p => p.includes(t) ? p.filter(x => x !== t) : [...p, t])
   async function toggleAuto(k) {
     const next = { ...autoRun, [k]: !autoRun[k] }; setAutoRun(next)
     try { await api.cases.setAutoRun(caseId, { [k]: next[k] }) } catch { /* ignore */ }
+  }
+  async function toggleSigma() {
+    const next = !sigma.sigma_enabled
+    setSigma(s => ({ ...s, sigma_enabled: next, override: next }))
+    try { setSigma(await api.cases.setSigma(caseId, next)) }
+    catch { api.cases.getSigma(caseId).then(setSigma).catch(() => {}) }
   }
 
   async function run() {
@@ -71,6 +79,20 @@ function ThreatMatch({ caseId, onSearch }) {
                   {autoRun[k] ? '✓' : '✕'} {lbl}
                 </button>
               ))}
+            </div>
+          )}
+
+          {sigma && (
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-[9px] uppercase tracking-wide text-gray-400">Sigma rules</span>
+              <button onClick={toggleSigma}
+                title={sigma.override === null
+                  ? `Inheriting global default (${sigma.global_default ? 'on' : 'off'}) — click to override`
+                  : 'Per-case override — click to flip'}
+                className={`badge text-[9px] border ${sigma.sigma_enabled ? 'bg-green-50 text-green-700 border-green-200' : 'bg-gray-100 text-gray-400 border-gray-200'}`}>
+                {sigma.sigma_enabled ? '✓' : '✕'} {sigma.sigma_enabled ? 'Enabled' : 'Disabled'}
+                {sigma.override === null && <span className="ml-1 opacity-60">(inherited)</span>}
+              </button>
             </div>
           )}
 

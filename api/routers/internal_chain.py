@@ -120,6 +120,7 @@ def _run_finalize_chain(case_id: str) -> dict:
                         "executive_summary": analysis.get("executive_summary"),
                         "auto": True,
                     }),
+                    ex=7 * 86400,  # TTL so stale per-case AI risk doesn't leak indefinitely
                 )
             except Exception:  # noqa: BLE001
                 pass

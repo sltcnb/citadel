@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 from auth.dependencies import get_company_filter, get_current_user, require_case_access
 from services import elasticsearch as es
-from services.cases import get_case, list_cases
+from services.cases import get_case
 
 router = APIRouter(tags=["search"])
 
@@ -213,7 +213,9 @@ class NoteUpdate(BaseModel):
 
 
 @router.put("/cases/{case_id}/events/{fo_id}/tag")
-def tag_event(case_id: str, fo_id: str, body: TagUpdate):
+def tag_event(
+    case_id: str, fo_id: str, body: TagUpdate, _acl: dict = Depends(require_case_access)
+):
     """Set tags on an event."""
     event = es.get_event_by_id(case_id, fo_id)
     if not event:
@@ -227,7 +229,7 @@ def tag_event(case_id: str, fo_id: str, body: TagUpdate):
 
 
 @router.put("/cases/{case_id}/events/{fo_id}/flag")
-def flag_event(case_id: str, fo_id: str):
+def flag_event(case_id: str, fo_id: str, _acl: dict = Depends(require_case_access)):
     """Toggle the is_flagged field on an event."""
     event = es.get_event_by_id(case_id, fo_id)
     if not event:
@@ -245,7 +247,9 @@ class PinUpdate(BaseModel):
 
 
 @router.put("/cases/{case_id}/events/{fo_id}/pin")
-def pin_event(case_id: str, fo_id: str, body: PinUpdate):
+def pin_event(
+    case_id: str, fo_id: str, body: PinUpdate, _acl: dict = Depends(require_case_access)
+):
     """Toggle/set the is_pinned field. Pin = 'curated evidence for the report',
     distinct from flag ('triage me later'). Optional note explains why pinned."""
     event = es.get_event_by_id(case_id, fo_id)
@@ -262,7 +266,9 @@ def pin_event(case_id: str, fo_id: str, body: PinUpdate):
 
 
 @router.get("/cases/{case_id}/pinned")
-def list_pinned(case_id: str, size: int = Query(100, le=500)):
+def list_pinned(
+    case_id: str, _acl: dict = Depends(require_case_access), size: int = Query(100, le=500)
+):
     """Return all pinned events for a case, newest pin first."""
     import urllib.error
 
@@ -286,7 +292,9 @@ def list_pinned(case_id: str, size: int = Query(100, le=500)):
 
 
 @router.put("/cases/{case_id}/events/{fo_id}/note")
-def note_event(case_id: str, fo_id: str, body: NoteUpdate):
+def note_event(
+    case_id: str, fo_id: str, body: NoteUpdate, _acl: dict = Depends(require_case_access)
+):
     """Set an analyst note on an event."""
     event = es.get_event_by_id(case_id, fo_id)
     if not event:
@@ -298,7 +306,9 @@ def note_event(case_id: str, fo_id: str, body: NoteUpdate):
 
 
 @router.get("/cases/{case_id}/iocs")
-def get_iocs(case_id: str, size: int = Query(50, le=200)):
+def get_iocs(
+    case_id: str, _acl: dict = Depends(require_case_access), size: int = Query(50, le=200)
+):
     """
     Return the top observed values for IOC-relevant fields across the whole case.
     Each category is an aggregation bucket list: [{value, count}].
@@ -374,7 +384,7 @@ def get_iocs(case_id: str, size: int = Query(50, le=200)):
 
 
 @router.get("/cases/{case_id}/fields")
-def list_fields(case_id: str):
+def list_fields(case_id: str, _acl: dict = Depends(require_case_access)):
     """
     Return all indexed fields across the case's indices, grouped by namespace.
     Used by the Timeline field explorer + search autocomplete.
@@ -430,7 +440,7 @@ def list_fields(case_id: str):
 
 
 @router.get("/cases/{case_id}/mitre/coverage")
-def mitre_coverage(case_id: str):
+def mitre_coverage(case_id: str, _acl: dict = Depends(require_case_access)):
     """
     Return MITRE ATT&CK coverage for a case.
 

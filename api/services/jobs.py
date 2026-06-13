@@ -150,13 +150,25 @@ def list_case_job_ids_recent(case_id: str, n: int = 5000) -> list[str]:
 
 
 def list_case_jobs(case_id: str, limit: int = 500, page: int = 0) -> list[dict]:
-    """Return paginated job records. Avoids loading all N jobs into memory at once."""
+    """Return paginated job records, newest first.
+
+    Pages over the per-case sorted set (score = creation time) so pagination is
+    STABLE — `smembers` returns an unordered set, which duplicated/skipped jobs
+    across pages. Falls back to the unordered set for cases created before the
+    sorted set existed.
+    """
     r = get_redis()
-    all_ids = list(r.smembers(f"case:{case_id}:jobs"))
-    page_ids = all_ids[page * limit : (page + 1) * limit]
+    start = page * limit
+    end = start + limit - 1
+    page_ids = list(r.zrevrange(f"case:{case_id}:jobs:zs", start, end))
+    if not page_ids and page == 0:
+        # Legacy case with no sorted set: fall back to unordered membership.
+        all_ids = list(r.smembers(f"case:{case_id}:jobs"))
+        page_ids = all_ids[start : start + limit]
     jobs = []
     for jid in page_ids:
         job = get_job(jid)
         if job:
             jobs.append(job)
+    # zrevrange already orders newest-first; re-sort defensively for the fallback.
     return sorted(jobs, key=lambda j: j.get("created_at", ""), reverse=True)

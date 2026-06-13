@@ -3,7 +3,8 @@
 import sys
 from pathlib import Path
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from auth.dependencies import require_admin
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
 from config import settings
 
@@ -40,7 +41,7 @@ def list_plugins():
         raise HTTPException(status_code=500, detail=f"Plugin discovery failed: {exc}")
 
 
-@router.post("/plugins/upload")
+@router.post("/plugins/upload", dependencies=[Depends(require_admin)])
 async def upload_plugin(file: UploadFile = File(...)):
     """
     Upload a Python plugin file (.py) to the plugins directory and reload.
