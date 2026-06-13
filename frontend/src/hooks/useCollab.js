@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { getToken } from '../api/client'
+import { api, getToken } from '../api/client'
 
 /**
  * Subscribes to /cases/{caseId}/collab/stream (SSE). Returns:
@@ -31,24 +31,32 @@ export function useCollab(caseId, currentUser) {
 
   useEffect(() => {
     if (!caseId) return
-    const token = getToken()
-    // EventSource doesn't accept headers — pass token as query param; api router
-    // accepts both (Authorization header OR ?_token=)
-    const url = `/api/v1/cases/${caseId}/collab/stream${token ? `?_token=${encodeURIComponent(token)}` : ''}`
-    const es = new EventSource(url)
-    esRef.current = es
+    let es = null
+    let cancelled = false
 
-    es.onmessage = e => {
-      try {
-        const ev = JSON.parse(e.data)
-        setEvents(prev => [...prev.slice(-49), ev])
-        if (ev.user) {
-          setPresence(prev => ({ ...prev, [ev.user]: { lastSeen: Date.now(), ts: ev.ts } }))
-        }
-      } catch { /* ignore malformed */ }
-    }
+    ;(async () => {
+      // EventSource can't set an Authorization header, so the token rides in the
+      // ?_token= query param. Mint a SHORT-LIVED (60s) stream token instead of
+      // embedding the full 8h access JWT so it doesn't leak into logs/history.
+      let token
+      try { token = (await api.auth.streamToken()).token } catch { token = getToken() }
+      if (cancelled) return
+      const url = `/api/v1/cases/${caseId}/collab/stream${token ? `?_token=${encodeURIComponent(token)}` : ''}`
+      es = new EventSource(url)
+      esRef.current = es
 
-    return () => { try { es.close() } catch {} }
+      es.onmessage = e => {
+        try {
+          const ev = JSON.parse(e.data)
+          setEvents(prev => [...prev.slice(-49), ev])
+          if (ev.user) {
+            setPresence(prev => ({ ...prev, [ev.user]: { lastSeen: Date.now(), ts: ev.ts } }))
+          }
+        } catch { /* ignore malformed */ }
+      }
+    })()
+
+    return () => { cancelled = true; try { es?.close() } catch {} }
   }, [caseId])
 
   // Heartbeat presence

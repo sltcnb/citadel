@@ -11,6 +11,7 @@ import { api } from '../api/client'
 import LicenseGate from '../components/LicenseGate'
 import { useLicense } from '../contexts/LicenseContext'
 import { PageShell, PageHeader } from '../components/shared/PageShell'
+import { useAsyncConfig } from '../hooks/useAsyncConfig'
 
 /* ── Constants ────────────────────────────────────────────────────────────── */
 
@@ -362,47 +363,75 @@ export default function Settings() {
   const setS3Triage = (k, v) => setS3TriageForm(f => ({ ...f, [k]: v }))
 
   /* ── Archive state ────────────────────────────────────────────────────── */
-  const [archiveLoading, setArchiveLoading]       = useState(true)
-  const [archiveSaving, setArchiveSaving]         = useState(false)
-  const [archiveSaved, setArchiveSaved]           = useState(false)
-  const [archiveError, setArchiveError]           = useState('')
   const [showArchiveKey, setShowArchiveKey]       = useState(false)
   const [archiveSecretSet, setArchiveSecretSet]   = useState(false)
   const [archiveTesting, setArchiveTesting]       = useState(false)
   const [archiveTestResult, setArchiveTestResult] = useState(null)
-  const [archiveForm, setArchiveForm] = useState({
-    auto_archive_enabled: false,
-    auto_archive_days:    14,
-    auto_export_enabled:  false,
-    s3_vendor:     '',
-    s3_endpoint:   '',
-    s3_access_key: '',
-    s3_secret_key: '',
-    s3_bucket:     '',
-    s3_region:     '',
-    s3_use_ssl:    true,
+  const {
+    form: archiveForm, setForm: setArchiveForm, setField: setArchive,
+    loading: archiveLoading, saving: archiveSaving, saved: archiveSaved,
+    error: archiveError, save: saveArchive,
+  } = useAsyncConfig({
+    load: () => api.admin.getArchiveSettings(),
+    save: (form) => api.admin.updateArchiveSettings(form),
+    initialForm: {
+      auto_archive_enabled: false,
+      auto_archive_days:    14,
+      auto_export_enabled:  false,
+      s3_vendor:     '',
+      s3_endpoint:   '',
+      s3_access_key: '',
+      s3_secret_key: '',
+      s3_bucket:     '',
+      s3_region:     '',
+      s3_use_ssl:    true,
+    },
+    // Runs on load and after save: keep the "secret is set" flag in sync and
+    // always re-blank the secret field ("leave blank to keep" semantics).
+    toForm: (cfg) => {
+      setArchiveSecretSet(!!cfg.s3_secret_key_set)
+      return {
+        auto_archive_enabled: cfg.auto_archive_enabled ?? false,
+        auto_archive_days:    cfg.auto_archive_days    ?? 14,
+        auto_export_enabled:  cfg.auto_export_enabled  ?? false,
+        s3_vendor:     cfg.s3_vendor     || '',
+        s3_endpoint:   cfg.s3_endpoint   || '',
+        s3_access_key: cfg.s3_access_key || '',
+        s3_secret_key: '',
+        s3_bucket:     cfg.s3_bucket     || '',
+        s3_region:     cfg.s3_region     || '',
+        s3_use_ssl:    cfg.s3_use_ssl    !== false,
+      }
+    },
   })
-  const setArchive = (k, v) => setArchiveForm(f => ({ ...f, [k]: v }))
 
   /* ── Cuckoo state ─────────────────────────────────────────────────────── */
-  const [cuckooConfig, setCuckooConfig]       = useState(null)
-  const [cuckooLoading, setCuckooLoading]     = useState(true)
-  const [cuckooSaving, setCuckooSaving]       = useState(false)
-  const [cuckooSaved, setCuckooSaved]         = useState(false)
-  const [cuckooError, setCuckooError]         = useState('')
   const [showCuckooToken, setShowCuckooToken] = useState(false)
-  const [cuckooForm, setCuckooForm]           = useState({ api_url: '', api_token: '' })
-  const setCuckoo = (k, v) => setCuckooForm(f => ({ ...f, [k]: v }))
+  const {
+    config: cuckooConfig, setConfig: setCuckooConfig,
+    form: cuckooForm, setForm: setCuckooForm, setField: setCuckoo,
+    loading: cuckooLoading, saving: cuckooSaving, saved: cuckooSaved,
+    error: cuckooError, setError: setCuckooError, save: saveCuckoo,
+  } = useAsyncConfig({
+    load: () => api.cuckooConfig.get(),
+    save: (form) => api.cuckooConfig.set(form),
+    initialForm: { api_url: '', api_token: '' },
+    // Only restore the URL on load; keep the secret token field blank.
+    toForm: (cfg) => (cfg?.api_url ? { api_url: cfg.api_url } : null),
+  })
 
   /* ── VirusTotal state ─────────────────────────────────────────────────── */
-  const [vtConfig, setVtConfig]   = useState(null)
-  const [vtLoading, setVtLoading] = useState(true)
-  const [vtSaving, setVtSaving]   = useState(false)
-  const [vtSaved, setVtSaved]     = useState(false)
-  const [vtError, setVtError]     = useState('')
   const [showVtKey, setShowVtKey] = useState(false)
-  const [vtForm, setVtForm]       = useState({ vt_api_key: '' })
-  const setVt = (k, v) => setVtForm(f => ({ ...f, [k]: v }))
+  const {
+    config: vtConfig, setConfig: setVtConfig,
+    form: vtForm, setForm: setVtForm, setField: setVt,
+    loading: vtLoading, saving: vtSaving, saved: vtSaved,
+    error: vtError, setError: setVtError, save: saveVt,
+  } = useAsyncConfig({
+    load: () => api.mwoConfig.get(),
+    save: (form) => api.mwoConfig.set(form),
+    initialForm: { vt_api_key: '' },
+  })
 
   /* ── Webhooks state ───────────────────────────────────────────────────── */
   const [webhooksList, setWebhooksList]   = useState([])
@@ -488,25 +517,6 @@ export default function Settings() {
       .catch(() => {})
       .finally(() => setS3TriageLoading(false))
 
-    api.admin.getArchiveSettings()
-      .then(cfg => {
-        setArchiveSecretSet(!!cfg.s3_secret_key_set)
-        setArchiveForm({
-          auto_archive_enabled: cfg.auto_archive_enabled ?? false,
-          auto_archive_days:    cfg.auto_archive_days    ?? 14,
-          auto_export_enabled:  cfg.auto_export_enabled  ?? false,
-          s3_vendor:     cfg.s3_vendor     || '',
-          s3_endpoint:   cfg.s3_endpoint   || '',
-          s3_access_key: cfg.s3_access_key || '',
-          s3_secret_key: '',
-          s3_bucket:     cfg.s3_bucket     || '',
-          s3_region:     cfg.s3_region     || '',
-          s3_use_ssl:    cfg.s3_use_ssl    !== false,
-        })
-      })
-      .catch(() => {})
-      .finally(() => setArchiveLoading(false))
-
     api.webhooks.list()
       .then(r => setWebhooksList(r.webhooks || []))
       .catch(() => {})
@@ -515,19 +525,6 @@ export default function Settings() {
     api.admin.getReportTemplate()
       .then(tpl => setRtForm(tpl))
       .catch(() => {})
-
-    api.cuckooConfig.get()
-      .then(cfg => {
-        setCuckooConfig(cfg)
-        if (cfg.api_url) setCuckooForm(f => ({ ...f, api_url: cfg.api_url }))
-      })
-      .catch(() => {})
-      .finally(() => setCuckooLoading(false))
-
-    api.mwoConfig.get()
-      .then(cfg => setVtConfig(cfg))
-      .catch(() => {})
-      .finally(() => setVtLoading(false))
 
     api.metrics.dashboard()
       .then(m => setWorkerMetrics(m))
@@ -659,18 +656,6 @@ export default function Settings() {
   }
 
   /* ── Archive handlers ─────────────────────────────────────────────────── */
-  async function saveArchive(e) {
-    e.preventDefault()
-    setArchiveSaving(true); setArchiveError(''); setArchiveSaved(false)
-    try {
-      const updated = await api.admin.updateArchiveSettings(archiveForm)
-      setArchiveSecretSet(!!updated.s3_secret_key_set)
-      setArchiveSaved(true)
-      setTimeout(() => setArchiveSaved(false), 3000)
-    } catch (err) { setArchiveError(err.message) }
-    finally { setArchiveSaving(false) }
-  }
-
   async function testArchive() {
     setArchiveTesting(true); setArchiveTestResult(null)
     try {
@@ -681,18 +666,6 @@ export default function Settings() {
   }
 
   /* ── Cuckoo handlers ──────────────────────────────────────────────────── */
-  async function saveCuckoo(e) {
-    e.preventDefault()
-    setCuckooSaving(true); setCuckooError(''); setCuckooSaved(false)
-    try {
-      const updated = await api.cuckooConfig.set(cuckooForm)
-      setCuckooConfig(updated)
-      setCuckooSaved(true)
-      setTimeout(() => setCuckooSaved(false), 3000)
-    } catch (err) { setCuckooError(err.message) }
-    finally { setCuckooSaving(false) }
-  }
-
   async function clearCuckoo() {
     if (!confirm('Remove Cuckoo Sandbox configuration?')) return
     try {
@@ -737,18 +710,6 @@ export default function Settings() {
     } catch (err) {
       setWhTestResult({ id, delivered: false, error: err.message })
     } finally { setWhTesting(null) }
-  }
-
-  async function saveVt(e) {
-    e.preventDefault()
-    setVtSaving(true); setVtError(''); setVtSaved(false)
-    try {
-      const updated = await api.mwoConfig.set(vtForm)
-      setVtConfig(updated)
-      setVtSaved(true)
-      setTimeout(() => setVtSaved(false), 3000)
-    } catch (err) { setVtError(err.message) }
-    finally { setVtSaving(false) }
   }
 
   async function clearVt() {

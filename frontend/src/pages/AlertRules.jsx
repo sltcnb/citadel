@@ -3,6 +3,7 @@ import { AlertTriangle, Plus, Trash2, Play, CheckCircle, Loader2,
          ChevronDown, ChevronUp, Sparkles, Brain, RefreshCw, Clock,
          ExternalLink } from 'lucide-react'
 import { api } from '../api/client'
+import { severityStyle } from '../utils/severity'
 import { ProvenancePills } from '../components/AlertRuleFilterBar'
 import { filterAlertRules } from '../lib/alertRuleFilters'
 
@@ -29,11 +30,7 @@ function AnalysisResult({ analysis, onReanalyze, analyzing }) {
       </div>
       {analysis.summary && <p className="text-[10px] text-gray-700">{analysis.summary}</p>}
       {analysis.severity && (
-        <span className={`badge text-[10px] ${
-          analysis.severity === 'critical' ? 'bg-red-100 text-red-600 border-red-200' :
-          analysis.severity === 'high'     ? 'bg-orange-100 text-orange-600 border-orange-200' :
-          'bg-yellow-100 text-yellow-600 border-yellow-200'
-        }`}>{analysis.severity}</span>
+        <span className={`badge text-[10px] ${severityStyle(analysis.severity)}`}>{analysis.severity}</span>
       )}
       {(analysis.recommendations || []).length > 0 && (
         <div>

@@ -27,6 +27,7 @@ from minio import Minio
 from pydantic import BaseModel
 from services import jobs as job_svc
 from services.cases import get_case
+from services.redis_mutate import mutate_json
 
 from config import get_redis as _redis
 
@@ -157,17 +158,21 @@ def _make_config_routes(redis_key: str, path_prefix: str, label: str):
 
     def put_cfg(body: S3ConfigIn):
         r = _redis()
-        existing = _load(r, redis_key)
-        cfg = {
-            "endpoint": body.endpoint,
-            "access_key": body.access_key,
-            "bucket": body.bucket,
-            "region": body.region,
-            "vendor": body.vendor,
-            "use_ssl": body.use_ssl,
-            "secret_key": body.secret_key if body.secret_key else existing.get("secret_key", ""),
-        }
-        _save(r, redis_key, cfg)
+
+        def _apply(existing: dict) -> dict:
+            return {
+                "endpoint": body.endpoint,
+                "access_key": body.access_key,
+                "bucket": body.bucket,
+                "region": body.region,
+                "vendor": body.vendor,
+                "use_ssl": body.use_ssl,
+                "secret_key": body.secret_key
+                if body.secret_key
+                else (existing or {}).get("secret_key", ""),
+            }
+
+        cfg = mutate_json(r, redis_key, _apply, {})
         return S3ConfigOut(**{**cfg, "secret_key_set": bool(cfg["secret_key"])})
 
     def delete_cfg():
@@ -555,7 +560,6 @@ def list_import_configs():
 @router.post("/admin/s3-import-configs", response_model=S3NamedConfigOut, status_code=201)
 def add_import_config(body: S3NamedConfigIn):
     r = _redis()
-    configs = _load_import_list(r)
     new_cfg = {
         "id": uuid.uuid4().hex,
         "name": body.name,
@@ -567,8 +571,7 @@ def add_import_config(body: S3NamedConfigIn):
         "vendor": body.vendor,
         "use_ssl": body.use_ssl,
     }
-    configs.append(new_cfg)
-    _save_import_list(r, configs)
+    mutate_json(r, _S3_IMPORT_LIST_KEY, lambda cfgs: cfgs + [new_cfg], [])
     _sync_individual_key(r, new_cfg)
     return _named_cfg_to_out(new_cfg)
 
@@ -576,35 +579,50 @@ def add_import_config(body: S3NamedConfigIn):
 @router.put("/admin/s3-import-configs/{config_id}", response_model=S3NamedConfigOut)
 def update_import_config(config_id: str, body: S3NamedConfigIn):
     r = _redis()
-    configs = _load_import_list(r)
-    for i, cfg in enumerate(configs):
-        if cfg["id"] == config_id:
-            updated = {
-                **cfg,
-                "name": body.name,
-                "endpoint": body.endpoint,
-                "access_key": body.access_key,
-                "secret_key": body.secret_key if body.secret_key else cfg.get("secret_key", ""),
-                "bucket": body.bucket,
-                "region": body.region,
-                "vendor": body.vendor,
-                "use_ssl": body.use_ssl,
-            }
-            configs[i] = updated
-            _save_import_list(r, configs)
-            _sync_individual_key(r, updated)
-            return _named_cfg_to_out(updated)
-    raise HTTPException(status_code=404, detail="Import config not found")
+    found: dict = {}
+
+    def _apply(configs: list[dict]) -> list[dict]:
+        found.clear()
+        out = []
+        for cfg in configs:
+            if cfg["id"] == config_id:
+                updated = {
+                    **cfg,
+                    "name": body.name,
+                    "endpoint": body.endpoint,
+                    "access_key": body.access_key,
+                    "secret_key": body.secret_key if body.secret_key else cfg.get("secret_key", ""),
+                    "bucket": body.bucket,
+                    "region": body.region,
+                    "vendor": body.vendor,
+                    "use_ssl": body.use_ssl,
+                }
+                found["cfg"] = updated
+                out.append(updated)
+            else:
+                out.append(cfg)
+        return out
+
+    mutate_json(r, _S3_IMPORT_LIST_KEY, _apply, [])
+    if "cfg" not in found:
+        raise HTTPException(status_code=404, detail="Import config not found")
+    _sync_individual_key(r, found["cfg"])
+    return _named_cfg_to_out(found["cfg"])
 
 
 @router.delete("/admin/s3-import-configs/{config_id}", status_code=204)
 def delete_import_config(config_id: str):
     r = _redis()
-    configs = _load_import_list(r)
-    new_configs = [c for c in configs if c["id"] != config_id]
-    if len(new_configs) == len(configs):
+    counts: dict = {}
+
+    def _apply(configs: list[dict]) -> list[dict]:
+        new_configs = [c for c in configs if c["id"] != config_id]
+        counts["removed"] = len(configs) - len(new_configs)
+        return new_configs
+
+    mutate_json(r, _S3_IMPORT_LIST_KEY, _apply, [])
+    if not counts.get("removed"):
         raise HTTPException(status_code=404, detail="Import config not found")
-    _save_import_list(r, new_configs)
     _delete_individual_key(r, config_id)
 
 
@@ -723,5 +741,5 @@ def scaleway_regions():
                 "pl-waw": "Warsaw (pl-waw)",
             }[k],
         }
-        for k in SCALEWAY_ENDPOINTS
+        for k, v in SCALEWAY_ENDPOINTS.items()
     ]

@@ -42,6 +42,8 @@ import ProcessTreePanel from '../components/shared/ProcessTreePanel'
 import MitrePanel from '../components/shared/MitrePanel'
 import { useLicense } from '../contexts/LicenseContext'
 import { useCollab } from '../hooks/useCollab'
+import { severityStyle } from '../utils/severity'
+import { statusStyle } from '../utils/status'
 
 // ── Artifact badge colours ────────────────────────────────────────────────────
 const ARTIFACT_BADGE = {
@@ -1097,15 +1099,6 @@ const MODULE_ACCENT = {
 }
 
 // ── LLM analysis display ──────────────────────────────────────────────────────
-const SEVERITY_BADGE = {
-  critical:      'bg-red-100 text-red-700 border-red-200',
-  high:          'bg-orange-100 text-orange-700 border-orange-200',
-  medium:        'bg-yellow-100 text-yellow-700 border-yellow-200',
-  low:           'bg-blue-100 text-blue-700 border-blue-200',
-  informational: 'bg-gray-100 text-gray-600 border-gray-200',
-  unknown:       'bg-gray-100 text-gray-500 border-gray-200',
-}
-
 function LLMAnalysisPanel({ analysis }) {
   if (!analysis) return null
   const sev = (analysis.severity || 'unknown').toLowerCase()
@@ -1117,7 +1110,7 @@ function LLMAnalysisPanel({ analysis }) {
         {analysis.model_used && (
           <span className="text-[10px] text-purple-400 font-mono">{analysis.model_used}</span>
         )}
-        <span className={`ml-auto text-[10px] font-medium border rounded-full px-2 py-0.5 ${SEVERITY_BADGE[sev] || SEVERITY_BADGE.unknown}`}>
+        <span className={`ml-auto text-[10px] font-medium border rounded-full px-2 py-0.5 ${severityStyle(sev)}`}>
           {sev}
         </span>
       </div>
@@ -1237,14 +1230,7 @@ function ModuleRunCard({
   const preview     = run.results_preview || []
   const byLevel     = run.hits_by_level   || {}
 
-  const STATUS_STYLE = {
-    PENDING:   'bg-gray-100 text-gray-600',
-    RUNNING:   'bg-amber-100 text-amber-700',
-    COMPLETED: 'bg-green-100 text-green-700',
-    FAILED:    'bg-red-100 text-red-700',
-    CANCELLED: 'bg-gray-100 text-gray-500',
-  }
-  const statusStyle = STATUS_STYLE[run.status] || STATUS_STYLE.PENDING
+  const statusCls = statusStyle(run.status).cls
 
   const ts = run.completed_at || run.started_at
   const tsDisplay = ts
@@ -1345,7 +1331,7 @@ function ModuleRunCard({
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="font-semibold text-sm text-brand-text">{moduleName}</span>
-            <span className={`badge ${statusStyle} inline-flex items-center gap-1`}>
+            <span className={`badge ${statusCls} inline-flex items-center gap-1`}>
               {run.status === 'RUNNING' && <Loader2 size={9} className="animate-spin" />}
               {run.status}
             </span>

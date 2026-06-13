@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 import { api } from '../api/client'
 import { useUpload } from '../contexts/UploadContext'
+import { formatBytes as fmtSize } from '../utils/format'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -34,14 +35,6 @@ const STUCK_MS      = 5 * 60 * 1000
 const CHUNK_SIZE    = 50 * 1024 * 1024   // 50 MB per upload chunk
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-function fmtSize(bytes) {
-  if (!bytes) return '—'
-  if (bytes < 1024)        return `${bytes} B`
-  if (bytes < 1048576)     return `${(bytes / 1024).toFixed(1)} KB`
-  if (bytes < 1073741824)  return `${(bytes / 1048576).toFixed(1)} MB`
-  return `${(bytes / 1073741824).toFixed(2)} GB`
-}
 
 function useElapsed(iso) {
   const [e, setE] = useState(0)

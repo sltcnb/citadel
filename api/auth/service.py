@@ -44,6 +44,19 @@ def create_token(username: str, role: str) -> str:
     return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
 
 
+def create_stream_token(username: str, role: str) -> str:
+    """Mint a SHORT-LIVED (60s) access token for SSE/EventSource streams.
+
+    EventSource cannot set an Authorization header, so the token rides in the
+    ``?_token=`` query param — which then leaks into proxy/server logs and
+    browser history. Issuing a 60-second token instead of the full 8-hour access
+    JWT bounds that exposure. It carries the same claims as a normal access token
+    (sub, role, jti), so decode_token / get_current_user accept it as-is."""
+    expire = datetime.now(UTC) + timedelta(seconds=60)
+    payload = {"sub": username, "role": role, "exp": expire, "jti": str(uuid.uuid4())}
+    return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
+
+
 def decode_token(token: str) -> dict:
     """Decode and verify JWT. Raises JWTError on failure."""
     return jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])

@@ -18,6 +18,7 @@ from auth.service import (
     confirm_totp_enrollment,
     create_mfa_challenge,
     create_pw_change_challenge,
+    create_stream_token,
     create_token,
     create_user,
     decode_mfa_challenge,
@@ -272,6 +273,17 @@ async def logout(
 @router.get("/me", response_model=UserInfo, summary="Current user info")
 async def me(current_user: dict = Depends(get_current_user)):
     return UserInfo(username=current_user["username"], role=current_user["role"])
+
+
+@router.get("/stream-token", summary="Mint a short-lived token for SSE streams")
+async def stream_token(current_user: dict = Depends(get_current_user)):
+    """Return a 60-second access token for EventSource/SSE URLs.
+
+    EventSource can't set an Authorization header, so the token must ride in the
+    ``?_token=`` query param (which leaks into logs/history). This short-lived
+    token bounds that exposure versus embedding the full 8-hour access JWT."""
+    username = _resolve_username(current_user)
+    return {"token": create_stream_token(username, current_user["role"])}
 
 
 # ── Self-service: change own password ────────────────────────────────────────

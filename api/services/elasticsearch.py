@@ -67,7 +67,7 @@ INDEX_TEMPLATE = {
 }
 
 
-def _request(method: str, path: str, body: dict | None = None) -> dict:
+def es_request(method: str, path: str, body: dict | None = None) -> dict:
     url = f"{ES_URL}{path}"
     data = json.dumps(body).encode() if body else None
     req = urllib.request.Request(
@@ -78,6 +78,51 @@ def _request(method: str, path: str, body: dict | None = None) -> dict:
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
         return json.loads(resp.read())
+
+
+# Backward-compat alias. Many routers do `from services.elasticsearch import
+# _request as es_req` — keep the private name pointing at the public one so
+# those imports keep working untouched.
+_request = es_request
+
+
+# --- Reusable query-building helpers (pure functions, unit-testable) ---
+
+
+def build_bool_query(
+    must: list[dict] | None = None,
+    filter: list[dict] | None = None,
+    must_not: list[dict] | None = None,
+    should: list[dict] | None = None,
+) -> dict:
+    """Return a ``{"bool": {...}}`` dict, omitting empty clauses."""
+    bool_body: dict[str, Any] = {}
+    if must:
+        bool_body["must"] = must
+    if filter:
+        bool_body["filter"] = filter
+    if must_not:
+        bool_body["must_not"] = must_not
+    if should:
+        bool_body["should"] = should
+    return {"bool": bool_body}
+
+
+def paginate(page: int, size: int, max_window: int = 10000) -> dict:
+    """Return ``{"from": ..., "size": ...}`` clamped so ``from + size`` never
+    exceeds ``max_window``. ``from`` is clamped to ``max(0, max_window - size)``."""
+    frm = page * size
+    frm = min(frm, max(0, max_window - size))
+    frm = max(0, frm)
+    return {"from": frm, "size": size}
+
+
+def total_hits_setting(threshold: int | None = None) -> dict:
+    """Return a ``track_total_hits`` setting for use where exact counts matter.
+
+    With no threshold → exact count (``True``); with an int → cap the count at
+    that value (cheaper for huge unfiltered result sets)."""
+    return {"track_total_hits": threshold if threshold is not None else True}
 
 
 def apply_index_template() -> None:
@@ -282,12 +327,10 @@ def search_events(
     if extra_filters:
         filter_clauses.extend(extra_filters)
 
-    es_query: dict[str, Any] = {
-        "bool": {
-            "must": must_clauses or [{"match_all": {}}],
-            "filter": filter_clauses,
-        }
-    }
+    es_query: dict[str, Any] = build_bool_query(
+        must=must_clauses or [{"match_all": {}}],
+        filter=filter_clauses,
+    )
 
     body = {
         "query": es_query,
@@ -301,14 +344,15 @@ def search_events(
         # the user wants the true "N results"). For an unfiltered whole-case view
         # (match_all over millions of events), an exact count would force ES to
         # count everything on every page → cap it to stay fast.
-        "track_total_hits": True if (must_clauses or filter_clauses) else 100000,
+        **total_hits_setting(None if (must_clauses or filter_clauses) else 100000),
     }
     # search_after = cursor pagination (deep, O(1)) — required past the 10k
     # max_result_window. Falls back to shallow `from` only for the first pages.
     if search_after:
         body["search_after"] = search_after
     else:
-        body["from"] = min(page * size, 9500)
+        # `size` is already in `body`; only the clamped `from` is needed here.
+        body["from"] = paginate(page, size)["from"]
 
     try:
         result = _request("POST", f"/{index}/_search", body)

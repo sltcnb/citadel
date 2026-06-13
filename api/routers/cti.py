@@ -26,6 +26,7 @@ from auth.dependencies import require_case_access
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from services.elasticsearch import _request as es_req
+from services.redis_mutate import mutate_json
 
 from config import get_redis as _redis
 
@@ -866,7 +867,6 @@ def add_feed(body: FeedCreate):
             status_code=422, detail="poll_interval_unit must be 'minutes', 'hours', or 'days'."
         )
     r = _redis()
-    feeds = _load_feeds(r)
     feed = {
         "id": str(uuid.uuid4())[:8],
         "name": body.name,
@@ -882,8 +882,7 @@ def add_feed(body: FeedCreate):
         "ioc_count": 0,
         "created_at": datetime.now(UTC).isoformat(),
     }
-    feeds.append(feed)
-    _save_feeds(r, feeds)
+    mutate_json(r, FEEDS_KEY, lambda feeds: feeds + [feed], [])
     return feed
 
 
@@ -891,15 +890,24 @@ def add_feed(body: FeedCreate):
 def update_feed(feed_id: str, body: FeedUpdate):
     """Update an existing feed configuration."""
     r = _redis()
-    feeds = _load_feeds(r)
-    feed = _find_feed(feeds, feed_id)
-    if not feed:
-        raise HTTPException(status_code=404, detail="Feed not found")
-
     patch = body.dict(exclude_none=True)
-    feed.update(patch)
-    _save_feeds(r, feeds)
-    return feed
+    found: dict = {}
+
+    def _apply(feeds: list[dict]) -> list[dict]:
+        found.clear()
+        out = []
+        for f in feeds:
+            f = dict(f)
+            if f["id"] == feed_id:
+                f.update(patch)
+                found["feed"] = f
+            out.append(f)
+        return out
+
+    mutate_json(r, FEEDS_KEY, _apply, [])
+    if "feed" not in found:
+        raise HTTPException(status_code=404, detail="Feed not found")
+    return found["feed"]
 
 
 @router.delete("/cti/feeds/{feed_id}", status_code=204)
@@ -914,9 +922,8 @@ def delete_feed(feed_id: str):
     # Remove IOCs belonging to this feed
     _remove_feed_iocs(r, feed_id)
 
-    # Remove feed from list
-    feeds = [f for f in feeds if f["id"] != feed_id]
-    _save_feeds(r, feeds)
+    # Remove feed from list (atomic — a concurrent update can't resurrect it)
+    mutate_json(r, FEEDS_KEY, lambda fs: [f for f in fs if f["id"] != feed_id], [])
 
 
 @router.post("/cti/feeds/{feed_id}/pull")
