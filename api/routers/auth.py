@@ -17,14 +17,17 @@ from auth.service import (
     backup_codes_remaining,
     confirm_totp_enrollment,
     create_mfa_challenge,
+    create_pw_change_challenge,
     create_token,
     create_user,
     decode_mfa_challenge,
+    decode_pw_change_challenge,
     delete_user,
     disable_totp,
     get_user,
     is_totp_enabled,
     list_users,
+    must_change_password,
     revoke_token,
     start_totp_enrollment,
     update_user,
@@ -77,13 +80,20 @@ class TokenResponse(BaseModel):
 
 
 class LoginResponse(BaseModel):
-    """Either a full token (no MFA / MFA passed) or an MFA challenge."""
+    """A full token, an MFA challenge, or a forced password-change challenge."""
     access_token: str | None = None
     token_type: str | None = None
     username: str | None = None
     role: str | None = None
     mfa_required: bool = False
     mfa_token: str | None = None
+    password_change_required: bool = False
+    pw_token: str | None = None
+
+
+class ChangePasswordChallengeRequest(BaseModel):
+    pw_token: str
+    new_password: str = Field(..., min_length=8)
 
 
 class TotpLoginRequest(BaseModel):
@@ -146,6 +156,14 @@ async def login(request: Request, body: LoginRequest):
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password",
         )
+    if must_change_password(user["username"]):
+        # Withhold a full token until the password is rotated (complete via
+        # /auth/login/change-password with the returned pw_token).
+        return LoginResponse(
+            password_change_required=True,
+            pw_token=create_pw_change_challenge(user["username"]),
+            username=user["username"],
+        )
     if is_totp_enabled(user["username"]):
         return LoginResponse(
             mfa_required=True,
@@ -178,6 +196,30 @@ async def login_totp(request: Request, body: TotpLoginRequest):
     )
 
 
+@router.post("/login/change-password", response_model=TokenResponse, summary="Complete forced password change")
+async def login_change_password(request: Request, body: ChangePasswordChallengeRequest):
+    """Second login step for a must-change-password account: set a new password
+    using the short-lived pw_token, then receive a normal access token."""
+    _check_login_rate_limit(request)
+    username = decode_pw_change_challenge(body.pw_token)
+    if not username:
+        raise HTTPException(status_code=401, detail="Session expired — sign in again")
+    user = get_user(username)
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+    # Reject reusing the current (default) password.
+    if verify_password(body.new_password, user.get("hashed_password", "")):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New password must differ from the current password",
+        )
+    update_user(username, password=body.new_password)  # also clears must_change_password
+    token = create_token(username, user["role"])
+    return TokenResponse(
+        access_token=token, token_type="bearer", username=username, role=user["role"],
+    )
+
+
 @router.post("/token", response_model=TokenResponse, summary="Login (OAuth2 form)")
 async def token(request: Request, form: OAuth2PasswordRequestForm = Depends()):
     """OAuth2-compatible endpoint for tooling (Swagger UI, curl, etc.)."""
@@ -187,6 +229,12 @@ async def token(request: Request, form: OAuth2PasswordRequestForm = Depends()):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if must_change_password(user["username"]):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Password change required — sign in via the web UI to set a new password.",
             headers={"WWW-Authenticate": "Bearer"},
         )
     if is_totp_enabled(user["username"]):

@@ -105,3 +105,46 @@ def test_list_users_strips_secrets(fake_redis):
     users = svc.list_users()
     assert any(u["username"] == "ken" for u in users)
     assert all("hashed_password" not in u for u in users)
+
+
+# ── Forced password change ────────────────────────────────────────────────────
+
+
+def test_must_change_password_flag(fake_redis):
+    svc.create_user("leo", "pw12345!", role="admin")
+    assert svc.must_change_password("leo") is False
+    svc.set_must_change_password("leo", True)
+    assert svc.must_change_password("leo") is True
+    svc.set_must_change_password("leo", False)
+    assert svc.must_change_password("leo") is False
+
+
+def test_update_user_password_clears_flag(fake_redis):
+    svc.create_user("mia", "pw12345!", role="admin")
+    svc.set_must_change_password("mia", True)
+    svc.update_user("mia", password="newpw678!")
+    assert svc.must_change_password("mia") is False
+
+
+def test_update_password_clears_flag(fake_redis):
+    svc.create_user("ned", "pw12345!", role="analyst")
+    svc.set_must_change_password("ned", True)
+    assert svc.update_password("ned", "another1!") is True
+    assert svc.must_change_password("ned") is False
+
+
+def test_pw_change_challenge_round_trip():
+    tok = svc.create_pw_change_challenge("olga")
+    assert svc.decode_pw_change_challenge(tok) == "olga"
+
+
+def test_pw_and_mfa_challenges_not_interchangeable():
+    # An MFA challenge must not pass as a password-change challenge, and vice versa.
+    mfa = svc.create_mfa_challenge("pat")
+    pwc = svc.create_pw_change_challenge("pat")
+    assert svc.decode_pw_change_challenge(mfa) is None
+    assert svc.decode_mfa_challenge(pwc) is None
+
+
+def test_decode_pw_challenge_rejects_garbage():
+    assert svc.decode_pw_change_challenge("not-a-token") is None

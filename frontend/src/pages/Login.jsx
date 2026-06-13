@@ -33,12 +33,15 @@ export default function Login({ onLogin }) {
   const navigate = useNavigate()
   const location = useLocation()
 
-  const [step, setStep]         = useState('credentials')   // 'credentials' | 'mfa'
+  const [step, setStep]         = useState('credentials')   // 'credentials' | 'mfa' | 'change_password'
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [showPass, setShowPass] = useState(false)
   const [mfaToken, setMfaToken] = useState('')
   const [code, setCode]         = useState('')
+  const [pwToken, setPwToken]   = useState('')
+  const [newPass, setNewPass]   = useState('')
+  const [confirmPass, setConfirmPass] = useState('')
   const [loading, setLoading]   = useState(false)
   const [error, setError]       = useState('')
   const codeRef = useRef(null)
@@ -57,7 +60,11 @@ export default function Login({ onLogin }) {
     setLoading(true); setError('')
     try {
       const data = await postJSON('/api/v1/auth/login', { username: username.trim(), password })
-      if (data.mfa_required) {
+      if (data.password_change_required) {
+        setPwToken(data.pw_token)
+        setNewPass(''); setConfirmPass('')
+        setStep('change_password')
+      } else if (data.mfa_required) {
         setMfaToken(data.mfa_token)
         setCode('')
         setStep('mfa')
@@ -66,6 +73,23 @@ export default function Login({ onLogin }) {
       }
     } catch (err) {
       setError(err.message || 'Login failed')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function submitChangePassword(e) {
+    e.preventDefault()
+    if (newPass.length < 8) { setError('Password must be at least 8 characters'); return }
+    if (newPass !== confirmPass) { setError('Passwords do not match'); return }
+    setLoading(true); setError('')
+    try {
+      const data = await postJSON('/api/v1/auth/login/change-password', {
+        pw_token: pwToken, new_password: newPass,
+      })
+      finish(data)
+    } catch (err) {
+      setError(err.message || 'Could not set new password')
     } finally {
       setLoading(false)
     }
@@ -164,7 +188,7 @@ export default function Login({ onLogin }) {
                 </button>
               </form>
             </>
-          ) : (
+          ) : step === 'mfa' ? (
             <>
               <button onClick={() => { setStep('credentials'); setError(''); setCode('') }}
                 className="inline-flex items-center gap-1.5 text-xs text-gray-500 hover:text-brand-text mb-5">
@@ -195,6 +219,52 @@ export default function Login({ onLogin }) {
                   className="btn-primary w-full justify-center py-2.5">
                   {loading ? <><Loader2 size={14} className="animate-spin" /> Verifying…</>
                            : <><ShieldCheck size={14} /> Verify &amp; sign in</>}
+                </button>
+              </form>
+            </>
+          ) : (
+            <>
+              <button onClick={() => { setStep('credentials'); setError(''); setNewPass(''); setConfirmPass('') }}
+                className="inline-flex items-center gap-1.5 text-xs text-gray-500 hover:text-brand-text mb-5">
+                <ArrowLeft size={13} /> Back
+              </button>
+              <div className="mb-6">
+                <div className="w-11 h-11 rounded-xl bg-brand-accent/10 flex items-center justify-center mb-3">
+                  <KeyRound size={20} className="text-brand-accent" />
+                </div>
+                <h2 className="text-xl font-semibold text-brand-text tracking-tight">Set a new password</h2>
+                <p className="text-sm text-gray-500 mt-1">
+                  This account still uses the default password. Choose a new one to continue.
+                </p>
+              </div>
+
+              <form onSubmit={submitChangePassword} className="space-y-4">
+                {error && <ErrorBox msg={error} />}
+                <Field label="New password">
+                  <div className="relative">
+                    <input
+                      type={showPass ? 'text' : 'password'} value={newPass}
+                      onChange={e => setNewPass(e.target.value)} autoComplete="new-password"
+                      placeholder="At least 8 characters" className="input w-full pr-10"
+                      autoFocus disabled={loading}
+                    />
+                    <button type="button" onClick={() => setShowPass(v => !v)} tabIndex={-1}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                      {showPass ? <EyeOff size={15} /> : <Eye size={15} />}
+                    </button>
+                  </div>
+                </Field>
+                <Field label="Confirm new password">
+                  <input
+                    type={showPass ? 'text' : 'password'} value={confirmPass}
+                    onChange={e => setConfirmPass(e.target.value)} autoComplete="new-password"
+                    placeholder="Re-enter the new password" className="input w-full" disabled={loading}
+                  />
+                </Field>
+                <button type="submit" disabled={loading || newPass.length < 8 || !confirmPass}
+                  className="btn-primary w-full justify-center py-2.5">
+                  {loading ? <><Loader2 size={14} className="animate-spin" /> Saving…</>
+                           : <><KeyRound size={14} /> Set password &amp; sign in</>}
                 </button>
               </form>
             </>
