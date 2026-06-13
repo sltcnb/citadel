@@ -33,7 +33,7 @@ except ImportError:
     _YAML_AVAILABLE = False
 
 import redis_keys as rk
-from auth.dependencies import get_company_filter, get_current_user
+from auth.dependencies import get_company_filter, get_current_user, require_case_access
 from services.elasticsearch import _request as es_req
 from services.redis_mutate import mutate_json
 from services.sigma_settings import (
@@ -782,7 +782,11 @@ def delete_library_rule(rule_id: str):
 
 
 @router.post("/cases/{case_id}/alert-rules/run-library")
-def run_library_against_case(case_id: str, rule_types: list[str] = Query(default=[])):
+def run_library_against_case(
+    case_id: str,
+    rule_types: list[str] = Query(default=[]),
+    _acl: dict = Depends(require_case_access),
+):
     """
     Execute rules in the global library against the given case's data.
     Optional rule_types filter: 'sigma', 'custom', 'legacy'. Empty = run all.
@@ -867,7 +871,9 @@ def run_library_against_case(case_id: str, rule_types: list[str] = Query(default
 
 
 @router.post("/cases/{case_id}/alert-rules/library/{rule_id}/run")
-def run_single_rule_against_case(case_id: str, rule_id: str):
+def run_single_rule_against_case(
+    case_id: str, rule_id: str, _acl: dict = Depends(require_case_access)
+):
     """Execute a single rule from the global library against the given case."""
     r = _redis()
     rules: list[dict] = json.loads(r.get(GLOBAL_KEY) or "[]")
@@ -911,6 +917,48 @@ def run_single_rule_against_case(case_id: str, rule_id: str):
         "rules_checked": 1,
         "fired": match is not None,
     }
+
+
+# ── Alert auto-triage — spawn a scoped Pilot investigation per fired rule ───────
+
+
+@router.post("/cases/{case_id}/alert-rules/triage")
+def triage_alerts(
+    case_id: str, limit: int = 3, _acl: dict = Depends(require_case_access)
+):
+    """Auto-investigate the rules that fired in the most recent run-library pass.
+
+    Reads the persisted last run, ranks fired rules by severity × match count,
+    and spawns a bounded background Pilot investigation for the top `limit`. The
+    analyst then opens pre-triaged alerts (verdict + evidence) instead of raw
+    hits. Returns the triage entries (rule_id → run_id); poll the agent progress
+    endpoint per run_id to watch each investigation."""
+    from services.alert_triage import trigger_triage
+
+    r = _redis()
+    raw = r.get(rk.case_alert_run(case_id))
+    if not raw:
+        raise HTTPException(
+            status_code=400,
+            detail="No recent rule run found — run the rule library against this case first.",
+        )
+    try:
+        run = json.loads(raw)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=500, detail="Stored rule run is corrupt.")
+    matches = run.get("matches", [])
+    if not matches:
+        return {"triaged": [], "detail": "No fired rules to triage."}
+    entries = trigger_triage(case_id, matches, limit=limit)
+    return {"triaged": entries}
+
+
+@router.get("/cases/{case_id}/alert-rules/triage")
+def get_alert_triage(case_id: str, _acl: dict = Depends(require_case_access)):
+    """List the auto-triage investigations spawned for this case (newest-first)."""
+    from services.alert_triage import get_triage_status
+
+    return {"triaged": get_triage_status(case_id)}
 
 
 # ── LLM helpers ───────────────────────────────────────────────────────────────
