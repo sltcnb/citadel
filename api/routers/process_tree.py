@@ -17,7 +17,8 @@ from collections import defaultdict
 
 from auth.dependencies import get_current_user, require_case_access
 from fastapi import APIRouter, Depends, HTTPException, Query
-from services.elasticsearch import _request as es_req
+from services.elasticsearch import build_bool_query
+from services.elasticsearch import es_request as es_req
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["process-tree"])
@@ -83,7 +84,7 @@ def process_tree(
     ]
     body = {
         "size": size,
-        "query": {"bool": {"must": must}},
+        "query": build_bool_query(must=must),
         "sort": [{"timestamp": {"order": "asc", "unmapped_type": "keyword", "missing": "_last"}}],
         "_source": [
             "fo_id",

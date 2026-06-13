@@ -35,6 +35,7 @@ except ImportError:
 import redis_keys as rk
 from auth.dependencies import get_company_filter, get_current_user
 from services.elasticsearch import _request as es_req
+from services.redis_mutate import mutate_json
 from services.sigma_settings import (
     get_global_sigma_enabled,
     is_sigma_rule,
@@ -165,10 +166,12 @@ def _seed_defaults_if_empty(r: redis_lib.Redis) -> None:
     """Populate the library with default rules the very first time it is accessed."""
     if r.get(GLOBAL_SEEDED_KEY):
         return
-    existing = json.loads(r.get(GLOBAL_KEY) or "[]")
-    if not existing:
-        rules = [_make_rule(t) for t in _get_default_rules()]
-        r.set(GLOBAL_KEY, json.dumps(rules))
+    mutate_json(
+        r,
+        GLOBAL_KEY,
+        lambda existing: existing if existing else [_make_rule(t) for t in _get_default_rules()],
+        [],
+    )
     r.set(GLOBAL_SEEDED_KEY, "1")
 
 
@@ -180,28 +183,36 @@ def _migrate_rule_types(r: redis_lib.Redis) -> None:
     Tracks completion via fo:alert_rules:migrated_v2."""
     if r.get(rk.GLOBAL_ALERT_RULES_MIGRATED):
         return
-    raw = r.get(GLOBAL_KEY)
-    if not raw:
+    if not r.get(GLOBAL_KEY):
         r.set(rk.GLOBAL_ALERT_RULES_MIGRATED, "1")
         return
     # Build name → rule_type map from fresh YAML load
     name_to_type = {d["name"]: d["rule_type"] for d in _get_default_rules()}
-    rules = json.loads(raw)
-    changed = 0
-    for rule in rules:
-        if rule.get("rule_type") == "custom":
-            continue  # user-created, never touch
-        correct = name_to_type.get(rule.get("name"))
-        if correct and rule.get("rule_type") != correct:
-            rule["rule_type"] = correct
-            changed += 1
-        elif not rule.get("rule_type") and not correct:
-            # Unknown seeded rule — keep as legacy
-            rule["rule_type"] = "legacy"
-            changed += 1
-    if changed:
-        r.set(GLOBAL_KEY, json.dumps(rules))
-        logger.info("Migration v2: retagged %d rules with correct rule_type", changed)
+    counts: dict = {}
+
+    def _retag(rules: list[dict]) -> list[dict]:
+        out = []
+        changed = 0
+        for rule in rules:
+            rule = dict(rule)
+            if rule.get("rule_type") == "custom":
+                out.append(rule)  # user-created, never touch
+                continue
+            correct = name_to_type.get(rule.get("name"))
+            if correct and rule.get("rule_type") != correct:
+                rule["rule_type"] = correct
+                changed += 1
+            elif not rule.get("rule_type") and not correct:
+                # Unknown seeded rule — keep as legacy
+                rule["rule_type"] = "legacy"
+                changed += 1
+            out.append(rule)
+        counts["changed"] = changed
+        return out
+
+    mutate_json(r, GLOBAL_KEY, _retag, [])
+    if counts.get("changed"):
+        logger.info("Migration v2: retagged %d rules with correct rule_type", counts["changed"])
     r.set(rk.GLOBAL_ALERT_RULES_MIGRATED, "1")
 
 
@@ -287,25 +298,31 @@ def seed_library(replace: bool = False):
 
     r = _redis()
     defaults = _get_default_rules()
-    existing: list[dict] = json.loads(r.get(GLOBAL_KEY) or "[]")
 
     if replace:
         rules = [_make_rule(t) for t in defaults]
-        r.set(GLOBAL_KEY, json.dumps(rules))
+        mutate_json(r, GLOBAL_KEY, lambda _cur: rules, [])
         r.set(GLOBAL_SEEDED_KEY, "1")
         return {"added": len(rules), "total": len(rules)}
 
-    existing_names = {rl["name"].lower() for rl in existing}
-    added = []
-    for template in defaults:
-        if template["name"].lower() not in existing_names:
-            new_rule = _make_rule(template)
-            existing.append(new_rule)
-            added.append(new_rule)
-    if added:
-        r.set(GLOBAL_KEY, json.dumps(existing))
+    counts: dict = {}
+
+    def _append_missing(existing: list[dict]) -> list[dict]:
+        existing = list(existing)
+        existing_names = {rl["name"].lower() for rl in existing}
+        added = 0
+        for template in defaults:
+            if template["name"].lower() not in existing_names:
+                existing.append(_make_rule(template))
+                existing_names.add(template["name"].lower())
+                added += 1
+        counts["added"] = added
+        counts["total"] = len(existing)
+        return existing
+
+    mutate_json(r, GLOBAL_KEY, _append_missing, [])
     r.set(GLOBAL_SEEDED_KEY, "1")
-    return {"added": len(added), "total": len(existing)}
+    return {"added": counts.get("added", 0), "total": counts.get("total", 0)}
 
 
 @router.post("/alert-rules/sigma/parse")
@@ -433,7 +450,17 @@ def import_sigma_rules(body: dict):
         imported += 1
 
     if new_rules:
-        r.set(GLOBAL_KEY, json.dumps(rules))
+
+        def _append(existing: list[dict]) -> list[dict]:
+            existing = list(existing)
+            present = {rl["name"].lower() for rl in existing}
+            for nr in new_rules:
+                if nr["name"].lower() not in present:
+                    existing.append(nr)
+                    present.add(nr["name"].lower())
+            return existing
+
+        mutate_json(r, GLOBAL_KEY, _append, [])
 
     return {
         "imported": imported,
@@ -711,14 +738,12 @@ def _sigma_to_artifact_type(sigma: dict) -> str:
 def create_library_rule(body: AlertRuleIn):
     """Add a new rule to the global library."""
     r = _redis()
-    rules: list[dict] = json.loads(r.get(GLOBAL_KEY) or "[]")
     new_rule = {
         "id": str(uuid.uuid4())[:8],
         **body.dict(),
         "created_at": datetime.utcnow().isoformat(),
     }
-    rules.append(new_rule)
-    r.set(GLOBAL_KEY, json.dumps(rules))
+    mutate_json(r, GLOBAL_KEY, lambda rules: rules + [new_rule], [])
     return new_rule
 
 
@@ -726,26 +751,31 @@ def create_library_rule(body: AlertRuleIn):
 def update_library_rule(rule_id: str, body: AlertRuleUpdate):
     """Update an existing rule in the global library."""
     r = _redis()
-    rules: list[dict] = json.loads(r.get(GLOBAL_KEY) or "[]")
-    updated = None
-    for rl in rules:
-        if rl["id"] == rule_id:
-            patch = body.dict(exclude_none=True)
-            rl.update(patch)
-            updated = rl
-            break
-    if updated is None:
+    patch = body.dict(exclude_none=True)
+    found: dict = {}
+
+    def _apply(rules: list[dict]) -> list[dict]:
+        found.clear()
+        out = []
+        for rl in rules:
+            rl = dict(rl)
+            if rl["id"] == rule_id:
+                rl.update(patch)
+                found["rule"] = rl
+            out.append(rl)
+        return out
+
+    mutate_json(r, GLOBAL_KEY, _apply, [])
+    if "rule" not in found:
         raise HTTPException(status_code=404, detail="Rule not found")
-    r.set(GLOBAL_KEY, json.dumps(rules))
-    return updated
+    return found["rule"]
 
 
 @router.delete("/alert-rules/library/{rule_id}", status_code=204)
 def delete_library_rule(rule_id: str):
     """Remove a rule from the global library."""
     r = _redis()
-    rules: list[dict] = json.loads(r.get(GLOBAL_KEY) or "[]")
-    r.set(GLOBAL_KEY, json.dumps([rl for rl in rules if rl["id"] != rule_id]))
+    mutate_json(r, GLOBAL_KEY, lambda rules: [rl for rl in rules if rl["id"] != rule_id], [])
 
 
 # ── Run library against a case ────────────────────────────────────────────────

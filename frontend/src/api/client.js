@@ -145,6 +145,7 @@ export const api = {
 
   auth: {
     me:                 ()                   => request('GET',    '/auth/me'),
+    streamToken:        ()                   => request('GET',    '/auth/stream-token'),
     login:              (data)               => request('POST',   '/auth/login', data),
     logout:             ()                   => request('POST',   '/auth/logout'),
     listUsers:          ()                   => request('GET',    '/auth/users'),

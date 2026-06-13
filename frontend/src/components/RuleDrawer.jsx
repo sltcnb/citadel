@@ -5,6 +5,7 @@ import {
 import Editor from '@monaco-editor/react'
 import { api } from '../api/client'
 import { useCompanies } from '../pages/UserManagement'
+import { severityStyle } from '../utils/severity'
 
 // ── Shared constants ──────────────────────────────────────────────────────────
 
@@ -52,13 +53,6 @@ export const CATEGORY_STYLES = {
   'Other':             { bg: 'bg-gray-100 text-gray-600 border-gray-200',         dot: 'bg-gray-400'    },
 }
 
-export const SIGMA_LEVEL_STYLES = {
-  critical: 'bg-red-100 text-red-700 border-red-200',
-  high:     'bg-orange-100 text-orange-700 border-orange-200',
-  medium:   'bg-yellow-100 text-yellow-700 border-yellow-200',
-  low:      'bg-blue-100 text-blue-700 border-blue-200',
-  info:     'bg-gray-100 text-gray-600 border-gray-200',
-}
 
 export function _alertRuleToCode(rule) {
   if (rule.sigma_yaml) return rule.sigma_yaml
@@ -100,7 +94,7 @@ export function CategoryBadge({ category }) {
 
 export function SigmaLevelBadge({ level }) {
   if (!level) return null
-  const cls = SIGMA_LEVEL_STYLES[level.toLowerCase()] || SIGMA_LEVEL_STYLES.info
+  const cls = severityStyle(level)
   return (
     <span className={`inline-flex items-center text-[10px] font-medium border rounded-full px-2 py-0.5 ${cls}`}>
       {level}

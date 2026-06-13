@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import { PageShell, PageHeader } from '../components/shared/PageShell'
 import { api } from '../api/client'
+import { formatBytes } from '../utils/format'
 
 // ── UploadZone ────────────────────────────────────────────────────────────────
 function UploadZone({ onUploaded }) {
@@ -74,7 +75,7 @@ function UploadZone({ onUploaded }) {
             <FileCode2 size={20} className="text-brand-accent" />
             <div className="text-left">
               <p className="text-sm font-medium text-brand-text">{file.name}</p>
-              <p className="text-xs text-gray-500">{(file.size / 1024).toFixed(1)} KB</p>
+              <p className="text-xs text-gray-500">{formatBytes(file.size)}</p>
             </div>
             <div className="flex gap-2 ml-4">
               <button

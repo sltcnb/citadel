@@ -272,7 +272,7 @@ def list_pinned(
     """Return all pinned events for a case, newest pin first."""
     import urllib.error
 
-    from services.elasticsearch import _request as es_req
+    from services.elasticsearch import es_request as es_req
 
     body = {
         "query": {"term": {"is_pinned": True}},
@@ -319,7 +319,7 @@ def get_iocs(
     """
     import urllib.error
 
-    from services.elasticsearch import _request as es_req
+    from services.elasticsearch import es_request as es_req
 
     index = f"fo-case-{case_id}-*"
 
@@ -393,7 +393,7 @@ def list_fields(case_id: str, _acl: dict = Depends(require_case_access)):
     """
     import urllib.error
 
-    from services.elasticsearch import _request as es_req
+    from services.elasticsearch import es_request as es_req
 
     try:
         res = es_req("GET", f"/fo-case-{case_id}-*/_mapping/field/*")
@@ -455,7 +455,7 @@ def mitre_coverage(case_id: str, _acl: dict = Depends(require_case_access)):
     """
     import urllib.error
 
-    from services.elasticsearch import _request as es_req
+    from services.elasticsearch import es_request as es_req
 
     index = f"fo-case-{case_id}-*"
     # Plugins emit mitre.id / mitre.technique / mitre.tactic (registry plugin,
@@ -546,7 +546,7 @@ def search_cross_case(body: dict, current_user: dict = Depends(get_current_user)
     import urllib.error
 
     from services import cases as case_svc
-    from services.elasticsearch import _request as es_req
+    from services.elasticsearch import es_request as es_req
     from services.elasticsearch import search_events
 
     query = (body.get("query") or "").strip()
@@ -654,7 +654,8 @@ def aggregate(
     """
     import urllib.error
 
-    from services.elasticsearch import _request as es_req
+    from services.elasticsearch import build_bool_query, total_hits_setting
+    from services.elasticsearch import es_request as es_req
 
     fields_list = [f.strip() for f in field.split(",") if f.strip()] if agg == "terms" else [field]
     if not fields_list:
@@ -769,8 +770,8 @@ def aggregate(
     # ES-side soft timeout → returns partial buckets + timed_out flag instead of
     # blowing the HTTP timeout and hard-failing. track_total_hits=True gives the
     # real query hit count (not the misleading 10k cap).
-    body = {"size": 0, "query": {"bool": {"must": must}}, "aggs": aggs,
-            "timeout": "25s", "track_total_hits": True}
+    body = {"size": 0, "query": build_bool_query(must=must), "aggs": aggs,
+            "timeout": "25s", **total_hits_setting()}
 
     try:
         result = es_req("POST", f"/fo-case-{case_id}-*/_search", body)

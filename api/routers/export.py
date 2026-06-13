@@ -661,8 +661,15 @@ async def import_archive(file: UploadFile = File(...)):
 # ── Archive restore helper ─────────────────────────────────────────────────────
 
 
-def _restore_archive_into_case(case_id: str, tf: tarfile.TarFile) -> dict:
-    """Restore archive contents into an existing case. Returns stats dict."""
+def _restore_archive_into_case(case_id: str, tf: tarfile.TarFile, pre_index_hook=None) -> dict:
+    """Restore archive contents into an existing case. Returns stats dict.
+
+    All archive members are read and parsed (validated) up front. ``pre_index_hook``
+    (if given) is invoked only AFTER that validation succeeds and immediately
+    BEFORE any data is written/indexed — used by the restore endpoint to delete
+    the old indices only once the archive is known-good, so a corrupt or
+    unreadable archive can never wipe an existing case.
+    """
 
     def _read(name):
         try:
@@ -674,10 +681,16 @@ def _restore_archive_into_case(case_id: str, tf: tarfile.TarFile) -> dict:
 
     r = get_redis()
     now = datetime.now(UTC).isoformat()
+    # Read + parse everything first; a parse error here raises before we touch
+    # (or delete) any existing case data.
     notes_data = json.loads(_read("notes.json") or b"{}")
     alert_rules = json.loads(_read("alert_rules.json") or b"[]")
     saved_searches = json.loads(_read("saved_searches.json") or b"[]")
     events_gz = _read("events.ndjson.gz")
+
+    # Archive validated/extracted — now safe to drop the old indices.
+    if pre_index_hook is not None:
+        pre_index_hook()
 
     if notes_data.get("body"):
         r.hset(rk.case_notes(case_id), mapping={"body": notes_data["body"], "updated_at": now})
@@ -821,11 +834,18 @@ def restore_archive_case(case_id: str, _case: dict = Depends(require_case_access
             raise HTTPException(status_code=400, detail=f"Invalid archive: {exc}")
 
         with tf:
-            # Clear existing ES indices first so re-indexing doesn't create duplicates
+            # Don't delete the existing indices until the archive has been
+            # downloaded, opened, and its members read + parsed successfully.
+            # _restore_archive_into_case validates everything first, then calls
+            # this hook (clearing old indices to avoid duplicate docs) immediately
+            # before the first bulk write. An early failure (bad download, corrupt
+            # tar, unparseable JSON) raises before the hook runs, leaving the
+            # existing case data intact.
             from services.elasticsearch import delete_case_indices
 
-            delete_case_indices(case_id)
-            stats = _restore_archive_into_case(case_id, tf)
+            stats = _restore_archive_into_case(
+                case_id, tf, pre_index_hook=lambda: delete_case_indices(case_id)
+            )
 
         update_case(case_id, status="active", local_purged="false")
         return {"ok": True, **stats}

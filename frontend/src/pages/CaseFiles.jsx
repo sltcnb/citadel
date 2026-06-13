@@ -5,6 +5,7 @@ import {
   X, ArrowLeft, AlertTriangle, Lock, CheckCircle, RefreshCw,
 } from 'lucide-react'
 import { api } from '../api/client'
+import { formatBytes } from '../utils/format'
 
 // ── Category icons ────────────────────────────────────────────────────────────
 function FileIcon({ category, size = 13 }) {
@@ -246,7 +247,7 @@ function DiskImageBrowser({ caseId, file }) {
                     </span>
                   </td>
                   <td className="px-3 py-1.5 text-right text-gray-500 tabular-nums">
-                    {entry.is_dir ? '—' : entry.size ? _fmtSize(entry.size) : '0 B'}
+                    {entry.is_dir ? '—' : entry.size ? formatBytes(entry.size) : '0 B'}
                   </td>
                   <td className="px-3 py-1.5 text-gray-500 tabular-nums">
                     {entry.mtime ? new Date(entry.mtime).toISOString().replace('T', ' ').slice(0, 19) : '—'}
@@ -259,13 +260,6 @@ function DiskImageBrowser({ caseId, file }) {
       </div>
     </div>
   )
-}
-
-function _fmtSize(bytes) {
-  if (bytes < 1024)       return `${bytes} B`
-  if (bytes < 1048576)    return `${(bytes / 1024).toFixed(1)} KB`
-  if (bytes < 1073741824) return `${(bytes / 1048576).toFixed(1)} MB`
-  return `${(bytes / 1073741824).toFixed(2)} GB`
 }
 
 // ── File search panel ─────────────────────────────────────────────────────────
