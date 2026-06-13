@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { Shield, Plus, Trash2, RefreshCw, Download, Upload, Search, Globe, Hash, AtSign, Link2, FileText, Loader2, Check, X, AlertTriangle, CheckCircle, ExternalLink, Play, ChevronRight } from 'lucide-react'
 import { PageShell, PageHeader } from '../components/shared/PageShell'
 import { api } from '../api/client'
+import { formatDate } from '../utils/format'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -49,12 +50,7 @@ const IOC_ICONS = {
   filename: FileText,
 }
 
-function fmtDate(d) {
-  if (!d) return 'Never'
-  return new Date(d).toLocaleString(undefined, {
-    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
-  })
-}
+const fmtDate = d => formatDate(d, 'month-time', 'Never')
 
 // ── IOC Stat Card ────────────────────────────────────────────────────────────
 

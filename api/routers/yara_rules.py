@@ -12,6 +12,7 @@ from auth.dependencies import get_company_filter, get_current_user
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
+from redis import WatchError
 
 from config import get_redis as _r
 
@@ -104,20 +105,40 @@ def create_rule(body: RuleIn):
 @router.put("/yara-rules/{rule_id}")
 def update_rule(rule_id: str, body: RuleIn):
     r = _r()
-    if not r.exists(rk.yara_rule(rule_id)):
-        raise HTTPException(status_code=404, detail="YARA rule not found")
+    rule_key = rk.yara_rule(rule_id)
     now = datetime.now(UTC).isoformat()
-    r.hset(
-        rk.yara_rule(rule_id),
-        mapping={
-            "name": body.name.strip(),
-            "description": body.description.strip(),
-            "tags": json.dumps(body.tags),
-            "companies": json.dumps(body.companies),
-            "content": body.content,
-            "updated_at": now,
-        },
-    )
+    patch = {
+        "name": body.name.strip(),
+        "description": body.description.strip(),
+        "tags": json.dumps(body.tags),
+        "companies": json.dumps(body.companies),
+        "content": body.content,
+        "updated_at": now,
+    }
+    # Atomic check-then-act: WATCH the hash so a concurrent delete between the
+    # existence check and the write can't leave a partial, set-orphaned record.
+    # On the write we re-merge the existing full mapping (preserving id /
+    # created_at) and re-add the id to the index set.
+    for _ in range(25):
+        with r.pipeline() as pipe:
+            try:
+                pipe.watch(rule_key)
+                existing = pipe.hgetall(rule_key)
+                if not existing:
+                    pipe.unwatch()
+                    raise HTTPException(status_code=404, detail="YARA rule not found")
+                merged = {**existing, **patch}
+                merged.setdefault("id", rule_id)
+                merged.setdefault("created_at", now)
+                pipe.multi()
+                pipe.hset(rule_key, mapping=merged)
+                pipe.sadd(rk.YARA_RULES_SET, rule_id)
+                pipe.execute()
+                break
+            except WatchError:
+                continue
+    else:
+        raise RuntimeError(f"Redis contention on {rule_key} after 25 retries")
     return _load(r, rule_id)
 
 

@@ -1,29 +1,33 @@
-import { useState } from 'react'
+import { useState, lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useLocation, useSearchParams } from 'react-router-dom'
 
 import Layout         from './components/layout/ModernLayout'
-import Dashboard      from './pages/Dashboard'
-import CaseTimeline   from './pages/CaseTimeline'
-import CaseFiles      from './pages/CaseFiles'
-import CaseNotes      from './pages/CaseNotes'
-import AlertLibrary   from './pages/AlertLibrary'
-import YaraLibrary    from './pages/YaraLibrary'
-import Ingesters      from './pages/Ingesters'
-import Modules        from './pages/Modules'
-import Collector      from './pages/Collector'
-import Studio         from './pages/Studio'
-import Docs           from './pages/Docs'
-import Settings       from './pages/Settings'
-import Account        from './pages/Account'
 import Login          from './pages/Login'
-import Performance    from './pages/Performance'
-import Logs           from './pages/Logs'
-import Suite          from './pages/Suite'
-import UserManagement from './pages/UserManagement'
-import ThreatIntel    from './pages/ThreatIntel'
-import MalwareAnalysis from './pages/MalwareAnalysis'
-import CrossCaseSearch from './pages/CrossCaseSearch'
-import Watchlist from './pages/Watchlist'
+import RouteFallback  from './components/RouteFallback'
+
+// Heavy page components are lazy-loaded so they ship as separate chunks.
+const Dashboard       = lazy(() => import('./pages/Dashboard'))
+const CaseTimeline    = lazy(() => import('./pages/CaseTimeline'))
+const CaseFiles       = lazy(() => import('./pages/CaseFiles'))
+const CaseNotes       = lazy(() => import('./pages/CaseNotes'))
+const AlertLibrary    = lazy(() => import('./pages/AlertLibrary'))
+const YaraLibrary     = lazy(() => import('./pages/YaraLibrary'))
+const Ingesters       = lazy(() => import('./pages/Ingesters'))
+const Modules         = lazy(() => import('./pages/Modules'))
+const Collector       = lazy(() => import('./pages/Collector'))
+const Studio          = lazy(() => import('./pages/Studio'))
+const Docs            = lazy(() => import('./pages/Docs'))
+const Settings        = lazy(() => import('./pages/Settings'))
+const Account         = lazy(() => import('./pages/Account'))
+const Performance     = lazy(() => import('./pages/Performance'))
+const Logs            = lazy(() => import('./pages/Logs'))
+const Suite           = lazy(() => import('./pages/Suite'))
+const UserManagement  = lazy(() => import('./pages/UserManagement'))
+const ThreatIntel     = lazy(() => import('./pages/ThreatIntel'))
+const MalwareAnalysis = lazy(() => import('./pages/MalwareAnalysis'))
+const CrossCaseSearch = lazy(() => import('./pages/CrossCaseSearch'))
+const Watchlist       = lazy(() => import('./pages/Watchlist'))
+
 import { UploadProvider } from './contexts/UploadContext'
 import { LicenseProvider } from './contexts/LicenseContext'
 
@@ -70,6 +74,7 @@ export default function App() {
     <LicenseProvider isAuthenticated={isAuthenticated()}>
     <UploadProvider>
       <BrowserRouter>
+        <Suspense fallback={<RouteFallback />}>
         <Routes>
           {/* ── Public ── */}
           <Route path="/login" element={<Login onLogin={handleLogin} />} />
@@ -114,6 +119,7 @@ export default function App() {
             <Route path="*"       element={<Navigate to="/" replace />} />
           </Route>
         </Routes>
+        </Suspense>
       </BrowserRouter>
     </UploadProvider>
     </LicenseProvider>

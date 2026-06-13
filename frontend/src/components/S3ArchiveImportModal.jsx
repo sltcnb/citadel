@@ -4,6 +4,7 @@ import {
   X, RefreshCw, CloudDownload, Folder, FileArchive, ChevronLeft,
 } from 'lucide-react'
 import { api } from '../api/client'
+import { formatBytes } from '../utils/format'
 
 export default function S3ArchiveImportModal({ onClose, onImported }) {
   const navigate = useNavigate()
@@ -120,7 +121,7 @@ export default function S3ArchiveImportModal({ onClose, onImported }) {
                     <FileArchive size={13} className={`flex-shrink-0 ${isCitadel ? 'text-brand-accent' : 'text-gray-400'}`} />
                     <span className="flex-1 truncate text-gray-700">{name}</span>
                     {f.size != null && (
-                      <span className="text-gray-400 flex-shrink-0">{(f.size / 1024).toFixed(0)} KB</span>
+                      <span className="text-gray-400 flex-shrink-0">{formatBytes(f.size)}</span>
                     )}
                     {isCitadel && (
                       <button

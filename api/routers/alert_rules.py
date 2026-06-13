@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 import redis_keys as rk
 from services.elasticsearch import _request as es_req
+from services.redis_mutate import mutate_json
 
 from config import get_redis as _r
 
@@ -83,14 +84,12 @@ def list_rules(case_id: str, _acl: dict = Depends(require_case_access)):
 def create_rule(case_id: str, body: AlertRuleIn, _acl: dict = Depends(require_case_access)):
     r = _r()
     key = rk.case_alert_rules(case_id)
-    rules = json.loads(r.get(key) or "[]")
     new = {
         "id": str(uuid.uuid4())[:8],
         **body.model_dump(),
         "created_at": datetime.now(UTC).isoformat(),
     }
-    rules.append(new)
-    r.set(key, json.dumps(rules))
+    mutate_json(r, key, lambda rules: rules + [new], [])
     return new
 
 
@@ -144,8 +143,7 @@ def run_single_rule(case_id: str, rule_id: str, _acl: dict = Depends(require_cas
 def delete_rule(case_id: str, rule_id: str, _acl: dict = Depends(require_case_access)):
     r = _r()
     key = rk.case_alert_rules(case_id)
-    rules = json.loads(r.get(key) or "[]")
-    r.set(key, json.dumps([rl for rl in rules if rl["id"] != rule_id]))
+    mutate_json(r, key, lambda rules: [rl for rl in rules if rl["id"] != rule_id], [])
 
 
 # ── Last run ───────────────────────────────────────────────────────────────────

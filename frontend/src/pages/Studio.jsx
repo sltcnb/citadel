@@ -770,12 +770,15 @@ export default function Studio() {
   const [logPanel, setLogPanel] = useState({ show: false, lines: [], done: false, runId: null })
   const esRef = useRef(null)
 
-  function openLogStream(runId) {
+  async function openLogStream(runId) {
     if (esRef.current) esRef.current.close()
     setLogPanel({ show: true, lines: [], done: false, runId })
     const url = api.modules.logStreamUrl(runId)
-    const token = getToken()
-    // Pass token via query param (EventSource doesn't support custom headers)
+    // EventSource can't set an Authorization header, so the token rides in the
+    // ?_token= query param. Mint a SHORT-LIVED (60s) stream token instead of the
+    // full 8h access JWT so it doesn't leak into proxy logs / browser history.
+    let token
+    try { token = (await api.auth.streamToken()).token } catch { token = getToken() }
     const es = new EventSource(`${url}?_token=${encodeURIComponent(token || '')}`)
     esRef.current = es
     es.onmessage = (e) => {

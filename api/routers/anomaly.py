@@ -151,8 +151,11 @@ def scan_anomalies(
             continue
         for i, focus_day in enumerate(days_sorted):
             focus = counts[i]
-            baseline = counts[:i] + counts[i + 1 :]
-            if len(baseline) < 2:
+            # Strictly TRAILING baseline: only days BEFORE the focus day, so the
+            # focus day's own count (and any later days) never leak into the mean
+            # /stddev it's being scored against.
+            baseline = counts[:i]
+            if len(baseline) < 2:  # too few prior samples — skip (no divide-by-zero)
                 continue
             mean = sum(baseline) / len(baseline)
             var = sum((x - mean) ** 2 for x in baseline) / len(baseline)

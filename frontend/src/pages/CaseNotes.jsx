@@ -8,6 +8,7 @@ import {
   Highlighter, Link, RemoveFormatting,
 } from 'lucide-react'
 import { api } from '../api/client'
+import { relativeTime } from '../utils/format'
 
 // ── WYSIWYG toolbar ───────────────────────────────────────────────────────────
 
@@ -60,24 +61,6 @@ function EditorToolbar({ editorRef }) {
       <ToolbarBtn title="Remove formatting" onClick={() => cmd('removeFormat')}><RemoveFormatting size={13} /></ToolbarBtn>
     </div>
   )
-}
-
-function relativeTime(iso) {
-  if (!iso) return null
-  const diff = Math.round((Date.now() - new Date(iso).getTime()) / 1000)
-  if (diff < 10)   return 'just now'
-  if (diff < 60)   return `${diff}s ago`
-  if (diff < 3600) return `${Math.round(diff / 60)}m ago`
-  return `${Math.round(diff / 3600)}h ago`
-}
-
-const RISK_CONFIG = {
-  none:     { color: 'text-green-600',  bg: 'bg-green-100',  border: 'border-green-300',  bar: 'bg-green-500',   label: 'No Risk' },
-  low:      { color: 'text-blue-600',   bg: 'bg-blue-100',   border: 'border-blue-300',   bar: 'bg-blue-500',    label: 'Low' },
-  medium:   { color: 'text-amber-600',  bg: 'bg-amber-100',  border: 'border-amber-300',  bar: 'bg-amber-500',   label: 'Medium' },
-  high:     { color: 'text-orange-600', bg: 'bg-orange-100', border: 'border-orange-300', bar: 'bg-orange-500',  label: 'High' },
-  critical: { color: 'text-red-600',    bg: 'bg-red-100',    border: 'border-red-300',    bar: 'bg-red-500',     label: 'Critical' },
-  unknown:  { color: 'text-gray-500',   bg: 'bg-gray-100',   border: 'border-gray-300',   bar: 'bg-gray-400',    label: 'Unknown' },
 }
 
 // ── Tab: Notes ────────────────────────────────────────────────────────────────

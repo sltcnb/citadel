@@ -26,6 +26,18 @@ def test_token_round_trip():
     assert payload["jti"]
 
 
+def test_stream_token_round_trip():
+    import time
+
+    token = svc.create_stream_token("erin", "developer")
+    payload = svc.decode_token(token)
+    assert payload["sub"] == "erin"
+    assert payload["role"] == "developer"
+    assert payload["jti"]
+    # Short-lived: expiry is ~60s out, not the 8h access-token window.
+    assert 0 < payload["exp"] - time.time() <= 60
+
+
 def test_expired_token_rejected(monkeypatch):
     monkeypatch.setattr(settings, "JWT_EXPIRE_HOURS", -1)  # already expired
     token = svc.create_token("bob", "admin")

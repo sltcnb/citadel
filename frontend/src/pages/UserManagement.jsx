@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Users, Plus, Trash2, Pencil, Key, Shield, ShieldCheck, Loader2, Check, X, UserCircle, AlertTriangle, Building2, Code2, Eye } from 'lucide-react'
 import { PageShell, PageHeader } from '../components/shared/PageShell'
 import { api } from '../api/client'
+import { formatDate } from '../utils/format'
 
 /* ── Shared company hooks ─────────────────────────────────────────────────── */
 
@@ -25,10 +26,7 @@ function cachedUser() {
   try { return JSON.parse(localStorage.getItem('fo_user')) } catch { return null }
 }
 
-function fmtDate(iso) {
-  if (!iso) return '-'
-  return new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
-}
+const fmtDate = iso => formatDate(iso, 'date', '-')
 
 /* ── Modal shell ──────────────────────────────────────────────────────────── */
 
