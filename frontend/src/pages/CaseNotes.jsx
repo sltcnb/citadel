@@ -88,6 +88,7 @@ function NotesTab({ caseId }) {
   const [currentBody, setCurrentBody] = useState('')
   const [updatedAt, setUpdatedAt]     = useState(null)
   const [saving, setSaving]           = useState(false)
+  const [error, setError]             = useState(null)
   const [, setTick] = useState(0)
 
   useEffect(() => {
@@ -96,8 +97,9 @@ function NotesTab({ caseId }) {
       setSavedBody(body)
       setCurrentBody(body)
       setUpdatedAt(d.updated_at)
+      setError(null)
       if (editorRef.current) editorRef.current.innerHTML = DOMPurify.sanitize(body)
-    })
+    }).catch(err => setError(err.message || 'Failed to load notes'))
   }, [caseId])
 
   useEffect(() => {
@@ -114,6 +116,9 @@ function NotesTab({ caseId }) {
       setSavedBody(body)
       setCurrentBody(body)
       setUpdatedAt(res.updated_at)
+      setError(null)
+    } catch (err) {
+      setError(err.message || 'Failed to save notes')
     } finally {
       setSaving(false)
     }
@@ -179,8 +184,9 @@ function NotesTab({ caseId }) {
       {/* Save bar */}
       <div className="flex items-center justify-between px-4 py-1.5 border-b border-gray-100 bg-white flex-shrink-0">
         <div className="flex items-center gap-1.5">
-          {updatedAt && !dirty && <span className="text-xs text-gray-500">saved {relativeTime(updatedAt)}</span>}
-          {dirty && <span className="text-xs text-amber-500">unsaved changes</span>}
+          {error && <span className="text-xs text-red-600">{error}</span>}
+          {!error && updatedAt && !dirty && <span className="text-xs text-gray-500">saved {relativeTime(updatedAt)}</span>}
+          {!error && dirty && <span className="text-xs text-amber-500">unsaved changes</span>}
         </div>
         <div className="flex items-center gap-2">
           <button onClick={handleExportPDF} className="btn-ghost text-xs flex items-center gap-1.5">

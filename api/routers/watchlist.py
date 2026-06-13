@@ -19,7 +19,7 @@ import logging
 import uuid
 from datetime import UTC, datetime
 
-from auth.dependencies import get_current_user, require_analyst_or_admin
+from auth.dependencies import get_current_user, require_analyst_or_admin, require_case_access
 from fastapi import APIRouter, Depends, HTTPException
 
 from config import get_redis
@@ -127,7 +127,7 @@ def delete_watchlist_entry(entry_id: str):
 
 
 @router.get("/cases/{case_id}/watchlist/auto-run")
-def get_case_watchlist_run(case_id: str, _: dict = Depends(get_current_user)):
+def get_case_watchlist_run(case_id: str, _acl: dict = Depends(require_case_access)):
     """Return the latest auto-evaluated watchlist hits for a case (set by the
     post-ingest deferred runner). Empty if no run has happened yet."""
     raw = get_redis().get(f"fo:watchlist_runs:{case_id}")
@@ -185,6 +185,7 @@ def evaluate_watchlist(_: dict = Depends(get_current_user)):
         q = f'({e["query"]}) AND {not_clause}' if not_clause else e["query"]
         agg = {
             "size": 0,
+            "track_total_hits": True,
             "query": {
                 "query_string": {
                     "query": q,

@@ -2,13 +2,36 @@
 
 import logging
 
-from fastapi import APIRouter, HTTPException, Query
+from auth.dependencies import (
+    get_company_filter,
+    get_current_user,
+    require_case_access,
+)
+from fastapi import APIRouter, Depends, HTTPException, Query
 from services import elasticsearch as es
 from services import jobs as job_svc
 from services import storage
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["jobs"])
+
+
+def _check_job_case_access(job: dict, current_user: dict) -> None:
+    """Enforce the caller's company restriction for a job that has no case_id path
+    param. Mirrors require_case_access / cases._check_company_access: 404 if the
+    job's case is missing, 403 if it belongs to another company."""
+    from services.cases import get_case as _get_case
+
+    job_case_id = job.get("case_id")
+    case = _get_case(job_case_id) if job_case_id else None
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+    flt = get_company_filter(current_user)
+    if flt is not None and case.get("company", "") not in flt:
+        raise HTTPException(
+            status_code=403,
+            detail="Access denied: case belongs to a different company",
+        )
 
 
 @router.get("/jobs/{job_id}")
@@ -25,6 +48,7 @@ def list_case_jobs(
     case_id: str,
     limit: int = Query(500, ge=1, le=2000),
     page: int = Query(0, ge=0),
+    _case: dict = Depends(require_case_access),
 ):
     """List jobs for a case — paginated to avoid loading all records at once."""
     total = job_svc.count_case_jobs(case_id)
@@ -79,11 +103,21 @@ def retry_job(job_id: str):
             detail=f"Only FAILED or PENDING jobs can be retried (current status: {job.get('status')})",
         )
 
-    case_id = job["case_id"]
-    minio_object_key = job["minio_object_key"]
-    original_filename = job["original_filename"]
+    case_id = job.get("case_id")
+    original_filename = job.get("original_filename", "")
+    minio_object_key = job.get("minio_object_key", "")
     s3_config_key = job.get("s3_config_key", "")
     s3_source_key = job.get("s3_source_key", "")
+
+    if not case_id:
+        raise HTTPException(status_code=422, detail="Job is missing a case_id and cannot be retried")
+    # An S3-only job restarts from the transfer phase; a MinIO-backed job needs
+    # its object key. Require at least one valid dispatch path.
+    if not ((s3_source_key and s3_config_key) or minio_object_key):
+        raise HTTPException(
+            status_code=422,
+            detail="Job has no source object key and cannot be retried",
+        )
 
     # Reset job state in Redis
     job_svc.reset_job_for_retry(job_id)
@@ -115,7 +149,7 @@ def retry_job(job_id: str):
 
 
 @router.delete("/jobs/{job_id}")
-def delete_job(job_id: str):
+def delete_job(job_id: str, current_user: dict = Depends(get_current_user)):
     """
     Permanently delete an ingestion job and all its data:
       - Job metadata from Redis (and child job records if this was a ZIP)
@@ -128,13 +162,17 @@ def delete_job(job_id: str):
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
+    # IDOR guard: this route has no case_id path param, so enforce the company
+    # restriction against the job's own case before any destructive action.
+    _check_job_case_access(job, current_user)
+
     if job.get("status") in ("RUNNING", "UPLOADING"):
         raise HTTPException(
             status_code=409,
             detail=f"Cannot delete an active job (status: {job.get('status')}). Wait for it to finish.",
         )
 
-    case_id = job["case_id"]
+    case_id = job.get("case_id")
 
     # Collect this job + any child jobs created from a ZIP expansion.
     # Use a pipeline HGET on just source_zip (one round-trip) to avoid
@@ -188,7 +226,7 @@ def delete_job(job_id: str):
 
 
 @router.delete("/cases/{case_id}/jobs")
-def delete_all_case_jobs(case_id: str):
+def delete_all_case_jobs(case_id: str, _case: dict = Depends(require_case_access)):
     """
     Delete all non-active jobs for a case (COMPLETED, FAILED, SKIPPED, PENDING).
     Active jobs (RUNNING, UPLOADING) are skipped.

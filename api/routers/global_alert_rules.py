@@ -35,6 +35,11 @@ except ImportError:
 import redis_keys as rk
 from auth.dependencies import get_company_filter, get_current_user
 from services.elasticsearch import _request as es_req
+from services.sigma_settings import (
+    get_global_sigma_enabled,
+    is_sigma_rule,
+    sigma_enabled_for_case,
+)
 
 from config import get_redis as _redis
 
@@ -80,13 +85,11 @@ def _load_default_rules() -> list[dict]:
         logger.warning("Alert rules directory %s not found", _RULES_DIR)
         return []
 
-    from config import settings as _settings
-
     rules: list[dict] = []
     for path in sorted(_RULES_DIR.glob("**/*.yaml")):
         # Sigma is opt-in — skip the bulky Sigma HQ community rule packs unless
         # enabled. Native/custom rule files still load.
-        if not _settings.SIGMA_ENABLED and "sigma_hq" in path.parts:
+        if not get_global_sigma_enabled() and "sigma_hq" in path.parts:
             continue
         try:
             with path.open() as fh:
@@ -312,8 +315,7 @@ def parse_sigma_rule(body: dict):
     Used by the frontend edit modal to preview / validate the ES query.
     Returns { name, description, category, artifact_type, query, sigma_level, sigma_tags, sigma_status }.
     """
-    from config import settings as _settings
-    if not _settings.SIGMA_ENABLED:
+    if not get_global_sigma_enabled():
         raise HTTPException(status_code=503, detail="Sigma integration is disabled on this instance.")
     if not _YAML_AVAILABLE:
         raise HTTPException(status_code=500, detail="PyYAML is not installed on the server.")
@@ -353,8 +355,7 @@ def import_sigma_rules(body: dict):
 
     Returns { "imported": N, "skipped": N, "rules": [...] }
     """
-    from config import settings as _settings
-    if not _settings.SIGMA_ENABLED:
+    if not get_global_sigma_enabled():
         raise HTTPException(status_code=503, detail="Sigma integration is disabled on this instance.")
     if not _YAML_AVAILABLE:
         raise HTTPException(status_code=500, detail="PyYAML is not installed on the server.")
@@ -766,6 +767,11 @@ def run_library_against_case(case_id: str, rule_types: list[str] = Query(default
     case_company = (raw_co.decode() if isinstance(raw_co, bytes) else raw_co) or ""
     rules = [rl for rl in rules if _rule_applies_to_company(rl, case_company)]
 
+    # Respect the Sigma opt-out (per-case override else global). When disabled,
+    # Sigma rules are skipped; native + custom rules still run.
+    if not sigma_enabled_for_case(case_id):
+        rules = [rl for rl in rules if not is_sigma_rule(rl)]
+
     if rule_types:
 
         def _matches_type(rule: dict) -> bool:
@@ -775,7 +781,7 @@ def run_library_against_case(case_id: str, rule_types: list[str] = Query(default
                 return True
             if "custom" in rule_types and rt == "custom":
                 return True
-            if "legacy" in rule_types and not rt and not has_sigma and rt != "sigma":
+            if "legacy" in rule_types and (rt == "legacy" or (not rt and not has_sigma)):
                 return True
             return False
 
@@ -838,6 +844,9 @@ def run_single_rule_against_case(case_id: str, rule_id: str):
     rule = next((rl for rl in rules if rl["id"] == rule_id), None)
     if rule is None:
         raise HTTPException(status_code=404, detail="Rule not found")
+
+    if is_sigma_rule(rule) and not sigma_enabled_for_case(case_id):
+        return {"match": None, "rules_checked": 0, "fired": False, "skipped": "sigma_disabled"}
 
     artifact_type = rule.get("artifact_type", "").strip()
     index = f"fo-case-{case_id}-{artifact_type}" if artifact_type else f"fo-case-{case_id}-*"

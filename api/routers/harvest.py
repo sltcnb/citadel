@@ -18,7 +18,8 @@ import uuid
 from datetime import UTC, datetime
 
 import redis
-from fastapi import APIRouter, HTTPException
+from auth.dependencies import require_case_access
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 router = APIRouter(tags=["harvest"])
@@ -295,7 +296,9 @@ def list_levels():
 
 
 @router.post("/cases/{case_id}/harvest")
-def start_harvest(case_id: str, req: HarvestRequest):
+def start_harvest(
+    case_id: str, req: HarvestRequest, _case: dict = Depends(require_case_access)
+):
     """
     Start a harvest run against a disk image or mounted directory.
 
@@ -406,6 +409,12 @@ def cancel_run(run_id: str):
     raw = r.hgetall(f"harvest_run:{run_id}")
     if not raw:
         raise HTTPException(status_code=404, detail=f"Harvest run {run_id!r} not found")
+
+    # Only cancel runs that are still in flight — never clobber a terminal state
+    # (COMPLETED / FAILED / already CANCELLED).
+    current_status = raw.get("status", "UNKNOWN")
+    if current_status not in ("PENDING", "RUNNING"):
+        return {"run_id": run_id, "status": current_status}
 
     task_id = raw.get("task_id")
     if task_id:

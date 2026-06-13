@@ -18,9 +18,8 @@ import logging
 import uuid
 from datetime import UTC, datetime
 
-from auth.dependencies import get_current_user
+from auth.dependencies import get_current_user, require_case_access
 from fastapi import APIRouter, Depends, HTTPException, Query
-from services.cases import get_case
 
 from config import get_redis
 
@@ -139,7 +138,7 @@ def list_templates(_: dict = Depends(get_current_user)):
 def get_template_for_case(
     case_id: str,
     template_id: str,
-    _: dict = Depends(get_current_user),
+    _acl: dict = Depends(require_case_access),
 ):
     """Return the template as an investigation *playbook* for this specific
     case — each watchlist IOC becomes a "check" with a pre-built Lucene query
@@ -208,11 +207,8 @@ def get_template_for_case(
 def apply_template(
     case_id: str,
     template_id: str = Query(..., description="ransomware|insider_threat|phishing"),
-    _: dict = Depends(get_current_user),
+    case: dict = Depends(require_case_access),
 ):
-    case = get_case(case_id)
-    if not case:
-        raise HTTPException(status_code=404, detail="Case not found")
     tpl = TEMPLATES.get(template_id)
     if not tpl:
         raise HTTPException(status_code=404, detail=f"Template '{template_id}' not found")

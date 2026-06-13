@@ -64,6 +64,8 @@ export const api = {
     delete:      (id)         => request('DELETE', `/cases/${id}`),
     getAutoRun:  (id)         => request('GET',    `/cases/${id}/auto-run`),
     setAutoRun:  (id, flags)  => request('PUT',    `/cases/${id}/auto-run`, flags),
+    getSigma:    (id)         => request('GET',    `/cases/${id}/sigma`),
+    setSigma:    (id, enabled) => request('PUT',   `/cases/${id}/sigma`, { enabled }),
     aiAggregate: (id, question) => request('POST', `/cases/${id}/ai/aggregate`, { question }),
     aiAnalyze:   (id)         => request('POST',   `/cases/${id}/ai/analyze`),
     aiInvestigate: (id, circumstance) => request('POST', `/cases/${id}/ai/investigate`, { circumstance }),
@@ -71,7 +73,6 @@ export const api = {
     aiAgentFlag:     (id, runIdx)       => request('POST', `/cases/${id}/ai/agent/${runIdx}/flag_evidence`),
     aiAgentPromote:  (id, runIdx)       => request('POST', `/cases/${id}/ai/agent/${runIdx}/promote_iocs`),
     aiAgentFeedback: (id, runIdx, data) => request('POST', `/cases/${id}/ai/agent/${runIdx}/feedback`, data),
-    aiAgentFeedbackList: (id)           => request('GET',  `/cases/${id}/ai/agent/feedback`),
     // Background-resumable agent runs
     aiAgentStart:    (id, circumstance, maxSteps, parentRunIdx, language) =>
       request('POST', `/cases/${id}/ai/agent/start`,
@@ -81,49 +82,6 @@ export const api = {
     aiAgentActive:   (id)                  => request('GET',  `/cases/${id}/ai/agent/active`),
     aiAgentProgress: (id, runId, since=0)  => request('GET',  `/cases/${id}/ai/agent/progress/${runId}?since=${since}`),
     aiAgentCancel:   (id, runId)           => request('POST', `/cases/${id}/ai/agent/cancel/${runId}`),
-    // SSE stream of agent steps. Returns an async generator that yields parsed
-    // {type:'step'|'done'|'error', ...} events as they land. Caller is
-    // responsible for handling abort via AbortController.
-    aiAgentStream: async function* (id, circumstance, maxSteps, signal, parentRunIdx) {
-      const token = getToken()
-      const res = await fetch(`/api/v1/cases/${id}/ai/agent/stream`, {
-        method:  'POST',
-        signal,
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({
-          circumstance,
-          max_steps:      maxSteps,
-          parent_run_idx: parentRunIdx ?? undefined,
-        }),
-      })
-      if (!res.ok) {
-        const txt = await res.text().catch(() => '')
-        throw new Error(`HTTP ${res.status}: ${txt || res.statusText}`)
-      }
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder()
-      let buf = ''
-      while (true) {
-        const { value, done } = await reader.read()
-        if (done) break
-        buf += decoder.decode(value, { stream: true })
-        // SSE frame separator is a blank line
-        let idx
-        while ((idx = buf.indexOf('\n\n')) !== -1) {
-          const frame = buf.slice(0, idx)
-          buf = buf.slice(idx + 2)
-          for (const line of frame.split('\n')) {
-            if (!line.startsWith('data: ')) continue
-            const payload = line.slice(6)
-            try { yield JSON.parse(payload) }
-            catch { /* malformed frame — ignore */ }
-          }
-        }
-      }
-    },
     aiResults:   (id)         => request('GET',    `/cases/${id}/ai/results`),
     aiDeleteResults:    (id, withReport=false) => request('DELETE', `/cases/${id}/ai/results?include_report=${withReport ? 'true' : 'false'}`),
     aiDeleteReport:     (id)                    => request('DELETE', `/cases/${id}/ai/report`),
@@ -154,7 +112,6 @@ export const api = {
     crossCase: (query, sizePerCase = 3) => request('POST', '/search/cross', { query, size_per_case: sizePerCase }),
     mitreCoverage: (caseId) => request('GET', `/cases/${caseId}/mitre/coverage`),
     anomalies:     (caseId) => request('GET', `/cases/${caseId}/anomaly`),
-    scanAnomalies: (caseId) => request('POST', `/cases/${caseId}/anomaly/scan`),
     report: {
       markdown: (caseId) => `/api/v1/cases/${caseId}/report.md`,
       html:     (caseId) => `/api/v1/cases/${caseId}/report.html`,
@@ -225,7 +182,6 @@ export const api = {
     add:      (entry) => request('POST', '/watchlist', entry),
     delete:   (id) => request('DELETE', `/watchlist/${id}`),
     evaluate: () => request('POST',   '/watchlist/evaluate'),
-    caseAutoRun: (caseId) => request('GET', `/cases/${caseId}/watchlist/auto-run`),
     getWhitelist: () => request('GET', '/watchlist/whitelist'),
     setWhitelist: (hostnames, ips) => request('PUT', '/watchlist/whitelist', { hostnames, ips }),
   },
@@ -259,6 +215,8 @@ export const api = {
     generateSigmaRule: (data)         => request('POST',   '/alert-rules/generate-sigma', data),
     analyzeResult:   (data)           => request('POST',   '/alert-rules/analyze', data),
     parseSigma:      (data)           => request('POST',   '/alert-rules/sigma/parse', data),
+    getSigmaSettings: ()              => request('GET',    '/sigma/settings'),
+    setSigmaSettings: (enabled)       => request('PUT',    '/sigma/settings', { enabled }),
   },
 
   export: {
@@ -315,7 +273,6 @@ export const api = {
     testConfig:        ()     => request('POST',   '/admin/llm-config/test'),
     getUsage:          ()     => request('GET',    '/admin/llm-usage'),
     analyzeModuleRun:  (runId)     => request('POST', `/module-runs/${runId}/analyze`),
-    analyzeAlertRule:  (data)      => request('POST', '/alert-rules/analyze', data),
     explainEvents:     (data)      => request('POST', '/events/explain', data),
     generateRule:      (data)      => request('POST', '/alert-rules/generate', data),
     searchAssist:      (data)      => request('POST', '/search/ai-assist', data),
@@ -380,7 +337,6 @@ export const api = {
     browse:       (prefix = '', delimiter = '/') => request('GET', `/s3-triage/browse?prefix=${encodeURIComponent(prefix)}&delimiter=${encodeURIComponent(delimiter)}`),
     pullToCase:   (caseId, data) => request('POST',   `/cases/${caseId}/s3-triage-pull`, data),
     importBatch:  (caseId, keys) => request('POST',   `/cases/${caseId}/s3-triage-pull-batch`, { keys }),
-    scwRegions:   ()             => request('GET',    '/s3/scaleway-regions'),
   },
 
   admin: {
@@ -520,7 +476,6 @@ export const api = {
     },
     categories: () => request('GET', '/collector/categories'),
     pythonEmbeds: () => request('GET', '/collector/python-embeds'),
-    warmPythonEmbeds: (targets) => request('POST', '/collector/python-embeds/warm', targets),
     // Admin-only: POST returns fo-uploader-presigned.zip with 3 pre-signed PUT URLs (no raw credentials).
     uploaderPresigned: async ({ filename, expiresHours = 24, count = 3 } = {}) => {
       const params = new URLSearchParams()
@@ -570,8 +525,6 @@ export const api = {
     createIngress:     () => request('POST',   '/collector/ingress'),
     getIngress:        () => request('GET',    '/collector/ingress'),
     deleteIngress:     () => request('DELETE', '/collector/ingress'),
-    rbacUrl:           () => `${window.location.origin}${BASE}/collector/ingress/rbac`,
-    getRbacYaml:       () => fetch(`${BASE}/collector/ingress/rbac`).then(r => r.text()),
   },
   license: {
     info:      () => request('GET',    '/license/info'),

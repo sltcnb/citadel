@@ -17,7 +17,7 @@ import uuid
 from datetime import UTC, datetime
 
 import redis_keys as rk
-from auth.dependencies import require_admin
+from auth.dependencies import require_admin, require_case_access
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from license.gate import require_feature
@@ -212,7 +212,10 @@ def import_archive_from_s3(body: dict):
 # ── CSV export ────────────────────────────────────────────────────────────────
 
 
-@router.get("/cases/{case_id}/export/csv", dependencies=[Depends(require_feature("export"))])
+@router.get(
+    "/cases/{case_id}/export/csv",
+    dependencies=[Depends(require_feature("export")), Depends(require_case_access)],
+)
 def export_csv(case_id: str, artifact_type: str = "", flagged_only: bool = False, q: str = ""):
     """Export case events as CSV (max 10 000 rows)."""
     idx = f"fo-case-{case_id}-{artifact_type}" if artifact_type else f"fo-case-{case_id}-*"
@@ -276,7 +279,10 @@ def export_csv(case_id: str, artifact_type: str = "", flagged_only: bool = False
 # ── Chain of custody ──────────────────────────────────────────────────────────
 
 
-@router.get("/cases/{case_id}/chain-of-custody", dependencies=[Depends(require_feature("export"))])
+@router.get(
+    "/cases/{case_id}/chain-of-custody",
+    dependencies=[Depends(require_feature("export")), Depends(require_case_access)],
+)
 def chain_of_custody(case_id: str):
     """
     Return a chain of custody document listing all ingested artifacts with
@@ -425,7 +431,10 @@ def _build_archive(case_id: str, tmp_path: str) -> int:
     return event_count
 
 
-@router.get("/cases/{case_id}/export/archive", dependencies=[Depends(require_feature("export"))])
+@router.get(
+    "/cases/{case_id}/export/archive",
+    dependencies=[Depends(require_feature("export")), Depends(require_case_access)],
+)
 def export_archive(case_id: str):
     """
     Export complete case data as a .citadel archive (gzip tar).
@@ -481,12 +490,16 @@ def _bulk_index_events(case_id: str, events_gz: bytes) -> int:
     from config import settings
 
     es_url = settings.ELASTICSEARCH_URL
-    count = 0
+    count = 0          # docs actually indexed (excludes per-item failures)
+    failed = 0         # docs ES rejected
     lines: list[str] = []
+    pending = 0        # docs in the current (unflushed) batch
 
     def _flush():
+        nonlocal count, failed, pending
         if not lines:
             return
+        batch = pending
         body = ("\n".join(lines) + "\n").encode()
         req = urllib.request.Request(
             f"{es_url}/_bulk",
@@ -496,10 +509,25 @@ def _bulk_index_events(case_id: str, events_gz: bytes) -> int:
         )
         try:
             with urllib.request.urlopen(req, timeout=60) as r:
-                r.read()
+                resp = json.loads(r.read() or b"{}")
+            # ES _bulk returns HTTP 200 even when individual docs fail; the
+            # top-level "errors" flag and per-item status reveal real failures.
+            if resp.get("errors"):
+                batch_failed = 0
+                for item in resp.get("items", []):
+                    op = next(iter(item.values()), {}) if item else {}
+                    if op.get("error") or op.get("status", 200) >= 400:
+                        batch_failed += 1
+                failed += batch_failed
+                count += batch - batch_failed
+                logger.warning("Bulk index: %d of %d docs failed", batch_failed, batch)
+            else:
+                count += batch
         except Exception as exc:
-            logger.warning("Bulk index flush failed: %s", exc)
+            failed += batch
+            logger.warning("Bulk index flush failed (%d docs lost): %s", batch, exc)
         lines.clear()
+        pending = 0
 
     with gzip.GzipFile(fileobj=io.BytesIO(events_gz)) as gz:
         for raw in gz:
@@ -515,11 +543,13 @@ def _bulk_index_events(case_id: str, events_gz: bytes) -> int:
             idx = f"fo-case-{case_id}-{artifact_type}"
             lines.append(json.dumps({"index": {"_index": idx}}))
             lines.append(json.dumps(ev, separators=(",", ":")))
-            count += 1
+            pending += 1
             if len(lines) >= 2000:
                 _flush()
 
     _flush()
+    if failed:
+        logger.warning("Bulk index for case %s: %d indexed, %d failed", case_id, count, failed)
     return count
 
 
@@ -689,7 +719,7 @@ def _get_archive_s3(case_id: str):
 
 
 @router.post("/cases/{case_id}/upload-archive")
-def upload_archive_case(case_id: str):
+def upload_archive_case(case_id: str, _case: dict = Depends(require_case_access)):
     """Build .citadel and upload to S3 without deleting local data. Creates a restorable backup."""
     case = get_case(case_id)
     if not case:
@@ -714,7 +744,7 @@ def upload_archive_case(case_id: str):
 
 
 @router.post("/cases/{case_id}/purge-archive")
-def purge_archive_case(case_id: str):
+def purge_archive_case(case_id: str, _case: dict = Depends(require_case_access)):
     """Build .citadel archive, upload to configured archive S3, delete ES + MinIO, mark purged."""
     case = get_case(case_id)
     if not case:
@@ -758,7 +788,7 @@ def purge_archive_case(case_id: str):
 
 
 @router.post("/cases/{case_id}/restore-archive")
-def restore_archive_case(case_id: str):
+def restore_archive_case(case_id: str, _case: dict = Depends(require_case_access)):
     """Download .citadel from S3 and restore ES + notes into this case."""
     case = get_case(case_id)
     if not case:

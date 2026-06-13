@@ -15,9 +15,8 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 
-from auth.dependencies import get_current_user
+from auth.dependencies import get_current_user, require_case_access
 from fastapi import APIRouter, Depends, HTTPException, Query
-from services.cases import get_case
 from services.elasticsearch import _request as es_req
 
 logger = logging.getLogger(__name__)
@@ -49,6 +48,7 @@ PROCESS_CREATION_FILTER = {
 def process_tree(
     case_id: str,
     _: dict = Depends(get_current_user),
+    _case: dict = Depends(require_case_access),
     host: str | None = Query(default=None, description="Restrict to a single hostname"),
     size: int = Query(2000, ge=10, le=10000),
 ):
@@ -62,10 +62,6 @@ def process_tree(
         "roots":  [pid, …]
       }
     """
-    case = get_case(case_id)
-    if not case:
-        raise HTTPException(status_code=404, detail="Case not found")
-
     host_agg = {
         "size": 0,
         "query": PROCESS_CREATION_FILTER,

@@ -18,10 +18,9 @@ import logging
 import time
 from collections.abc import AsyncGenerator
 
-from auth.dependencies import get_current_user
-from fastapi import APIRouter, Depends, HTTPException, Request
+from auth.dependencies import get_current_user, require_case_access
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
-from services.cases import get_case
 
 from config import get_redis
 
@@ -42,7 +41,12 @@ def _chan_key(case_id: str) -> str:
 
 
 @router.post("/cases/{case_id}/collab/event")
-def publish_collab_event(case_id: str, body: dict, user: dict = Depends(get_current_user)):
+def publish_collab_event(
+    case_id: str,
+    body: dict,
+    user: dict = Depends(get_current_user),
+    _case: dict = Depends(require_case_access),
+):
     """Publish a collab event. body = {type, payload, target?}.
 
     Common types:
@@ -52,9 +56,6 @@ def publish_collab_event(case_id: str, body: dict, user: dict = Depends(get_curr
       - note      → {fo_id, snippet}
       - search    → {query}
     """
-    case = get_case(case_id)
-    if not case:
-        raise HTTPException(status_code=404, detail="Case not found")
     ev = {
         "ts": time.time(),
         "user": user.get("username", ""),
@@ -107,10 +108,12 @@ async def _stream(case_id: str, request: Request) -> AsyncGenerator[bytes, None]
 
 
 @router.get("/cases/{case_id}/collab/stream")
-async def collab_stream(case_id: str, request: Request, _: dict = Depends(get_current_user)):
-    case = get_case(case_id)
-    if not case:
-        raise HTTPException(status_code=404, detail="Case not found")
+async def collab_stream(
+    case_id: str,
+    request: Request,
+    _: dict = Depends(get_current_user),
+    _case: dict = Depends(require_case_access),
+):
     return StreamingResponse(
         _stream(case_id, request),
         media_type="text/event-stream",
@@ -122,7 +125,11 @@ async def collab_stream(case_id: str, request: Request, _: dict = Depends(get_cu
 
 
 @router.get("/cases/{case_id}/collab/recent")
-def recent_events(case_id: str, _: dict = Depends(get_current_user)):
+def recent_events(
+    case_id: str,
+    _: dict = Depends(get_current_user),
+    _case: dict = Depends(require_case_access),
+):
     """Plain JSON fetch of the backlog (for clients without SSE)."""
     raw = get_redis().lrange(_list_key(case_id), 0, _LIST_MAX - 1) or []
     events = []

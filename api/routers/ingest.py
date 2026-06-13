@@ -26,7 +26,8 @@ import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile
+from auth.dependencies import require_case_access
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 from services import jobs as job_svc
 from services import storage
@@ -399,6 +400,7 @@ async def ingest_chunk(
     chunk: UploadFile = File(...),
     keep_raw: bool = Form(False),
     background_tasks: BackgroundTasks = None,
+    _case: dict = Depends(require_case_access),
 ):
     """
     Receive one chunk of a large file upload.
@@ -475,6 +477,7 @@ async def ingest_files(
     files: list[UploadFile] = File(...),
     keep_raw: bool = Form(False),
     background_tasks: BackgroundTasks = None,
+    _case: dict = Depends(require_case_access),
 ):
     """
     Upload one or more forensics files (or zip archives) to a case and enqueue processing.
@@ -576,7 +579,12 @@ class ReingestRequest(BaseModel):
 
 
 @router.post("/cases/{case_id}/jobs/{job_id}/reingest")
-def reingest_job(case_id: str, job_id: str, req: ReingestRequest = ReingestRequest()):
+def reingest_job(
+    case_id: str,
+    job_id: str,
+    req: ReingestRequest = ReingestRequest(),
+    _case: dict = Depends(require_case_access),
+):
     """
     Re-run ingestion for an existing job (COMPLETED, FAILED, or SKIPPED).
 
@@ -624,7 +632,7 @@ def reingest_job(case_id: str, job_id: str, req: ReingestRequest = ReingestReque
 
 
 @router.post("/cases/{case_id}/ingest/cancel")
-def cancel_case_ingestion(case_id: str):
+def cancel_case_ingestion(case_id: str, _case: dict = Depends(require_case_access)):
     """
     Cancel all PENDING and RUNNING ingest jobs for a case.
 

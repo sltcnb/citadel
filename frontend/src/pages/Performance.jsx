@@ -181,14 +181,14 @@ export default function Performance() {
   }, [])
 
   useEffect(() => {
-    if (paused) {
-      if (intervalRef.current) clearInterval(intervalRef.current)
-      intervalRef.current = null
-      return
+    if (!paused) {
+      intervalRef.current = setInterval(fetchMetrics, 5000)
     }
-    intervalRef.current = setInterval(fetchMetrics, 5000)
     return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current)
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current)
+        intervalRef.current = null
+      }
     }
   }, [paused])
 

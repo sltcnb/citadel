@@ -22,13 +22,13 @@ import zipfile
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import APIRouter, HTTPException, Query
+from auth.dependencies import require_case_access
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from services import elasticsearch as es
 from services import jobs as job_svc
 from services import storage
-from services.cases import get_case
 
 from config import settings
 
@@ -122,11 +122,8 @@ def _file_category(filename: str) -> str:
 
 
 @router.get("/cases/{case_id}/files")
-def list_case_files(case_id: str):
+def list_case_files(case_id: str, _case: dict = Depends(require_case_access)):
     """List all files ingested into a case with readability metadata."""
-    if not get_case(case_id):
-        raise HTTPException(status_code=404, detail="Case not found")
-
     jobs = job_svc.list_case_jobs(case_id)
     files = []
     for job in jobs:
@@ -168,16 +165,15 @@ def _minio_stream(minio_key: str):
 
 
 @router.get("/cases/{case_id}/files/{job_id}/download")
-def download_file(case_id: str, job_id: str):
+def download_file(
+    case_id: str, job_id: str, _case: dict = Depends(require_case_access)
+):
     """
     Stream the original stored file as a browser download.
 
     Auth via ?_token= query param (same pattern as CSV export) so the browser
     can trigger the download directly without AJAX.
     """
-    if not get_case(case_id):
-        raise HTTPException(status_code=404, detail="Case not found")
-
     job = job_svc.get_job(job_id)
     if not job or job.get("case_id") != case_id:
         raise HTTPException(status_code=404, detail="File not found")
@@ -204,6 +200,7 @@ def extract_archive_member(
     case_id: str,
     job_id: str,
     member: str = Query(..., description="Relative path of the member inside the archive"),
+    _case: dict = Depends(require_case_access),
 ):
     """
     Extract and stream one member from an archived source file stored in MinIO.
@@ -212,9 +209,6 @@ def extract_archive_member(
     TAR archive — in that case event.raw.archive_member holds the member path
     and this endpoint serves the correct binary rather than the outer archive.
     """
-    if not get_case(case_id):
-        raise HTTPException(status_code=404, detail="Case not found")
-
     job = job_svc.get_job(job_id)
     if not job or job.get("case_id") != case_id:
         raise HTTPException(status_code=404, detail="File not found")
@@ -298,14 +292,13 @@ def extract_archive_member(
 
 
 @router.get("/cases/{case_id}/files/{job_id}/content")
-def get_file_content(case_id: str, job_id: str):
+def get_file_content(
+    case_id: str, job_id: str, _case: dict = Depends(require_case_access)
+):
     """
     Return the text content of a readable file stored in MinIO.
     HTTP 415 for binary/unreadable files, HTTP 413 if file exceeds 5 MB.
     """
-    if not get_case(case_id):
-        raise HTTPException(status_code=404, detail="Case not found")
-
     job = job_svc.get_job(job_id)
     if not job or job.get("case_id") != case_id:
         raise HTTPException(status_code=404, detail="File not found")
@@ -352,14 +345,13 @@ class FileSearchRequest(BaseModel):
 
 
 @router.post("/cases/{case_id}/files/search")
-def search_file_contents(case_id: str, body: FileSearchRequest):
+def search_file_contents(
+    case_id: str, body: FileSearchRequest, _case: dict = Depends(require_case_access)
+):
     """
     Full-text search within all readable stored files for a case.
     Returns line-level context snippets (±3 lines around each match).
     """
-    if not get_case(case_id):
-        raise HTTPException(status_code=404, detail="Case not found")
-
     if not body.query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty")
 
@@ -444,11 +436,8 @@ def search_file_contents(case_id: str, body: FileSearchRequest):
 
 
 @router.get("/cases/{case_id}/disk-images")
-def list_disk_images(case_id: str):
+def list_disk_images(case_id: str, _case: dict = Depends(require_case_access)):
     """List all disk image files ingested into a case."""
-    if not get_case(case_id):
-        raise HTTPException(status_code=404, detail="Case not found")
-
     jobs = job_svc.list_case_jobs(case_id)
     images = [
         {
@@ -474,6 +463,7 @@ def browse_disk_image(
     job_id: str,
     path: str = Query("/", description="Directory path within the image"),
     size: int = Query(500, le=2000),
+    _case: dict = Depends(require_case_access),
 ):
     """
     Browse the filesystem of an indexed disk image.
@@ -482,9 +472,6 @@ def browse_disk_image(
     artifact_type=diskimage. This endpoint queries those events by parent path
     to return directory contents without re-mounting the image.
     """
-    if not get_case(case_id):
-        raise HTTPException(status_code=404, detail="Case not found")
-
     job = job_svc.get_job(job_id)
     if not job or job.get("case_id") != case_id:
         raise HTTPException(status_code=404, detail="Disk image job not found")

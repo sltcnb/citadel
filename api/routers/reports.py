@@ -21,10 +21,9 @@ import logging
 from datetime import UTC, datetime
 
 import redis_keys as rk
-from auth.dependencies import get_current_user
-from fastapi import APIRouter, Depends, HTTPException
+from auth.dependencies import require_case_access
+from fastapi import APIRouter, Depends
 from fastapi.responses import Response
-from services.cases import get_case
 from services.elasticsearch import _request as es_req
 
 from config import get_redis
@@ -115,14 +114,17 @@ def _fetch_flagged(case_id: str, size: int = 200) -> list[dict]:
 
 
 def _fetch_mitre(case_id: str) -> dict:
+    # Field shapes mirror search.py mitre_coverage: live data uses mitre.id
+    # (text → aggregate on .keyword) and mitre.technique (.keyword), with
+    # mitre.tactic mapped as keyword directly.
     body = {
         "size": 0,
-        "query": {"exists": {"field": "mitre.technique_id"}},
+        "query": {"exists": {"field": "mitre.id"}},
         "aggs": {
             "by_technique": {
-                "terms": {"field": "mitre.technique_id", "size": 100},
+                "terms": {"field": "mitre.id.keyword", "size": 100},
                 "aggs": {
-                    "top_name": {"terms": {"field": "mitre.technique_name.keyword", "size": 1}},
+                    "top_name": {"terms": {"field": "mitre.technique.keyword", "size": 1}},
                     "top_tactic": {"terms": {"field": "mitre.tactic", "size": 1}},
                 },
             },
@@ -346,10 +348,7 @@ def _render_markdown(
 
 
 @router.get("/cases/{case_id}/report.md")
-def report_markdown(case_id: str, _: dict = Depends(get_current_user)):
-    case = get_case(case_id)
-    if not case:
-        raise HTTPException(status_code=404, detail="Case not found")
+def report_markdown(case_id: str, case: dict = Depends(require_case_access)):
     md = _render_markdown(
         case=case,
         pinned=_fetch_pinned(case_id),
@@ -369,11 +368,8 @@ def report_markdown(case_id: str, _: dict = Depends(get_current_user)):
 
 
 @router.get("/cases/{case_id}/report.html")
-def report_html(case_id: str, _: dict = Depends(get_current_user)):
+def report_html(case_id: str, case: dict = Depends(require_case_access)):
     """Self-contained HTML render — printable, screenshots cleanly."""
-    case = get_case(case_id)
-    if not case:
-        raise HTTPException(status_code=404, detail="Case not found")
     md = _render_markdown(
         case=case,
         pinned=_fetch_pinned(case_id),

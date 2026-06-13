@@ -7,8 +7,10 @@ import uuid
 from datetime import UTC, datetime
 
 import redis as redis_lib
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+
+from auth.dependencies import require_case_access
 
 logger = logging.getLogger(__name__)
 
@@ -72,24 +74,28 @@ class AlertRuleIn(BaseModel):
 
 
 @router.get("/cases/{case_id}/alert-rules")
-def list_rules(case_id: str):
+def list_rules(case_id: str, _acl: dict = Depends(require_case_access)):
     data = _r().get(rk.case_alert_rules(case_id))
     return {"rules": json.loads(data) if data else []}
 
 
 @router.post("/cases/{case_id}/alert-rules")
-def create_rule(case_id: str, body: AlertRuleIn):
+def create_rule(case_id: str, body: AlertRuleIn, _acl: dict = Depends(require_case_access)):
     r = _r()
     key = rk.case_alert_rules(case_id)
     rules = json.loads(r.get(key) or "[]")
-    new = {"id": str(uuid.uuid4())[:8], **body.dict(), "created_at": datetime.utcnow().isoformat()}
+    new = {
+        "id": str(uuid.uuid4())[:8],
+        **body.model_dump(),
+        "created_at": datetime.now(UTC).isoformat(),
+    }
     rules.append(new)
     r.set(key, json.dumps(rules))
     return new
 
 
 @router.post("/cases/{case_id}/alert-rules/{rule_id}/run")
-def run_single_rule(case_id: str, rule_id: str):
+def run_single_rule(case_id: str, rule_id: str, _acl: dict = Depends(require_case_access)):
     """Run a single case-specific rule against this case."""
     r = _r()
     data = r.get(rk.case_alert_rules(case_id))
@@ -106,6 +112,7 @@ def run_single_rule(case_id: str, rule_id: str):
     body = {
         "query": {"query_string": {"query": rule["query"], "default_operator": "AND"}},
         "size": 5,
+        "track_total_hits": True,
         "_source": ["timestamp", "message", "host", "fo_id", "artifact_type"],
         "sort": [{"timestamp": {"order": "desc"}}],
     }
@@ -134,7 +141,7 @@ def run_single_rule(case_id: str, rule_id: str):
 
 
 @router.delete("/cases/{case_id}/alert-rules/{rule_id}", status_code=204)
-def delete_rule(case_id: str, rule_id: str):
+def delete_rule(case_id: str, rule_id: str, _acl: dict = Depends(require_case_access)):
     r = _r()
     key = rk.case_alert_rules(case_id)
     rules = json.loads(r.get(key) or "[]")
@@ -145,13 +152,13 @@ def delete_rule(case_id: str, rule_id: str):
 
 
 @router.get("/cases/{case_id}/alert-rules/last-run")
-def get_last_run(case_id: str):
+def get_last_run(case_id: str, _acl: dict = Depends(require_case_access)):
     """Return the most recent check run (matches + cached analyses)."""
     return _load_run(_r(), case_id)
 
 
 @router.post("/cases/{case_id}/alert-rules/last-run/analyze/{rule_id}")
-def analyze_run_match(case_id: str, rule_id: str):
+def analyze_run_match(case_id: str, rule_id: str, _acl: dict = Depends(require_case_access)):
     """
     (Re-)run AI analysis for a rule and persist it.
     Works even if the rule had 0 matches or no check has run yet —
@@ -210,7 +217,7 @@ def analyze_run_match(case_id: str, rule_id: str):
 
 
 @router.post("/cases/{case_id}/alert-rules/check")
-def check_rules(case_id: str):
+def check_rules(case_id: str, _acl: dict = Depends(require_case_access)):
     """Run all rules against current case, persist the run, return it."""
     r = _r()
     data = r.get(rk.case_alert_rules(case_id))
@@ -235,6 +242,7 @@ def check_rules(case_id: str):
         body = {
             "query": {"query_string": {"query": rule["query"], "default_operator": "AND"}},
             "size": 3,
+            "track_total_hits": True,
             "_source": ["timestamp", "message", "host", "fo_id"],
         }
         try:
@@ -248,8 +256,10 @@ def check_rules(case_id: str):
                         "sample_events": [h["_source"] for h in resp["hits"]["hits"]],
                     }
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "Alert rule %r check failed on case %s: %s", rule.get("name"), case_id, exc
+            )
 
     run = {
         "ran_at": datetime.now(UTC).isoformat(),
