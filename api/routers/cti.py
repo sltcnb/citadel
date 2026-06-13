@@ -84,6 +84,24 @@ def _validate_feed_url(url: str) -> None:
             )
 
 
+def _safe_urlopen(req, timeout: int):
+    """urlopen that re-validates every redirect target against _validate_feed_url.
+
+    The initial URL is validated by callers, but urllib follows 3xx redirects by
+    default — a validated public host could 302 us to 169.254.169.254 or an
+    internal service. Re-checking each hop closes that bypass. (Residual: a
+    DNS-rebinding TOCTOU between validation and connect is not addressed here.)"""
+    import urllib.request
+
+    class _ValidatingRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, request, fp, code, msg, headers, newurl):
+            _validate_feed_url(newurl)
+            return super().redirect_request(request, fp, code, msg, headers, newurl)
+
+    opener = urllib.request.build_opener(_ValidatingRedirect())
+    return opener.open(req, timeout=timeout)
+
+
 # ── Redis key layout ─────────────────────────────────────────────────────────
 # fo:cti:feeds                → JSON list of feed configs
 # fo:cti:iocs:type:{type}     → Redis SET of JSON IOC objects per type
@@ -540,7 +558,7 @@ def _taxii_fetch(feed: dict) -> dict:
 
     req = urllib.request.Request(objects_url, headers=headers, method="GET")
     try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
+        with _safe_urlopen(req, 60) as resp:
             data = json.loads(resp.read())
             # TAXII 2.1 envelope has "objects" at top level
             if "objects" in data:
@@ -570,7 +588,7 @@ def _stix_url_fetch(feed: dict) -> dict:
 
     req = urllib.request.Request(url, headers=headers, method="GET")
     try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
+        with _safe_urlopen(req, 60) as resp:
             return json.loads(resp.read())
     except urllib.error.HTTPError as exc:
         raise HTTPException(
@@ -642,6 +660,7 @@ def _misp_fetch(feed: dict) -> list:
             resp = _req.post(
                 f"{base_url}/attributes/restSearch",
                 json=payload, headers=headers, timeout=120,
+                allow_redirects=False,  # SSRF: don't follow a redirect off the validated host
             )
             resp.raise_for_status()
             attrs = resp.json().get("response", {}).get("Attribute", [])
@@ -751,6 +770,7 @@ def _yeti_fetch(feed: dict) -> list:
                 f"{base_url}/api/v2/observables/search",
                 json={"query": {"name": ""}, "type": "all", "count": per_page, "page": page},
                 headers=headers, timeout=120,
+                allow_redirects=False,  # SSRF: don't follow a redirect off the validated host
             )
             resp.raise_for_status()
             data = resp.json()

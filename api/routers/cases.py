@@ -40,6 +40,18 @@ class CaseSigmaUpdate(BaseModel):
     enabled: bool | None = None
 
 
+def _redact_case(case: dict) -> dict:
+    """Strip the BitLocker recovery key from API responses — it's a decryption
+    secret. Callers only need to know whether one is set; the disk-image worker
+    reads the raw value straight from Redis, not via the API."""
+    if case is None:
+        return case
+    has_key = bool(case.get("bitlocker_recovery_key"))
+    case.pop("bitlocker_recovery_key", None)
+    case["bitlocker_key_set"] = has_key
+    return case
+
+
 def _check_company_access(case: dict, company_filter: list[str] | None) -> None:
     """Raise 403 if the user's company filter does not include this case's company."""
     if company_filter is None:
@@ -64,6 +76,7 @@ def list_cases(current_user: dict = Depends(get_current_user)):
         s = stats.get(case["case_id"], {})
         case["event_count"] = s.get("event_count", 0)
         case["artifact_types"] = s.get("artifact_types", [])
+        _redact_case(case)
     return {"cases": visible, "total": len(visible)}
 
 
@@ -88,7 +101,7 @@ def get_case(case_id: str, current_user: dict = Depends(get_current_user)):
     _check_company_access(case, get_company_filter(current_user))
     case["event_count"] = count_case_events(case_id)
     case["artifact_types"] = list_artifact_types(case_id)
-    return case
+    return _redact_case(case)
 
 
 @router.get("/cases/{case_id}/auto-run")
@@ -160,7 +173,7 @@ def update_case(case_id: str, body: CaseUpdate, current_user: dict = Depends(get
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
     case = case_svc.update_case(case_id, **updates)
-    return case
+    return _redact_case(case)
 
 
 @router.delete("/cases/{case_id}", status_code=204)

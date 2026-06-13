@@ -519,7 +519,7 @@ export default function CaseFiles({ caseId }) {
   useEffect(() => {
     if (!hasDiskImages) return
     api.cases.get(caseId)
-      .then(c => setBkHasKey(!!c.bitlocker_recovery_key))
+      .then(c => setBkHasKey(!!c.bitlocker_key_set))
       .catch(() => {})
   }, [caseId, hasDiskImages])
 
