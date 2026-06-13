@@ -14,6 +14,8 @@ from typing import Any
 
 import yaml
 
+from .enrich import enrich_event
+
 _DEFAULT_MAP = Path(__file__).parent / "fieldmaps" / "default.yaml"
 
 # Standard ECS enrichment sub-objects a ForensicEvent may already carry; Rosetta
@@ -187,6 +189,12 @@ class Normalizer:
         # drop an empty event block defensively (shouldn't happen)
         if not doc["event"]:
             doc.pop("event")
+
+        # Network enrichment (GeoIP/ASN/rDNS). Graceful no-op when the geoip2
+        # library or .mmdb databases are absent; never raises, so it can't
+        # break canonicalization. Operates on the ECS source/destination/
+        # client/server.ip fields populated above.
+        enrich_event(doc)
 
         return doc
 

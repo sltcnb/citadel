@@ -13,6 +13,8 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest>=7.0"]
+# Network enrichment (GeoIP/ASN) is optional; without it enrichment no-ops.
+enrich = ["geoip2>=4.0"]
 
 [project.scripts]
 rosetta = "rosetta.cli:main"
