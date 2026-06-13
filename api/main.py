@@ -26,6 +26,7 @@ from routers import (
     admin_utils,
     alert_rules,
     anomaly,
+    audit,
     case_files,
     case_templates,
     cases,
@@ -200,6 +201,70 @@ _ACCESS_LOG_SKIP = (
     "/admin/logs", "/tools/capabilities", "/cti/iocs/stats", "/license/info",
 )
 _access_logger = logging.getLogger("citadel.api")
+
+# ── Audit trail (chain-of-custody) ─────────────────────────────────────────────
+# Record an immutable, hash-chained audit event for MUTATING requests on the API.
+# Skip read-only methods (GET/HEAD/OPTIONS) and pure health/metrics noise — but
+# DO record logins/logouts and every case/evidence mutation.
+import re as _re
+
+_AUDIT_METHODS = ("POST", "PUT", "PATCH", "DELETE")
+# Health/metrics churn that carries no chain-of-custody value.
+_AUDIT_SKIP = ("/health", "/metrics/dashboard", "/metrics/history")
+_CASE_ID_RE = _re.compile(r"/cases/([^/]+)")
+
+
+def _audit_actor_from_scope(scope) -> tuple[str, str]:
+    """Best-effort (actor, role) from the bearer / ?_token, without raising.
+    Returns ("anonymous", "") when no valid token is present."""
+    token = ""
+    for k, v in scope.get("headers", []):
+        if k == b"authorization":
+            hv = v.decode("latin-1")
+            if hv.startswith("Bearer "):
+                token = hv[7:]
+            break
+    if not token:
+        # ?_token query param (browser downloads / EventSource).
+        qs = scope.get("query_string", b"").decode("latin-1")
+        from urllib.parse import parse_qs
+
+        token = (parse_qs(qs).get("_token") or [""])[0]
+    if not token:
+        return "anonymous", ""
+    try:
+        from auth.service import decode_token
+
+        payload = decode_token(token)
+        return payload.get("sub") or "anonymous", payload.get("role") or ""
+    except Exception:  # noqa: BLE001 — never let token decode break auditing
+        return "anonymous", ""
+
+
+def _client_ip_from_scope(scope) -> str:
+    for k, v in scope.get("headers", []):
+        if k == b"x-forwarded-for":
+            return v.decode("latin-1").split(",")[0].strip()
+    client = scope.get("client")
+    return client[0] if client else ""
+
+
+def _record_audit(scope, method: str, path: str, status_code: int) -> None:
+    """Synchronous audit write — called off the event loop via run_in_executor.
+    Wrapped so an audit failure can never affect the request it describes."""
+    try:
+        actor, role = _audit_actor_from_scope(scope)
+        m = _CASE_ID_RE.search(path)
+        case_id = m.group(1) if m else ""
+        from services import audit as _audit
+
+        _audit.record_event(
+            actor=actor, role=role, method=method, path=path,
+            case_id=case_id, status=status_code, ip=_client_ip_from_scope(scope),
+        )
+    except Exception as exc:  # noqa: BLE001 — auditing must never break a request
+        logger.warning("audit: failed to record %s %s: %s", method, path, exc)
+
 _SECURITY_HEADERS = {
     b"x-content-type-options": b"nosniff",
     b"x-frame-options": b"DENY",
@@ -264,6 +329,22 @@ class CoreHTTPMiddleware:
                     short = path.split("/api/v1/", 1)[-1]
                     _access_logger.info("%s /%s → %d (%.0fms)", method, short, code, ms)
             except Exception:  # noqa: BLE001 — logging must never break a request
+                pass
+            # ── Persistent audit trail — mutating API requests only ───────────
+            # Offload the Redis/ES write to the threadpool so the chain append
+            # never blocks the event loop, and never let it raise here.
+            try:
+                if (
+                    code
+                    and method in _AUDIT_METHODS
+                    and "/api/v1/" in path
+                    and not any(s in path for s in _AUDIT_SKIP)
+                ):
+                    loop = asyncio.get_event_loop()
+                    loop.run_in_executor(
+                        None, _record_audit, scope, method, path, code
+                    )
+            except Exception:  # noqa: BLE001 — auditing must never break a request
                 pass
 
     @staticmethod
@@ -558,3 +639,4 @@ app.include_router(webhooks.router, prefix="/api/v1", dependencies=_admin_only)
 app.include_router(companies.router, prefix="/api/v1", dependencies=_analyst_or_admin)
 app.include_router(metrics.router, prefix="/api/v1", dependencies=_analyst_or_admin)
 app.include_router(sigma_sync.router, prefix="/api/v1", dependencies=_admin_only)
+app.include_router(audit.router, prefix="/api/v1", dependencies=_admin_only)
