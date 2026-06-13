@@ -20,6 +20,14 @@ class Settings:
     # ── Authentication ─────────────────────────────────────────────────────
     # Set AUTH_ENABLED=false to disable auth (dev/trusted-LAN only).
     AUTH_ENABLED: bool = os.getenv("AUTH_ENABLED", "true").lower() not in ("false", "0", "no")
+    # Disabling auth grants every request a synthetic unrestricted admin — a total
+    # bypass. Require an explicit second opt-in so it can never happen by a stray
+    # env var in a real deploy; startup fails closed (re-enables auth) otherwise.
+    ALLOW_NO_AUTH: bool = os.getenv("CITADEL_ALLOW_NO_AUTH", "false").lower() in (
+        "true",
+        "1",
+        "yes",
+    )
     # JWT_SECRET MUST be a strong random string in production.
     # Generate one: python -c "import secrets; print(secrets.token_hex(32))"
     JWT_SECRET: str = os.getenv("JWT_SECRET", "CHANGE_ME_IN_PRODUCTION")
