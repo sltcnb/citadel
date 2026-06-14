@@ -7,13 +7,18 @@ import logging
 import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import Optional
+
+import re
 
 import redis_keys as rk
 from jose import jwt
 from passlib.context import CryptContext
 
+from auth import rbac
 from config import get_redis as _redis
 from config import settings
+from services.redis_mutate import mutate_json
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +27,8 @@ _pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
 # Keep module-level aliases so external importers (main.py) don't break.
 _USERS_SET = rk.USERS_SET
 _USER_KEY = "fo:user:{username}"
+# Single JSON document {group_id: group} holding all RBAC groups.
+_GROUPS_KEY = "fo:groups"
 
 
 # ── Password helpers ──────────────────────────────────────────────────────────
@@ -275,7 +282,12 @@ VALID_ROLES = ("admin", "analyst", "developer", "guest")
 
 
 def create_user(
-    username: str, password: str, role: str = "analyst", companies: list[str] | None = None
+    username: str,
+    password: str,
+    role: str = "analyst",
+    companies: list[str] | None = None,
+    groups: list[str] | None = None,
+    extra_permissions: list[str] | None = None,
 ) -> dict:
     if role not in VALID_ROLES:
         raise ValueError(f"Invalid role '{role}'. Must be one of: {', '.join(VALID_ROLES)}")
@@ -288,6 +300,8 @@ def create_user(
         "hashed_password": hash_password(password),
         "role": role,
         "companies": json.dumps(companies or []),
+        "groups": json.dumps(groups or []),
+        "extra_permissions": json.dumps(_clean_perms(extra_permissions)),
         "created_at": datetime.now(UTC).isoformat(),
     }
     r.hset(key, mapping=user)
@@ -321,8 +335,11 @@ def update_user(
     role: Optional[str] = None,
     password: Optional[str] = None,
     companies: Optional[list[str]] = None,
+    groups: Optional[list[str]] = None,
+    extra_permissions: Optional[list[str]] = None,
 ) -> dict:
-    """Update a user's role, password, and/or company restrictions."""
+    """Update a user's role, password, company restrictions, group memberships
+    and/or per-user extra permissions."""
     r = _redis()
     key = rk.user_key(username)
     if not r.exists(key):
@@ -336,6 +353,10 @@ def update_user(
         r.hdel(key, "must_change_password")  # rotating the password clears the force-change flag
     if companies is not None:
         r.hset(key, "companies", json.dumps(companies))
+    if groups is not None:
+        r.hset(key, "groups", json.dumps(groups))
+    if extra_permissions is not None:
+        r.hset(key, "extra_permissions", json.dumps(_clean_perms(extra_permissions)))
     return _public(r.hgetall(key))
 
 
@@ -365,14 +386,157 @@ def user_count() -> int:
 _SECRET_FIELDS = {"hashed_password", "totp_secret", "totp_pending_secret", "totp_backup"}
 
 
+def _parse_json_list(result: dict, field: str) -> None:
+    """In-place: parse ``result[field]`` (a JSON string from the hash) into a list,
+    defaulting to [] on absence or malformed data."""
+    raw = result.get(field)
+    if raw is None:
+        result[field] = []
+        return
+    try:
+        parsed = json.loads(raw)
+        result[field] = parsed if isinstance(parsed, list) else []
+    except (json.JSONDecodeError, TypeError):
+        result[field] = []
+
+
 def _public(user: dict) -> dict:
-    """Strip secrets (password hash, TOTP secret, backup codes); parse companies."""
+    """Strip secrets (password hash, TOTP secret, backup codes); parse the
+    JSON-encoded list fields (companies, groups, extra_permissions)."""
     result = {k: v for k, v in user.items() if k not in _SECRET_FIELDS}
-    if "companies" in result:
-        try:
-            result["companies"] = json.loads(result["companies"])
-        except (json.JSONDecodeError, TypeError):
-            result["companies"] = []
-    else:
-        result["companies"] = []
+    _parse_json_list(result, "companies")
+    _parse_json_list(result, "groups")
+    _parse_json_list(result, "extra_permissions")
     return result
+
+
+# ── Permission / id helpers ─────────────────────────────────────────────────────
+
+
+def _clean_perms(perms: list[str] | None) -> list[str]:
+    """Keep only known permission ids, de-duplicated and sorted."""
+    if not perms:
+        return []
+    return sorted({p for p in perms if p in rbac.ALL_PERMISSIONS})
+
+
+def _slugify(value: str) -> str:
+    """Turn a group name into a stable, url-safe id."""
+    slug = re.sub(r"[^a-z0-9]+", "-", (value or "").strip().lower()).strip("-")
+    return slug or "group"
+
+
+# ── Group store (Redis-backed JSON at fo:groups) ────────────────────────────────
+# A single JSON document {id: group} keyed at _GROUPS_KEY. Group shape:
+#   {id, name, description, roles, permissions, companies, members}
+# Writes go through mutate_json for atomic read-modify-write under contention.
+
+
+def list_groups() -> list[dict]:
+    """Return all groups sorted by name."""
+    return sorted(groups_index().values(), key=lambda g: g.get("name", g.get("id", "")))
+
+
+def groups_index() -> dict[str, dict]:
+    """Return the {group_id: group} map (the raw store document)."""
+    r = _redis()
+    raw = r.get(_GROUPS_KEY)
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+        return data if isinstance(data, dict) else {}
+    except (json.JSONDecodeError, TypeError):
+        return {}
+
+
+def get_group(group_id: str) -> Optional[dict]:
+    return groups_index().get(group_id)
+
+
+def _normalize_group(group_id: str, name: str, description, roles, permissions,
+                     companies, members) -> dict:
+    g = rbac.empty_group(group_id, name)
+    g["description"] = description or ""
+    g["roles"] = sorted({r for r in (roles or []) if r in VALID_ROLES})
+    g["permissions"] = _clean_perms(permissions)
+    g["companies"] = sorted({str(c) for c in (companies or [])})
+    g["members"] = sorted({str(m) for m in (members or [])})
+    return g
+
+
+def create_group(
+    name: str,
+    description: str = "",
+    roles: list[str] | None = None,
+    permissions: list[str] | None = None,
+    companies: list[str] | None = None,
+    members: list[str] | None = None,
+) -> dict:
+    """Create a group with a slugged id derived from its name (suffixed on clash)."""
+    base = _slugify(name)
+    existing = groups_index()
+    group_id = base
+    n = 2
+    while group_id in existing:
+        group_id = f"{base}-{n}"
+        n += 1
+    group = _normalize_group(
+        group_id, name, description, roles, permissions, companies, members
+    )
+
+    def _add(store: dict) -> dict:
+        if group_id in store:  # lost the race; caller can retry/rename
+            raise ValueError(f"Group '{group_id}' already exists")
+        store[group_id] = group
+        return store
+
+    mutate_json(_redis(), _GROUPS_KEY, _add, default={})
+    return group
+
+
+def update_group(
+    group_id: str,
+    name: Optional[str] = None,
+    description: Optional[str] = None,
+    roles: Optional[list[str]] = None,
+    permissions: Optional[list[str]] = None,
+    companies: Optional[list[str]] = None,
+    members: Optional[list[str]] = None,
+) -> dict:
+    """Patch the supplied fields of a group (id is immutable)."""
+    result: dict = {}
+
+    def _patch(store: dict) -> dict:
+        cur = store.get(group_id)
+        if not cur:
+            raise ValueError(f"Group '{group_id}' not found")
+        merged = _normalize_group(
+            group_id,
+            name if name is not None else cur.get("name", group_id),
+            description if description is not None else cur.get("description", ""),
+            roles if roles is not None else cur.get("roles", []),
+            permissions if permissions is not None else cur.get("permissions", []),
+            companies if companies is not None else cur.get("companies", []),
+            members if members is not None else cur.get("members", []),
+        )
+        store[group_id] = merged
+        result["g"] = merged
+        return store
+
+    mutate_json(_redis(), _GROUPS_KEY, _patch, default={})
+    return result["g"]
+
+
+def delete_group(group_id: str) -> bool:
+    """Delete a group. Returns False if it did not exist."""
+    existed = {"v": False}
+
+    def _del(store: dict) -> dict:
+        if group_id in store:
+            del store[group_id]
+            existed["v"] = True
+        return store
+
+    mutate_json(_redis(), _GROUPS_KEY, _del, default={})
+    return existed["v"]

@@ -11,9 +11,10 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Upload, Cloud, X, RefreshCw, AlertTriangle,
   ChevronRight, ChevronDown, Folder, File, Loader2, Database, Download, Trash2,
-  HardDrive, Play,
+  HardDrive, Play, Crosshair, FolderOpen, MonitorSmartphone,
 } from 'lucide-react'
 import PanelHelp from './shared/PanelHelp'
+import ArtifactSelector from './shared/ArtifactSelector'
 import { api } from '../api/client'
 import { useUpload } from '../contexts/UploadContext'
 import { formatBytes as fmtSize } from '../utils/format'
@@ -677,20 +678,77 @@ function S3Tab({ caseId, onJobsAdded }) {
   )
 }
 
-// ── Harvest tab — server-side artifact collection from a mounted path / disk image ──
+// ── Harvest helpers ─────────────────────────────────────────────────────────
+
+const DEFAULT_LEVELS = ['small', 'complete', 'exhaustive']
+
+// Humanize a flat category key into a readable label: "event_logs" → "Event Logs".
+function humanizeKey(key) {
+  return String(key)
+    .replace(/[_-]+/g, ' ')
+    .replace(/\b\w/g, ch => ch.toUpperCase())
+    .replace(/\bMft\b/i, 'MFT')
+    .replace(/\bMru\b/i, 'MRU')
+    .replace(/\bUsb\b/i, 'USB')
+    .replace(/\bEvtx\b/i, 'EVTX')
+}
+
+// Normalize whatever listLevels() returns (array of strings, array of objects,
+// or { levels: [...] }) into [{ key, label, desc }].
+function normalizeLevels(raw) {
+  const list = Array.isArray(raw) ? raw : raw?.levels || []
+  const items = list.length ? list : DEFAULT_LEVELS
+  return items.map(l => {
+    if (typeof l === 'string') return { key: l, label: '', desc: '' }
+    const key = l.key || l.id || l.name
+    return { key, label: l.label || '', desc: l.desc || l.description || '' }
+  }).filter(l => l.key)
+}
+
+// Normalize listCategories() — backend gives a FLAT dict { key: description }.
+// Also tolerate an array form. → [{ key, label, desc }].
+function normalizeCategories(raw) {
+  const dict = raw?.categories ?? raw
+  if (Array.isArray(dict)) {
+    return dict.map(c => {
+      if (typeof c === 'string') return { key: c, label: humanizeKey(c), desc: '' }
+      const key = c.key || c.id || c.name
+      return { key, label: c.label || humanizeKey(key), desc: c.desc || c.description || '' }
+    }).filter(c => c.key)
+  }
+  if (dict && typeof dict === 'object') {
+    return Object.entries(dict).map(([key, desc]) => ({
+      key, label: humanizeKey(key), desc: typeof desc === 'string' ? desc : '',
+    }))
+  }
+  return []
+}
+
+// ── Harvest tab — server-side artifact collection powered by Talon ──
+// Talon runs server-side against a Windows disk image or mounted volume the
+// worker can reach. Each artifact found is dispatched as a normal ingest job.
 function HarvestTab({ caseId, onJobsAdded }) {
   const [levels, setLevels]         = useState([])
   const [categories, setCategories] = useState([])
   const [level, setLevel]           = useState('complete')
-  const [selectedCats, setCats]     = useState([])    // empty = all in level
+  const [selectedCats, setCats]     = useState(new Set())  // empty = all in level
   const [path, setPath]             = useState('')
-  const [run, setRun]               = useState(null)  // { run_id, status, ... }
+  const [run, setRun]               = useState(null)       // { run_id, status, ... }
   const [busy, setBusy]             = useState(false)
   const [error, setError]           = useState('')
 
   useEffect(() => {
-    api.harvest.listLevels().then(r => setLevels(r.levels || r || [])).catch(() => {})
-    api.harvest.listCategories().then(r => setCategories(r.categories || r || [])).catch(() => {})
+    api.harvest.listLevels()
+      .then(r => {
+        const lv = normalizeLevels(r)
+        setLevels(lv)
+        // Keep "complete" if offered, else fall back to the first level.
+        if (lv.length && !lv.some(l => l.key === 'complete')) setLevel(lv[0].key)
+      })
+      .catch(() => setLevels(normalizeLevels(null)))
+    api.harvest.listCategories()
+      .then(r => setCategories(normalizeCategories(r)))
+      .catch(() => {})
   }, [])
 
   // Poll the active run until it finishes.
@@ -706,74 +764,101 @@ function HarvestTab({ caseId, onJobsAdded }) {
     return () => clearInterval(t)
   }, [run?.run_id, run?.status, onJobsAdded])
 
-  const toggleCat = c => setCats(p => p.includes(c) ? p.filter(x => x !== c) : [...p, c])
+  const running = run && !['completed', 'failed', 'cancelled'].includes(run.status)
+
+  // When the depth changes we reset the explicit category selection back to
+  // "defaults for this depth" (empty Set = collect everything in the level).
+  function pickLevel(key) {
+    if (running) return
+    setLevel(key)
+    setCats(new Set())
+  }
+
+  const toggleCat = key => {
+    if (running) return
+    setCats(prev => {
+      const n = new Set(prev)
+      n.has(key) ? n.delete(key) : n.add(key)
+      return n
+    })
+  }
+  const selectAll = () => !running && setCats(new Set(categories.map(c => c.key)))
+  const clearCats = () => !running && setCats(new Set())
 
   async function start() {
     if (!path.trim()) { setError('A mounted path or disk-image path is required'); return }
     setBusy(true); setError('')
     try {
       const r = await api.harvest.startRun(caseId, {
-        level, categories: selectedCats, mounted_path: path.trim(),
+        level, categories: [...selectedCats], mounted_path: path.trim(),
       })
       setRun(r)
     } catch (e) { setError(e.message || 'Harvest failed to start') }
     finally { setBusy(false) }
   }
 
-  const running = run && !['completed', 'failed', 'cancelled'].includes(run.status)
-
   return (
-    <div className="p-4 space-y-3">
-      <p className="text-[11px] text-gray-500">
-        Server-side collection from a path the worker can reach (a mounted disk image or
-        directory). Each artifact found is dispatched as a normal ingest job — watch it
-        in the job list below.
-      </p>
+    <div className="p-4 space-y-4">
 
+      {/* ── Talon brand header ──────────────────────────────────────── */}
+      <div className="card overflow-hidden">
+        <div className="flex items-start gap-3 px-4 py-3 bg-brand-accent/5 border-b border-brand-accent/15">
+          <div className="w-9 h-9 rounded-lg bg-brand-accent/10 border border-brand-accent/30 flex items-center justify-center flex-shrink-0">
+            <Crosshair size={18} className="text-brand-accent" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-semibold text-brand-text">Server-side Harvest</span>
+              <span className="badge text-[10px] bg-brand-accent/10 text-brand-accent border border-brand-accent/30">
+                Powered by Talon
+              </span>
+            </div>
+            <p className="text-[11px] text-gray-500 mt-0.5 leading-relaxed">
+              Talon runs the acquisition <strong>server-side</strong> against a Windows
+              disk image or mounted volume the worker can reach. Each artifact it
+              extracts is dispatched as a normal ingest job — watch progress in the list below.
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-1.5 px-4 py-2 text-[11px] text-gray-500">
+          <MonitorSmartphone size={12} className="text-gray-400 flex-shrink-0" />
+          Source: <span className="font-medium text-gray-600">Windows disk image / mounted volume</span>
+          <span className="text-gray-400">·</span>
+          <span>Live multi-OS collection lives in the <strong>Collector</strong> page.</span>
+        </div>
+      </div>
+
+      {/* ── Source path ─────────────────────────────────────────────── */}
       <div>
-        <label className="block text-[10px] uppercase tracking-wide text-gray-400 mb-1">Source path (on the worker)</label>
+        <h4 className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-1.5 flex items-center gap-1.5">
+          <FolderOpen size={12} className="text-gray-400" /> Source path (on the worker)
+        </h4>
         <input value={path} onChange={e => setPath(e.target.value)} disabled={running}
           placeholder="/mnt/evidence/diskimage  or  /mnt/triage"
           className="input w-full text-xs font-mono" />
       </div>
 
-      <div>
-        <label className="block text-[10px] uppercase tracking-wide text-gray-400 mb-1">Depth</label>
-        <div className="flex gap-1.5">
-          {(levels.length ? levels : ['small', 'complete', 'exhaustive']).map(l => {
-            const id = typeof l === 'string' ? l : l.id || l.name
-            return (
-              <button key={id} onClick={() => setLevel(id)} disabled={running}
-                className={`badge text-[11px] border capitalize ${level === id
-                  ? 'bg-brand-accentlight text-brand-accent border-brand-accent'
-                  : 'bg-gray-50 text-gray-500 border-gray-200'}`}>{id}</button>
-            )
-          })}
-        </div>
-      </div>
+      {/* ── Depth + categories (shared component) ───────────────────── */}
+      <ArtifactSelector
+        levels={levels}
+        level={level}
+        onLevel={pickLevel}
+        categories={categories}
+        selected={selectedCats}
+        onToggle={toggleCat}
+        onSelectAll={selectAll}
+        onClear={clearCats}
+        disabled={running}
+      />
 
-      {categories.length > 0 && (
-        <div>
-          <label className="block text-[10px] uppercase tracking-wide text-gray-400 mb-1">
-            Categories <span className="text-gray-400 normal-case">(none selected = all in depth)</span>
-          </label>
-          <div className="flex flex-wrap gap-1 max-h-32 overflow-y-auto">
-            {categories.map(c => {
-              const id = typeof c === 'string' ? c : c.id || c.name
-              return (
-                <button key={id} onClick={() => toggleCat(id)} disabled={running}
-                  className={`badge text-[10px] border ${selectedCats.includes(id)
-                    ? 'bg-brand-accent/10 text-brand-accent border-brand-accent/40'
-                    : 'bg-gray-50 text-gray-400 border-gray-200'}`}>{id}</button>
-              )
-            })}
-          </div>
-        </div>
+      {error && (
+        <p className="text-[11px] text-red-500 flex items-center gap-1">
+          <AlertTriangle size={11} /> {error}
+        </p>
       )}
 
-      {error && <p className="text-[11px] text-red-500 flex items-center gap-1"><AlertTriangle size={11} /> {error}</p>}
-
-      <div className="flex items-center gap-2">
+      {/* ── Actions + live status ───────────────────────────────────── */}
+      <div className="flex items-center gap-2 pt-1">
         <button onClick={start} disabled={busy || running || !path.trim()} className="btn-primary text-xs">
           {busy ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />} Start harvest
         </button>
