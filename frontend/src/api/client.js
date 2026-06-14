@@ -192,6 +192,15 @@ export const api = {
     totpSetup:          ()                   => request('POST',   '/auth/me/totp/setup'),
     totpEnable:         (code)               => request('POST',   '/auth/me/totp/enable', { code }),
     totpDisable:        (password)           => request('POST',   '/auth/me/totp/disable', { password }),
+    // RBAC — groups, permission catalog, effective access
+    listGroups:         ()                   => request('GET',    '/groups'),
+    createGroup:        (data)               => request('POST',   '/groups', data),
+    updateGroup:        (id, data)           => request('PUT',    `/groups/${id}`, data),
+    deleteGroup:        (id)                 => request('DELETE', `/groups/${id}`),
+    permissionCatalog:  ()                   => request('GET',    '/permissions'),
+    userEffective:      (username)           => request('GET',    `/users/${username}/effective`),
+    // SSO (OIDC) — providers list; login is a browser redirect to /api/v1/auth/sso/{id}/login
+    ssoProviders:       ()                   => request('GET',    '/auth/sso/providers'),
   },
 
   savedSearches: {
@@ -209,6 +218,10 @@ export const api = {
   caseTemplates: {
     list:    () => request('GET', '/case-templates'),
     detail:  (caseId, tplId) => request('GET', `/cases/${caseId}/case-templates/${tplId}`),
+    getFull: (id) => request('GET', `/case-templates/${id}`),
+    create:  (data) => request('POST', '/case-templates', data),
+    update:  (id, data) => request('PUT', `/case-templates/${id}`, data),
+    remove:  (id) => request('DELETE', `/case-templates/${id}`),
     apply: (caseId, templateId) => request('POST', `/cases/${caseId}/apply-template?template_id=${encodeURIComponent(templateId)}`),
   },
 

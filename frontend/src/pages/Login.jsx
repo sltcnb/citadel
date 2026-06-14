@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { Loader2, Eye, EyeOff, ShieldCheck, ArrowLeft, KeyRound, Lock } from 'lucide-react'
+import { api, setToken } from '../api/client'
 
 // Robust FastAPI error extraction (detail may be a string or a 422 array).
 async function readError(res) {
@@ -44,14 +45,58 @@ export default function Login({ onLogin }) {
   const [confirmPass, setConfirmPass] = useState('')
   const [loading, setLoading]   = useState(false)
   const [error, setError]       = useState('')
+  const [providers, setProviders] = useState([])   // SSO providers: [{id,name}]
+  const [ssoLoading, setSsoLoading] = useState(false)
   const codeRef = useRef(null)
 
   useEffect(() => { if (step === 'mfa') codeRef.current?.focus() }, [step])
+
+  // ── SSO: discover providers + handle OIDC return (token/error in URL hash) ──
+  useEffect(() => {
+    api.auth.ssoProviders()
+      .then(d => setProviders(d?.providers || []))
+      .catch(() => {})
+
+    const hash = window.location.hash || ''
+    if (!hash) return
+    const params = new URLSearchParams(hash.replace(/^#/, ''))
+    const token = params.get('sso_token')
+    const ssoErr = params.get('sso_error')
+    // Clear the hash so the token/error doesn't linger in the URL or get re-read.
+    const clearHash = () => {
+      window.history.replaceState(null, '', window.location.pathname + window.location.search)
+    }
+    if (token) {
+      clearHash()
+      finishSSO(token)
+    } else if (ssoErr) {
+      clearHash()
+      setError(decodeURIComponent(ssoErr))
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   function finish(data) {
     onLogin(data.access_token, { username: data.username, role: data.role })
     const from = location.state?.from?.pathname || '/'
     navigate(from, { replace: true })
+  }
+
+  // SSO return gives us only the JWT — store it, then resolve the user via /auth/me
+  // (api.auth.me() reads the token from storage) before driving the normal flow.
+  async function finishSSO(token) {
+    setSsoLoading(true); setError('')
+    try {
+      setToken(token)
+      const me = await api.auth.me()
+      finish({ access_token: token, username: me.username, role: me.role })
+    } catch (err) {
+      setError(err.message || 'Single sign-on failed')
+      setSsoLoading(false)
+    }
+  }
+
+  function startSSO(id) {
+    window.location.href = `/api/v1/auth/sso/${id}/login`
   }
 
   async function submitCredentials(e) {
@@ -181,12 +226,34 @@ export default function Login({ onLogin }) {
                   </div>
                 </Field>
 
-                <button type="submit" disabled={loading || !username.trim() || !password}
+                <button type="submit" disabled={loading || ssoLoading || !username.trim() || !password}
                   className="btn-primary w-full justify-center py-2.5">
                   {loading ? <><Loader2 size={14} className="animate-spin" /> Signing in…</>
                            : <><Lock size={14} /> Sign in</>}
                 </button>
               </form>
+
+              {providers.length > 0 && (
+                <div className="mt-6 space-y-3">
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1 h-px bg-gray-200" />
+                    <span className="text-[11px] uppercase tracking-wider text-gray-400">or</span>
+                    <div className="flex-1 h-px bg-gray-200" />
+                  </div>
+                  {providers.map(p => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => startSSO(p.id)}
+                      disabled={loading || ssoLoading}
+                      className="w-full flex items-center justify-center gap-2.5 py-2.5 rounded-lg border border-gray-200 bg-white text-sm font-medium text-brand-text hover:bg-gray-50 transition-colors disabled:opacity-60"
+                    >
+                      {ssoLoading ? <Loader2 size={16} className="animate-spin" /> : <ProviderIcon id={p.id} />}
+                      Continue with {p.name || p.id}
+                    </button>
+                  ))}
+                </div>
+              )}
             </>
           ) : step === 'mfa' ? (
             <>
@@ -277,6 +344,30 @@ export default function Login({ onLogin }) {
       </div>
     </div>
   )
+}
+
+function ProviderIcon({ id }) {
+  if (id === 'google') {
+    return (
+      <svg width="16" height="16" viewBox="0 0 48 48" aria-hidden="true">
+        <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" />
+        <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z" />
+        <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z" />
+        <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" />
+      </svg>
+    )
+  }
+  if (id === 'microsoft') {
+    return (
+      <svg width="16" height="16" viewBox="0 0 21 21" aria-hidden="true">
+        <rect x="1" y="1" width="9" height="9" fill="#F25022" />
+        <rect x="11" y="1" width="9" height="9" fill="#7FBA00" />
+        <rect x="1" y="11" width="9" height="9" fill="#00A4EF" />
+        <rect x="11" y="11" width="9" height="9" fill="#FFB900" />
+      </svg>
+    )
+  }
+  return <ShieldCheck size={16} className="text-gray-500" />
 }
 
 function Field({ label, children }) {

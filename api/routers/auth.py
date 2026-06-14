@@ -122,6 +122,10 @@ class CreateUserRequest(BaseModel):
     companies: list[str] = Field(
         default_factory=list, description="Companies this user can access (empty = all)"
     )
+    groups: list[str] = Field(default_factory=list, description="RBAC group ids the user belongs to")
+    extra_permissions: list[str] = Field(
+        default_factory=list, description="Permissions granted directly to this user (beyond role/groups)"
+    )
 
 
 class UpdateUserRequest(BaseModel):
@@ -129,6 +133,10 @@ class UpdateUserRequest(BaseModel):
     password: str | None = Field(None, min_length=8, description="New password (min 8 chars)")
     companies: list[str] | None = Field(
         None, description="Companies this user can access (empty list = all)"
+    )
+    groups: list[str] | None = Field(None, description="RBAC group ids the user belongs to")
+    extra_permissions: list[str] | None = Field(
+        None, description="Permissions granted directly to this user"
     )
 
 
@@ -403,7 +411,10 @@ async def admin_create_user(
 ):
     check_user_limit()
     try:
-        user = create_user(body.username, body.password, body.role, body.companies)
+        user = create_user(
+            body.username, body.password, body.role, body.companies,
+            groups=body.groups, extra_permissions=body.extra_permissions,
+        )
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -418,15 +429,17 @@ async def admin_update_user(
     body: UpdateUserRequest,
     admin: dict = Depends(require_admin),
 ):
-    """Update a user's role and/or reset their password."""
-    if body.role is None and body.password is None:
+    """Update a user's role, password, companies, group membership, or direct permissions."""
+    if all(v is None for v in (body.role, body.password, body.companies,
+                               body.groups, body.extra_permissions)):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Nothing to update — provide 'role' and/or 'password'",
+            detail="Nothing to update",
         )
     try:
         user = update_user(
-            username, role=body.role, password=body.password, companies=body.companies
+            username, role=body.role, password=body.password, companies=body.companies,
+            groups=body.groups, extra_permissions=body.extra_permissions,
         )
     except ValueError as exc:
         raise HTTPException(

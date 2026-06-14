@@ -7,7 +7,8 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError
 
-from auth.service import decode_token, get_user, is_token_revoked
+from auth import rbac
+from auth.service import decode_token, get_user, groups_index, is_token_revoked
 from config import settings
 
 _oauth2 = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token", auto_error=False)
@@ -118,9 +119,80 @@ async def get_current_user(
         )
 
 
+# ── Effective permission/company resolution ─────────────────────────────────────
+
+
+def _as_list(value) -> list[str]:
+    """Coerce a raw hash field (JSON string or list) into a list of strings."""
+    if not value:
+        return []
+    if isinstance(value, list):
+        return [str(v) for v in value]
+    if isinstance(value, str):
+        try:
+            import json as _json
+
+            parsed = _json.loads(value)
+            return [str(v) for v in parsed] if isinstance(parsed, list) else []
+        except (ValueError, TypeError):
+            return []
+    return []
+
+
+def resolve_effective(user: dict) -> dict:
+    """Resolve and cache the user's effective permissions + company scope onto the
+    user dict (idempotent). Reads the groups index from Redis once; cheap enough
+    for per-request use and memoized via the ``_effective_perms`` marker key.
+
+    Returns the same user dict (mutated in place) for convenience.
+    """
+    if user.get("_effective_perms") is not None:
+        return user
+    # Normalize the raw hash fields into real lists so the pure rbac functions
+    # (which expect lists) work whether the dict came from get_user (JSON strings)
+    # or from _public (already parsed).
+    norm = dict(user)
+    norm["groups"] = _as_list(user.get("groups"))
+    norm["companies"] = _as_list(user.get("companies"))
+    norm["extra_permissions"] = _as_list(user.get("extra_permissions"))
+    try:
+        gidx = groups_index()
+    except Exception:
+        gidx = {}
+    user["_effective_perms"] = rbac.effective_permissions(norm, gidx)
+    user["_effective_companies"] = rbac.effective_companies(norm, gidx)
+    return user
+
+
+def has_permission(user: dict, perm: str) -> bool:
+    """True if the user holds ``perm`` (admins always pass)."""
+    if user.get("role") == "admin":
+        return True
+    return perm in resolve_effective(user)["_effective_perms"]
+
+
+def require_permission(perm: str):
+    """Dependency factory: 403 unless the current user has ``perm``. Admins pass.
+
+    Usage:  Depends(require_permission("cases.write"))
+    """
+
+    async def _dep(current_user: dict = Depends(get_current_user)) -> dict:
+        if not has_permission(current_user, perm):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Missing required permission: {perm}",
+            )
+        return current_user
+
+    return _dep
+
+
 async def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
-    """Only allow users with the 'admin' role."""
-    if current_user.get("role") != "admin":
+    """Only allow users with the 'admin' role (or the settings.admin permission)."""
+    if current_user.get("role") != "admin" and not has_permission(
+        current_user, rbac.SETTINGS_ADMIN
+    ):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
     return current_user
 
@@ -185,17 +257,10 @@ def get_company_filter(user: dict) -> list[str] | None:
     """
     Return the list of companies this user is restricted to, or None (unrestricted).
 
-    Admins are always unrestricted. Analysts with an empty companies list are also
-    unrestricted. Only analysts with a non-empty companies list are filtered.
+    Now group-aware: the scope is the UNION of the user's own companies and the
+    company scopes of every group they belong to (via rbac.effective_companies).
+    Admins (and anyone with no scope anywhere) are unrestricted (None).
     """
     if user.get("role") == "admin":
         return None
-    import json
-
-    companies = user.get("companies", [])
-    if isinstance(companies, str):
-        try:
-            companies = json.loads(companies)
-        except (json.JSONDecodeError, TypeError):
-            companies = []
-    return companies if companies else None
+    return resolve_effective(user)["_effective_companies"]

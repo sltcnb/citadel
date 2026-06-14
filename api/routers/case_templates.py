@@ -15,16 +15,21 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import uuid
 from datetime import UTC, datetime
 
-from auth.dependencies import get_current_user, require_case_access
-from fastapi import APIRouter, Depends, HTTPException, Query
+from auth.dependencies import get_current_user, require_admin, require_case_access
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
 from config import get_redis
+from services.redis_mutate import mutate_json
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["case-templates"])
+
+# Redis key for the user-defined templates layered over the built-ins below.
+CUSTOM_KEY = "fo:case_templates:custom"
 
 
 TEMPLATES: dict[str, dict] = {
@@ -118,6 +123,97 @@ TEMPLATES: dict[str, dict] = {
 }
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Custom-template store (Redis) layered over the built-in TEMPLATES above.
+# Built-ins are read-only; custom templates are editable by admins.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _load_custom() -> dict[str, dict]:
+    raw = get_redis().get(CUSTOM_KEY)
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _get_template(tid: str) -> dict | None:
+    """Resolve a template id, custom store taking precedence over built-ins."""
+    custom = _load_custom()
+    if tid in custom:
+        return {**custom[tid], "id": tid, "builtin": False}
+    if tid in TEMPLATES:
+        return {**TEMPLATES[tid], "builtin": True}
+    return None
+
+
+def _all_templates() -> list[dict]:
+    """Built-ins first, then custom templates."""
+    out = [{**t, "builtin": True} for t in TEMPLATES.values()]
+    for tid, t in _load_custom().items():
+        out.append({**t, "id": tid, "builtin": False})
+    return out
+
+
+def _slugify(name: str) -> str:
+    s = re.sub(r"[^\w\s-]", "", name).strip().lower()
+    s = re.sub(r"[\s_]+", "-", s)[:48].strip("-")
+    return s or "template"
+
+
+def _unique_id(name: str, custom: dict[str, dict]) -> str:
+    base = _slugify(name)
+    candidate = base
+    n = 2
+    while candidate in custom or candidate in TEMPLATES:
+        candidate = f"{base}-{n}"
+        n += 1
+    return candidate
+
+
+def _validate_payload(data: dict) -> dict:
+    """Validate + normalize a template create/update body. Raises HTTPException."""
+    name = (data.get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+
+    watchlist_in = data.get("watchlist") or []
+    if not isinstance(watchlist_in, list):
+        raise HTTPException(status_code=400, detail="watchlist must be a list")
+    watchlist: list[dict] = []
+    for ioc in watchlist_in:
+        if not isinstance(ioc, dict):
+            raise HTTPException(status_code=400, detail="watchlist entries must be objects")
+        kind = (ioc.get("kind") or "").strip()
+        value = (ioc.get("value") or "").strip()
+        if not kind or not value:
+            raise HTTPException(
+                status_code=400, detail="each watchlist entry needs a kind and value"
+            )
+        watchlist.append(
+            {"kind": kind, "value": value, "label": (ioc.get("label") or "").strip() or value}
+        )
+
+    def _str_list(v):
+        if isinstance(v, str):
+            return [x.strip() for x in v.split(",") if x.strip()]
+        if isinstance(v, list):
+            return [str(x).strip() for x in v if str(x).strip()]
+        return []
+
+    return {
+        "name": name,
+        "description": (data.get("description") or "").strip(),
+        "tags": _str_list(data.get("tags")),
+        "watchlist": watchlist,
+        "rule_categories": _str_list(data.get("rule_categories")),
+        "notes": data.get("notes") or "",
+    }
+
+
 @router.get("/case-templates")
 def list_templates(_: dict = Depends(get_current_user)):
     return {
@@ -128,10 +224,88 @@ def list_templates(_: dict = Depends(get_current_user)):
                 "description": t["description"],
                 "watchlist_count": len(t["watchlist"]),
                 "tags": t["tags"],
+                "builtin": t["builtin"],
             }
-            for t in TEMPLATES.values()
+            for t in _all_templates()
         ]
     }
+
+
+@router.get("/case-templates/{template_id}")
+def get_template_full(template_id: str, _: dict = Depends(get_current_user)):
+    """Full editable template object (watchlist/rule_categories/notes)."""
+    tpl = _get_template(template_id)
+    if not tpl:
+        raise HTTPException(status_code=404, detail=f"Template '{template_id}' not found")
+    return {
+        "id": tpl["id"],
+        "name": tpl["name"],
+        "description": tpl.get("description", ""),
+        "tags": tpl.get("tags", []),
+        "watchlist": tpl.get("watchlist", []),
+        "rule_categories": tpl.get("rule_categories", []),
+        "notes": tpl.get("notes", ""),
+        "builtin": tpl["builtin"],
+    }
+
+
+@router.post("/case-templates")
+def create_template(data: dict = Body(...), _: dict = Depends(require_admin)):
+    fields = _validate_payload(data)
+
+    def _mutate(cur: dict) -> dict:
+        tid = _unique_id(fields["name"], cur)
+        cur[tid] = {
+            **fields,
+            "id": tid,
+            "created_at": datetime.now(UTC).isoformat(),
+        }
+        _mutate.tid = tid  # type: ignore[attr-defined]
+        return cur
+
+    store = mutate_json(get_redis(), CUSTOM_KEY, _mutate, {})
+    tid = _mutate.tid  # type: ignore[attr-defined]
+    return {**store[tid], "builtin": False}
+
+
+@router.put("/case-templates/{template_id}")
+def update_template(template_id: str, data: dict = Body(...), _: dict = Depends(require_admin)):
+    if template_id in TEMPLATES:
+        raise HTTPException(
+            status_code=400, detail="built-in templates can't be edited; clone it instead"
+        )
+    fields = _validate_payload(data)
+
+    def _mutate(cur: dict) -> dict:
+        if template_id not in cur:
+            raise HTTPException(status_code=404, detail=f"Template '{template_id}' not found")
+        cur[template_id] = {
+            **cur[template_id],
+            **fields,
+            "id": template_id,
+            "updated_at": datetime.now(UTC).isoformat(),
+        }
+        return cur
+
+    store = mutate_json(get_redis(), CUSTOM_KEY, _mutate, {})
+    return {**store[template_id], "builtin": False}
+
+
+@router.delete("/case-templates/{template_id}")
+def delete_template(template_id: str, _: dict = Depends(require_admin)):
+    if template_id in TEMPLATES:
+        raise HTTPException(
+            status_code=400, detail="built-in templates can't be edited; clone it instead"
+        )
+
+    def _mutate(cur: dict) -> dict:
+        if template_id not in cur:
+            raise HTTPException(status_code=404, detail=f"Template '{template_id}' not found")
+        del cur[template_id]
+        return cur
+
+    mutate_json(get_redis(), CUSTOM_KEY, _mutate, {})
+    return {"deleted": template_id}
 
 
 @router.get("/cases/{case_id}/case-templates/{template_id}")
@@ -145,7 +319,7 @@ def get_template_for_case(
     AND the live hit count from this case's index. That turns the template
     from "apply opaque magic" into an analyst-friendly checklist they can
     work through, query by query."""
-    tpl = TEMPLATES.get(template_id)
+    tpl = _get_template(template_id)
     if not tpl:
         raise HTTPException(status_code=404, detail=f"Template '{template_id}' not found")
 
@@ -209,7 +383,7 @@ def apply_template(
     template_id: str = Query(..., description="ransomware|insider_threat|phishing"),
     case: dict = Depends(require_case_access),
 ):
-    tpl = TEMPLATES.get(template_id)
+    tpl = _get_template(template_id)
     if not tpl:
         raise HTTPException(status_code=404, detail=f"Template '{template_id}' not found")
 
