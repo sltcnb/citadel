@@ -6,7 +6,7 @@ The Citadel suite is 10 standalone tools. Each has its own directory under `tool
 |------|------|------------------------|
 | **Talon** | Acquisition agent | `talon collect --host workstation01 --out bundle/` |
 | **Sluice** | Intake & routing | `sluice ingest bundle/ --route` |
-| **Babel** | Parser library (43 parsers) | `babel parse evtx Security.evtx > events.jsonl` |
+| **Babel** | Parser library (44 parsers) | `babel parse evtx Security.evtx > events.jsonl` |
 | **Rosetta** | Canonicalizer (ECS v8 + OSSEM, GeoIP/ASN/rDNS) | `rosetta normalize events.jsonl > ecs.jsonl` |
 | **Sigil** | Detection engine (Sigma + YARA) | `sigil match --rules sigma/ ecs.jsonl` |
 | **Anvil** | Analysis runner (12+ analyzers) | `anvil run volatility --image mem.raw` |
@@ -19,7 +19,7 @@ The Citadel suite is 10 standalone tools. Each has its own directory under `tool
 
 - **Talon** — collects host/disk artifacts into an artifact bundle. Lives in `tools/talon/`.
 - **Sluice** — detects, dedups, routes, and parses anything; emits to the bus. `tools/sluice/` + `tools/sluice-worker/`.
-- **Babel** — parses any artifact into a normalized `ForensicEvent` stream (43 parsers). `tools/babel/`.
+- **Babel** — parses any artifact into a normalized `ForensicEvent` stream (44 parsers). `tools/babel/`.
 - **Rosetta** — normalizes any event stream to ECS v8 + OSSEM and enriches IPs (GeoIP/ASN/rDNS). `tools/rosetta/`.
 - **Sigil** — matches Sigma + YARA against an event stream. `tools/sigil/`.
 - **Anvil** — runs sandboxed deep analyzers (Volatility/Hayabusa/…). `tools/anvil/`.

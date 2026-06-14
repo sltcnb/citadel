@@ -1,8 +1,66 @@
 import { useState, useEffect } from 'react'
 import { AlertTriangle, Plus, Trash2, Play, CheckCircle, Loader2,
          ChevronDown, ChevronUp, Sparkles, Brain, RefreshCw, Clock,
-         ExternalLink } from 'lucide-react'
+         ExternalLink, Shield, ShieldOff } from 'lucide-react'
 import { api } from '../api/client'
+
+// ── Sigma enable/disable — per-case override on top of the global default ──────
+// Surfaced here (the Detection Rules panel) because this is where an analyst
+// looks to turn Sigma off. Global default also lives in Settings → System.
+function SigmaControl({ caseId }) {
+  const [state, setState] = useState(null)   // { sigma_enabled, override, global_default }
+  const [busy, setBusy]   = useState(false)
+
+  useEffect(() => {
+    api.cases.getSigma(caseId).then(setState).catch(() => setState(null))
+  }, [caseId])
+
+  if (!state) return null
+  const on = state.sigma_enabled
+  const inherited = state.override === null || state.override === undefined
+
+  async function setOverride(val) {           // true | false | null (inherit)
+    setBusy(true)
+    try { setState(await api.cases.setSigma(caseId, val)) }
+    catch { /* keep prior state */ }
+    finally { setBusy(false) }
+  }
+
+  return (
+    <div className={`mb-3 rounded-lg border p-2.5 flex items-center gap-2 text-xs ${
+      on ? 'border-gray-200 bg-gray-50' : 'border-amber-200 bg-amber-50'}`}>
+      {on ? <Shield size={14} className="text-emerald-600 flex-shrink-0" />
+          : <ShieldOff size={14} className="text-amber-600 flex-shrink-0" />}
+      <div className="min-w-0 flex-1">
+        <span className="font-semibold text-gray-700">
+          Sigma detection rules: {on ? 'enabled' : 'disabled'} for this case
+        </span>
+        <span className="block text-[10px] text-gray-500">
+          {inherited
+            ? `Inheriting the global default (${state.global_default ? 'on' : 'off'}).`
+            : 'Per-case override set.'} Native + custom rules are unaffected.
+        </span>
+      </div>
+      <button
+        onClick={() => setOverride(!on)}
+        disabled={busy}
+        className={`btn-outline text-[11px] py-0.5 flex-shrink-0 ${
+          on ? 'text-amber-700 border-amber-300 hover:bg-amber-100'
+             : 'text-emerald-700 border-emerald-300 hover:bg-emerald-50'}`}
+      >
+        {busy ? <Loader2 size={11} className="animate-spin" />
+              : on ? <><ShieldOff size={11} /> Disable Sigma</> : <><Shield size={11} /> Enable Sigma</>}
+      </button>
+      {!inherited && (
+        <button onClick={() => setOverride(null)} disabled={busy}
+          className="text-[10px] text-gray-500 hover:text-gray-700 flex-shrink-0"
+          title="Clear the per-case override and follow the global default">
+          Reset
+        </button>
+      )}
+    </div>
+  )
+}
 import { severityStyle } from '../utils/severity'
 import { ProvenancePills } from '../components/AlertRuleFilterBar'
 import { filterAlertRules } from '../lib/alertRuleFilters'
@@ -674,6 +732,9 @@ export default function AlertRules({ caseId, onSearchQuery }) {
       )}
 
       {/* Rule type filter pills */}
+      {/* Sigma enable/disable for this case */}
+      <SigmaControl caseId={caseId} />
+
       {libraryRules.length > 0 && (
         <div className="flex items-center gap-1 mb-2 flex-wrap">
           <ProvenancePills value={ruleTypeFilter} onChange={setRuleTypeFilter} size="xs" />

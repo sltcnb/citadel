@@ -52,7 +52,7 @@ flowchart TD
 | `modules.completed` | Anvil | Citadel | findings + run id |
 | `intel.enriched` | Augur | Citadel | enriched IOCs (STIX) |
 
-See [`contracts/bus_topics.md`](contracts.md) for the full contract.
+See [`contracts/bus_topics.md`](../contracts/bus_topics.md) for the full contract.
 
 ## The three shared layers
 

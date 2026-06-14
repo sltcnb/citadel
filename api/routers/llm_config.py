@@ -1799,15 +1799,23 @@ def ai_analyze_case(case_id: str):
 
 
 def _compute_risk_score(ctx: dict) -> dict:
-    """Risk score = function of alert-rule severity counts. Each severity
-    contributes a fixed weight; capped at 10. Output is what the UI shows."""
+    """Risk score from the case's actual threat signal — the MAX of three paths,
+    so a strong signal on any one of them can't be zeroed by the others:
+
+      1. Fired alert-rules (weighted by severity).
+      2. Indexed high/critical detections (hayabusa/evtx/sigma → `findings.high_severity`).
+      3. Confirmed external CTI matches (`findings.cti_high`).
+
+    Previously this counted only (1), so a case with 1.3M high/critical detections
+    and CTI hits but no *triggered alert rule* scored 0/10 — which is nonsense."""
+    import math
+
     matches = (ctx.get("alert_run") or {}).get("matches", []) or []
     by_sev: dict[str, int] = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
     for m in matches:
         sev = (
             m.get("rule", {}).get("level") or m.get("level") or m.get("severity") or "info"
         ).lower()
-        # Map common aliases
         if sev in ("crit",):
             sev = "critical"
         elif sev in ("med",):
@@ -1816,12 +1824,22 @@ def _compute_risk_score(ctx: dict) -> dict:
             sev = "info"
         by_sev[sev] = by_sev.get(sev, 0) + 1
 
-    # Weighted score — each tier contributes:
-    #   critical: 4   high: 2   medium: 1   low: 0.5   info: 0
-    raw_score = (
+    rule_score = (
         by_sev["critical"] * 4 + by_sev["high"] * 2 + by_sev["medium"] * 1 + by_sev["low"] * 0.5
     )
-    score = min(10, int(round(raw_score)))
+
+    # Count-driven signal: 0 stays 0, otherwise a base floor + growth per order of
+    # magnitude so it saturates (a handful is notable; millions is critical).
+    def _signal(count: int, base: float, per_decade: float) -> float:
+        return 0.0 if count <= 0 else base + per_decade * math.log10(max(1, count))
+
+    findings = ctx.get("findings") or {}
+    hi = int(findings.get("high_severity", 0) or 0)
+    cti = int(findings.get("cti_high", 0) or 0)
+    det_score = _signal(hi, base=3.0, per_decade=1.2)   # 1→3, 1k→6.6, 1M→10.2
+    cti_score = _signal(cti, base=5.0, per_decade=1.0)  # external confirmed-bad → higher floor
+
+    score = min(10, int(round(max(rule_score, det_score, cti_score))))
 
     if score == 0:
         level = "none"
@@ -1835,16 +1853,22 @@ def _compute_risk_score(ctx: dict) -> dict:
         level = "critical"
 
     parts = [f"{by_sev[s]} {s}" for s in ("critical", "high", "medium", "low") if by_sev[s]]
-    basis = (
-        ("Computed from " + ", ".join(parts) + " rule match(es)")
-        if parts
-        else "No alert-rule matches"
-    )
+    basis_bits = []
+    if parts:
+        basis_bits.append(", ".join(parts) + " rule match(es)")
+    if hi:
+        basis_bits.append(f"{hi:,} high/critical detection(s)")
+    if cti:
+        basis_bits.append(f"{cti:,} confirmed CTI match(es)")
+    basis = ("Computed from " + "; ".join(basis_bits)) if basis_bits else "No threat signal found"
+
     return {
         "score": score,
         "level": level,
         "basis": basis,
         "by_severity": {k: v for k, v in by_sev.items() if v},
+        "high_severity_events": hi,
+        "cti_high": cti,
     }
 
 
@@ -1976,7 +2000,7 @@ At every step return ONE JSON object — no markdown, no commentary outside it:
 
   {
     "thought": "what you're trying to verify and why",
-    "action":  "search" | "aggregate" | "inspect" | "time_window" | "correlate" | "mitre_hits" | "conclude",
+    "action":  "search" | "aggregate" | "inspect" | "time_window" | "correlate" | "mitre_hits" | "entity_graph" | "stack_rare" | "cti_seen_before" | "conclude",
 
     // action=search — full Elasticsearch query_string against fo-case-{id}-*
     "query":   "host.hostname:DESKTOP-* AND artifact_type:evtx",
@@ -2064,6 +2088,16 @@ Tool playbook — chain these like a real DFIR analyst:
                        Pass {"action":"launch_module","module_id":"hayabusa"} etc.
                        Returns a run_id; use read_module_result later to see hits.
   read_module_result → fetch full hits of a specific module run by run_id.
+  entity_graph       → host↔user↔IP relationship graph — SEE lateral movement
+                       (which accounts touched a host, which hosts an account
+                       reached). Optional {"focus":"<host-or-user>"} to scope to
+                       one entity's neighbourhood. Use when scoping blast radius.
+  stack_rare         → least-frequency stacking: of a field, the values present
+                       on ONE host that are rare across the case (the odd service
+                       / lone scheduled task / one-off process is usually it).
+                       {"action":"stack_rare","field":"process.name.keyword","host":"WS01"}
+  cti_seen_before    → cross-case memory: have these IOCs shown up in PRIOR cases?
+                       ("this C2/hash burned us before"). {"values":["1.2.3.4","<hash>"]}
   conclude           → wrap up — MUST address every hypothesis you declared.
 
   // Argument-free tools (just `{"action": "detection_rules"}`):
@@ -2071,6 +2105,9 @@ Tool playbook — chain these like a real DFIR analyst:
   // set_hypotheses takes a `hypotheses: [...]` array.
   // launch_module takes a `module_id: str`.
   // read_module_result takes a `run_id: str`.
+  // entity_graph takes an optional `focus: str`.
+  // stack_rare takes `field: str` + `host: str` (+ optional `max_hosts: int`).
+  // cti_seen_before takes `values: [str]` (or a single `value: str`).
 
 Key DFIR field-name reminders:
   - Sysmon / Windows EVTX events have *structured* sub-fields under
@@ -2827,9 +2864,100 @@ def _tool_module_runs(case_id: str, step: dict) -> dict:
     return {"runs": out, "total": len(out), "query_status": "ok"}
 
 
+def _tool_entity_graph(case_id: str, step: dict) -> dict:
+    """Pull the host↔user↔IP relationship graph (optionally scoped to a focus
+    entity). Lets the agent SEE lateral movement — which accounts touched a host,
+    which hosts an account reached — instead of inferring it from flat searches."""
+    try:
+        from services.entity_graph import build_graph
+    except Exception as exc:
+        return {"query_status": "invalid", "query_error": f"entity graph unavailable: {exc}"}
+    focus = (step.get("focus") or "").strip() or None
+    try:
+        g = build_graph(case_id, focus=focus, limit=40)
+    except Exception as exc:
+        return {"query_status": "invalid", "query_error": f"graph failed: {exc}"}
+    nodes = g.get("nodes", [])
+    edges = g.get("edges", [])
+    # Compact, LLM-friendly summary: counts + the strongest edges.
+    by_type: dict[str, int] = {}
+    for n in nodes:
+        by_type[n.get("type", "?")] = by_type.get(n.get("type", "?"), 0) + 1
+    top_edges = sorted(edges, key=lambda e: -(e.get("count") or 0))[:12]
+    edge_lines = [
+        f"{e.get('source')} →{e.get('type','')}→ {e.get('target')} ({e.get('count')})"
+        for e in top_edges
+    ]
+    return {
+        "query_status": "ok",
+        "focus": focus or "(whole case)",
+        "node_counts": by_type,
+        "edge_count": len(edges),
+        "sample": edge_lines,
+    }
+
+
+def _tool_stack_rare(case_id: str, step: dict) -> dict:
+    """Least-frequency-of-occurrence stacking: of `field`, surface the values
+    present on `host` that occur on the fewest hosts case-wide. The classic
+    'the malicious artifact is the rare one' move, done in one call."""
+    try:
+        from services.baseline import is_allowed_field, stack_field
+    except Exception as exc:
+        return {"query_status": "invalid", "query_error": f"stacking unavailable: {exc}"}
+    field = (step.get("field") or "").strip()
+    host = (step.get("host") or "").strip()
+    if not field or not host:
+        return {"query_status": "invalid",
+                "query_error": "field and host required (e.g. field=process.name.keyword, host=WS01)"}
+    if not is_allowed_field(field):
+        return {"query_status": "invalid", "query_error": f"field '{field}' is not stackable"}
+    try:
+        res = stack_field(case_id, field, host, max_hosts=int(step.get("max_hosts", 2) or 2))
+    except Exception as exc:
+        return {"query_status": "invalid", "query_error": f"stack failed: {exc}"}
+    rare = res.get("rare", [])[:15]
+    return {
+        "query_status": "ok",
+        "field": field,
+        "host": host,
+        "result_count": len(res.get("rare", [])),
+        "sample": [f"{r['value']} (on {r['host_count']} host(s), ×{r['target_count']} here)" for r in rare],
+    }
+
+
+def _tool_cti_seen_before(case_id: str, step: dict) -> dict:
+    """Cross-case memory: have these IOCs appeared in OTHER cases before? The
+    'this C2/hash burned us last quarter' institutional-memory signal."""
+    try:
+        from services import pilot_memory as _pm
+    except Exception as exc:
+        return {"query_status": "invalid", "query_error": f"cross-case memory unavailable: {exc}"}
+    values = step.get("values") or ([step["value"]] if step.get("value") else [])
+    values = [str(v).strip() for v in values if str(v).strip()][:50]
+    if not values:
+        return {"query_status": "invalid", "query_error": "values (list of IOCs) required"}
+    try:
+        hits = _pm.seen_before(values, current_case=case_id)
+    except Exception as exc:
+        return {"query_status": "invalid", "query_error": f"lookup failed: {exc}"}
+    return {
+        "query_status": "ok",
+        "checked": len(values),
+        "result_count": len(hits),
+        "sample": [
+            f"{h.get('value')} — seen in {h.get('count', len(h.get('cases', [])))} prior case(s)"
+            for h in hits[:15]
+        ],
+    }
+
+
 AGENT_LAUNCH_CAP = 3  # max launch_module calls per case per 10-min window
 
 AGENT_TOOLS = {
+    "entity_graph": _tool_entity_graph,
+    "stack_rare": _tool_stack_rare,
+    "cti_seen_before": _tool_cti_seen_before,
     "set_hypotheses": _tool_set_hypotheses,
     "search": _tool_search,
     "aggregate": _tool_aggregate,

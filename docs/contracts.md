@@ -43,7 +43,7 @@ bundle/  manifest.json | events.jsonl | blobs/<sha256> | bundle.sha256
 The per-tool manifest. Every tool ships one at its repo root, declaring how it composes into the suite; **standalone use never requires it.**
 
 - **Required**: `name`, `kind`, `version`.
-- `kind` is one of: `collector`, `intake`, `parser-lib`, `canonicalizer`, `detection`, `analysis-runner`, `enrichment`, `agent`, `report`, `domain-analyzer`, `platform`.
+- `kind` is one of: `collector`, `intake`, `parser-lib`, `canonicalizer`, `detection`, `analysis-runner`, `enrichment`, `agent`, `report`, `platform`.
 - `consumes`: `content_types`, `filenames`, `schema` (contract `$id`s consumed).
 - `produces`: `schema` (contract `$id`s produced), `artifact_types`.
 - `dependencies`: other suite tools or substrate (elasticsearch, redis, minio).

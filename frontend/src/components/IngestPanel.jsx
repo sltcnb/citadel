@@ -11,6 +11,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Upload, Cloud, X, RefreshCw, AlertTriangle,
   ChevronRight, ChevronDown, Folder, File, Loader2, Database, Download, Trash2,
+  HardDrive, Play,
 } from 'lucide-react'
 import PanelHelp from './shared/PanelHelp'
 import { api } from '../api/client'
@@ -676,6 +677,124 @@ function S3Tab({ caseId, onJobsAdded }) {
   )
 }
 
+// ── Harvest tab — server-side artifact collection from a mounted path / disk image ──
+function HarvestTab({ caseId, onJobsAdded }) {
+  const [levels, setLevels]         = useState([])
+  const [categories, setCategories] = useState([])
+  const [level, setLevel]           = useState('complete')
+  const [selectedCats, setCats]     = useState([])    // empty = all in level
+  const [path, setPath]             = useState('')
+  const [run, setRun]               = useState(null)  // { run_id, status, ... }
+  const [busy, setBusy]             = useState(false)
+  const [error, setError]           = useState('')
+
+  useEffect(() => {
+    api.harvest.listLevels().then(r => setLevels(r.levels || r || [])).catch(() => {})
+    api.harvest.listCategories().then(r => setCategories(r.categories || r || [])).catch(() => {})
+  }, [])
+
+  // Poll the active run until it finishes.
+  useEffect(() => {
+    if (!run?.run_id || ['completed', 'failed', 'cancelled'].includes(run.status)) return
+    const t = setInterval(async () => {
+      try {
+        const s = await api.harvest.getRun(run.run_id)
+        setRun(s)
+        if (['completed', 'failed', 'cancelled'].includes(s.status)) { clearInterval(t); onJobsAdded?.() }
+      } catch { /* keep polling */ }
+    }, 3000)
+    return () => clearInterval(t)
+  }, [run?.run_id, run?.status, onJobsAdded])
+
+  const toggleCat = c => setCats(p => p.includes(c) ? p.filter(x => x !== c) : [...p, c])
+
+  async function start() {
+    if (!path.trim()) { setError('A mounted path or disk-image path is required'); return }
+    setBusy(true); setError('')
+    try {
+      const r = await api.harvest.startRun(caseId, {
+        level, categories: selectedCats, mounted_path: path.trim(),
+      })
+      setRun(r)
+    } catch (e) { setError(e.message || 'Harvest failed to start') }
+    finally { setBusy(false) }
+  }
+
+  const running = run && !['completed', 'failed', 'cancelled'].includes(run.status)
+
+  return (
+    <div className="p-4 space-y-3">
+      <p className="text-[11px] text-gray-500">
+        Server-side collection from a path the worker can reach (a mounted disk image or
+        directory). Each artifact found is dispatched as a normal ingest job — watch it
+        in the job list below.
+      </p>
+
+      <div>
+        <label className="block text-[10px] uppercase tracking-wide text-gray-400 mb-1">Source path (on the worker)</label>
+        <input value={path} onChange={e => setPath(e.target.value)} disabled={running}
+          placeholder="/mnt/evidence/diskimage  or  /mnt/triage"
+          className="input w-full text-xs font-mono" />
+      </div>
+
+      <div>
+        <label className="block text-[10px] uppercase tracking-wide text-gray-400 mb-1">Depth</label>
+        <div className="flex gap-1.5">
+          {(levels.length ? levels : ['small', 'complete', 'exhaustive']).map(l => {
+            const id = typeof l === 'string' ? l : l.id || l.name
+            return (
+              <button key={id} onClick={() => setLevel(id)} disabled={running}
+                className={`badge text-[11px] border capitalize ${level === id
+                  ? 'bg-brand-accentlight text-brand-accent border-brand-accent'
+                  : 'bg-gray-50 text-gray-500 border-gray-200'}`}>{id}</button>
+            )
+          })}
+        </div>
+      </div>
+
+      {categories.length > 0 && (
+        <div>
+          <label className="block text-[10px] uppercase tracking-wide text-gray-400 mb-1">
+            Categories <span className="text-gray-400 normal-case">(none selected = all in depth)</span>
+          </label>
+          <div className="flex flex-wrap gap-1 max-h-32 overflow-y-auto">
+            {categories.map(c => {
+              const id = typeof c === 'string' ? c : c.id || c.name
+              return (
+                <button key={id} onClick={() => toggleCat(id)} disabled={running}
+                  className={`badge text-[10px] border ${selectedCats.includes(id)
+                    ? 'bg-brand-accent/10 text-brand-accent border-brand-accent/40'
+                    : 'bg-gray-50 text-gray-400 border-gray-200'}`}>{id}</button>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {error && <p className="text-[11px] text-red-500 flex items-center gap-1"><AlertTriangle size={11} /> {error}</p>}
+
+      <div className="flex items-center gap-2">
+        <button onClick={start} disabled={busy || running || !path.trim()} className="btn-primary text-xs">
+          {busy ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />} Start harvest
+        </button>
+        {run && (
+          <span className="text-[11px] text-gray-600 flex items-center gap-1.5">
+            {running && <Loader2 size={11} className="animate-spin text-brand-accent" />}
+            <span className="capitalize">{run.status}</span>
+            {run.current_category && <span className="text-gray-400">· {run.current_category}</span>}
+            {typeof run.total_dispatched === 'number' && <span className="text-gray-400">· {run.total_dispatched} jobs</span>}
+          </span>
+        )}
+        {running && (
+          <button onClick={() => api.harvest.cancelRun(run.run_id).catch(() => {})}
+            className="btn-ghost text-[11px] text-red-500 ml-auto">Cancel</button>
+        )}
+      </div>
+      {run?.error && <p className="text-[11px] text-red-500">{run.error}</p>}
+    </div>
+  )
+}
+
 // ── Main IngestPanel ──────────────────────────────────────────────────────────
 
 const JOB_SORT_ORDER = { RUNNING: 0, UPLOADING: 1, PENDING: 2, COMPLETED: 3, SKIPPED: 4, FAILED: 5 }
@@ -697,9 +816,9 @@ export default function IngestPanel({ caseId, onClose, onComplete }) {
   useEffect(() => { jobsRef.current    = jobs        }, [jobs])
   useEffect(() => { statusesRef.current = jobStatuses }, [jobStatuses])
 
-  // Load existing jobs on mount — request up to 2000; API max is 2000
-  useEffect(() => {
-    api.ingest.listJobs(caseId, { limit: 2000 }).then(r => {
+  // Load existing jobs (mount + after a server-side harvest dispatches new ones).
+  const reloadJobs = useCallback(() => {
+    return api.ingest.listJobs(caseId, { limit: 2000 }).then(r => {
       const all = r.jobs || []
       setTotalJobs(r.total ?? all.length)
       setServerCounts(r.status_counts || null)
@@ -710,6 +829,7 @@ export default function IngestPanel({ caseId, onClose, onComplete }) {
       setJobs([...all].sort((a, b) => (JOB_SORT_ORDER[a.status] ?? 9) - (JOB_SORT_ORDER[b.status] ?? 9)).map(j => j.job_id))
     }).catch(err => setLoadError(err?.message || 'Failed to load jobs'))
   }, [caseId])
+  useEffect(() => { reloadJobs() }, [reloadJobs])
 
   // Central batch poller — one request per 3 s for all non-terminal jobs
   useEffect(() => {
@@ -813,8 +933,7 @@ export default function IngestPanel({ caseId, onClose, onComplete }) {
   return (
     <div className="panel-backdrop" onClick={onClose}>
       <div
-        className="absolute right-0 top-0 h-full w-full sm:w-[90vw] md:w-[580px] bg-white border-l border-gray-200 flex flex-col"
-        style={{ boxShadow: '-4px 0 24px rgba(0,0,0,0.10)' }}
+        className="panel-drawer md:w-[580px]"
         onClick={e => e.stopPropagation()}
       >
         {/* ── Header + tabs ── */}
@@ -824,8 +943,9 @@ export default function IngestPanel({ caseId, onClose, onComplete }) {
 
           <div className="flex gap-0.5 bg-gray-100 rounded-lg p-0.5 ml-1">
             {[
-              { id: 'upload', label: 'Upload',    Icon: Upload },
-              { id: 's3',     label: 'S3 Import', Icon: Cloud  },
+              { id: 'upload',  label: 'Upload',    Icon: Upload },
+              { id: 's3',      label: 'S3 Import', Icon: Cloud  },
+              { id: 'harvest', label: 'Harvest',   Icon: HardDrive },
             ].map(({ id, label, Icon }) => (
               <button key={id} onClick={() => setTab(id)}
                 className={`text-xs px-3 py-1 rounded-md transition-colors whitespace-nowrap inline-flex items-center gap-1.5 ${
@@ -853,8 +973,9 @@ export default function IngestPanel({ caseId, onClose, onComplete }) {
               data={['Nothing — this is where data first enters the case']}
               tip="ZIP/TAR archives are extracted recursively; large files upload in resumable chunks." />
           </div>
-          {tab === 'upload' && <UploadTab caseId={caseId} onJobsAdded={addJobs} />}
-          {tab === 's3'     && <S3Tab     caseId={caseId} onJobsAdded={addJobs} />}
+          {tab === 'upload'  && <UploadTab  caseId={caseId} onJobsAdded={addJobs} />}
+          {tab === 's3'      && <S3Tab      caseId={caseId} onJobsAdded={addJobs} />}
+          {tab === 'harvest' && <HarvestTab caseId={caseId} onJobsAdded={reloadJobs} />}
         </div>
 
         {/* ── Shared job list — always visible, scrollable ── */}
