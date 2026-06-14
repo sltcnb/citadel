@@ -27,6 +27,7 @@ from routers import (
     alert_rules,
     anomaly,
     audit,
+    baseline,
     case_files,
     case_templates,
     cases,
@@ -35,6 +36,8 @@ from routers import (
     companies,
     cti,
     editor,
+    entity_graph,
+    evidence_seal,
     export,
     global_alert_rules,
     harvest,
@@ -42,10 +45,12 @@ from routers import (
     ingest,
     internal_chain,
     jobs,
+    killchain,
     llm_config,
     metrics,
     modules,
     notes,
+    pilot_memory,
     plugins,
     process_tree,
     reports,
@@ -619,6 +624,11 @@ app.include_router(watchlist.router, prefix="/api/v1", dependencies=_analyst_or_
 app.include_router(reports.router, prefix="/api/v1", dependencies=_analyst_or_admin)
 app.include_router(anomaly.router, prefix="/api/v1", dependencies=_analyst_or_admin)
 app.include_router(process_tree.router, prefix="/api/v1", dependencies=_analyst_or_admin)
+app.include_router(baseline.router, prefix="/api/v1", dependencies=_analyst_or_admin)
+app.include_router(entity_graph.router, prefix="/api/v1", dependencies=_analyst_or_admin)
+app.include_router(killchain.router, prefix="/api/v1", dependencies=_analyst_or_admin)
+app.include_router(pilot_memory.router, prefix="/api/v1", dependencies=_analyst_or_admin)
+app.include_router(evidence_seal.router, prefix="/api/v1", dependencies=_analyst_or_admin)
 app.include_router(case_templates.router, prefix="/api/v1", dependencies=_analyst_or_admin)
 app.include_router(collab.router, prefix="/api/v1", dependencies=_analyst_or_admin)
 app.include_router(yara_rules.router, prefix="/api/v1", dependencies=_analyst_or_admin)

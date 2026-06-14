@@ -102,6 +102,40 @@ export const api = {
     deleteAllJobs: (caseId) => request('DELETE', `/cases/${caseId}/jobs`),
   },
 
+  // ── Analyst gamechangers: baseline stacking, entity graph, kill-chain,
+  //    Pilot cross-case memory + co-pilot watch, signed evidence chain ─────────
+  baseline: {
+    fields: (caseId) => request('GET', `/cases/${caseId}/baseline/fields`),
+    stack:  (caseId, field, host, maxHosts = 2) =>
+      request('GET', withParams(`/cases/${caseId}/baseline/stack`, { field, host, max_hosts: maxHosts })),
+  },
+  graph: {
+    get:      (caseId, { focus = null, limit = 50 } = {}) =>
+      request('GET', withParams(`/cases/${caseId}/graph`, focus ? { focus, limit } : { limit })),
+    entities: (caseId, limit = 50) => request('GET', withParams(`/cases/${caseId}/graph/entities`, { limit })),
+  },
+  killchain: {
+    get: (caseId, { foId = null, host = null, timestamp = null, windowMinutes = 60 } = {}) => {
+      const p = { window_minutes: windowMinutes }
+      if (foId) p.fo_id = foId
+      if (host) p.host = host
+      if (timestamp) p.timestamp = timestamp
+      return request('GET', withParams(`/cases/${caseId}/killchain`, p))
+    },
+  },
+  pilot: {
+    recallMemory: (kind, value) => request('GET', withParams('/pilot/memory', { kind, value })),
+    seenBefore:   (caseId, values) => request('POST', `/cases/${caseId}/pilot/memory/seen`, { values }),
+    watchStatus:  (caseId) => request('GET', `/cases/${caseId}/pilot/watch`),
+    markReviewed: (caseId) => request('POST', `/cases/${caseId}/pilot/watch/reviewed`),
+  },
+  evidence: {
+    seal:     (caseId, data) => request('POST', `/cases/${caseId}/evidence/seal`, data),
+    seals:    (caseId) => request('GET', `/cases/${caseId}/evidence/seals`),
+    verify:   (caseId) => request('GET', `/cases/${caseId}/evidence/verify`),
+    manifest: (caseId) => request('GET', `/cases/${caseId}/evidence/manifest`),
+  },
+
   search: {
     timeline: (caseId, params = {}) => request('GET', withParams(`/cases/${caseId}/timeline`, params)),
     search:   (caseId, params = {}) => request('GET', withParams(`/cases/${caseId}/search`, params)),
