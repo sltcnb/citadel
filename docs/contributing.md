@@ -33,4 +33,4 @@ Implement `parse()` (yield dicts with required `timestamp` + `message`), declare
 - Timestamps are ISO-8601 **Z**; structured artifact types must carry `raw`.
 - Add a test; `scripts/run_tests.sh` must stay green.
 
-See the [ADRs](adr/index.md) for the decisions behind these rules.
+See [Architecture](architecture.md) and [Contracts](contracts.md) for the rules behind these conventions.
