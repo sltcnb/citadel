@@ -12,6 +12,7 @@ import {
   Upload, Cloud, X, RefreshCw, AlertTriangle,
   ChevronRight, ChevronDown, Folder, File, Loader2, Database, Download, Trash2,
 } from 'lucide-react'
+import PanelHelp from './shared/PanelHelp'
 import { api } from '../api/client'
 import { useUpload } from '../contexts/UploadContext'
 import { formatBytes as fmtSize } from '../utils/format'
@@ -812,7 +813,7 @@ export default function IngestPanel({ caseId, onClose, onComplete }) {
   return (
     <div className="panel-backdrop" onClick={onClose}>
       <div
-        className="absolute right-0 top-0 h-full w-[580px] bg-white border-l border-gray-200 flex flex-col"
+        className="absolute right-0 top-0 h-full w-full sm:w-[90vw] md:w-[580px] bg-white border-l border-gray-200 flex flex-col"
         style={{ boxShadow: '-4px 0 24px rgba(0,0,0,0.10)' }}
         onClick={e => e.stopPropagation()}
       >
@@ -845,6 +846,13 @@ export default function IngestPanel({ caseId, onClose, onComplete }) {
 
         {/* ── Tab content ── */}
         <div className="border-b border-gray-100 flex-shrink-0">
+          <div className="px-4 pt-3">
+            <PanelHelp title="Ingest"
+              use="Uploads evidence — files, archives, disk images — into the case for parsing, normalization and indexing."
+              when="At case start, and whenever new evidence arrives."
+              data={['Nothing — this is where data first enters the case']}
+              tip="ZIP/TAR archives are extracted recursively; large files upload in resumable chunks." />
+          </div>
           {tab === 'upload' && <UploadTab caseId={caseId} onJobsAdded={addJobs} />}
           {tab === 's3'     && <S3Tab     caseId={caseId} onJobsAdded={addJobs} />}
         </div>

@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Analyst investigation suite + security/UX hardening (2026-06)
+
+- **Alert-triggered auto-investigation** — fired detection rules spawn scoped Pilot investigations (severity×count ranked); analysts open pre-triaged alerts with verdicts instead of raw rows. `POST /cases/{id}/alert-rules/triage`.
+- **Entity graph** — host↔user↔IP relationship view for lateral-movement at a glance. `GET /cases/{id}/graph`.
+- **Baseline / rare-artifact stacking** — least-frequency-of-occurrence: values rare across the case but present on a target host. `GET /cases/{id}/baseline/stack`.
+- **Reverse kill-chain assembly** — from an anchor event, walk back to first access / forward to impact, ATT&CK-tagged. `GET /cases/{id}/killchain`.
+- **Cross-case Pilot memory** — IOCs/TTPs/verdicts persist across cases ("this IOC burned us before"); auto-persisted on Pilot conclude. **Continuous co-pilot** watch surfaces un-triaged new activity. `/pilot/memory`, `/cases/{id}/pilot/watch`.
+- **Confidence calibration** — Pilot verdicts annotated with evidence-weighted confidence bands; low-confidence verdicts flagged "needs more data".
+- **Signed evidence chain-of-custody** — per-case hash-chained artifact seals + court-ready, HMAC-signable manifest with verification. `/cases/{id}/evidence/*`.
+- **Tamper-evident audit log** — persistent, hash-chained record of all mutating requests; `GET /audit/log` + `/audit/verify` (admin).
+- **Rosetta enrichment** — GeoIP / ASN / reverse-DNS for public IP fields (ECS `*.geo`, `*.as`); graceful no-op without MaxMind DBs.
+- **Sigma opt-out** — runtime global toggle (admin, Settings) + per-case override; replaces the restart-only env flag.
+- **Frontend** — case toolbar consolidated from 15 buttons into grouped **Detect / Investigate / Case** menus; every case panel gained an inline "How to use" help block (what it does · when to use · data it needs) and a responsive full-width-on-mobile drawer; route-level code-splitting (main bundle 816 kB → 64 kB); shared `useAsyncConfig`/`Badge`/format utilities; vitest test runner bootstrapped.
+
+### Security
+
+- **IDOR closed** across ~25 case-scoped endpoints (`require_case_access` company-filter enforcement).
+- **Analyst→RCE** via plugin upload gated to admin.
+- **Prompt-injection guardrails** on the Pilot agent — untrusted forensic evidence sanitized + fenced as data, system prompt instructs the model evidence is never instructions.
+- **Auth** — `AUTH_ENABLED=false` fails closed without explicit `CITADEL_ALLOW_NO_AUTH`; forced password rotation off the default bootstrap password; login rate-limiting; short-lived SSE stream tokens (no full JWT in query strings); CTI feed fetches re-validate redirects (SSRF).
+- **Secrets** — CTI feed `api_key` and case BitLocker recovery keys redacted from API responses.
+
+### Fixed
+
+- Detection thresholds miscounted above 10 k (`track_total_hits`); silent rule-failure swallowing; empty MITRE report section (wrong field names); non-atomic archive restore; Redis read-modify-write races on rule/feed/config blobs (optimistic WATCH/MULTI); job pagination over unordered sets; anomaly baseline window included future days.
+- Event-loop blocking offloaded to executors (CTI scheduler, malware upload + bounded streaming, SSE log polling, chunked ingest).
+- Backend test suite grown from 1 → 148 passing (auth/ACL/sigma-converter/triage/baseline/graph/killchain/pilot-memory/evidence-seal/audit).
+
 ### Changed — directories match tool names
 
 - **Tool dirs renamed to their tool names**: `collector`→`talon`, `plugins`→`babel`, `modules`→`anvil`, `ingester`→`sluice`, `processor`→`sluice-worker` (`rosetta`/`augur`/`sigil` already matched). The `plugins` Python package was renamed to `babel` across all imports; container/k8s `/app/plugins`→`/app/babel`, `/app/modules`→`/app/anvil`, `/app/ingester`→`/app/sluice`. Submodule/manifest/brick/pyproject names, Dockerfiles, compose, CI, and docs all updated. 16/16 suites green. (Container/k8s deploy paths updated mechanically — need a build to confirm.)

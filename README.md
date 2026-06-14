@@ -48,7 +48,7 @@ Each tool is its own repo (`tools/<name>`), its own CLI, its own `brick.yaml`. R
 | **Talon** | Acquisition agent | host/disk/cloud → artifact bundle | `talon collect --out case.bundle` |
 | **Sluice** | Intake & routing | bundle/file/dir → routed events (+ bus) | `sluice ingest case.bundle` |
 | **Babel** | Parser library (43+) | artifact → `ForensicEvent` | `babel parse Security.evtx` |
-| **Rosetta** | Canonicalizer | `ForensicEvent` → ECS v8 + OSSEM | `rosetta normalize ev.jsonl` |
+| **Rosetta** | Canonicalizer | `ForensicEvent` → ECS v8 + OSSEM (+ GeoIP/ASN/rDNS) | `rosetta normalize ev.jsonl` |
 | **Sigil** | Detection engine | ECS + rules → detections | `sigil validate ./rules/` |
 | **Anvil** | Analysis runner | artifact + module → findings | `anvil run volatility3 -a mem.raw` |
 | **Augur** | Intel enrichment | IOCs → scored STIX / MISP | `augur enrich iocs.json` |
@@ -69,13 +69,16 @@ Each tool ships a `capabilities.yaml` declaring, per platform, what it can do an
 | Area | What |
 |------|------|
 | **Ingestion** | 40+ forensic formats auto-detected (EVTX, MFT, Registry, Prefetch, LNK, PCAP, Plaso, syslog, Zeek, Suricata, browsers, Android/iOS, disk images) |
-| **Detection** | 1 628 built-in rules (1 487 Sigma across 13 ATT&CK tactics + 141 ES queries); Sigma→ES conversion; ATT&CK coverage matrix; SigmaHQ import |
+| **Detection** | 1 628 built-in rules (1 487 Sigma across 13 ATT&CK tactics + 141 ES queries); Sigma→ES conversion; ATT&CK coverage matrix; SigmaHQ import; runtime Sigma opt-out (global + per-case) |
 | **Analysis** | Hayabusa, RegRipper, YARA, Volatility3, capa/FLOSS, oletools, PE/strings, CTI IOC matching — typed `BaseModule` + DAG pipelines |
-| **Search** | Elasticsearch full-text + facets, saved queries, timeline, CSV export |
-| **AI assist** | LLM providers (Anthropic, OpenAI, Ollama, OpenRouter) for the Pilot agent, rule generation, summaries; cost tracking |
-| **Threat intel** | STIX/TAXII, MISP, OTX/URLhaus/AbuseIPDB/Shodan/GreyNoise enrichment |
-| **Access** | JWT auth; roles admin/analyst/developer/guest; per-company isolation; tiered licensing |
-| **Observability** | structured JSON logs, Prometheus `/metrics`, `/healthz`/`/readyz`, admin log viewer |
+| **Search** | Elasticsearch full-text + facets, saved queries, timeline, CSV export, cross-case search |
+| **Normalize** | `ForensicEvent → ECS v8` + OSSEM ATT&CK; GeoIP / ASN / reverse-DNS enrichment of IP fields |
+| **Investigate** | Alert-triggered auto-investigation · entity graph (host↔user↔IP lateral movement) · baseline / rare-artifact stacking · reverse kill-chain assembly · cross-case Pilot memory · continuous co-pilot watch |
+| **AI assist** | LLM providers (Anthropic, OpenAI, Ollama, OpenRouter) for the Pilot agent, rule generation, summaries; cost tracking; **prompt-injection guardrails** (untrusted evidence is sanitized + fenced as data) and **confidence-calibrated verdicts** |
+| **Threat intel** | STIX/TAXII, MISP, YETI, OTX/URLhaus/AbuseIPDB/Shodan/GreyNoise enrichment; SSRF-guarded feed fetches |
+| **Access** | JWT auth (short-lived stream tokens for SSE); MFA/TOTP; forced password rotation off defaults; login rate-limiting; roles admin/analyst/developer/guest; per-company isolation (IDOR-guarded); tiered licensing |
+| **Evidence integrity** | Tamper-evident, hash-chained **audit log** + signed **chain-of-custody** manifests (court-ready, HMAC-signable); BitLocker keys redacted from API |
+| **Observability** | structured JSON logs, Prometheus `/metrics`, `/healthz`/`/readyz`, admin log viewer, persistent audit trail |
 
 ---
 

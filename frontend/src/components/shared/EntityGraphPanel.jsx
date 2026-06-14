@@ -3,6 +3,7 @@ import {
   Network, Loader2, RefreshCw, AlertTriangle, X,
 } from 'lucide-react'
 import { api } from '../../api/client'
+import PanelHelp from './PanelHelp'
 
 /**
  * Right-side drawer: entity graph / lateral-movement view.
@@ -114,7 +115,7 @@ export default function EntityGraphPanel({ caseId, onClose, onPivot }) {
   return (
     <div className="panel-backdrop" onClick={onClose}>
       <div
-        className="absolute right-0 top-0 h-full w-[860px] max-w-full bg-white border-l border-gray-200 flex flex-col"
+        className="absolute right-0 top-0 h-full w-full sm:w-[90vw] md:w-[860px] max-w-full bg-white border-l border-gray-200 flex flex-col"
         style={{ boxShadow: '-4px 0 24px rgba(0,0,0,0.10)' }}
         onClick={e => e.stopPropagation()}
       >
@@ -167,6 +168,11 @@ export default function EntityGraphPanel({ caseId, onClose, onPivot }) {
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          <PanelHelp title="Entity graph"
+            use="Draws host ↔ user ↔ IP relationships straight from the events so lateral movement is visible at a glance."
+            when="When you suspect an account or host pivoted to others and want to see the blast radius."
+            data={['Events carrying host.hostname and user.name','network.dst_ip for the host/user → IP edges']}
+            tip="Set a focus host or user to scope the graph to that entity's neighborhood." />
           <p className="text-[11px] text-gray-500">
             Host ↔ user ↔ ip relationships for spotting lateral movement. Click any node to pivot
             the timeline to that entity's events.

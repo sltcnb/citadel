@@ -3,6 +3,7 @@ import {
   Layers, Loader2, AlertTriangle, ExternalLink, Info, X,
 } from 'lucide-react'
 import { api } from '../../api/client'
+import PanelHelp from './PanelHelp'
 
 /**
  * Right-side drawer: baseline diff / least-frequency-of-occurrence "stacking".
@@ -72,7 +73,7 @@ export default function BaselinePanel({ caseId, onClose, onPivot }) {
   return (
     <div className="panel-backdrop" onClick={onClose}>
       <div
-        className="absolute right-0 top-0 h-full w-[860px] max-w-full bg-white border-l border-gray-200 flex flex-col"
+        className="absolute right-0 top-0 h-full w-full sm:w-[90vw] md:w-[860px] max-w-full bg-white border-l border-gray-200 flex flex-col"
         style={{ boxShadow: '-4px 0 24px rgba(0,0,0,0.10)' }}
         onClick={e => e.stopPropagation()}
       >
@@ -87,6 +88,11 @@ export default function BaselinePanel({ caseId, onClose, onPivot }) {
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          <PanelHelp title="Baseline / rare artifacts"
+            use="Least-frequency-of-occurrence stacking — pick a field and see the values present on one host that are RARE across the whole case."
+            when="On a busy host where the malicious artifact is the uncommon one — an odd service, a lone scheduled task, a one-off process."
+            data={['Multiple hosts ingested (stacking needs a population to compare against)','The chosen field populated on events (e.g. process.name, service.name)']}
+            tip="Rare isn't automatically bad — but rare AND on your suspect host is where to look first." />
           <p className="text-[11px] text-gray-500">
             Values present on the selected host that occur on ≤N hosts case-wide — the rare
             ones are worth a look.
