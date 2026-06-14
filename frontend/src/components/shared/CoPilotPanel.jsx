@@ -4,6 +4,7 @@ import {
   Eye, Search, ExternalLink, Clock, Brain, ListChecks,
 } from 'lucide-react'
 import { api } from '../../api/client'
+import PanelHelp from './PanelHelp'
 
 /**
  * Pilot "co-pilot" drawer.
@@ -107,7 +108,7 @@ export default function CoPilotPanel({ caseId, onClose, onPivot }) {
   return (
     <div className="panel-backdrop" onClick={onClose}>
       <div
-        className="absolute right-0 top-0 h-full w-[860px] max-w-full bg-white border-l border-gray-200 flex flex-col"
+        className="absolute right-0 top-0 h-full w-full sm:w-[90vw] md:w-[860px] max-w-full bg-white border-l border-gray-200 flex flex-col"
         style={{ boxShadow: '-4px 0 24px rgba(0,0,0,0.10)' }}
         onClick={e => e.stopPropagation()}
       >
@@ -129,6 +130,11 @@ export default function CoPilotPanel({ caseId, onClose, onPivot }) {
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-5">
+          <PanelHelp title="Pilot co-pilot"
+            use="Surfaces what's new since you last reviewed the case, and looks up IOCs across all past cases."
+            when="Returning to a long-running case, or checking whether an indicator has burned you before."
+            data={['Prior Pilot runs / sealed IOCs for the cross-case memory','Ongoing ingest for the since-you-last-looked delta']}
+            tip="Hit Mark reviewed once you've triaged the new events to reset the counter." />
 
           {/* ── SECTION 1: Since you last looked ─────────────────────────────── */}
           <section className="space-y-2">

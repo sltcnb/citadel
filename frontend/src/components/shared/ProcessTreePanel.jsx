@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Cpu, Loader2, ChevronRight, ChevronDown, ExternalLink, X } from 'lucide-react'
 import { api } from '../../api/client'
+import PanelHelp from './PanelHelp'
 
 /**
  * Right-side drawer version of the old Process Tree page.
@@ -57,7 +58,7 @@ export default function ProcessTreePanel({ caseId, onClose, onPivot }) {
   return (
     <div className="panel-backdrop" onClick={onClose}>
       <div
-        className="absolute right-0 top-0 h-full w-[1024px] max-w-full bg-white border-l border-gray-200 flex flex-col"
+        className="absolute right-0 top-0 h-full w-full sm:w-[90vw] md:w-[1024px] max-w-full bg-white border-l border-gray-200 flex flex-col"
         style={{ boxShadow: '-4px 0 24px rgba(0,0,0,0.10)' }}
         onClick={e => e.stopPropagation()}
       >
@@ -83,6 +84,11 @@ export default function ProcessTreePanel({ caseId, onClose, onPivot }) {
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          <PanelHelp title="Process tree"
+            use="Reconstructs parent → child process chains from process-creation events."
+            when="To trace what spawned a suspicious process, or what a process went on to launch."
+            data={['Process-creation events with pid/ppid — Windows EVTX 4688, Sysmon 1, or Linux auditd']}
+            tip="Pivot from a process name in the timeline, then walk its ancestry here." />
           <p className="text-[11px] text-gray-500">
             Reconstructed from Windows EVTX 4688, Sysmon (Windows + Linux), and auditd execve.
             Click any process → pivot to timeline filtered by that PID.

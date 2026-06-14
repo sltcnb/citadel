@@ -4,6 +4,7 @@ import {
   Download, Copy, Check, FileCheck, Lock,
 } from 'lucide-react'
 import { api } from '../../api/client'
+import PanelHelp from './PanelHelp'
 
 /**
  * Right-side drawer: court-ready signed evidence chain (tamper-evident
@@ -115,7 +116,7 @@ export default function EvidencePanel({ caseId, onClose }) {
   return (
     <div className="panel-backdrop" onClick={onClose}>
       <div
-        className="absolute right-0 top-0 h-full w-[860px] max-w-full bg-white border-l border-gray-200 flex flex-col"
+        className="absolute right-0 top-0 h-full w-full sm:w-[90vw] md:w-[860px] max-w-full bg-white border-l border-gray-200 flex flex-col"
         style={{ boxShadow: '-4px 0 24px rgba(0,0,0,0.10)' }}
         onClick={e => e.stopPropagation()}
       >
@@ -136,6 +137,11 @@ export default function EvidencePanel({ caseId, onClose }) {
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          <PanelHelp title="Evidence chain of custody"
+            use="Verifies the tamper-evident hash-chain of sealed artifacts and exports a court-ready custody manifest."
+            when="Before handing evidence to a client or court, or to prove nothing was altered."
+            data={['Sealed artifacts — auto-sealed at ingest, or seal one manually here']}
+            tip="Set EVIDENCE_SIGNING_KEY on the server to HMAC-sign the exported manifest." />
           {/* Integrity banner */}
           {verify && (
             ok ? (

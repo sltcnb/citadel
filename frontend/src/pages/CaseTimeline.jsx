@@ -45,6 +45,7 @@ import EntityGraphPanel from '../components/shared/EntityGraphPanel'
 import KillChainPanel from '../components/shared/KillChainPanel'
 import EvidencePanel from '../components/shared/EvidencePanel'
 import CoPilotPanel from '../components/shared/CoPilotPanel'
+import ToolbarMenu from '../components/shared/ToolbarMenu'
 import { useLicense } from '../contexts/LicenseContext'
 import { useCollab } from '../hooks/useCollab'
 import { severityStyle } from '../utils/severity'
@@ -2127,7 +2128,7 @@ export default function CaseTimeline() {
     <div className="flex flex-col h-full">
 
       {/* ── Case header ──────────────────────────────────────────────────── */}
-      <div className="bg-white border-b border-gray-200 px-6 py-3 flex items-center gap-4 flex-shrink-0">
+      <div className="bg-white border-b border-gray-200 px-4 sm:px-6 py-3 flex flex-wrap items-center gap-x-4 gap-y-2 flex-shrink-0">
 
         {/* Case name + meta */}
         <div className="flex-1 min-w-0">
@@ -2203,7 +2204,7 @@ export default function CaseTimeline() {
 
 
         {/* Action buttons */}
-        <div className="flex items-center gap-2 flex-shrink-0">
+        <div className="flex flex-wrap items-center justify-end gap-2 ml-auto">
           <button
             onClick={() => setShowIngest(true)}
             className="btn-primary"
@@ -2233,128 +2234,82 @@ export default function CaseTimeline() {
           <button
             onClick={() => setShowAI(v => !v)}
             className={`btn-outline ${showAI ? 'bg-purple-50 border-purple-300 text-purple-700' : ''}`}
+            title="Pilot — autonomous AI investigation of this case"
           >
             <Sparkles size={14} />
             AI
           </button>
 
-          <button
-            onClick={() => setShowNotes(v => !v)}
-            className={`btn-outline ${showNotes ? 'bg-brand-accentlight border-brand-accent text-brand-accent' : ''}`}
-          >
-            <FileText size={14} />
-            Notes
-          </button>
+          {/* Detect — find what's suspicious */}
+          <ToolbarMenu
+            label="Detect"
+            icon={<Bell size={14} />}
+            anyActive={showAlertRules || showAnomaly || showBaseline || showMitre}
+            items={[
+              { key: 'rules', label: 'Detection Rules', icon: <Bell size={13} />, active: showAlertRules,
+                title: 'Run the Sigma/EQL rule library against this case',
+                onClick: () => setShowAlertRules(v => !v) },
+              { key: 'anomaly', label: 'Anomalies', icon: <Activity size={13} />, active: showAnomaly,
+                title: 'Statistical z-score outliers (host × event_id × day)',
+                onClick: () => setShowAnomaly(true) },
+              { key: 'baseline', label: 'Baseline / rare artifacts', icon: <Layers size={13} />, active: showBaseline,
+                title: 'Stack a field; surface values rare across the case but present on a host',
+                onClick: () => setShowBaseline(true) },
+              { key: 'mitre', label: 'MITRE coverage', icon: <Target size={13} />, active: showMitre,
+                title: 'ATT&CK technique coverage for this case',
+                onClick: () => setShowMitre(true) },
+            ]}
+          />
 
-          <button
-            onClick={() => setShowIocs(v => !v)}
-            className={`btn-outline ${showIocs ? 'bg-red-50 border-red-300 text-red-600' : ''}`}
-          >
-            <Crosshair size={14} />
-            IOCs
-          </button>
+          {/* Investigate — dig into and pivot around findings */}
+          <ToolbarMenu
+            label="Investigate"
+            icon={<Crosshair size={14} />}
+            anyActive={showIocs || showProcessTree || showGraph || showKillChain || showCoPilot}
+            items={[
+              { key: 'iocs', label: 'IOCs', icon: <Crosshair size={13} />, active: showIocs,
+                title: 'Observed indicators + threat-intel matching',
+                onClick: () => setShowIocs(v => !v) },
+              { key: 'ptree', label: 'Process Tree', icon: <GitBranch size={13} />, active: showProcessTree,
+                title: 'Parent→child process chains (EVTX / Sysmon / auditd)',
+                onClick: () => setShowProcessTree(true) },
+              { key: 'graph', label: 'Entity graph', icon: <Network size={13} />, active: showGraph,
+                title: 'Host ↔ user ↔ IP relationships (lateral movement)',
+                onClick: () => setShowGraph(true) },
+              { key: 'killchain', label: 'Kill chain', icon: <Crosshair size={13} />, active: showKillChain,
+                title: 'Assemble the attack story around an anchor event',
+                onClick: () => setShowKillChain(true) },
+              { key: 'copilot', label: 'Co-Pilot', icon: <Sparkles size={13} />, active: showCoPilot,
+                title: "What's new since you last looked + cross-case IOC memory",
+                onClick: () => setShowCoPilot(true) },
+            ]}
+          />
 
-          <button
-            onClick={() => setShowAlertRules(v => !v)}
-            className={`btn-outline ${showAlertRules ? 'bg-yellow-50 border-yellow-300 text-yellow-700' : ''}`}
-          >
-            <Bell size={14} />
-            Detection Rules
-          </button>
-
-          <button
-            onClick={() => setShowProcessTree(true)}
-            className={`btn-outline ${showProcessTree ? 'bg-brand-accentlight border-brand-accent text-brand-accent' : ''}`}
-            title="Reconstruct parent→child process chains (Windows EVTX / Sysmon / Linux auditd)"
-          >
-            <GitBranch size={14} />
-            Process Tree
-          </button>
-
-          <button
-            onClick={() => setShowMitre(true)}
-            className={`btn-outline ${showMitre ? 'bg-brand-accentlight border-brand-accent text-brand-accent' : ''}`}
-            title="MITRE ATT&CK technique coverage for this case"
-          >
-            <Target size={14} />
-            MITRE
-          </button>
-
-          <button
-            onClick={() => setShowAnomaly(true)}
-            className={`btn-outline ${showAnomaly ? 'bg-brand-accentlight border-brand-accent text-brand-accent' : ''}`}
-            title="Statistical anomaly detection (z-score over host × event_id × day)"
-          >
-            <Activity size={14} />
-            Anomalies
-          </button>
-
-          <button
-            onClick={() => setShowBaseline(true)}
-            className={`btn-outline ${showBaseline ? 'bg-brand-accentlight border-brand-accent text-brand-accent' : ''}`}
-            title="Baseline / rare-artifact stacking — surface values rare across the case but present on a host"
-          >
-            <Layers size={14} />
-            Baseline
-          </button>
-
-          <button
-            onClick={() => setShowGraph(true)}
-            className={`btn-outline ${showGraph ? 'bg-brand-accentlight border-brand-accent text-brand-accent' : ''}`}
-            title="Entity graph — host ↔ user ↔ IP relationships (lateral movement)"
-          >
-            <Network size={14} />
-            Graph
-          </button>
-
-          <button
-            onClick={() => setShowKillChain(true)}
-            className={`btn-outline ${showKillChain ? 'bg-brand-accentlight border-brand-accent text-brand-accent' : ''}`}
-            title="Reverse kill-chain — assemble the attack story around an anchor event"
-          >
-            <Crosshair size={14} />
-            Kill Chain
-          </button>
-
-          <button
-            onClick={() => setShowCoPilot(true)}
-            className={`btn-outline ${showCoPilot ? 'bg-brand-accentlight border-brand-accent text-brand-accent' : ''}`}
-            title="Pilot co-pilot — what's new since you last looked + cross-case IOC memory"
-          >
-            <Sparkles size={14} />
-            Co-Pilot
-          </button>
-
-          <button
-            onClick={() => setShowEvidence(true)}
-            className={`btn-outline ${showEvidence ? 'bg-brand-accentlight border-brand-accent text-brand-accent' : ''}`}
-            title="Signed chain-of-custody — verify evidence integrity, export court-ready manifest"
-          >
-            <Shield size={14} />
-            Evidence
-          </button>
-
-          <button
-            onClick={() => setShowTemplates(true)}
-            className="btn-outline"
-            title="Apply a pre-canned investigation template (ransomware / insider / phishing)"
-          >
-            <LayoutTemplate size={14} />
-            Templates
-          </button>
-
-          <button
-            onClick={() => setShowReport(true)}
-            className="btn-outline"
-            title="Generate a Markdown or HTML report of this case"
-          >
-            <FileDown size={14} />
-            Report
-          </button>
+          {/* Case — document, template, report, prove integrity */}
+          <ToolbarMenu
+            label="Case"
+            icon={<FileText size={14} />}
+            anyActive={showNotes || showTemplates || showReport || showEvidence}
+            items={[
+              { key: 'notes', label: 'Notes', icon: <FileText size={13} />, active: showNotes,
+                title: 'Free-form case notes',
+                onClick: () => setShowNotes(v => !v) },
+              { key: 'templates', label: 'Templates', icon: <LayoutTemplate size={13} />,
+                title: 'Apply a pre-canned investigation template (ransomware / insider / phishing)',
+                onClick: () => setShowTemplates(true) },
+              { key: 'report', label: 'Report', icon: <FileDown size={13} />,
+                title: 'Generate a Markdown / HTML case report',
+                onClick: () => setShowReport(true) },
+              { key: 'evidence', label: 'Evidence chain', icon: <Shield size={13} />, active: showEvidence,
+                title: 'Signed chain-of-custody — verify integrity, export court-ready manifest',
+                onClick: () => setShowEvidence(true) },
+            ]}
+          />
 
           <button
             onClick={() => { setShowModules(true); setShowModuleRuns(false) }}
             className="btn-outline"
+            title="Run analysis modules (Hayabusa, YARA, CAPA, Volatility…)"
           >
             <Cpu size={14} />
             Modules

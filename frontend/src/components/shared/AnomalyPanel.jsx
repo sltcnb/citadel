@@ -3,6 +3,7 @@ import {
   Activity, Loader2, RefreshCw, AlertTriangle, ExternalLink, Info, X,
 } from 'lucide-react'
 import { api, getToken } from '../../api/client'
+import PanelHelp from './PanelHelp'
 
 /**
  * Right-side drawer version of the old Anomaly page.
@@ -81,7 +82,7 @@ export default function AnomalyPanel({ caseId, onClose, onPivot }) {
   return (
     <div className="panel-backdrop" onClick={onClose}>
       <div
-        className="absolute right-0 top-0 h-full w-[860px] max-w-full bg-white border-l border-gray-200 flex flex-col"
+        className="absolute right-0 top-0 h-full w-full sm:w-[90vw] md:w-[860px] max-w-full bg-white border-l border-gray-200 flex flex-col"
         style={{ boxShadow: '-4px 0 24px rgba(0,0,0,0.10)' }}
         onClick={e => e.stopPropagation()}
       >
@@ -102,6 +103,11 @@ export default function AnomalyPanel({ caseId, onClose, onPivot }) {
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          <PanelHelp title="Anomaly detection"
+            use="Flags host × event-id × day buckets whose volume is a statistical outlier (z-score) versus the case's own baseline."
+            when="To catch volume spikes — mass logons, beaconing, sudden process churn — that you'd miss scrolling a flat timeline."
+            data={['At least ~3 days of timestamped events per host','host.hostname plus an event id (e.g. EVTX event_id)']}
+            tip="Run the scan first; lower the threshold to surface subtler spikes." />
           <p className="text-[11px] text-gray-500">
             Rolling z-score over (host, event_id, day). Scans the last N days, flags days that
             deviate ≥ threshold σ from baseline.

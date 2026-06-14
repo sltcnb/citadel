@@ -36,7 +36,21 @@ Point `--map` at your own yaml to extend coverage without code changes.
 - [◐] Shared canonicalizer (consolidate mapping out of parsers)
 - [ ] OSSEM relationships + Sigma-tag→ATT&CK technique enrichment
 - [ ] Daemon: watch + ES out + disk-backed backpressure
-- [ ] Enrichment hooks: GeoIP, ASN, reverse-DNS
+- [●] Enrichment hooks: GeoIP / ASN / reverse-DNS on public IP fields (`enrich.py`)
+
+## Enrichment (GeoIP / ASN / rDNS)
+Public IPs on ECS fields (`source.ip`, `destination.ip`, `client.ip`, `server.ip`)
+are annotated with `*.geo.{country_iso_code,country_name,city_name,location}` and
+`*.as.{number,organization_name}`; reverse-DNS (`*.domain`) is opt-in.
+
+```
+pip install -e '.[enrich]'                 # adds geoip2
+export GEOIP_CITY_DB=/usr/share/GeoIP/GeoLite2-City.mmdb
+export GEOIP_ASN_DB=/usr/share/GeoIP/GeoLite2-ASN.mmdb
+export ROSETTA_ENABLE_RDNS=true            # optional, slow — off by default
+```
+Graceful no-op when `geoip2` or the `.mmdb` files are absent — normalization never
+fails on missing enrichment. Private/loopback/reserved IPs are skipped.
 
 ## Tests
 ```

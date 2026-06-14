@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo } from 'react'
 import { Target, ArrowRight, Loader2, X } from 'lucide-react'
 import { api } from '../../api/client'
+import PanelHelp from './PanelHelp'
 
 // Tactic ordering follows the ATT&CK Enterprise kill-chain
 const TACTIC_ORDER = [
@@ -55,7 +56,7 @@ export default function MitrePanel({ caseId, onClose, onPivot }) {
   return (
     <div className="panel-backdrop" onClick={onClose}>
       <div
-        className="absolute right-0 top-0 h-full w-[920px] max-w-full bg-white border-l border-gray-200 flex flex-col"
+        className="absolute right-0 top-0 h-full w-full sm:w-[90vw] md:w-[920px] max-w-full bg-white border-l border-gray-200 flex flex-col"
         style={{ boxShadow: '-4px 0 24px rgba(0,0,0,0.10)' }}
         onClick={e => e.stopPropagation()}
       >
@@ -76,6 +77,11 @@ export default function MitrePanel({ caseId, onClose, onPivot }) {
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          <PanelHelp title="MITRE ATT&CK coverage"
+            use="Shows which ATT&CK tactics and techniques this case's events cover."
+            when="To see detection blind spots and to frame findings in ATT&CK terms for the report."
+            data={['Events tagged with mitre.id / mitre.tactic — Sigil detections and rule hits produce these']}
+            tip="A gap here means no visibility into that tactic, not necessarily that the case is clean." />
           <p className="text-[11px] text-gray-500">
             Techniques with evidence in this case, grouped by tactic along the kill-chain.
             Click any cell to jump to the timeline filtered by that technique.
