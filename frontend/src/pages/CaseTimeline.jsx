@@ -9,7 +9,7 @@ import {
   Monitor, HardDrive, Globe, Brain,
   Binary, Bug, Network, FileImage, TextSearch, Tag,
   GitBranch, Target, Activity, LayoutTemplate, FileDown,
-  Printer, FileBarChart,
+  Printer, FileBarChart, Layers,
 } from 'lucide-react'
 
 const MOD_CATEGORY_ICONS = {
@@ -40,6 +40,11 @@ import CaseAiPanel from '../components/CaseAiPanel'
 import AnomalyPanel from '../components/shared/AnomalyPanel'
 import ProcessTreePanel from '../components/shared/ProcessTreePanel'
 import MitrePanel from '../components/shared/MitrePanel'
+import BaselinePanel from '../components/shared/BaselinePanel'
+import EntityGraphPanel from '../components/shared/EntityGraphPanel'
+import KillChainPanel from '../components/shared/KillChainPanel'
+import EvidencePanel from '../components/shared/EvidencePanel'
+import CoPilotPanel from '../components/shared/CoPilotPanel'
 import { useLicense } from '../contexts/LicenseContext'
 import { useCollab } from '../hooks/useCollab'
 import { severityStyle } from '../utils/severity'
@@ -1997,6 +2002,11 @@ export default function CaseTimeline() {
   const [showAnomaly, setShowAnomaly]       = useState(false)
   const [showProcessTree, setShowProcessTree] = useState(false)
   const [showMitre, setShowMitre]           = useState(false)
+  const [showBaseline, setShowBaseline]     = useState(false)
+  const [showGraph, setShowGraph]           = useState(false)
+  const [showKillChain, setShowKillChain]   = useState(false)
+  const [showEvidence, setShowEvidence]     = useState(false)
+  const [showCoPilot, setShowCoPilot]       = useState(false)
   const [showAI, setShowAI]                 = useState(false)
   const [iocPivotQuery, setIocPivotQuery]   = useState(null)
   // When react-router pushes a new location.state.pivotQuery (time-window pivot,
@@ -2280,6 +2290,51 @@ export default function CaseTimeline() {
           </button>
 
           <button
+            onClick={() => setShowBaseline(true)}
+            className={`btn-outline ${showBaseline ? 'bg-brand-accentlight border-brand-accent text-brand-accent' : ''}`}
+            title="Baseline / rare-artifact stacking — surface values rare across the case but present on a host"
+          >
+            <Layers size={14} />
+            Baseline
+          </button>
+
+          <button
+            onClick={() => setShowGraph(true)}
+            className={`btn-outline ${showGraph ? 'bg-brand-accentlight border-brand-accent text-brand-accent' : ''}`}
+            title="Entity graph — host ↔ user ↔ IP relationships (lateral movement)"
+          >
+            <Network size={14} />
+            Graph
+          </button>
+
+          <button
+            onClick={() => setShowKillChain(true)}
+            className={`btn-outline ${showKillChain ? 'bg-brand-accentlight border-brand-accent text-brand-accent' : ''}`}
+            title="Reverse kill-chain — assemble the attack story around an anchor event"
+          >
+            <Crosshair size={14} />
+            Kill Chain
+          </button>
+
+          <button
+            onClick={() => setShowCoPilot(true)}
+            className={`btn-outline ${showCoPilot ? 'bg-brand-accentlight border-brand-accent text-brand-accent' : ''}`}
+            title="Pilot co-pilot — what's new since you last looked + cross-case IOC memory"
+          >
+            <Sparkles size={14} />
+            Co-Pilot
+          </button>
+
+          <button
+            onClick={() => setShowEvidence(true)}
+            className={`btn-outline ${showEvidence ? 'bg-brand-accentlight border-brand-accent text-brand-accent' : ''}`}
+            title="Signed chain-of-custody — verify evidence integrity, export court-ready manifest"
+          >
+            <Shield size={14} />
+            Evidence
+          </button>
+
+          <button
             onClick={() => setShowTemplates(true)}
             className="btn-outline"
             title="Apply a pre-canned investigation template (ransomware / insider / phishing)"
@@ -2509,6 +2564,45 @@ export default function CaseTimeline() {
           caseId={caseId}
           onClose={() => setShowMitre(false)}
           onPivot={q => { setIocPivotQuery(q); setShowMitre(false) }}
+        />
+      )}
+
+      {showBaseline && (
+        <BaselinePanel
+          caseId={caseId}
+          onClose={() => setShowBaseline(false)}
+          onPivot={q => { setIocPivotQuery(q); setShowBaseline(false) }}
+        />
+      )}
+
+      {showGraph && (
+        <EntityGraphPanel
+          caseId={caseId}
+          onClose={() => setShowGraph(false)}
+          onPivot={q => { setIocPivotQuery(q); setShowGraph(false) }}
+        />
+      )}
+
+      {showKillChain && (
+        <KillChainPanel
+          caseId={caseId}
+          onClose={() => setShowKillChain(false)}
+          onPivot={q => { setIocPivotQuery(q); setShowKillChain(false) }}
+        />
+      )}
+
+      {showCoPilot && (
+        <CoPilotPanel
+          caseId={caseId}
+          onClose={() => setShowCoPilot(false)}
+          onPivot={q => { setIocPivotQuery(q); setShowCoPilot(false) }}
+        />
+      )}
+
+      {showEvidence && (
+        <EvidencePanel
+          caseId={caseId}
+          onClose={() => setShowEvidence(false)}
         />
       )}
 
