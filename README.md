@@ -66,15 +66,17 @@ Each tool ships a `capabilities.yaml` declaring, per platform, what it can do an
 
 | Area | What |
 |------|------|
-| **Ingestion** | 40+ forensic formats auto-detected (EVTX, MFT, Registry, Prefetch, LNK, PCAP, Plaso, syslog, Zeek, Suricata, browsers, Android/iOS, disk images) |
+| **Acquisition** | Talon live + dead-box collection (Windows/Linux/macOS/server); in-app **Harvest** (server-side Talon collection from a mounted disk image / path); resumable encrypted upload; gRPC remote agent (mTLS) |
+| **Ingestion** | 44 parsers, 80+ forensic formats auto-detected (EVTX, MFT, Registry, Prefetch, LNK, PCAP, Plaso, syslog, Zeek, Suricata, browsers, Android/iOS, disk images) |
 | **Detection** | 1 666 built-in rules (1 487 Sigma across 13 ATT&CK tactics + 179 native ES queries); Sigma→ES conversion; ATT&CK coverage matrix; SigmaHQ import; runtime Sigma opt-out (global + per-case) |
 | **Analysis** | Hayabusa, RegRipper, YARA, Volatility3, capa/FLOSS, oletools, PE/strings, CTI IOC matching — typed `BaseModule` + DAG pipelines |
 | **Search** | Elasticsearch full-text + facets, saved queries, timeline, CSV export, cross-case search |
 | **Normalize** | `ForensicEvent → ECS v8` + OSSEM ATT&CK; GeoIP / ASN / reverse-DNS enrichment of IP fields |
-| **Investigate** | Alert-triggered auto-investigation · entity graph (host↔user↔IP lateral movement) · baseline / rare-artifact stacking · reverse kill-chain assembly · cross-case Pilot memory · continuous co-pilot watch |
-| **AI assist** | LLM providers (Anthropic, OpenAI, Ollama, OpenRouter) for the Pilot agent, rule generation, summaries; cost tracking; **prompt-injection guardrails** (untrusted evidence is sanitized + fenced as data) and **confidence-calibrated verdicts** |
-| **Threat intel** | STIX/TAXII, MISP, YETI, OTX/URLhaus/AbuseIPDB/Shodan/GreyNoise enrichment; SSRF-guarded feed fetches |
-| **Access** | JWT auth (short-lived stream tokens for SSE); MFA/TOTP; forced password rotation off defaults; login rate-limiting; roles admin/analyst/developer/guest; per-company isolation (IDOR-guarded); tiered licensing |
+| **Investigate** | Alert-triggered auto-investigation · entity graph (host↔user↔IP lateral movement) · baseline / rare-artifact stacking · reverse kill-chain assembly · cross-case Pilot memory · continuous co-pilot watch · editable investigation templates |
+| **AI assist** | LLM providers (Anthropic, OpenAI, Ollama, OpenRouter) for the Pilot agent — which can drive entity-graph / rare-artifact stacking / cross-case-memory tools mid-investigation — rule generation, summaries; cost tracking; **prompt-injection guardrails** (untrusted evidence sanitized + fenced as data) and **confidence-calibrated verdicts** |
+| **Threat intel** | STIX/TAXII, MISP, YETI, OTX/URLhaus/AbuseIPDB/Shodan/GreyNoise enrichment; SSRF-guarded feed fetches (per-feed TLS-verify opt-out for internal/self-signed servers) |
+| **Authentication** | JWT (short-lived SSE stream tokens) · MFA/TOTP · **SSO via Google & Microsoft OIDC** (auto-provisioning, domain allowlist) · forced password rotation off defaults · login rate-limiting |
+| **Authorization (RBAC)** | Granular permissions + role presets (admin/analyst/developer/guest) · **groups** (roles + permissions + company scope + members) · per-user direct permissions · per-company multi-tenant isolation (IDOR-guarded) · tiered licensing |
 | **Evidence integrity** | Tamper-evident, hash-chained **audit log** + signed **chain-of-custody** manifests (court-ready, HMAC-signable); BitLocker keys redacted from API |
 | **Observability** | structured JSON logs, Prometheus `/metrics`, `/healthz`/`/readyz`, admin log viewer, persistent audit trail |
 
