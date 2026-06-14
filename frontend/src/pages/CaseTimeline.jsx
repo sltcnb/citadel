@@ -2231,20 +2231,15 @@ export default function CaseTimeline() {
             )}
           </button>
 
-          {/* AI (Pilot) — autonomous investigation + the co-pilot watch/memory */}
-          <ToolbarMenu
-            label="AI"
-            icon={<Sparkles size={14} />}
-            anyActive={showAI || showCoPilot}
-            items={[
-              { key: 'ai', label: 'Autopilot investigation', icon: <Sparkles size={13} />, active: showAI,
-                title: 'Pilot runs an autonomous investigation of this case',
-                onClick: () => setShowAI(v => !v) },
-              { key: 'copilot', label: 'Co-Pilot — watch & memory', icon: <Bot size={13} />, active: showCoPilot,
-                title: "What's new since you last looked + cross-case IOC memory",
-                onClick: () => setShowCoPilot(true) },
-            ]}
-          />
+          {/* AI (Pilot) — autonomous investigation */}
+          <button
+            onClick={() => setShowAI(v => !v)}
+            className={`btn-outline ${showAI ? 'bg-purple-50 border-purple-300 text-purple-700' : ''}`}
+            title="Pilot — autonomous AI investigation of this case"
+          >
+            <Sparkles size={14} />
+            AI
+          </button>
 
           {/* Detect — find what's suspicious */}
           <ToolbarMenu
@@ -2271,7 +2266,7 @@ export default function CaseTimeline() {
           <ToolbarMenu
             label="Investigate"
             icon={<Crosshair size={14} />}
-            anyActive={showIocs || showProcessTree || showGraph || showKillChain}
+            anyActive={showIocs || showProcessTree || showGraph || showKillChain || showCoPilot}
             items={[
               { key: 'iocs', label: 'IOCs', icon: <Crosshair size={13} />, active: showIocs,
                 title: 'Observed indicators + threat-intel matching',
@@ -2285,6 +2280,9 @@ export default function CaseTimeline() {
               { key: 'killchain', label: 'Kill chain', icon: <Crosshair size={13} />, active: showKillChain,
                 title: 'Assemble the attack story around an anchor event',
                 onClick: () => setShowKillChain(true) },
+              { key: 'copilot', label: 'Co-Pilot — watch & memory', icon: <Bot size={13} />, active: showCoPilot,
+                title: "What's new since you last looked + cross-case IOC memory",
+                onClick: () => setShowCoPilot(true) },
             ]}
           />
 
