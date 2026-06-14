@@ -55,6 +55,36 @@ class Settings:
     CITADEL_LICENSE_SERVER: str = os.getenv("CITADEL_LICENSE_SERVER", "")
     CITADEL_LICENSE_JWT_SECRET: str = os.getenv("CITADEL_LICENSE_JWT_SECRET", "")
 
+    # ── Single Sign-On (OIDC, opt-in) ──────────────────────────────────────
+    # SSO is OFF unless a provider's client_id AND client_secret are both set.
+    # The Login page calls GET /api/v1/auth/sso/providers to learn which
+    # buttons to render, so leaving these empty simply hides SSO entirely.
+    GOOGLE_CLIENT_ID: str = os.getenv("GOOGLE_CLIENT_ID", "")
+    GOOGLE_CLIENT_SECRET: str = os.getenv("GOOGLE_CLIENT_SECRET", "")
+    MICROSOFT_CLIENT_ID: str = os.getenv("MICROSOFT_CLIENT_ID", "")
+    MICROSOFT_CLIENT_SECRET: str = os.getenv("MICROSOFT_CLIENT_SECRET", "")
+    # Azure AD tenant: a tenant GUID, a domain, or "common"/"organizations".
+    MICROSOFT_TENANT: str = os.getenv("MICROSOFT_TENANT", "common")
+    # Public base URL of the app (no trailing slash), e.g.
+    # https://citadel.example.com — used to build the OAuth callback URL.
+    SSO_REDIRECT_BASE: str = os.getenv("SSO_REDIRECT_BASE", "").rstrip("/")
+    # Optional comma-separated email-domain allowlist. If set, only addresses in
+    # these domains may sign in via SSO. Empty = any verified email allowed.
+    SSO_ALLOWED_DOMAINS: list = [
+        d.strip().lower().lstrip("@")
+        for d in os.getenv("SSO_ALLOWED_DOMAINS", "").split(",")
+        if d.strip()
+    ]
+    # Role auto-provisioned SSO users receive on first login.
+    SSO_DEFAULT_ROLE: str = os.getenv("SSO_DEFAULT_ROLE", "analyst")
+    # If true, a Citadel user is created on first SSO login. If false, only
+    # users that already exist in Redis may complete an SSO sign-in.
+    SSO_AUTO_PROVISION: bool = os.getenv("SSO_AUTO_PROVISION", "true").lower() not in (
+        "false",
+        "0",
+        "no",
+    )
+
     # ── Bootstrap admin ────────────────────────────────────────────────────
     # Created automatically on first start if no users exist in Redis.
     # Change immediately after first login.

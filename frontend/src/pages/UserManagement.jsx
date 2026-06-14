@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Users, Plus, Trash2, Pencil, Key, Shield, ShieldCheck, Loader2, Check, X, UserCircle, AlertTriangle, Building2, Code2, Eye } from 'lucide-react'
+import { Users, Plus, Trash2, Pencil, Key, Shield, ShieldCheck, Loader2, Check, X, UserCircle, AlertTriangle, Building2, Code2, Eye, UsersRound, KeySquare, Layers, Wand2 } from 'lucide-react'
 import { PageShell, PageHeader } from '../components/shared/PageShell'
 import { api } from '../api/client'
 import { formatDate } from '../utils/format'
@@ -30,11 +30,11 @@ const fmtDate = iso => formatDate(iso, 'date', '-')
 
 /* ── Modal shell ──────────────────────────────────────────────────────────── */
 
-function Modal({ open, onClose, title, children }) {
+function Modal({ open, onClose, title, children, wide = false }) {
   if (!open) return null
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30" onClick={onClose}>
-      <div className="card p-5 w-full max-w-md mx-4 space-y-4" onClick={e => e.stopPropagation()}>
+      <div className={`card p-5 w-full ${wide ? 'max-w-2xl' : 'max-w-md'} mx-4 space-y-4 max-h-[90vh] overflow-y-auto`} onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between">
           <h3 className="font-semibold text-brand-text">{title}</h3>
           <button onClick={onClose} className="text-gray-500 hover:text-gray-600"><X size={16} /></button>
@@ -75,15 +75,90 @@ function StatCard({ label, value, color = 'text-brand-text' }) {
   )
 }
 
+/* ── RBAC reusable bits ───────────────────────────────────────────────────── */
+
+// Checkbox list bound to an array of selected string ids.
+function CheckboxList({ options, selected, onChange, getId = o => o, getLabel = o => o, getDesc, maxHeight = 'max-h-36', empty }) {
+  if (!options || options.length === 0) {
+    return <p className="text-xs text-gray-500 italic">{empty || 'Nothing available.'}</p>
+  }
+  return (
+    <div className={`space-y-1 ${maxHeight} overflow-y-auto border border-gray-200 rounded-lg px-3 py-2`}>
+      {options.map(o => {
+        const id = getId(o)
+        const checked = selected.includes(id)
+        return (
+          <label key={id} className="flex items-start gap-2 text-xs text-gray-700 cursor-pointer hover:bg-gray-50 rounded px-1 py-0.5">
+            <input
+              type="checkbox"
+              checked={checked}
+              onChange={e => onChange(e.target.checked ? [...selected, id] : selected.filter(x => x !== id))}
+              className="mt-0.5 rounded border-gray-300 text-brand-accent focus:ring-brand-accent"
+            />
+            <span>
+              <span className="font-medium">{getLabel(o)}</span>
+              {getDesc && getDesc(o) && <span className="text-gray-400 ml-1">— {getDesc(o)}</span>}
+            </span>
+          </label>
+        )
+      })}
+    </div>
+  )
+}
+
+// Comma/tag style input backed by a string array.
+function TagInput({ value, onChange, placeholder }) {
+  const [draft, setDraft] = useState('')
+  function commit() {
+    const v = draft.trim()
+    if (v && !value.includes(v)) onChange([...value, v])
+    setDraft('')
+  }
+  return (
+    <div className="border border-gray-200 rounded-lg px-2 py-1.5 flex flex-wrap gap-1 items-center">
+      {value.map(t => (
+        <span key={t} className="badge bg-cyan-50 text-cyan-700 border border-cyan-200 text-[10px] gap-1">
+          {t}
+          <button type="button" onClick={() => onChange(value.filter(x => x !== t))} className="text-cyan-400 hover:text-red-500"><X size={10} /></button>
+        </span>
+      ))}
+      <input
+        className="flex-1 min-w-[100px] text-xs outline-none bg-transparent py-0.5"
+        placeholder={placeholder || 'Type and press Enter…'}
+        value={draft}
+        onChange={e => setDraft(e.target.value)}
+        onKeyDown={e => {
+          if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); commit() }
+          else if (e.key === 'Backspace' && !draft && value.length) onChange(value.slice(0, -1))
+        }}
+        onBlur={commit}
+      />
+    </div>
+  )
+}
+
 /* ══════════════════════════════════════════════════════════════════════════ */
 
 export default function UserManagement() {
   const [me, setMe] = useState(cachedUser)  // seed from cache, verified via API below
 
   /* ── State ── */
+  const [tab, setTab]           = useState('users')   // 'users' | 'groups'
   const [users, setUsers]       = useState([])
   const [loading, setLoading]   = useState(true)
   const [error, setError]       = useState('')
+
+  // RBAC: permission catalog + groups
+  const [catalog, setCatalog]   = useState({ permissions: [], roles: [], role_presets: {} })
+  const [groups, setGroups]     = useState([])
+  const [groupsLoading, setGroupsLoading] = useState(false)
+  const [groupsError, setGroupsError]     = useState('')
+
+  // Group editor (create or edit). null = closed.
+  const [groupTarget, setGroupTarget] = useState(null) // null | {} (new) | existing group
+  const [groupForm, setGroupForm]     = useState({ name: '', description: '', roles: [], permissions: [], companies: [], members: [] })
+  const [groupSaving, setGroupSaving] = useState(false)
+  const [groupErr, setGroupErr]       = useState('')
 
   // Companies registry
   const [companyList, setCompanyList]   = useState([])
@@ -93,9 +168,17 @@ export default function UserManagement() {
 
   // Create user
   const [showCreate, setShowCreate]   = useState(false)
-  const [createForm, setCreateForm]   = useState({ username: '', password: '', role: 'analyst', companiesInput: '' })
+  const [createForm, setCreateForm]   = useState({ username: '', password: '', role: 'analyst', companiesInput: '', groups: [], extra_permissions: [] })
   const [creating, setCreating]       = useState(false)
   const [createErr, setCreateErr]     = useState('')
+
+  // Unified user editor (role + groups + extra permissions + effective access)
+  const [userTarget, setUserTarget]   = useState(null) // existing user object | null
+  const [userForm, setUserForm]       = useState({ role: 'analyst', groups: [], extra_permissions: [] })
+  const [userSaving, setUserSaving]   = useState(false)
+  const [userErr, setUserErr]         = useState('')
+  const [effective, setEffective]     = useState(null)   // userEffective() result
+  const [effLoading, setEffLoading]   = useState(false)
 
   // Edit role
   const [editTarget, setEditTarget]     = useState(null) // { username, role }
@@ -132,15 +215,40 @@ export default function UserManagement() {
       .then(user => {
         setMe(user)
         localStorage.setItem('fo_user', JSON.stringify(user))
-        if (user?.role === 'admin') loadUsers()
+        if (user?.role === 'admin') { loadUsers(); loadRbac() }
         else setLoading(false)
       })
       .catch(() => {
         // Fall back to cached value
-        if (me?.role === 'admin') loadUsers()
+        if (me?.role === 'admin') { loadUsers(); loadRbac() }
         else setLoading(false)
       })
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function loadRbac() {
+    try {
+      const cat = await api.auth.permissionCatalog()
+      setCatalog({
+        permissions: cat.permissions || [],
+        roles: cat.roles || [],
+        role_presets: cat.role_presets || {},
+      })
+    } catch {}
+    loadGroups()
+  }
+
+  async function loadGroups() {
+    setGroupsLoading(true)
+    setGroupsError('')
+    try {
+      const d = await api.auth.listGroups()
+      setGroups(d.groups || [])
+    } catch (err) {
+      setGroupsError(err.message)
+    } finally {
+      setGroupsLoading(false)
+    }
+  }
 
   async function loadCompanies() {
     try {
@@ -197,9 +305,16 @@ export default function UserManagement() {
       const companies = createForm.companiesInput
         ? createForm.companiesInput.split(',').map(s => s.trim()).filter(Boolean)
         : []
-      await api.auth.createUser({ username: createForm.username, password: createForm.password, role: createForm.role, companies })
+      await api.auth.createUser({
+        username: createForm.username,
+        password: createForm.password,
+        role: createForm.role,
+        companies,
+        groups: createForm.groups,
+        extra_permissions: createForm.extra_permissions,
+      })
       setShowCreate(false)
-      setCreateForm({ username: '', password: '', role: 'analyst', companiesInput: '' })
+      setCreateForm({ username: '', password: '', role: 'analyst', companiesInput: '', groups: [], extra_permissions: [] })
       setCreateCoSearch('')
       await loadUsers()
     } catch (err) {
@@ -229,6 +344,99 @@ export default function UserManagement() {
     } finally {
       setEditingSave(false)
     }
+  }
+
+  /* ── Unified user editor (role + groups + extra permissions) ── */
+  function openUserEditor(u) {
+    setUserTarget(u)
+    setUserForm({
+      role: u.role,
+      groups: (u.groups || []).slice(),
+      extra_permissions: (u.extra_permissions || []).slice(),
+    })
+    setUserErr('')
+    setEffective(null)
+    // Load resolved effective access
+    setEffLoading(true)
+    api.auth.userEffective(u.username)
+      .then(setEffective)
+      .catch(() => {})
+      .finally(() => setEffLoading(false))
+  }
+
+  async function handleSaveUser(e) {
+    e.preventDefault()
+    setUserSaving(true)
+    setUserErr('')
+    try {
+      await api.auth.updateUser(userTarget.username, {
+        role: userForm.role,
+        groups: userForm.groups,
+        extra_permissions: userForm.extra_permissions,
+      })
+      setUserTarget(null)
+      await loadUsers()
+    } catch (err) {
+      setUserErr(err.message)
+    } finally {
+      setUserSaving(false)
+    }
+  }
+
+  /* ── Group editor ── */
+  function openGroupEditor(g) {
+    setGroupTarget(g || {})
+    setGroupForm(g ? {
+      name: g.name || '',
+      description: g.description || '',
+      roles: (g.roles || []).slice(),
+      permissions: (g.permissions || []).slice(),
+      companies: (g.companies || []).slice(),
+      members: (g.members || []).slice(),
+    } : { name: '', description: '', roles: [], permissions: [], companies: [], members: [] })
+    setGroupErr('')
+  }
+
+  async function handleSaveGroup(e) {
+    e.preventDefault()
+    setGroupSaving(true)
+    setGroupErr('')
+    try {
+      const payload = {
+        name: groupForm.name.trim(),
+        description: groupForm.description,
+        roles: groupForm.roles,
+        permissions: groupForm.permissions,
+        companies: groupForm.companies,
+        members: groupForm.members,
+      }
+      if (groupTarget?.id) await api.auth.updateGroup(groupTarget.id, payload)
+      else await api.auth.createGroup(payload)
+      setGroupTarget(null)
+      await loadGroups()
+      await loadUsers()  // group membership may have changed
+    } catch (err) {
+      setGroupErr(err.message)
+    } finally {
+      setGroupSaving(false)
+    }
+  }
+
+  async function handleDeleteGroup(g) {
+    if (!confirm(`Delete group "${g.name}"? Members will lose the access it grants.`)) return
+    try {
+      await api.auth.deleteGroup(g.id)
+      await loadGroups()
+      await loadUsers()
+    } catch (err) {
+      setGroupsError(err.message)
+    }
+  }
+
+  // Fill the group permission set from a role's preset (union, no removals).
+  function fillFromPreset(role) {
+    const preset = catalog.role_presets?.[role] || []
+    setGroupForm(f => ({ ...f, permissions: Array.from(new Set([...f.permissions, ...preset])) }))
   }
 
   /* ── Edit companies ── */
@@ -406,7 +614,34 @@ export default function UserManagement() {
         </div>
       )}
 
-      {isAdmin && <section className="card">
+      {/* Tabs — admin only */}
+      {isAdmin && (
+        <div className="flex items-center gap-1 mb-4 border-b border-gray-200">
+          {[
+            { id: 'users',  label: 'Users',  icon: Users },
+            { id: 'groups', label: 'Groups', icon: UsersRound },
+          ].map(t => {
+            const Icon = t.icon
+            const active = tab === t.id
+            return (
+              <button
+                key={t.id}
+                onClick={() => setTab(t.id)}
+                className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+                  active ? 'border-brand-accent text-brand-accent' : 'border-transparent text-gray-500 hover:text-brand-text'
+                }`}
+              >
+                <Icon size={14} /> {t.label}
+                {t.id === 'groups' && groups.length > 0 && (
+                  <span className="text-[10px] bg-gray-100 text-gray-500 rounded-full px-1.5">{groups.length}</span>
+                )}
+              </button>
+            )
+          })}
+        </div>
+      )}
+
+      {isAdmin && tab === 'users' && <section className="card">
         <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
           <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">Users</span>
           <button onClick={() => { setShowCreate(true); setCreateErr('') }} className="btn-primary text-xs">
@@ -431,6 +666,7 @@ export default function UserManagement() {
                 <tr className="text-left text-xs text-gray-500 uppercase tracking-wider border-b border-gray-100">
                   <th className="px-5 py-2.5 font-medium">Username</th>
                   <th className="px-5 py-2.5 font-medium">Role</th>
+                  <th className="px-5 py-2.5 font-medium">Groups</th>
                   <th className="px-5 py-2.5 font-medium">Companies</th>
                   <th className="px-5 py-2.5 font-medium">Created</th>
                   <th className="px-5 py-2.5 font-medium text-right">Actions</th>
@@ -450,6 +686,22 @@ export default function UserManagement() {
                     </td>
                     <td className="px-5 py-3"><RoleBadge role={u.role} /></td>
                     <td className="px-5 py-3">
+                      {(u.groups || []).length === 0 ? (
+                        <span className="text-xs text-gray-400 italic">—</span>
+                      ) : (
+                        <div className="flex flex-wrap gap-1">
+                          {(u.groups || []).map(g => {
+                            const grp = groups.find(x => x.id === g || x.name === g)
+                            return (
+                              <span key={g} className="badge bg-indigo-50 text-indigo-700 border border-indigo-200 text-[10px]">
+                                {grp?.name || g}
+                              </span>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-5 py-3">
                       {u.role === 'admin' ? (
                         <span className="text-xs text-gray-500 italic">all (admin)</span>
                       ) : u.role === 'guest' ? (
@@ -468,9 +720,9 @@ export default function UserManagement() {
                     <td className="px-5 py-3">
                       <div className="flex items-center justify-end gap-1">
                         <button
-                          onClick={() => openEditRole(u)}
+                          onClick={() => openUserEditor(u)}
                           className="btn-ghost text-xs py-1 px-2"
-                          title="Edit role"
+                          title="Edit role, groups & permissions"
                         >
                           <Pencil size={12} />
                         </button>
@@ -495,6 +747,84 @@ export default function UserManagement() {
                           className="btn-ghost text-xs py-1 px-2 text-red-500 hover:text-red-700 disabled:opacity-30"
                           title={u.username === me?.username ? 'Cannot delete yourself' : 'Delete user'}
                         >
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>}
+
+      {/* ── Groups tab ── */}
+      {isAdmin && tab === 'groups' && <section className="card">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
+          <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">Groups</span>
+          <button onClick={() => openGroupEditor(null)} className="btn-primary text-xs">
+            <Plus size={13} /> New Group
+          </button>
+        </div>
+
+        {groupsLoading ? (
+          <div className="flex items-center justify-center gap-2 text-gray-500 py-12">
+            <Loader2 size={14} className="animate-spin" /> Loading groups...
+          </div>
+        ) : groupsError ? (
+          <div className="text-xs text-red-600 bg-red-50 border-t border-red-100 px-5 py-4 flex items-center gap-1.5">
+            <AlertTriangle size={12} /> {groupsError}
+          </div>
+        ) : groups.length === 0 ? (
+          <div className="text-sm text-gray-500 text-center py-12">No groups defined yet.</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs text-gray-500 uppercase tracking-wider border-b border-gray-100">
+                  <th className="px-5 py-2.5 font-medium">Name</th>
+                  <th className="px-5 py-2.5 font-medium">Roles</th>
+                  <th className="px-5 py-2.5 font-medium">Permissions</th>
+                  <th className="px-5 py-2.5 font-medium">Companies</th>
+                  <th className="px-5 py-2.5 font-medium">Members</th>
+                  <th className="px-5 py-2.5 font-medium text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {groups.map(g => (
+                  <tr key={g.id} className="hover:bg-gray-50/50 transition-colors">
+                    <td className="px-5 py-3">
+                      <div className="flex items-center gap-2">
+                        <Layers size={15} className="text-indigo-500" />
+                        <div>
+                          <div className="font-medium text-brand-text">{g.name}</div>
+                          {g.description && <div className="text-[11px] text-gray-400">{g.description}</div>}
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-5 py-3">
+                      {(g.roles || []).length === 0 ? <span className="text-xs text-gray-400 italic">—</span> : (
+                        <div className="flex flex-wrap gap-1">{(g.roles || []).map(r => <RoleBadge key={r} role={r} />)}</div>
+                      )}
+                    </td>
+                    <td className="px-5 py-3 text-gray-500 text-xs">
+                      <span className="badge bg-gray-100 text-gray-600">{(g.permissions || []).length} perms</span>
+                    </td>
+                    <td className="px-5 py-3">
+                      {(g.companies || []).length === 0 ? <span className="text-xs text-gray-400 italic">all</span> : (
+                        <div className="flex flex-wrap gap-1">
+                          {(g.companies || []).map(c => <span key={c} className="badge bg-cyan-50 text-cyan-700 border border-cyan-200 text-[10px]">{c}</span>)}
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-5 py-3 text-gray-500 text-xs">{(g.members || []).length}</td>
+                    <td className="px-5 py-3">
+                      <div className="flex items-center justify-end gap-1">
+                        <button onClick={() => openGroupEditor(g)} className="btn-ghost text-xs py-1 px-2" title="Edit group">
+                          <Pencil size={12} />
+                        </button>
+                        <button onClick={() => handleDeleteGroup(g)} className="btn-ghost text-xs py-1 px-2 text-red-500 hover:text-red-700" title="Delete group">
                           <Trash2 size={12} />
                         </button>
                       </div>

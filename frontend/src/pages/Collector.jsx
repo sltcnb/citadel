@@ -579,9 +579,15 @@ export default function Collector() {
 
         {/* Page header */}
         <div className="mb-4">
-          <h1 className="text-lg font-bold text-brand-text">Artifact Collector</h1>
+          <div className="flex items-center gap-2 flex-wrap">
+            <h1 className="text-lg font-bold text-brand-text">Artifact Collector</h1>
+            <span className="badge text-[10px] bg-brand-accentlight text-brand-accent border border-brand-accent/30">
+              Powered by Talon
+            </span>
+          </div>
           <p className="text-xs text-gray-500 mt-0.5">
-            Generate a pre-configured collection script for live systems, mounted directories, or external drives
+            Generate a pre-configured Talon collection script for live systems, mounted directories, or external drives.
+            For server-side collection from a disk image already in a case, use <strong>Ingest → Harvest</strong>.
           </p>
         </div>
 

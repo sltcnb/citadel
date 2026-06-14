@@ -40,6 +40,7 @@ from routers import (
     evidence_seal,
     export,
     global_alert_rules,
+    groups,
     harvest,
     health,
     ingest,
@@ -58,6 +59,7 @@ from routers import (
     saved_searches,
     search,
     sigma_sync,
+    sso,
     tools as tools_router,
     watchlist,
     webhooks,
@@ -601,7 +603,12 @@ _admin_only = [Depends(require_admin)]
 # Public — no auth required
 app.include_router(health.router, prefix="/api/v1")
 app.include_router(auth_router.router, prefix="/api/v1")
+app.include_router(sso.router, prefix="/api/v1")  # OIDC SSO — endpoints are public by design (browser redirects)
 app.include_router(license_router, prefix="/api/v1")
+
+# RBAC group/permission management (gated inside the router via require_permission)
+app.include_router(groups.router, prefix="/api/v1")
+app.include_router(groups.catalog_router, prefix="/api/v1")
 
 # Protected — analyst or admin
 app.include_router(cases.router, prefix="/api/v1", dependencies=_analyst_or_admin)
