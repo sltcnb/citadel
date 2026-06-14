@@ -4,6 +4,7 @@ import {
 } from 'lucide-react'
 import { api } from '../../api/client'
 import { Badge } from './Badge'
+import PanelHelp from './PanelHelp'
 
 /**
  * Right-side drawer: reverse kill-chain reconstruction.
@@ -147,7 +148,7 @@ export default function KillChainPanel({
   return (
     <div className="panel-backdrop" onClick={onClose}>
       <div
-        className="absolute right-0 top-0 h-full w-[860px] max-w-full bg-white border-l border-gray-200 flex flex-col"
+        className="absolute right-0 top-0 h-full w-full sm:w-[90vw] md:w-[860px] max-w-full bg-white border-l border-gray-200 flex flex-col"
         style={{ boxShadow: '-4px 0 24px rgba(0,0,0,0.10)' }}
         onClick={e => e.stopPropagation()}
       >
@@ -163,6 +164,11 @@ export default function KillChainPanel({
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          <PanelHelp title="Reverse kill chain"
+            use="From one confirmed-bad event it walks backward to first access and forward to impact, tagging each step with ATT&CK."
+            when="After you've found something malicious and need the full attack story for the report."
+            data={['An anchor: an event fo_id, or a host + timestamp','Same-host events around the anchor; process.ppid for ancestry']}
+            tip="Open it from an event you're confident is malicious — the chain is only as good as its anchor." />
           <p className="text-[11px] text-gray-500">
             Reconstructed attack progression around the anchor event — walked backward to
             first access and forward to impact.

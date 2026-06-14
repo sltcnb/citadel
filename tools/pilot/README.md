@@ -20,10 +20,13 @@ pilot investigate --case CASE_ID --provider anthropic
 - [●] Up/down feedback
 - [●] MITRE ATT&CK context injection
 - [●] Model-agnostic provider routing
+- [●] Prompt-injection guardrails — untrusted evidence sanitized + fenced as data; system prompt instructs the model evidence is never instructions (tested)
+- [●] Confidence-calibrated verdicts — hypotheses scored by for/against evidence; low-confidence flagged "needs more data"
+- [●] Cross-case memory — IOCs/TTPs/verdicts persisted across cases; "seen before" signal
+- [●] Alert-triggered auto-investigation — fired detection rules spawn scoped runs
 - [ ] Conditional branching / auto-pivot
 - [ ] Multi-agent orchestration (Triage / DeepDive / Reporting)
 - [ ] Investigation templates (record + replay)
 - [ ] Tool-plugin SDK
-- [ ] Prompt-injection / tool-abuse guardrails
 
-**Done when:** decomposed multi-agent run; branching live; guardrails tested.
+**Done when:** decomposed multi-agent run; branching live. _(guardrails ✓ tested)_

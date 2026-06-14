@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import { api } from '../api/client'
 import { RISK_CONFIG } from '../utils/severity'
+import PanelHelp from './shared/PanelHelp'
 
 function RiskGauge({ score, level }) {
   const cfg = RISK_CONFIG[level] || RISK_CONFIG.unknown
@@ -983,7 +984,7 @@ export default function CaseAiPanel({ caseId, onClose, onSearchQuery, onOpenRepo
   return (
     <div className="panel-backdrop" onClick={onClose}>
       <div
-        className="absolute right-0 top-0 h-full w-[640px] bg-white border-l border-gray-200 flex flex-col"
+        className="absolute right-0 top-0 h-full w-full sm:w-[90vw] md:w-[640px] bg-white border-l border-gray-200 flex flex-col"
         style={{ boxShadow: '-4px 0 24px rgba(0,0,0,0.10)' }}
         onClick={e => e.stopPropagation()}
       >
@@ -1028,6 +1029,13 @@ export default function CaseAiPanel({ caseId, onClose, onSearchQuery, onOpenRepo
             ref={scrollRef}
             className="flex-1 overflow-y-auto"
           >
+            <div className="px-5 pt-4">
+              <PanelHelp title="Pilot — AI investigation"
+                use="Runs an autonomous AI investigation: it forms competing hypotheses, pivots through the case data with tools, and concludes with a calibrated verdict."
+                when="For a fast first-pass read on a case, or to investigate a specific scenario you describe."
+                data={['Ingested events to investigate','An LLM provider configured in Settings → AI']}
+                tip="Give it a concrete scenario — vague prompts produce vague verdicts." />
+            </div>
 
             {/* ── AI Autopilot (hero/top-centered) — first in source order so
                 the panel naturally scrolls to the top of this section on

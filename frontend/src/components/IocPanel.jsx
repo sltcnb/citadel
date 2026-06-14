@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Loader2, Search, Copy, ChevronDown, ChevronRight, Download, Globe, X, Play, AlertTriangle, CheckCircle, ShieldCheck } from 'lucide-react'
 import { api } from '../api/client'
+import PanelHelp from './shared/PanelHelp'
 
 // ── Threat-intel matching ─────────────────────────────────────────────────────
 // Runs the cti_match MODULE (one matching path) — results are indexed as
@@ -346,6 +347,12 @@ export default function IocPanel({ caseId, onSearch }) {
           </div>
         )}
       </div>
+
+      <PanelHelp title="Indicators (IOCs)"
+        use="Aggregates the case's observed indicators — IPs, domains, hashes, users — and matches them against the threat-intel database."
+        when="To pull the case's indicators for enrichment, watchlisting, or export."
+        data={['Ingested, normalized events','CTI feeds configured for the threat-match step']}
+        tip="Promote confirmed-bad IOCs to the watchlist so future cases flag them automatically." />
 
       {/* Search filter */}
       <div className="relative">
