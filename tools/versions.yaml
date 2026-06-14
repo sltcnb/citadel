@@ -1,5 +1,5 @@
 # Citadel tool manifest — the source of truth for "each tool is its own repo,
-# pulled and PINNED at deploy time" (ROADMAP §3.6, monorepo-of-submodules).
+# pulled and PINNED at deploy time" (monorepo-of-submodules).
 #
 # scripts/fetch_tools.sh reads this and clones/checks-out each tool at its
 # pinned `ref` into `path`. Pinning a ref (tag or commit) makes a deployment
@@ -54,24 +54,3 @@ tools:
     path: tools/sigil
     ref: v0.9.0
     vendored: true
-  # Domain tools live OUTSIDE this repo (sibling folder); fetched independently.
-  - name: Wraith
-    repo: wraith
-    path: ../domain-tools/wraith
-    ref: main
-    vendored: false
-  - name: Wiretap
-    repo: wiretap
-    path: ../domain-tools/wiretap
-    ref: main
-    vendored: false
-  - name: Nimbus
-    repo: nimbus
-    path: ../domain-tools/nimbus
-    ref: main
-    vendored: false
-  - name: Warden
-    repo: warden
-    path: ../domain-tools/warden
-    ref: main
-    vendored: false

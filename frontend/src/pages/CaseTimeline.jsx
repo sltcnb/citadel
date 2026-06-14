@@ -9,7 +9,7 @@ import {
   Monitor, HardDrive, Globe, Brain,
   Binary, Bug, Network, FileImage, TextSearch, Tag,
   GitBranch, Target, Activity, LayoutTemplate, FileDown,
-  Printer, FileBarChart, Layers,
+  Printer, FileBarChart, Layers, Bot,
 } from 'lucide-react'
 
 const MOD_CATEGORY_ICONS = {
@@ -2131,8 +2131,8 @@ export default function CaseTimeline() {
       <div className="bg-white border-b border-gray-200 px-4 sm:px-6 py-3 flex flex-wrap items-center gap-x-4 gap-y-2 flex-shrink-0">
 
         {/* Case name + meta */}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
+        <div className="flex-1 min-w-0 basis-full lg:basis-auto">
+          <div className="flex items-center gap-2 flex-wrap">
             <h1 className="text-base font-semibold text-brand-text truncate">
               {caseData?.name || 'Case'}
             </h1>
@@ -2204,7 +2204,7 @@ export default function CaseTimeline() {
 
 
         {/* Action buttons */}
-        <div className="flex flex-wrap items-center justify-end gap-2 ml-auto">
+        <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto lg:ml-auto justify-start lg:justify-end">
           <button
             onClick={() => setShowIngest(true)}
             className="btn-primary"
@@ -2231,14 +2231,20 @@ export default function CaseTimeline() {
             )}
           </button>
 
-          <button
-            onClick={() => setShowAI(v => !v)}
-            className={`btn-outline ${showAI ? 'bg-purple-50 border-purple-300 text-purple-700' : ''}`}
-            title="Pilot — autonomous AI investigation of this case"
-          >
-            <Sparkles size={14} />
-            AI
-          </button>
+          {/* AI (Pilot) — autonomous investigation + the co-pilot watch/memory */}
+          <ToolbarMenu
+            label="AI"
+            icon={<Sparkles size={14} />}
+            anyActive={showAI || showCoPilot}
+            items={[
+              { key: 'ai', label: 'Autopilot investigation', icon: <Sparkles size={13} />, active: showAI,
+                title: 'Pilot runs an autonomous investigation of this case',
+                onClick: () => setShowAI(v => !v) },
+              { key: 'copilot', label: 'Co-Pilot — watch & memory', icon: <Bot size={13} />, active: showCoPilot,
+                title: "What's new since you last looked + cross-case IOC memory",
+                onClick: () => setShowCoPilot(true) },
+            ]}
+          />
 
           {/* Detect — find what's suspicious */}
           <ToolbarMenu
@@ -2265,7 +2271,7 @@ export default function CaseTimeline() {
           <ToolbarMenu
             label="Investigate"
             icon={<Crosshair size={14} />}
-            anyActive={showIocs || showProcessTree || showGraph || showKillChain || showCoPilot}
+            anyActive={showIocs || showProcessTree || showGraph || showKillChain}
             items={[
               { key: 'iocs', label: 'IOCs', icon: <Crosshair size={13} />, active: showIocs,
                 title: 'Observed indicators + threat-intel matching',
@@ -2279,9 +2285,6 @@ export default function CaseTimeline() {
               { key: 'killchain', label: 'Kill chain', icon: <Crosshair size={13} />, active: showKillChain,
                 title: 'Assemble the attack story around an anchor event',
                 onClick: () => setShowKillChain(true) },
-              { key: 'copilot', label: 'Co-Pilot', icon: <Sparkles size={13} />, active: showCoPilot,
-                title: "What's new since you last looked + cross-case IOC memory",
-                onClick: () => setShowCoPilot(true) },
             ]}
           />
 

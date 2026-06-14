@@ -6,7 +6,7 @@ through the shared contracts in [`../contracts/`](../contracts/) — never by
 importing each other. The platform (`../api` + `../frontend`) pins and composes
 them.
 
-Machine-readable index: [`SUITE.yaml`](SUITE.yaml). Architecture: [`../ROADMAP.md`](../ROADMAP.md).
+Machine-readable index: [`SUITE.yaml`](SUITE.yaml).
 
 ## Pipeline
 
@@ -34,18 +34,6 @@ Talon ──bundle──▶ Sluice ──route──▶ Babel ──ForensicEven
 | **Scribe** | Report engine | case → **HTML/PDF/STIX/MISP** | `api/routers/reports.py` | `scribe report --case ID -f pdf` | partial |
 | **Citadel** | Platform / integrator | composes the suite; cases, timeline, search, console | `api` + `frontend` | `docker compose --profile full up` | built |
 
-## Domain tools (external — [`../../domain-tools/`](../../domain-tools/))
-
-Built outside this repo, each its own repository; Citadel consumes their output
-over the contracts (each emits `ForensicEvent`).
-
-| Tool | Role | Input → Output | Status |
-|------|------|----------------|--------|
-| **Wraith** | Memory forensics | memory image → findings + HTML report | planned |
-| **Wiretap** | Network detection | PCAP/Zeek → C2/beacon/tunnel findings | planned |
-| **Nimbus** | Cloud forensics | AWS/Azure/GCP (read-only) → ECS cloud events | planned |
-| **Warden** | Identity audit | 7 IdPs → identity graph + attack paths | planned |
-
 ## Contracts every tool speaks
 
 - **ForensicEvent** ([`forensic_event.schema.json`](../contracts/forensic_event.schema.json)) — required `timestamp` (ISO-8601 **Z**) + `message`; `raw` retained for structured types.
@@ -55,7 +43,7 @@ over the contracts (each emits `ForensicEvent`).
 - **Bus topics** ([`bus_topics.md`](../contracts/bus_topics.md)) — `events.parsed → events.normalized → {indexed, detections, modules, intel}`.
 - **Parser contract** ([`citadel_contracts`](citadel_contracts/)) — `BasePlugin`; subclass it to add a parser pack (drop-in, no platform changes).
 
-## Transport (per edge — see [ADR-0004](../docs/adr/0004-transport-per-edge.md))
+## Transport (per edge)
 Redis Streams for the pipeline data-plane · gRPC + S3/MinIO for Talon (remote, mTLS) · in-process via `citadel_contracts` for the Sluice→Babel hot path.
 
 ## Testing

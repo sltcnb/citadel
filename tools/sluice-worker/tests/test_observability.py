@@ -80,12 +80,19 @@ class _FakeRedis:
 def test_redis_log_handler_ships_to_capped_stream():
     import logging
 
+    import time
+
     r = _FakeRedis()
     obs.attach_redis_logs("processor", r)
     log = logging.getLogger("citadel.test.redislog")
     log.error("disk pressure on node-3")
     key = obs.log_stream_key("processor")
     assert key == "citadel:logs:processor"
+    # attach_redis_logs wraps the handler in a QueueListener (background thread),
+    # so shipping is asynchronous — poll briefly for the drain instead of racing it.
+    deadline = time.monotonic() + 3.0
+    while not r.streams.get(key) and time.monotonic() < deadline:
+        time.sleep(0.01)
     assert r.streams.get(key), "nothing shipped to redis stream"
     entry = r.streams[key][-1]
     assert entry["svc"] == "processor" and entry["level"] == "ERROR"
