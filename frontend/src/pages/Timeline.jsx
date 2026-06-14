@@ -631,6 +631,37 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
 
   useEffect(() => { load(0, true) }, [load])
 
+  // Fold the search box + every left-sidebar filter (artifact type, level,
+  // flagged, and the facet selections) into ONE Lucene query string. The main
+  // search passes facets as separate params, but /aggregate only takes `q` — so
+  // without this, aggregations ran against the whole case, ignoring the filters.
+  const buildEffectiveQuery = useCallback(() => {
+    let q = query
+    const and = (clause) => { q = q ? `(${q}) AND ${clause}` : clause }
+    const typesArr = selectedTypesStr ? selectedTypesStr.split(',') : []
+    if (typesArr.length) and(`artifact_type:(${typesArr.join(' OR ')})`)
+    if (selectedLevel) {
+      and(selectedLevel === 'none'
+        ? '(NOT _exists_:level) AND (NOT _exists_:evtx.level) AND (NOT _exists_:hayabusa.level)'
+        : `(evtx.level:${selectedLevel} OR hayabusa.level:${selectedLevel} OR level:${selectedLevel})`)
+    }
+    if (flaggedOnly) and('is_flagged:true')
+    const FACET_FIELD = {
+      hostname: 'host.hostname.keyword', username: 'user.name.keyword',
+      event_id: 'evtx.event_id', channel: 'evtx.channel.keyword',
+      src_ip: 'network.src_ip', dest_ip: 'network.dst_ip',
+      status_code: 'http.status_code', http_method: 'http.method.keyword',
+      domain: 'dns.question.name.keyword',
+    }
+    const NUMERIC = new Set(['event_id', 'status_code'])
+    for (const [k, v] of Object.entries(facetFilters)) {
+      const f = FACET_FIELD[k]
+      if (!f || v === undefined || v === '') continue
+      and(NUMERIC.has(k) ? `${f}:${v}` : `${f}:"${String(v).replace(/"/g, '\\"')}"`)
+    }
+    return q
+  }, [query, selectedTypesStr, selectedLevel, flaggedOnly, facetFilters])
+
   // Persist filters to localStorage on change
   useEffect(() => {
     saveCaseFilters(caseId, { selectedTypesStr, fromTs, toTs, query, flaggedOnly, selectedLevel })
@@ -1633,7 +1664,7 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
           {showAggregate && (
             <AggregatePanel
               caseId={caseId}
-              query={query}
+              query={buildEffectiveQuery()}
               fieldMap={fieldMap}
               state={aggState}
               setState={setAggState}
@@ -1645,7 +1676,7 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
                 try {
                   const params = {
                     field: aggState.fields.join(','),
-                    agg: aggState.agg, q: query,
+                    agg: aggState.agg, q: buildEffectiveQuery(),
                     size: aggState.size, interval: aggState.interval,
                   }
                   if (aggState.subCard?.length) params.sub_card = aggState.subCard.join(',')

@@ -85,13 +85,17 @@ def _validate_feed_url(url: str) -> None:
             )
 
 
-def _safe_urlopen(req, timeout: int):
+def _safe_urlopen(req, timeout: int, verify: bool = True):
     """urlopen that re-validates every redirect target against _validate_feed_url.
 
     The initial URL is validated by callers, but urllib follows 3xx redirects by
     default — a validated public host could 302 us to 169.254.169.254 or an
     internal service. Re-checking each hop closes that bypass. (Residual: a
-    DNS-rebinding TOCTOU between validation and connect is not addressed here.)"""
+    DNS-rebinding TOCTOU between validation and connect is not addressed here.)
+
+    `verify=False` disables TLS certificate verification — for an internal
+    TAXII/STIX server with a self-signed cert the operator trusts."""
+    import ssl
     import urllib.request
 
     class _ValidatingRedirect(urllib.request.HTTPRedirectHandler):
@@ -99,7 +103,10 @@ def _safe_urlopen(req, timeout: int):
             _validate_feed_url(newurl)
             return super().redirect_request(request, fp, code, msg, headers, newurl)
 
-    opener = urllib.request.build_opener(_ValidatingRedirect())
+    handlers = [_ValidatingRedirect()]
+    if not verify:
+        handlers.append(urllib.request.HTTPSHandler(context=ssl._create_unverified_context()))
+    opener = urllib.request.build_opener(*handlers)
     return opener.open(req, timeout=timeout)
 
 
@@ -126,6 +133,9 @@ class FeedCreate(BaseModel):
     poll_interval_value: int = 24
     poll_interval_unit: str = "hours"  # "minutes" | "hours" | "days"
     auto_pull: bool = True
+    # Verify the feed server's TLS certificate. Default True; set False only for
+    # an internal MISP/TAXII with a self-signed cert you trust.
+    verify_ssl: bool = True
 
 
 class FeedUpdate(BaseModel):
@@ -137,6 +147,7 @@ class FeedUpdate(BaseModel):
     poll_interval_unit: str | None = None
     auto_pull: bool | None = None
     enabled: bool | None = None
+    verify_ssl: bool | None = None
 
 
 class BundleImport(BaseModel):
@@ -564,7 +575,7 @@ def _taxii_fetch(feed: dict) -> dict:
 
     req = urllib.request.Request(objects_url, headers=headers, method="GET")
     try:
-        with _safe_urlopen(req, 60) as resp:
+        with _safe_urlopen(req, 60, verify=feed.get("verify_ssl", True)) as resp:
             data = json.loads(resp.read())
             # TAXII 2.1 envelope has "objects" at top level
             if "objects" in data:
@@ -594,7 +605,7 @@ def _stix_url_fetch(feed: dict) -> dict:
 
     req = urllib.request.Request(url, headers=headers, method="GET")
     try:
-        with _safe_urlopen(req, 60) as resp:
+        with _safe_urlopen(req, 60, verify=feed.get("verify_ssl", True)) as resp:
             return json.loads(resp.read())
     except urllib.error.HTTPError as exc:
         raise HTTPException(
@@ -667,6 +678,7 @@ def _misp_fetch(feed: dict) -> list:
                 f"{base_url}/attributes/restSearch",
                 json=payload, headers=headers, timeout=120,
                 allow_redirects=False,  # SSRF: don't follow a redirect off the validated host
+                verify=feed.get("verify_ssl", True),
             )
             resp.raise_for_status()
             attrs = resp.json().get("response", {}).get("Attribute", [])
@@ -777,6 +789,7 @@ def _yeti_fetch(feed: dict) -> list:
                 json={"query": {"name": ""}, "type": "all", "count": per_page, "page": page},
                 headers=headers, timeout=120,
                 allow_redirects=False,  # SSRF: don't follow a redirect off the validated host
+                verify=feed.get("verify_ssl", True),
             )
             resp.raise_for_status()
             data = resp.json()

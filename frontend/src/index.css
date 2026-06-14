@@ -215,10 +215,11 @@
     box-shadow: -8px 0 32px rgba(15,23,42,0.08);
     animation: slide-in-right 220ms cubic-bezier(0.16, 1, 0.3, 1);
   }
-  /* Responsive right-drawer body used by every case panel. Full-width on phones,
-     capped at 860px on tablet+. Replaces the old hard-coded w-[860px]. */
+  /* Shared shell for every case right-drawer panel: full-width on phones, 90vw on
+     tablet, and the panel adds its own `md:w-[Npx]` desktop cap. DRYs out the
+     positioning / chrome / shadow that was copy-pasted across ~10 panels. */
   .panel-drawer {
-    @apply absolute right-0 top-0 h-full w-full sm:w-[90vw] md:w-[860px] max-w-full
+    @apply absolute right-0 top-0 h-full w-full sm:w-[90vw] max-w-full
            bg-white border-l border-gray-200 flex flex-col;
     box-shadow: -4px 0 24px rgba(0,0,0,0.10);
   }

@@ -71,6 +71,9 @@ function AgentStepRow({ step: s, onPivot }) {
     action === 'module_runs'       ? 'bg-teal-100    text-teal-800' :
     action === 'launch_module'     ? 'bg-orange-100  text-orange-800' :
     action === 'read_module_result'? 'bg-teal-100    text-teal-800' :
+    action === 'entity_graph'      ? 'bg-sky-100     text-sky-800' :
+    action === 'stack_rare'        ? 'bg-fuchsia-100 text-fuchsia-800' :
+    action === 'cti_seen_before'   ? 'bg-rose-100    text-rose-800' :
                                       'bg-gray-100    text-gray-600'
   const actionIcon =
     isFinal                 ? <Sparkles size={9}/> :
@@ -80,6 +83,9 @@ function AgentStepRow({ step: s, onPivot }) {
     action === 'aggregate'  ? <TrendingUp size={9}/> :
     action === 'inspect'    ? <Zap size={9}/> :
     action === 'launch_module' ? <Bot size={9}/> :
+    action === 'entity_graph'  ? <Search size={9}/> :
+    action === 'stack_rare'    ? <TrendingUp size={9}/> :
+    action === 'cti_seen_before' ? <Shield size={9}/> :
                                   <ChevronRight size={9}/>
 
   return (
@@ -137,6 +143,15 @@ function AgentStepRow({ step: s, onPivot }) {
           <div className="space-y-0.5 mt-1">
             {s.sample.map((line, j) => (
               <p key={j} className="text-[10px] text-gray-600 truncate" title={line}>{line}</p>
+            ))}
+          </div>
+        )}
+
+        {/* entity_graph / stack_rare / cti_seen_before — generic sample-line list */}
+        {['entity_graph', 'stack_rare', 'cti_seen_before'].includes(action) && (s.sample || []).length > 0 && (
+          <div className="space-y-0.5 mt-1">
+            {s.sample.map((line, j) => (
+              <p key={j} className="text-[10px] font-mono text-gray-600 truncate" title={line}>{line}</p>
             ))}
           </div>
         )}
@@ -984,8 +999,7 @@ export default function CaseAiPanel({ caseId, onClose, onSearchQuery, onOpenRepo
   return (
     <div className="panel-backdrop" onClick={onClose}>
       <div
-        className="absolute right-0 top-0 h-full w-full sm:w-[90vw] md:w-[640px] bg-white border-l border-gray-200 flex flex-col"
-        style={{ boxShadow: '-4px 0 24px rgba(0,0,0,0.10)' }}
+        className="panel-drawer md:w-[640px]"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}

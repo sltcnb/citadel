@@ -108,8 +108,7 @@ export default function CoPilotPanel({ caseId, onClose, onPivot }) {
   return (
     <div className="panel-backdrop" onClick={onClose}>
       <div
-        className="absolute right-0 top-0 h-full w-full sm:w-[90vw] md:w-[860px] max-w-full bg-white border-l border-gray-200 flex flex-col"
-        style={{ boxShadow: '-4px 0 24px rgba(0,0,0,0.10)' }}
+        className="panel-drawer md:w-[860px]"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}

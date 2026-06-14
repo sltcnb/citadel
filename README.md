@@ -35,7 +35,7 @@ git clone https://github.com/sltcnb/citadel.git && cd citadel
 ```
 Open **http://localhost** — default login `admin` / `CitadelAdmin1!` (change immediately).
 
-**Full guide → [INSTALLATION.md](INSTALLATION.md)** (Docker Compose · Helm/bring-your-own-substrate · Kubernetes · ingress for Traefik/Tailscale · resource sizing).
+**Full guide → [docs/installation.md](docs/installation.md)** (Docker Compose · Helm/bring-your-own-substrate · Kubernetes · ingress for Traefik/Tailscale · resource sizing).
 
 ---
 
@@ -47,7 +47,7 @@ Each tool is its own repo (`tools/<name>`), its own CLI, its own `brick.yaml`. R
 |------|------|----------------|----------------|
 | **Talon** | Acquisition agent | host/disk/cloud → artifact bundle | `talon collect --out case.bundle` |
 | **Sluice** | Intake & routing | bundle/file/dir → routed events (+ bus) | `sluice ingest case.bundle` |
-| **Babel** | Parser library (43+) | artifact → `ForensicEvent` | `babel parse Security.evtx` |
+| **Babel** | Parser library (44) | artifact → `ForensicEvent` | `babel parse Security.evtx` |
 | **Rosetta** | Canonicalizer | `ForensicEvent` → ECS v8 + OSSEM (+ GeoIP/ASN/rDNS) | `rosetta normalize ev.jsonl` |
 | **Sigil** | Detection engine | ECS + rules → detections | `sigil validate ./rules/` |
 | **Anvil** | Analysis runner | artifact + module → findings | `anvil run volatility3 -a mem.raw` |
@@ -67,7 +67,7 @@ Each tool ships a `capabilities.yaml` declaring, per platform, what it can do an
 | Area | What |
 |------|------|
 | **Ingestion** | 40+ forensic formats auto-detected (EVTX, MFT, Registry, Prefetch, LNK, PCAP, Plaso, syslog, Zeek, Suricata, browsers, Android/iOS, disk images) |
-| **Detection** | 1 628 built-in rules (1 487 Sigma across 13 ATT&CK tactics + 141 ES queries); Sigma→ES conversion; ATT&CK coverage matrix; SigmaHQ import; runtime Sigma opt-out (global + per-case) |
+| **Detection** | 1 666 built-in rules (1 487 Sigma across 13 ATT&CK tactics + 179 native ES queries); Sigma→ES conversion; ATT&CK coverage matrix; SigmaHQ import; runtime Sigma opt-out (global + per-case) |
 | **Analysis** | Hayabusa, RegRipper, YARA, Volatility3, capa/FLOSS, oletools, PE/strings, CTI IOC matching — typed `BaseModule` + DAG pipelines |
 | **Search** | Elasticsearch full-text + facets, saved queries, timeline, CSV export, cross-case search |
 | **Normalize** | `ForensicEvent → ECS v8` + OSSEM ATT&CK; GeoIP / ASN / reverse-DNS enrichment of IP fields |
@@ -106,7 +106,7 @@ Each tool ships a `capabilities.yaml` declaring, per platform, what it can do an
 ```
 Add a parser or a tool: [docs → Contributing](docs/contributing.md). CI (`.github/workflows/`) runs lint, the test gate, multi-arch image builds + Trivy/SBOM, and `mkdocs build --strict`.
 
-Full documentation site (`mkdocs serve`): [`docs/`](docs/) — Getting Started · Architecture · Operations · Testing · Contributing · ADRs.
+Full documentation site (`mkdocs serve`): [`docs/`](docs/) — Installation · Getting Started · Architecture · Operations · Testing · Contributing.
 
 ---
 
