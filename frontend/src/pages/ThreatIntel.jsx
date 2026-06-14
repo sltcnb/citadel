@@ -87,6 +87,7 @@ function FeedModal({ feed, onClose, onSaved }) {
     poll_interval_unit:   feed?.poll_interval_unit  ?? 'hours',
     auto_pull:            feed?.auto_pull !== false,
     enabled:              feed?.enabled   !== false,
+    verify_ssl:           feed?.verify_ssl !== false,
   })
   const [saving, setSaving] = useState(false)
 
@@ -226,6 +227,20 @@ function FeedModal({ feed, onClose, onSaved }) {
                 </div>
               )}
             </div>
+          )}
+
+          {/* TLS verification — only relevant for feeds that fetch over a URL */}
+          {(form.type !== 'manual' || form.url?.trim()) && (
+            <label className="flex items-start gap-2 text-xs text-gray-600 cursor-pointer select-none">
+              <input type="checkbox" checked={form.verify_ssl} onChange={e => set('verify_ssl', e.target.checked)}
+                className="mt-0.5 rounded border-gray-300 accent-brand-accent" />
+              <span>
+                Verify the server's TLS certificate
+                <span className="block text-[10px] text-gray-400">
+                  Uncheck only for an internal MISP/TAXII with a self-signed certificate you trust.
+                </span>
+              </span>
+            </label>
           )}
 
           {/* Enabled */}
