@@ -3863,6 +3863,25 @@ def _agent_run(
         "is_followup": bool(parent_transcript),
         "run_id": run_id or "",  # stable key for feedback & cross-refs
     }
+    # Confidence calibration (#8) + cross-case memory (#5): annotate the verdict
+    # with confidence bands and persist surfaced IOCs/TTPs/verdict to the global
+    # Pilot memory so future cases get the "seen before" signal. Best-effort —
+    # never let it break a completed run.
+    try:
+        from services import pilot_memory as _pm
+
+        if final and final.get("action") == "conclude":
+            result_doc["final"] = _pm.calibrate_verdict(final)
+            for ioc in (final.get("indicators") or [])[:50]:
+                _pm.remember(case_id, "ioc", ioc, {"run_id": run_id or ""})
+            for ttp in (final.get("mitre_techniques") or [])[:50]:
+                _pm.remember(case_id, "ttp", ttp, {"run_id": run_id or ""})
+            if final.get("verdict"):
+                _pm.remember(case_id, "verdict", final["verdict"][:300], {"run_id": run_id or ""})
+            final = result_doc["final"]
+    except Exception as exc:
+        logger.warning("Pilot memory/calibration hook failed: %s", exc)
+
     # Persist for next time the panel opens.
     key = f"case:{case_id}:ai:agent_runs"
     _redis().lpush(key, json.dumps(result_doc))

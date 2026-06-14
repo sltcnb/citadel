@@ -303,6 +303,18 @@ function AgentStepRow({ step: s, onPivot }) {
             </span>
           </div>
         )}
+        {/* #8 calibrated confidence — flags an overconfident/under-evidenced verdict */}
+        {isFinal && s.calibration && (s.calibration.low_confidence || s.calibration.needs_more_data) && (
+          <div className="mt-1.5 flex items-start gap-1.5 rounded bg-amber-50 border border-amber-200 px-2 py-1">
+            <AlertTriangle size={11} className="text-amber-600 mt-0.5 flex-shrink-0" />
+            <span className="text-[10px] text-amber-800 leading-snug">
+              {s.calibration.needs_more_data
+                ? 'Low evidence for the leading verdict — treat as tentative; collect more before acting.'
+                : `Calibrated confidence: ${s.calibration.band || 'low'}.`}
+              {s.calibration.rationale ? ` ${s.calibration.rationale}` : ''}
+            </span>
+          </div>
+        )}
         {isFinal && (s.hypotheses || []).length > 0 && (
           <div className="mt-2 space-y-1.5">
             <p className="text-[9px] font-semibold text-gray-500 uppercase tracking-widest">Hypotheses</p>
