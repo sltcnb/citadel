@@ -2148,6 +2148,11 @@ Query rules:
   - Wildcard FIELD names are INVALID (`evtx.event_data.*:x` → HTTP 400).
     Use `message:*x*` or a concrete dotted field. Never retry a query
     shape that returned "invalid".
+  - To AGGREGATE on a text field (host.hostname, user.name, message,
+    http.request_path…) use its `.keyword` twin (host.hostname.keyword). Plain
+    text fields aren't aggregatable; the backend now auto-falls back to
+    `.keyword` for you, but prefer it directly. keyword/ip/int fields
+    (artifact_type, network.src_ip, evtx.event_id) aggregate as-is.
   - Forward slashes are handled for you — write paths/versions literally
     (`message:*HTTP/2*`, `http.request_path:*/app/129/*`). Do NOT try to
     escape them with backslashes; that only breaks the query.
@@ -2330,8 +2335,9 @@ def _tool_aggregate(case_id: str, step: dict) -> dict:
     size = min(25, max(1, int(step.get("agg_size") or 10)))
     qstr = escape_lucene_query((step.get("agg_query") or "").strip() or "*")
     index = f"fo-case-{case_id}-*"
-    try:
-        res = _es_req(
+
+    def _run(agg_field: str) -> dict:
+        return _es_req(
             "POST",
             f"/{index}/_search",
             {
@@ -2345,29 +2351,53 @@ def _tool_aggregate(case_id: str, step: dict) -> dict:
                         "lenient": True,
                     }
                 },
-                "aggs": {"terms": {"terms": {"field": field, "size": size, "missing": "(none)"}}},
+                "aggs": {"terms": {"terms": {"field": agg_field, "size": size, "missing": "(none)"}}},
             },
         )
+
+    used_field = field
+    note = None
+    try:
+        try:
+            res = _run(field)
+        except urllib.error.HTTPError as exc:
+            # Aggregating a `text` field (host.hostname, message, user.name…)
+            # 400s with "fielddata is disabled". The aggregatable twin is the
+            # `.keyword` sub-field — retry there transparently instead of
+            # bouncing the failure back to the model (which then loops).
+            body = ""
+            try:
+                body = exc.read().decode("utf-8", "ignore")
+            except Exception:
+                pass
+            retryable = exc.code == 400 and ("fielddata" in body or "not optimised" in body or "illegal_argument" in body)
+            if retryable and not field.endswith(".keyword"):
+                used_field = f"{field}.keyword"
+                res = _run(used_field)
+                note = f"'{field}' is a text field (not aggregatable) — used '{used_field}' instead."
+            else:
+                raise
         buckets = [
             {"value": b.get("key"), "count": int(b.get("doc_count", 0))}
             for b in (res.get("aggregations", {}).get("terms", {}).get("buckets", []))
         ]
         total = (res.get("hits", {}).get("total") or {}).get("value", 0)
-        # Detect "field doesn't exist on the matched docs" — every bucket
-        # collapses into the synthetic (none) entry. Surface it explicitly so
-        # the agent knows to try a different field.
         missing_only = (
             len(buckets) == 1
             and buckets[0]["value"] == "(none)"
             and buckets[0]["count"] == total
             and total > 0
         )
-        return {
+        out = {
             "result_count": int(total),
             "agg_buckets": buckets,
             "query_status": "ok",
             "field_absent": missing_only,
+            "agg_field": used_field,
         }
+        if note:
+            out["note"] = note
+        return out
     except (urllib.error.HTTPError, Exception) as exc:
         return {"result_count": None, "query_status": "invalid", "query_error": str(exc)[:200]}
 
