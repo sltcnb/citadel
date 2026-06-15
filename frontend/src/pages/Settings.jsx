@@ -1374,6 +1374,9 @@ export default function Settings() {
           </form>
         )}
       </section>
+
+      {/* Pilot agent capabilities — tools, module launching, web search */}
+      <PilotSettingsSection />
       </LicenseGate>
     )
   }
@@ -2057,9 +2060,6 @@ export default function Settings() {
 
         {/* SSO / Single Sign-On (Google + Microsoft OIDC) */}
         <SSOSettingsSection />
-
-        {/* Pilot agent capabilities */}
-        <PilotSettingsSection />
 
         {/* Report template */}
         <section className="card p-5 space-y-4">

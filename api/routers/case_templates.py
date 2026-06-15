@@ -141,20 +141,33 @@ def _load_custom() -> dict[str, dict]:
 
 
 def _get_template(tid: str) -> dict | None:
-    """Resolve a template id, custom store taking precedence over built-ins."""
+    """Resolve a template id, custom store taking precedence over built-ins.
+
+    A custom entry stored under a *built-in* id is an admin edit of that
+    built-in (an "override") — it shadows the shipped definition but the
+    built-in remains as the reset target.
+    """
     custom = _load_custom()
     if tid in custom:
-        return {**custom[tid], "id": tid, "builtin": False}
+        is_builtin = tid in TEMPLATES
+        return {**custom[tid], "id": tid, "builtin": is_builtin, "overridden": is_builtin}
     if tid in TEMPLATES:
-        return {**TEMPLATES[tid], "builtin": True}
+        return {**TEMPLATES[tid], "id": tid, "builtin": True}
     return None
 
 
 def _all_templates() -> list[dict]:
-    """Built-ins first, then custom templates."""
-    out = [{**t, "builtin": True} for t in TEMPLATES.values()]
-    for tid, t in _load_custom().items():
-        out.append({**t, "id": tid, "builtin": False})
+    """Built-ins (with any admin override applied) first, then pure customs."""
+    custom = _load_custom()
+    out: list[dict] = []
+    for tid, t in TEMPLATES.items():
+        if tid in custom:
+            out.append({**custom[tid], "id": tid, "builtin": True, "overridden": True})
+        else:
+            out.append({**t, "id": tid, "builtin": True})
+    for tid, t in custom.items():
+        if tid not in TEMPLATES:
+            out.append({**t, "id": tid, "builtin": False})
     return out
 
 
@@ -225,6 +238,7 @@ def list_templates(_: dict = Depends(get_current_user)):
                 "watchlist_count": len(t["watchlist"]),
                 "tags": t["tags"],
                 "builtin": t["builtin"],
+                "overridden": bool(t.get("overridden")),
             }
             for t in _all_templates()
         ]
@@ -270,17 +284,18 @@ def create_template(data: dict = Body(...), _: dict = Depends(require_admin)):
 
 @router.put("/case-templates/{template_id}")
 def update_template(template_id: str, data: dict = Body(...), _: dict = Depends(require_admin)):
-    if template_id in TEMPLATES:
-        raise HTTPException(
-            status_code=400, detail="built-in templates can't be edited; clone it instead"
-        )
+    # Built-ins are editable: the edit is persisted as an override in the custom
+    # store under the built-in's id, shadowing the shipped definition. The
+    # built-in itself stays put so the edit can be reset (DELETE the override).
+    is_builtin = template_id in TEMPLATES
     fields = _validate_payload(data)
 
     def _mutate(cur: dict) -> dict:
-        if template_id not in cur:
+        if template_id not in cur and not is_builtin:
             raise HTTPException(status_code=404, detail=f"Template '{template_id}' not found")
+        base = cur.get(template_id) or TEMPLATES.get(template_id) or {}
         cur[template_id] = {
-            **cur[template_id],
+            **base,
             **fields,
             "id": template_id,
             "updated_at": datetime.now(UTC).isoformat(),
@@ -288,14 +303,18 @@ def update_template(template_id: str, data: dict = Body(...), _: dict = Depends(
         return cur
 
     store = mutate_json(get_redis(), CUSTOM_KEY, _mutate, {})
-    return {**store[template_id], "builtin": False}
+    return {**store[template_id], "builtin": is_builtin, "overridden": is_builtin}
 
 
 @router.delete("/case-templates/{template_id}")
 def delete_template(template_id: str, _: dict = Depends(require_admin)):
-    if template_id in TEMPLATES:
+    # For a custom template this deletes it. For a built-in with an override it
+    # removes the override = "reset to built-in". A built-in with no override
+    # has nothing to delete.
+    is_builtin = template_id in TEMPLATES
+    if is_builtin and template_id not in _load_custom():
         raise HTTPException(
-            status_code=400, detail="built-in templates can't be edited; clone it instead"
+            status_code=400, detail="built-in template has no edits to reset"
         )
 
     def _mutate(cur: dict) -> dict:
@@ -305,7 +324,7 @@ def delete_template(template_id: str, _: dict = Depends(require_admin)):
         return cur
 
     mutate_json(get_redis(), CUSTOM_KEY, _mutate, {})
-    return {"deleted": template_id}
+    return {"reset": template_id} if is_builtin else {"deleted": template_id}
 
 
 @router.get("/cases/{case_id}/case-templates/{template_id}")

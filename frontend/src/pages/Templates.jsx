@@ -1,13 +1,14 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
-  LayoutTemplate, Plus, Pencil, Trash2, Copy, Loader2, X, Save, AlertCircle, Lock,
+  LayoutTemplate, Plus, Pencil, Trash2, Copy, Loader2, X, Save, AlertCircle, Lock, RotateCcw,
 } from 'lucide-react'
 import { PageShell, PageHeader } from '../components/shared/PageShell'
 import { api } from '../api/client'
 
-// Investigation-template authoring page. Built-ins are read-only (clone to
-// customize); custom templates are full CRUD. The same templates are applied
-// per-case from the case's Templates panel.
+// Investigation-template authoring page. Built-ins can be edited in place
+// (the edit is stored as an override; Reset restores the shipped default) or
+// cloned to a new custom template; custom templates are full CRUD. The same
+// templates are applied per-case from the case's Templates panel.
 
 const IOC_KINDS = ['cmdline', 'regex', 'domain', 'ip', 'hash', 'filename', 'user', 'host']
 const BLANK = { name: '', description: '', tags: [], watchlist: [], rule_categories: [], notes: '' }
@@ -158,12 +159,18 @@ export default function Templates() {
     catch (e) { setError(e.message || 'Delete failed') }
   }
 
+  async function reset(t) {
+    if (!confirm(`Reset "${t.name}" to its built-in default? Your edits will be discarded.`)) return
+    try { await api.caseTemplates.remove(t.id); load() }
+    catch (e) { setError(e.message || 'Reset failed') }
+  }
+
   return (
     <PageShell>
       <PageHeader
         title="Investigation Templates"
         icon={LayoutTemplate}
-        subtitle="Reusable kits — watchlist IOCs, rule categories, and a notes skeleton — applied to a case from its Templates panel. Built-ins are read-only; clone one to customize."
+        subtitle="Reusable kits — watchlist IOCs, rule categories, and a notes skeleton — applied to a case from its Templates panel. Edit built-ins in place (Reset restores the default) or clone one to a new custom template."
       />
 
       <div className="card p-3 mb-4 flex items-center justify-between">
@@ -190,6 +197,7 @@ export default function Templates() {
                   {t.builtin
                     ? <span className="badge text-[10px] bg-gray-100 text-gray-500 border border-gray-200"><Lock size={8} className="inline mr-0.5" />built-in</span>
                     : <span className="badge text-[10px] bg-brand-accentlight text-brand-accent border border-brand-accent/30">custom</span>}
+                  {t.overridden && <span className="badge text-[10px] bg-amber-50 text-amber-700 border border-amber-200">edited</span>}
                   {(t.tags || []).slice(0, 4).map(tag => (
                     <span key={tag} className="badge-pill bg-brand-soft text-brand-accent text-[10px] px-1.5">{tag}</span>
                   ))}
@@ -199,9 +207,15 @@ export default function Templates() {
               </div>
               <div className="flex items-center gap-1 flex-shrink-0">
                 {t.builtin ? (
-                  <button onClick={() => openEditor(t, true)} className="btn-ghost text-xs" title="Clone to a custom template">
-                    <Copy size={13} /> Clone
-                  </button>
+                  <>
+                    <button onClick={() => openEditor(t, false)} className="icon-btn" title="Edit built-in"><Pencil size={13} /></button>
+                    {t.overridden && (
+                      <button onClick={() => reset(t)} className="icon-btn text-amber-500 hover:text-amber-700" title="Reset to built-in default"><RotateCcw size={13} /></button>
+                    )}
+                    <button onClick={() => openEditor(t, true)} className="btn-ghost text-xs" title="Clone to a custom template">
+                      <Copy size={13} /> Clone
+                    </button>
+                  </>
                 ) : (
                   <>
                     <button onClick={() => openEditor(t, false)} className="icon-btn" title="Edit"><Pencil size={13} /></button>
