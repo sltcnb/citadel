@@ -33,6 +33,7 @@ from pydantic import BaseModel
 from services import jobs as job_svc
 from services import storage
 from services.cases import get_case
+from services.safe_paths import UnsafePathError, safe_join
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["ingest"])
@@ -420,7 +421,10 @@ async def ingest_chunk(
         raise HTTPException(status_code=400, detail="Invalid upload_id")
 
     safe_name = re.sub(r"[^\w.\-]", "_", filename)[:200]
-    tmp_path = str(_CHUNK_DIR / f"{upload_id}_{safe_name}")
+    try:
+        tmp_path = str(safe_join(_CHUNK_DIR, f"{upload_id}_{safe_name}"))
+    except UnsafePathError:
+        raise HTTPException(status_code=400, detail="Invalid filename")
 
     loop = asyncio.get_event_loop()
     try:

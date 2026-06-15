@@ -3070,8 +3070,9 @@ function ReportPanel({ caseId, onClose }) {
     if (!aiReport?.content) return
     const win = window.open('', '_blank')
     if (!win) return
+    const esc = s => String(s).replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]))
     win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8">
-<title>AI Investigation Report — Case ${caseId}</title>
+<title>AI Investigation Report — Case ${esc(caseId)}</title>
 <style>body{font-family:system-ui,sans-serif;font-size:13px;padding:40px;line-height:1.7;color:#111;max-width:900px;margin:0 auto;}
 h1,h2,h3{font-weight:600;margin-top:1.5em;}h1{font-size:1.4em;}h2{font-size:1.1em;border-bottom:1px solid #eee;padding-bottom:4px;}
 h3{font-size:1em;}pre,code{background:#f5f5f5;padding:2px 6px;border-radius:3px;font-family:monospace;}

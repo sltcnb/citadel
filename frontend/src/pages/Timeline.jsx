@@ -657,7 +657,7 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
     for (const [k, v] of Object.entries(facetFilters)) {
       const f = FACET_FIELD[k]
       if (!f || v === undefined || v === '') continue
-      and(NUMERIC.has(k) ? `${f}:${v}` : `${f}:"${String(v).replace(/"/g, '\\"')}"`)
+      and(NUMERIC.has(k) ? `${f}:${v}` : `${f}:"${String(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`)
     }
     return q
   }, [query, selectedTypesStr, selectedLevel, flaggedOnly, facetFilters])
