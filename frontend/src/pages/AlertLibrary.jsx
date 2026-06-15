@@ -14,7 +14,7 @@ import RuleDrawer, {
   CATEGORY_ORDER, CATEGORY_STYLES,
 } from '../components/RuleDrawer'
 import AlertRuleFilterBar from '../components/AlertRuleFilterBar'
-import { filterAlertRules } from '../lib/alertRuleFilters'
+import { filterAlertRules, ruleProvenance } from '../lib/alertRuleFilters'
 
 // ── AI Analysis panel (shown inside RunOnCaseModal after a firing result) ──────
 function AiAnalysisPanel({ rule, result }) {
@@ -406,7 +406,7 @@ export default function AlertLibrary() {
   }
   const [artifactFilter, setArtifactFilter] = useState('all')
   const [categoryFilter, setCategoryFilter] = useState('all')
-  const [provenanceFilter, setProvenanceFilter] = useState('all')
+  const [provenanceFilter, setProvenanceFilter] = useState('custom')
   const searchRef = useRef(null)
 
   useKeyboardShortcuts([
@@ -418,21 +418,31 @@ export default function AlertLibrary() {
     [rules, search, provenanceFilter, categoryFilter, artifactFilter]
   )
 
-  const groupedRules = useMemo(() => {
+  // Group rules by MITRE category, preserving CATEGORY_ORDER then "Other".
+  function groupByCategory(list) {
     const groups = new Map()
     for (const cat of CATEGORY_ORDER) {
-      const items = filteredRules.filter(r => (r.category || 'Other') === cat)
+      const items = list.filter(r => (r.category || 'Other') === cat)
       if (items.length > 0) groups.set(cat, items)
     }
     const known = new Set(CATEGORY_ORDER)
-    const uncategorized = filteredRules.filter(r => !known.has(r.category || 'Other'))
+    const uncategorized = list.filter(r => !known.has(r.category || 'Other'))
     if (uncategorized.length > 0) {
       groups.set('Other', [...(groups.get('Other') || []), ...uncategorized])
     }
     return groups
-  }, [filteredRules])
+  }
 
-  const hasFilters = !!(search || artifactFilter !== 'all' || categoryFilter !== 'all' || provenanceFilter !== 'all')
+  // Sigma rules are community-imported noise — fold them into a collapsed
+  // section so custom/legacy rules stay front-and-center. They still render
+  // grouped, just behind one click (open by default if the user explicitly
+  // filtered to Sigma).
+  const primaryRules = useMemo(() => filteredRules.filter(r => ruleProvenance(r) !== 'sigma'), [filteredRules])
+  const sigmaRules   = useMemo(() => filteredRules.filter(r => ruleProvenance(r) === 'sigma'), [filteredRules])
+  const groupedRules      = useMemo(() => groupByCategory(primaryRules), [primaryRules])
+  const groupedSigmaRules = useMemo(() => groupByCategory(sigmaRules),   [sigmaRules])
+
+  const hasFilters = !!(search || artifactFilter !== 'all' || categoryFilter !== 'all' || provenanceFilter !== 'custom')
 
   const loadRules = useCallback(() => {
     api.alertRules.listLibrary()
@@ -479,7 +489,7 @@ export default function AlertLibrary() {
     setSearch('')
     setArtifactFilter('all')
     setCategoryFilter('all')
-    setProvenanceFilter('all')
+    setProvenanceFilter('custom')
   }
 
   return (
@@ -646,6 +656,40 @@ export default function AlertLibrary() {
                 </div>
               </div>
             ))}
+
+            {/* Sigma rules — community detections, folded away by default */}
+            {sigmaRules.length > 0 && (
+              <details open={provenanceFilter === 'sigma'} className="border border-gray-200 rounded-xl overflow-hidden">
+                <summary className="cursor-pointer select-none px-4 py-3 bg-gray-50 hover:bg-gray-100 transition-colors flex items-center gap-2 text-sm">
+                  <ChevronDown size={14} className="text-gray-400" />
+                  <span className="font-semibold text-gray-600">Sigma rules</span>
+                  <span className="badge-pill bg-gray-100 text-gray-500">{sigmaRules.length}</span>
+                  <span className="text-xs text-gray-400 ml-1">community detections — click to expand</span>
+                </summary>
+                <div className="px-4 py-4 space-y-4 border-t border-gray-100">
+                  {[...groupedSigmaRules.entries()].map(([cat, items]) => (
+                    <div key={cat}>
+                      <div className="flex items-center gap-2 mb-2">
+                        <CategoryBadge category={cat} />
+                        <span className="text-xs text-gray-500">{items.length}</span>
+                      </div>
+                      <div className="space-y-2">
+                        {items.map(rule => (
+                          <LibraryRuleCard
+                            key={rule.id}
+                            rule={rule}
+                            cases={cases}
+                            onDelete={deleteRule}
+                            onUpdated={handleUpdated}
+                            onEdit={r => setDrawerRule(r)}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
           </div>
         )}
       </div>
