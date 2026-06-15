@@ -92,11 +92,12 @@ function PilotSettingsSection() {
   function hydrate(c) {
     setCfg(c)
     setForm({
+      agent_max_steps:        c.agent_max_steps ?? 50,
       disabled_tools:         c.disabled_tools || [],
       allow_module_launch:    c.allow_module_launch !== false,
       module_launch_cap:      c.module_launch_cap ?? 3,
       web_search_enabled:     !!c.web_search_enabled,
-      web_search_provider:    c.web_search_provider || 'tavily',
+      web_search_provider:    c.web_search_provider || 'model',
       web_search_api_key:     '',  // never echoed; blank = keep stored
       web_search_max_results: c.web_search_max_results ?? 5,
     })
@@ -150,6 +151,18 @@ function PilotSettingsSection() {
         </div>
       ) : form && (
         <form onSubmit={save} className="space-y-5">
+          {/* Step budget */}
+          <div className="space-y-1">
+            <h3 className="text-xs font-semibold text-gray-700">Investigation budget</h3>
+            <label className="flex items-center gap-2 text-xs text-gray-600">
+              Max steps per run
+              <input type="number" min={1} max={200} value={form.agent_max_steps}
+                onChange={e => setF('agent_max_steps', parseInt(e.target.value || '1', 10))}
+                className="w-20 border border-gray-200 rounded px-2 py-1 text-xs" />
+              <span className="text-gray-400">(1–200; higher = deeper but costlier)</span>
+            </label>
+          </div>
+
           {/* Tool enable/disable */}
           <div className="space-y-2">
             <h3 className="text-xs font-semibold text-gray-700">Enabled tools</h3>
@@ -205,21 +218,28 @@ function PilotSettingsSection() {
                     onChange={e => setF('web_search_max_results', parseInt(e.target.value || '5', 10))}
                     className="w-14 border border-gray-200 rounded px-2 py-1 text-xs" />
                 </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">
-                    API key {cfg?.web_search_api_key_set && <span className="text-gray-400">(set — leave blank to keep)</span>}
-                  </label>
-                  <div className="relative">
-                    <input type={showKey ? 'text' : 'password'} value={form.web_search_api_key}
-                      onChange={e => setF('web_search_api_key', e.target.value)}
-                      placeholder={cfg?.web_search_api_key_set ? '••••••••' : 'provider API key'}
-                      className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 pr-9" />
-                    <button type="button" onClick={() => setShowKey(s => !s)}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
-                      {showKey ? <EyeOff size={14} /> : <Eye size={14} />}
-                    </button>
+                {form.web_search_provider === 'model' ? (
+                  <p className="text-[11px] text-gray-500 flex items-center gap-1.5">
+                    <Info size={12} className="text-sky-500 flex-shrink-0" />
+                    Uses the configured LLM's own web search (no separate key). Needs an Anthropic provider in the AI Analysis section above.
+                  </p>
+                ) : (
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                      API key {cfg?.web_search_api_key_set && <span className="text-gray-400">(set — leave blank to keep)</span>}
+                    </label>
+                    <div className="relative">
+                      <input type={showKey ? 'text' : 'password'} value={form.web_search_api_key}
+                        onChange={e => setF('web_search_api_key', e.target.value)}
+                        placeholder={cfg?.web_search_api_key_set ? '••••••••' : 'provider API key'}
+                        className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 pr-9" />
+                      <button type="button" onClick={() => setShowKey(s => !s)}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                        {showKey ? <EyeOff size={14} /> : <Eye size={14} />}
+                      </button>
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
             )}
           </div>
@@ -494,10 +514,8 @@ const PLATFORM_NUMERIC_FIELDS = [
     key: 'login_rate_window_seconds', label: 'Login rate window (seconds)', min: 1,
     help: 'Length of the rolling window for the login attempt limit above.',
   },
-  {
-    key: 'agent_max_steps', label: 'Pilot agent max steps', min: 1,
-    help: 'Per-run ceiling on autonomous Pilot agent steps (bounds cost). Capped by the server hard limit (50).',
-  },
+  // agent_max_steps is configured in Settings → AI (Pilot) now — still sent in
+  // this payload from the loaded value so the platform fallback stays in sync.
   {
     key: 'max_upload_gib', label: 'Max upload size (GiB)', min: 1,
     help: 'Upload cap for standalone malware/ingest files. Enforced per request.',

@@ -57,11 +57,20 @@ KNOWN_TOOLS = (
     "web_search",
 )
 
-WEB_SEARCH_PROVIDERS = ("tavily", "brave")
+# "model" = use the configured LLM provider's NATIVE web search (Anthropic /
+# OpenAI server-side tool) — no separate key needed. tavily/brave use a
+# standalone search API key.
+WEB_SEARCH_PROVIDERS = ("model", "tavily", "brave")
+
+
+# Hard ceiling on the per-run step budget (matches AGENT_MAX_STEPS in
+# llm_config). The admin value is clamped to this.
+AGENT_MAX_STEPS_CAP = 200
 
 
 def _defaults() -> dict:
     return {
+        "agent_max_steps": 50,
         "disabled_tools": [],
         "allow_module_launch": True,
         "module_launch_cap": 3,
@@ -96,18 +105,24 @@ def get_pilot_config() -> dict:
 
 def web_search_enabled() -> bool:
     cfg = get_pilot_config()
-    return bool(cfg.get("web_search_enabled")) and bool(cfg.get("web_search_api_key"))
+    if not cfg.get("web_search_enabled"):
+        return False
+    # The "model" provider rides the configured LLM — no separate key needed.
+    if cfg.get("web_search_provider") == "model":
+        return True
+    return bool(cfg.get("web_search_api_key"))
 
 
 # ── Pydantic models ─────────────────────────────────────────────────────────
 
 
 class PilotConfigIn(BaseModel):
+    agent_max_steps: int = 50
     disabled_tools: list[str] = []
     allow_module_launch: bool = True
     module_launch_cap: int = 3
     web_search_enabled: bool = False
-    web_search_provider: str = "tavily"
+    web_search_provider: str = "model"
     web_search_api_key: str = ""  # blank = keep stored
     web_search_max_results: int = 5
 
@@ -126,6 +141,9 @@ def _validate(body: PilotConfigIn, existing: dict) -> dict:
     if bad:
         errors.append("unknown tools in disabled_tools: " + ", ".join(bad))
 
+    if not (1 <= body.agent_max_steps <= AGENT_MAX_STEPS_CAP):
+        errors.append(f"agent_max_steps must be between 1 and {AGENT_MAX_STEPS_CAP}")
+
     if not (1 <= body.module_launch_cap <= 50):
         errors.append("module_launch_cap must be between 1 and 50")
 
@@ -142,6 +160,7 @@ def _validate(body: PilotConfigIn, existing: dict) -> dict:
     key = body.web_search_api_key.strip() or existing.get("web_search_api_key", "")
 
     return {
+        "agent_max_steps": int(body.agent_max_steps),
         "disabled_tools": sorted(set(body.disabled_tools)),
         "allow_module_launch": bool(body.allow_module_launch),
         "module_launch_cap": int(body.module_launch_cap),
