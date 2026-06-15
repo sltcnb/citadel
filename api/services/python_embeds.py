@@ -30,6 +30,8 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
+from services.safe_paths import safe_join
+
 logger = logging.getLogger(__name__)
 
 # Cache directory — persistent volume in production, /tmp fallback.
@@ -84,9 +86,13 @@ EMBED_TARGETS: dict[str, EmbedSpec] = {
 
 
 def _cache_path(target: str) -> Path:
+    # target must be one of the pinned allowlist keys — never an arbitrary
+    # string — before it is interpolated into a cache filename.
+    if target not in EMBED_TARGETS:
+        raise ValueError(f"Unknown embed target: {target}")
     spec = EMBED_TARGETS[target]
     suffix = ".zip" if spec.archive == "zip" else ".tar.gz"
-    return EMBEDS_DIR / f"{target}-{CPY_VERSION}{suffix}"
+    return safe_join(EMBEDS_DIR, f"{target}-{CPY_VERSION}{suffix}")
 
 
 def _ensure_archive(target: str) -> Path:

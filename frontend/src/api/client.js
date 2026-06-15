@@ -263,8 +263,6 @@ export const api = {
     generateSigmaRule: (data)         => request('POST',   '/alert-rules/generate-sigma', data),
     analyzeResult:   (data)           => request('POST',   '/alert-rules/analyze', data),
     parseSigma:      (data)           => request('POST',   '/alert-rules/sigma/parse', data),
-    getSigmaSettings: ()              => request('GET',    '/sigma/settings'),
-    setSigmaSettings: (enabled)       => request('PUT',    '/sigma/settings', { enabled }),
     triage:          (caseId, limit=3) => request('POST',  `/cases/${caseId}/alert-rules/triage?limit=${limit}`),
     getTriage:       (caseId)          => request('GET',   `/cases/${caseId}/alert-rules/triage`),
   },

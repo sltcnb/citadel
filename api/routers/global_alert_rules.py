@@ -604,11 +604,18 @@ def _eval_condition(condition: str, sel_map: dict[str, str]) -> str:
 
     cond = condition.strip()
 
+    # Bound input length — the splitter regexes below run on `cond`, so a
+    # pathologically long condition could cause super-linear backtracking.
+    if len(cond) > 2000:
+        raise ValueError("Sigma condition too long")
+
     # "1 of selection*" / "all of selection*"
     m = _re.match(r"^(1|all) of (\S+)$", cond)
     if m:
         quantifier, pattern = m.groups()
-        pattern_re = _re.compile("^" + pattern.replace("*", ".*") + "$")
+        # Escape the selection-name pattern before turning the wildcard `*`
+        # into `.*` — prevents regex injection from rule-supplied names.
+        pattern_re = _re.compile("^" + _re.escape(pattern).replace(r"\*", ".*") + "$")
         matched = [v for k, v in sel_map.items() if pattern_re.match(k)]
         joiner = " OR " if quantifier == "1" else " AND "
         return joiner.join(f"({v})" for v in matched) if matched else "*"

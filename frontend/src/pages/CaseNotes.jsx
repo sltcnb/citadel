@@ -148,8 +148,9 @@ function NotesTab({ caseId }) {
     const content = editorRef.current?.innerHTML || ''
     const win = window.open('', '_blank')
     if (!win) return
+    const esc = s => String(s).replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]))
     win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8">
-<title>Notes — Case ${caseId}</title>
+<title>Notes — Case ${esc(caseId)}</title>
 <style>body{font-family:monospace;font-size:13px;padding:32px;line-height:1.7;color:#111;white-space:pre-wrap;word-break:break-word;}img{max-width:100%;display:block;margin:8px 0;}@media print{body{padding:0;}}</style>
 </head><body>${content}</body></html>`)
     win.document.close()
