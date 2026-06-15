@@ -4157,6 +4157,19 @@ def _autolaunch_modules(case_id: str) -> str:
     )
 
 
+_IP_RE_FOCUS = _re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
+
+
+def _query_focus(step: dict) -> set:
+    """Salient literals a step is targeting — IPs and quoted values. Used to
+    detect ENTITY FIXATION: many steps drilling the same IP/value with slightly
+    different filters (which evades the result-count/identical-query guards)."""
+    q = f"{step.get('query', '')} {step.get('agg_query', '')}"
+    toks = set(_IP_RE_FOCUS.findall(q))
+    toks |= {m for m in _re.findall(r'"([^"]{3,80})"', q)}
+    return toks
+
+
 def _loose_json(raw: str):
     """Best-effort parse of a JSON object from an LLM reply (handles ```fences```
     and surrounding prose)."""
@@ -4494,6 +4507,33 @@ def _agent_run(
         if invalid_streak >= 5:
             stale_run = max(stale_run, 12)  # trips STALE_BUDGET_CAP below → force-conclude
 
+        # Entity-fixation guard: the worst loop isn't repeated queries — it's
+        # the model drilling the SAME entity (one IP, one value) for many steps
+        # with varied filters that all return different counts (so the count/
+        # sample guards never trip). Count the trailing run of tool steps that
+        # share a salient literal (IP / quoted value); escalate past a threshold.
+        focus_streak = 0
+        focus_common: set | None = None
+        focus_val = ""
+        for s in reversed(recent):
+            f = _query_focus(s)
+            if not f:
+                break
+            if focus_common is None:
+                focus_common = f
+            inter = focus_common & f
+            if not inter:
+                break
+            focus_common = inter
+            focus_streak += 1
+        if focus_common:
+            focus_val = sorted(focus_common)[0]
+        if focus_streak >= 8:
+            stale_run = max(stale_run, 12)  # hard stop → force-conclude with the ledger
+        elif focus_streak >= 4:
+            # nudge harder but keep going a little
+            stale_run = max(stale_run, focus_streak - 2)
+
         # HARD STOP: if the agent has spent 6+ consecutive steps on the
         # exact same (action, result_count), it's not investigating any
         # more — it's burning the step budget. Force-conclude using
@@ -4664,6 +4704,15 @@ def _agent_run(
             stale_nudge = "\n".join(stale_nudge_parts) + "\n"
         else:
             stale_nudge = ""
+        # Entity-fixation nudge — fires independently of stale_run.
+        if focus_streak >= 4 and focus_val:
+            stale_nudge += (
+                f"\n⚠ FIXATION: you've drilled '{focus_val}' for {focus_streak} steps. "
+                "You've already established what it does (see the LEDGER). STOP querying it — "
+                "either pivot to a DIFFERENT entity/angle, or CONCLUDE now citing the facts "
+                "you have. An empty http.request_path on an nginx ERROR line is normal (the "
+                "request is in the message) — not a mystery to chase.\n"
+            )
         # Compress long runs: keep the last 24 steps verbatim; older steps are
         # already distilled into the ledger above, so we just note the count.
         _HIST = 24
