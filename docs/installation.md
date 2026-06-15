@@ -125,10 +125,49 @@ assemble from per-tool repos instead: `scripts/fetch_tools.sh` (reads
 
 ---
 
+## Single Sign-On (Google / Microsoft)
+
+SSO is **off until configured** — the login page only shows provider buttons once
+a provider's client id + secret are set. Add these env vars (Docker `.env` or Helm
+`config`/`secret`) and redeploy:
+
+```bash
+# Google (one of, or both providers)
+GOOGLE_CLIENT_ID=...apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=...
+# Microsoft / Entra ID
+MICROSOFT_CLIENT_ID=...
+MICROSOFT_CLIENT_SECRET=...
+MICROSOFT_TENANT=common            # or your tenant GUID / domain
+
+SSO_REDIRECT_BASE=https://citadel.example.com   # public URL (no trailing slash)
+SSO_ALLOWED_DOMAINS=example.com,acme.com         # optional email-domain allowlist
+SSO_DEFAULT_ROLE=analyst                          # role for auto-provisioned users
+SSO_AUTO_PROVISION=true                           # create users on first SSO login
+```
+
+Register the redirect URI with each provider as
+`{SSO_REDIRECT_BASE}/api/v1/auth/sso/{google|microsoft}/callback`. The platform
+verifies the provider's `id_token` against its JWKS (signature + audience +
+issuer) before issuing a Citadel session.
+
+## Roles, groups & permissions (RBAC)
+
+Beyond the built-in roles (admin / analyst / developer / guest), admins manage
+**groups** and **per-user permissions** under **Users** (`/users`): a group bundles
+roles + granular permissions + a company scope + members; a user's effective
+access is the union of their role, their groups, and any direct permissions.
+Per-company isolation scopes what cases each user sees.
+
 ## Post-install
 
 - Set the new admin password at first sign-in (enforced).
 - For premium tiers, add a license key (see [Licensing](licensing.md)); no key → Community.
+
+> **Upgrading an existing deployment?** New features (SSO, RBAC groups, in-app
+> Talon harvest, editable templates) ship in the API + frontend images — run
+> `./foctl update` to rebuild and redeploy, or a fresh `./foctl deploy …`. A
+> running instance on an older image won't show them until rebuilt.
 
 ## Troubleshooting
 
