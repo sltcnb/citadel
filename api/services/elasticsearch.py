@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import urllib.error
 import urllib.request
 from typing import Any
@@ -84,6 +85,31 @@ def es_request(method: str, path: str, body: dict | None = None) -> dict:
 # _request as es_req` — keep the private name pointing at the public one so
 # those imports keep working untouched.
 _request = es_request
+
+
+# A balanced `/regex/` token (slash, body, slash). Used to decide whether a
+# query is *intentionally* a Lucene regex before we touch its slashes.
+_BALANCED_REGEX_RE = re.compile(r"/(?:[^/\\]|\\.)+/")
+
+
+def escape_lucene_query(query: str, preserve_regex: bool = False) -> str:
+    """Neutralise stray forward slashes in a Lucene ``query_string``.
+
+    Lucene treats an unescaped ``/`` as the start of a regexp; a lone or
+    unbalanced slash (e.g. ``message:*HTTP/2*`` or a URL path) makes the whole
+    query unparseable and Elasticsearch returns **HTTP 400**. Models can't be
+    relied on to escape these consistently, so we do it server-side: every
+    ``/`` that isn't already backslash-escaped becomes ``\\/`` (a literal slash
+    to Lucene).
+
+    With ``preserve_regex=True`` a query that contains a balanced ``/regex/``
+    token is left untouched, so the UI's deliberate regex search still works.
+    """
+    if not query:
+        return query
+    if preserve_regex and _BALANCED_REGEX_RE.search(query):
+        return query
+    return re.sub(r"(?<!\\)/", r"\\/", query)
 
 
 # --- Reusable query-building helpers (pure functions, unit-testable) ---
@@ -281,6 +307,10 @@ def search_events(
     filter_clauses: list[dict] = []
 
     if query:
+        # Stray forward slashes (URL paths, "HTTP/2") otherwise make Lucene
+        # try to parse a regexp and 400 the whole query. Escape them — but keep
+        # a deliberate /regex/ search intact.
+        query = escape_lucene_query(query, preserve_regex=True)
         # Full Lucene query_string over all indexed fields.
         # Inline regexes work natively: /pattern/ syntax in the query string.
         #
@@ -534,7 +564,7 @@ def search_events_for_rule(case_id: str, query: str, size: int = 10) -> list[dic
     body = {
         "query": {
             "query_string": {
-                "query": query,
+                "query": escape_lucene_query(query, preserve_regex=True),
                 "default_operator": "AND",
                 "fields": ["*"],
                 "allow_leading_wildcard": True,
