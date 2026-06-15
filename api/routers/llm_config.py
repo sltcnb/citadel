@@ -2207,9 +2207,14 @@ THREAT INTEL — use it, it's high-signal (do this EARLY, ~first 5 steps):
     {"action":"launch_module","module_id":"cti_match"}, then `read_module_result`
     with the returned run_id (or re-search `artifact_type:cti_match`). Do this
     before concluding there are no CTI hits.
-  - Same for any scanner that hasn't run (Hayabusa for evtx, YARA for files):
-    `launch_module` it, then `read_module_result`. Don't conclude "no evidence"
-    when the producing module simply hasn't run.
+  - LAUNCH ANALYSIS MODULES when the evidence lives in an artifact a scanner
+    produces and that scanner hasn't run. The case context lists the modules
+    that fit this case's files (or call `list_modules`). Examples: hayabusa
+    (Windows evtx → Sigma detections), regripper (registry hives → keys),
+    yara/strings (files → signatures/IOCs), plaso (super-timeline), cti_match
+    (IOC DB). Flow: `list_modules` → `launch_module` module_id=… →
+    `read_module_result` run_id=…. Don't conclude "no evidence" when the
+    producing module simply hasn't been run yet.
 
 COVERAGE CHECK — do this before burning steps:
   Step 1-3 should establish WHICH artifact types exist (aggregate on
@@ -2852,6 +2857,37 @@ def _tool_set_hypotheses(case_id: str, step: dict) -> dict:
     }
 
 
+def _tool_list_modules(case_id: str, step: dict) -> dict:
+    """List analysis modules the agent can launch on this case, ranked by how
+    many of the case's files each applies to. The model uses this to pick a
+    sensible module_id (hayabusa for evtx, regripper for registry hives, yara
+    for files, plaso for timelining, cti_match for IOCs, …)."""
+    try:
+        from routers.modules import recommend_modules
+
+        rec = recommend_modules(case_id)
+    except Exception as exc:
+        return {"query_status": "invalid", "query_error": f"could not list modules: {exc}"}
+
+    def _fmt(m):
+        return {
+            "module_id": m.get("id"),
+            "name": m.get("name"),
+            "description": (m.get("description") or "")[:160],
+            "applies_to_files": m.get("matched_files", 0),
+        }
+
+    recommended = [_fmt(m) for m in (rec.get("recommended") or [])][:20]
+    generic = [_fmt(m) for m in (rec.get("generic") or [])][:20]
+    return {
+        "query_status": "ok",
+        "recommended": recommended,  # apply to this case's specific files
+        "generic": generic,          # run on anything (strings, cti_match, …)
+        "note": "Launch one with {\"action\":\"launch_module\",\"module_id\":\"<id>\"}, "
+        "then read_module_result with the run_id.",
+    }
+
+
 def _tool_launch_module(case_id: str, step: dict) -> dict:
     """Launch a module against this case (Hayabusa / YARA / Sigma scanners /
     etc). The agent picks module_id; backend wires source files from
@@ -3332,6 +3368,7 @@ AGENT_TOOLS = {
     "detection_rules": _tool_detection_rules,
     "watchlist": _tool_watchlist,
     "module_runs": _tool_module_runs,
+    "list_modules": _tool_list_modules,
     "launch_module": _tool_launch_module,
     "read_module_result": _tool_read_module_result,
     "web_search": _tool_web_search,
@@ -3899,12 +3936,37 @@ def _agent_run(
         if mitre
         else ""
     )
+    # Modules self-announce to Citadel; hand that catalog to the Pilot so it
+    # knows what it can launch on THIS case (ranked by file fit) without
+    # guessing module ids.
+    modules_block = ""
+    try:
+        from routers.modules import recommend_modules as _recmod
+
+        _rec = _recmod(case_id)
+        _mods = (_rec.get("recommended") or [])[:12]
+        if _mods:
+            modules_block = (
+                "\nModules you can launch on this case (launch_module module_id=… → "
+                "read_module_result), ranked by file fit:\n"
+                + "\n".join(
+                    f"  {m.get('id', ''):22s} {m.get('matched_files', 0):>4} file(s)  "
+                    f"{(m.get('description') or '')[:70]}"
+                    for m in _mods
+                )
+                + "\n  (cti_match runs the IOC database against the case — launch if "
+                "artifact_type:cti_match is empty.)\n"
+            )
+    except Exception:
+        pass
+
     base_intro = (
         f"Case: {ctx['case_name']}\n"
         f"Events: {ctx['event_count']:,}\n"
         f"Artifact types: {', '.join(ctx['artifact_types']) or 'none'}\n"
         + density_block
         + mitre_block
+        + modules_block
         + f"\nFull field list (use ONLY these — dotted, no aliases):\n"
         f"{', '.join(ctx.get('searchable_fields') or [])[:3500]}\n\n"
         + parent_hist
