@@ -2202,8 +2202,14 @@ THREAT INTEL — use it, it's high-signal (do this EARLY, ~first 5 steps):
     to check cross-case history. Consult `detection_rules` (fired rules) and
     `watchlist` for the case. These tools exist — USE them; don't rely on
     search/aggregate/inspect alone.
-  - If a needed scanner hasn't run (Hayabusa for evtx, YARA for files), you may
-    `launch_module` it, then `read_module_result`.
+  - If `artifact_type:cti_match` returns 0, the IOC matcher HASN'T RUN on this
+    case yet — that's NOT "no threat intel". LAUNCH IT:
+    {"action":"launch_module","module_id":"cti_match"}, then `read_module_result`
+    with the returned run_id (or re-search `artifact_type:cti_match`). Do this
+    before concluding there are no CTI hits.
+  - Same for any scanner that hasn't run (Hayabusa for evtx, YARA for files):
+    `launch_module` it, then `read_module_result`. Don't conclude "no evidence"
+    when the producing module simply hasn't run.
 
 COVERAGE CHECK — do this before burning steps:
   Step 1-3 should establish WHICH artifact types exist (aggregate on
@@ -2370,12 +2376,21 @@ def _tool_search(case_id: str, step: dict) -> dict:
             # an `inspect` action — earlier code truncated to 8 chars + "…",
             # which the model then sent verbatim and inspect would fail.
             samples.append(f"[{src.get('artifact_type', '?')}] fo_id={fo_id} {msg}")
-        return {
+        out = {
             "result_count": int(total),
             "sample": samples,
             "sample_ids": sample_ids,
             "query_status": "ok",
         }
+        # No CTI hits because the matcher never ran ≠ no threat intel. Nudge the
+        # agent to launch the module instead of giving up on the cti_match angle.
+        if total == 0 and "cti_match" in (step.get("query") or ""):
+            out["hint"] = (
+                "0 cti_match events — the IOC matcher likely hasn't run on this "
+                "case. Launch it: {\"action\":\"launch_module\",\"module_id\":\"cti_match\"}, "
+                "then read_module_result / re-search."
+            )
+        return out
     except (urllib.error.HTTPError, Exception) as exc:
         err = str(exc)[:200]
         # Teach instead of just failing — the dominant 400 cause is a
@@ -2911,7 +2926,10 @@ def _tool_launch_module(case_id: str, step: dict) -> dict:
         for j in jobs
         if j.get("status") in ("COMPLETED", "SKIPPED") and j.get("minio_object_key")
     ]
-    if not sources:
+    # cti_match (and other ES/Redis-driven modules) don't scan files — they
+    # query the case index + IOC DB — so don't require source files for them.
+    _NO_SOURCE_MODULES = {"cti_match"}
+    if not sources and module_id not in _NO_SOURCE_MODULES:
         return {"query_status": "invalid", "query_error": "no completed source files to scan"}
 
     # Build the module-run via the existing endpoint logic (in-process)
@@ -4033,6 +4051,25 @@ def _agent_run(
                     deep_stale += 1
         stale_run = max(stale_run, deep_stale)
 
+        # Repeated-invalid guard: a model that spams ONE action which keeps
+        # getting rejected (e.g. re-declaring set_hypotheses every step, or an
+        # unfixable bad query) never enters the `recent` set above, so the
+        # stale counters miss it and it runs to the step cap. Count the trailing
+        # run of same-action invalid steps and, past a small threshold, escalate
+        # straight to the force-conclude path.
+        invalid_streak = 0
+        _inv_action = None
+        for s in reversed(transcript):
+            if s.get("query_status") != "invalid":
+                break
+            if _inv_action is None:
+                _inv_action = s.get("action")
+            if s.get("action") != _inv_action:
+                break
+            invalid_streak += 1
+        if invalid_streak >= 5:
+            stale_run = max(stale_run, 12)  # trips STALE_BUDGET_CAP below → force-conclude
+
         # HARD STOP: if the agent has spent 6+ consecutive steps on the
         # exact same (action, result_count), it's not investigating any
         # more — it's burning the step budget. Force-conclude using
@@ -4290,12 +4327,13 @@ def _agent_run(
         # useful. Only block runaway re-declaration so it can't burn the budget.
         if action == "set_hypotheses":
             prior_decls = sum(1 for s in transcript if s.get("action") == "set_hypotheses")
-            if prior_decls >= 3:
+            if prior_decls >= 2:
                 step.update(
                     {
                         "query_status": "invalid",
-                        "query_error": "hypotheses already refined enough — "
-                        "test them with tool calls, then conclude",
+                        "query_error": "STOP — hypotheses are already declared. Do NOT call "
+                        "set_hypotheses again. Your next action MUST be a tool that TESTS them "
+                        "(search/aggregate/correlate/cti_seen_before/launch_module) or 'conclude'.",
                     }
                 )
                 transcript.append(step)
