@@ -370,7 +370,7 @@ export default function AlertRules({ caseId, onSearchQuery }) {
   const [form, setForm]                 = useState({ name:'', description:'', artifact_type:'', query:'', threshold:1 })
   const [expandedMatch, setExpandedMatch] = useState(null)
   // Rule type filter
-  const [ruleTypeFilter, setRuleTypeFilter] = useState('all')
+  const [ruleTypeFilter, setRuleTypeFilter] = useState('custom')
   // "Check All" analyses
   const [analyses, setAnalyses]           = useState({})
   const [analyzingIds, setAnalyzingIds]   = useState(new Set())

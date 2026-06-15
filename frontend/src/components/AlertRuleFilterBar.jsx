@@ -4,10 +4,10 @@ import { CATEGORY_ORDER, CATEGORY_STYLES } from './RuleDrawer'
 import { presentCategories, artifactTypes } from '../lib/alertRuleFilters'
 
 const PROVENANCE_PILLS = [
-  { id: 'all',    label: 'All rules' },
-  { id: 'sigma',  label: 'Sigma' },
   { id: 'custom', label: 'Custom' },
+  { id: 'all',    label: 'All rules' },
   { id: 'legacy', label: 'Legacy' },
+  { id: 'sigma',  label: 'Sigma' },
 ]
 
 // ── ProvenancePills ───────────────────────────────────────────────────────────
@@ -63,7 +63,7 @@ export default function AlertRuleFilterBar({
   const cats      = presentCategories(rules)
   const artifacts = artifactTypes(rules)
 
-  const hasFilters = search || provenance !== 'all' || category !== 'all' || artifact !== 'all'
+  const hasFilters = search || provenance !== 'custom' || category !== 'all' || artifact !== 'all'
 
   return (
     <div className="space-y-2">
