@@ -2162,7 +2162,9 @@ Query rules:
     shape that returned "invalid".
   - The time field is `timestamp` (NOT `@timestamp`). Date range:
     `timestamp:[2026-06-09T00:00:00Z TO 2026-06-09T23:59:59Z]`. `@timestamp`
-    is auto-rewritten for you, but use `timestamp`.
+    is auto-rewritten for you, but use `timestamp`. Timestamps may carry a local
+    offset (e.g. +02:00), so prefer a WHOLE-DAY window over a tight hour window —
+    0 hits in a 1-hour UTC slice is NOT proof the activity is absent.
   - AGGREGATION fields: keyword/ip/int fields (artifact_type, network.src_ip,
     evtx.event_id, mitre.id) aggregate AS-IS — do NOT append `.keyword` to
     them. Only TEXT fields (message, host.hostname, user.name,
@@ -2175,7 +2177,15 @@ Query rules:
   - Hashes are usually indexed LOWERCASE — always lowercase hash values.
   - If a field:value query returns 0 twice, the FIELD is probably wrong —
     re-check the field list, then fall back to message:*value*.
-  - set_hypotheses is a ONE-TIME action. Never call it twice.
+  - set_hypotheses may be REFINED later if the evidence reshapes your theories
+    (the latest set wins) — but don't spam it; 1-2 times is plenty.
+  - DON'T LOOP: if you've already found relevant evidence (a suspicious command,
+    a missing/archived log, a deletion, a service crash), STOP re-wording the
+    same search. Re-running `delete OR unlink OR remove` with new synonyms that
+    return the same hit is wasted budget. Instead INSPECT/CORRELATE that hit, or
+    CONCLUDE with what you have. A found `tar -czf …nginx-logs….tar.gz` or a
+    bash_history deletion IS the finding — report it, don't keep hunting for a
+    literally-named "delete" event that may not exist.
 
 COVERAGE CHECK — do this before burning steps:
   Step 1-3 should establish WHICH artifact types exist (aggregate on
@@ -3770,6 +3780,33 @@ def _is_cancelled(case_id: str, run_id: str) -> bool:
     return bool(_redis().exists(_AGENT_CANCEL_KEY(case_id, run_id)))
 
 
+def _llm_forced_conclude(cfg, system_prompt, base_intro, transcript, reason):
+    """When a stale guard fires, ask the LLM to conclude NOW from the evidence
+    it already gathered — instead of emitting a canned empty verdict that throws
+    away real findings. Returns a parsed conclude step, or None on any failure
+    (caller falls back to the canned verdict)."""
+    try:
+        msg = (
+            base_intro
+            + "\nTranscript so far:\n"
+            + _agent_step_history(transcript)
+            + f"\n\nSTOP SEARCHING — {reason} Output ONLY a conclude JSON object now. "
+            "SYNTHESISE the evidence you actually gathered above: suspicious commands, "
+            "missing or archived/compressed logs, file/history deletions, service "
+            "start/stop events, IOCs, hosts, users and timestamps. Do NOT say "
+            "'inconclusive' if you surfaced relevant indicators — report them, rank "
+            "the hypotheses with for/against evidence, and give an honest confidence. "
+            "action MUST be 'conclude'."
+        )
+        raw = _call_llm_with_system(cfg, system_prompt, msg, max_tokens=2000)
+        step = _parse_agent_step(raw)
+        if step.get("action") == "conclude":
+            return step
+    except Exception:
+        pass
+    return None
+
+
 def _agent_run(
     case_id: str,
     circumstance: str,
@@ -4008,35 +4045,43 @@ def _agent_run(
                 }
                 for h in declared_h
             ]
-            forced = {
-                "step": step_no,
-                "action": "conclude",
-                "thought": (
-                    f"Force-conclude — {stale_run} consecutive "
-                    "no-progress steps across varied queries."
-                ),
-                "verdict": (
-                    "The collected artifacts do not contain the events needed "
-                    "to test this scenario — repeated searches across multiple "
-                    "fields, artifact types and time windows produced no signal. "
-                    "This is a collection gap, not an exonerating result: "
-                    "collect the missing log sources (AV/EDR logs, Sysmon, "
-                    "MFT/UsnJrnl as applicable) and re-run."
-                ),
-                "incident_confirmed": "evidence_absent",
-                "linked_summary": "",
-                "evidence": [],
-                "indicators": [],
-                "mitre_techniques": [],
-                "hypotheses": synth_h,
-                "next_steps": [
-                    "Collect the log sources the scenario depends on "
-                    "(AV/EDR detection logs, Sysmon, MFT/UsnJrnl).",
-                    "Verify the relevant host/time range was actually acquired.",
-                ],
-                "confidence": 70,
-                "stopped_by": "stale_budget_guard",
-            }
+            forced = _llm_forced_conclude(
+                cfg, system_prompt, base_intro, transcript,
+                f"you've run {stale_run} no-progress steps across varied queries.",
+            )
+            if forced:
+                forced.setdefault("hypotheses", synth_h)
+                forced["stopped_by"] = "stale_budget_guard"
+            else:
+                forced = {
+                    "action": "conclude",
+                    "thought": (
+                        f"Force-conclude — {stale_run} consecutive "
+                        "no-progress steps across varied queries."
+                    ),
+                    "verdict": (
+                        "The collected artifacts do not contain the events needed "
+                        "to test this scenario — repeated searches across multiple "
+                        "fields, artifact types and time windows produced no signal. "
+                        "This is a collection gap, not an exonerating result: "
+                        "collect the missing log sources (AV/EDR logs, Sysmon, "
+                        "MFT/UsnJrnl as applicable) and re-run."
+                    ),
+                    "incident_confirmed": "evidence_absent",
+                    "linked_summary": "",
+                    "evidence": [],
+                    "indicators": [],
+                    "mitre_techniques": [],
+                    "hypotheses": synth_h,
+                    "next_steps": [
+                        "Collect the log sources the scenario depends on "
+                        "(AV/EDR detection logs, Sysmon, MFT/UsnJrnl).",
+                        "Verify the relevant host/time range was actually acquired.",
+                    ],
+                    "confidence": 70,
+                    "stopped_by": "stale_budget_guard",
+                }
+            forced["step"] = step_no
             final = forced
             transcript.append(forced)
             if run_id:
@@ -4062,29 +4107,37 @@ def _agent_run(
                 }
                 for h in declared_h
             ]
-            forced = {
-                "step": step_no,
-                "action": "conclude",
-                "thought": f"Hard force-conclude — {deep_stale} consecutive identical-shape steps.",
-                "verdict": (
-                    "Investigation stopped after the agent repeated the same "
-                    f"query shape {deep_stale} times in a row without progress. "
-                    "The available evidence is insufficient to confirm or refute "
-                    "the scenario; the agent could not break out of the loop."
-                ),
-                "incident_confirmed": "inconclusive",
-                "linked_summary": "",
-                "evidence": [],
-                "indicators": [],
-                "mitre_techniques": [],
-                "hypotheses": synth_h,
-                "next_steps": [
-                    "Rephrase the scenario more concretely.",
-                    "Launch a relevant module scan (Hayabusa / YARA) before rerunning.",
-                ],
-                "confidence": 10,
-                "stopped_by": "hard_stale_guard",
-            }
+            forced = _llm_forced_conclude(
+                cfg, system_prompt, base_intro, transcript,
+                f"you repeated the same query shape {deep_stale} times without new results.",
+            )
+            if forced:
+                forced.setdefault("hypotheses", synth_h)
+                forced["stopped_by"] = "hard_stale_guard"
+            else:
+                forced = {
+                    "action": "conclude",
+                    "thought": f"Hard force-conclude — {deep_stale} consecutive identical-shape steps.",
+                    "verdict": (
+                        "Investigation stopped after the agent repeated the same "
+                        f"query shape {deep_stale} times in a row without progress. "
+                        "The available evidence is insufficient to confirm or refute "
+                        "the scenario; the agent could not break out of the loop."
+                    ),
+                    "incident_confirmed": "inconclusive",
+                    "linked_summary": "",
+                    "evidence": [],
+                    "indicators": [],
+                    "mitre_techniques": [],
+                    "hypotheses": synth_h,
+                    "next_steps": [
+                        "Rephrase the scenario more concretely.",
+                        "Launch a relevant module scan (Hayabusa / YARA) before rerunning.",
+                    ],
+                    "confidence": 10,
+                    "stopped_by": "hard_stale_guard",
+                }
+            forced["step"] = step_no
             final = forced
             transcript.append(forced)
             if run_id:
@@ -4214,24 +4267,25 @@ def _agent_run(
             yield {"type": "step", "step": step}
             continue
 
-        # set_hypotheses is declared once — LLMs sometimes re-emit it on
-        # step 2 and burn a step. Reject the duplicate with a clear note.
-        if action == "set_hypotheses" and any(
-            s.get("action") == "set_hypotheses" for s in transcript
-        ):
-            step.update(
-                {
-                    "query_status": "invalid",
-                    "query_error": "hypotheses already declared — "
-                    "proceed with tool calls to test them",
-                }
-            )
-            transcript.append(step)
-            if run_id:
-                _append_step_log(case_id, run_id, step)
-                _update_active_run(case_id, run_id, step_count=len(transcript))
-            yield {"type": "step", "step": step}
-            continue
+        # set_hypotheses may be REFINED as the picture changes (the latest
+        # declaration wins at conclude time) — re-running it is allowed and
+        # useful. Only block runaway re-declaration so it can't burn the budget.
+        if action == "set_hypotheses":
+            prior_decls = sum(1 for s in transcript if s.get("action") == "set_hypotheses")
+            if prior_decls >= 3:
+                step.update(
+                    {
+                        "query_status": "invalid",
+                        "query_error": "hypotheses already refined enough — "
+                        "test them with tool calls, then conclude",
+                    }
+                )
+                transcript.append(step)
+                if run_id:
+                    _append_step_log(case_id, run_id, step)
+                    _update_active_run(case_id, run_id, step_count=len(transcript))
+                yield {"type": "step", "step": step}
+                continue
 
         tried_tools.add(action)
         # Track which artifact_types the agent has queried against so the
