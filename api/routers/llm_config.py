@@ -3603,6 +3603,15 @@ def _agent_step_history(transcript: list[dict]) -> str:
         # Common sample preview for any tool that returned events
         if s.get("sample"):
             line += "\n  sample=" + " | ".join(_sanitize_evidence(x, 160) for x in s["sample"][:3])
+        # Auto-pulled surrounding context for a strong finding (see #2).
+        ac = s.get("auto_context")
+        if isinstance(ac, dict) and ac.get("sample"):
+            line += (
+                f"\n  ↳ auto-context ±5min @ {ac.get('around', '')[11:19]} "
+                f"host={ac.get('host') or '(any)'} ({ac.get('hits', '?')} events):"
+            )
+            for x in ac["sample"][:6]:
+                line += f"\n      {_sanitize_evidence(x, 160)}"
         if s.get("query_status") == "invalid":
             line += f"\n  ⚠ invalid: {s.get('query_error', '')[:140]}"
         parts.append(line)
@@ -3926,6 +3935,190 @@ def _llm_forced_conclude(cfg, system_prompt, base_intro, transcript, reason):
     return None
 
 
+def _flatten_source(obj, prefix=""):
+    """Flatten a nested ES _source into dotted keys (host.hostname, audit.sig…)."""
+    out = {}
+    for k, v in (obj or {}).items():
+        key = f"{prefix}{k}"
+        if isinstance(v, dict):
+            out.update(_flatten_source(v, key + "."))
+        else:
+            out[key] = v
+    return out
+
+
+def _artifact_field_samples(case_id: str, artifact_types: list[str], per_type: int = 18) -> str:
+    """One real sample doc per artifact type → the LLM sees ACTUAL dotted field
+    names + values instead of guessing (`source_ip`, `@timestamp`, …). This is
+    the single biggest fix for 0-hit queries."""
+    from services.elasticsearch import _request as _es_req
+
+    lines = []
+    for at in (artifact_types or [])[:8]:
+        try:
+            res = _es_req(
+                "POST",
+                f"/fo-case-{case_id}-{at}/_search",
+                {"size": 1, "query": {"match_all": {}}, "_source": {"excludes": ["raw", "raw.*"]}},
+            )
+            hits = res.get("hits", {}).get("hits", [])
+            if not hits:
+                continue
+            flat = _flatten_source(hits[0].get("_source", {}))
+            shown = []
+            for k, v in flat.items():
+                if k.startswith("raw") or v in (None, "", [], {}):
+                    continue
+                shown.append(f"{k}={str(v)[:40].replace(chr(10), ' ')}")
+                if len(shown) >= per_type:
+                    break
+            if shown:
+                lines.append(f"  [{at}] " + " | ".join(shown))
+        except Exception:
+            continue
+    if not lines:
+        return ""
+    return (
+        "\nReal sample fields per artifact type (USE these exact dotted names — "
+        "do NOT invent source_ip/@timestamp/request_headers.*):\n" + "\n".join(lines) + "\n"
+    )
+
+
+_SIGNALS = {"6": "SIGABRT", "9": "SIGKILL/OOM", "11": "SIGSEGV (segfault)", "15": "SIGTERM"}
+
+
+def _ledger_update(ledger: dict, step: dict) -> None:
+    """Accumulate confirmed facts from a tool result so the model builds on what
+    it found instead of forgetting it (the step-18 ANOM_ABEND it ignored)."""
+    ev = step.get("event")
+    if isinstance(ev, dict):  # an inspect result — a fact the model chose to examine
+        fo = step.get("fo_id") or ev.get("fo_id") or ""
+        at = ev.get("artifact_type", "?")
+        ts = ev.get("timestamp", "")
+        audit = ev.get("audit") or {}
+        net = ev.get("network") or {}
+        proc = ev.get("process") or {}
+        cti = ev.get("cti_match") or {}
+        sig_bits = []
+        if audit.get("type") == "ANOM_ABEND" or audit.get("sig"):
+            s = str(audit.get("sig", ""))
+            sig_bits.append(
+                f"CRASH {audit.get('comm') or audit.get('exe') or ''} "
+                f"sig={s} {_SIGNALS.get(s, '')}".strip()
+            )
+        if cti.get("ioc_value"):
+            sig_bits.append(f"CTI hit {cti.get('ioc_type')}={cti.get('ioc_value')}")
+        if net.get("src_ip"):
+            sig_bits.append(f"src_ip={net['src_ip']}")
+            ledger["iocs"].add(str(net["src_ip"]))
+        if proc.get("command_line"):
+            sig_bits.append(f"cmd={str(proc['command_line'])[:80]}")
+        signal = " | ".join(sig_bits) or (ev.get("message") or "")[:120]
+        host = (ev.get("host") or {}).get("hostname")
+        user = (ev.get("user") or {}).get("name")
+        if host:
+            ledger["hosts"].add(str(host))
+        if user:
+            ledger["users"].add(str(user))
+        fact = f"[{at}] {ts} fo_id={fo} :: {signal}"
+        if fo and not any(fo in f for f in ledger["facts"]):
+            ledger["facts"].append(fact)
+    # cti_match / cti_seen_before searches → harvest IOC values from samples
+    if step.get("action") in ("cti_seen_before",) and step.get("sample"):
+        for s in step["sample"][:15]:
+            ledger["iocs"].add(str(s).split(" —")[0].strip()[:60])
+
+
+def _render_ledger(ledger: dict) -> str:
+    if not (ledger["facts"] or ledger["iocs"] or ledger["hosts"]):
+        return ""
+    parts = [
+        "\nINVESTIGATION LEDGER — facts you've already CONFIRMED (build on these; "
+        "do NOT re-derive or re-search them):"
+    ]
+    for f in ledger["facts"][-15:]:
+        parts.append(f"  • {f}")
+    if ledger["iocs"]:
+        parts.append("  IOCs: " + ", ".join(list(ledger["iocs"])[:15]))
+    if ledger["hosts"]:
+        parts.append("  Hosts: " + ", ".join(sorted(ledger["hosts"])[:10]))
+    if ledger["users"]:
+        parts.append("  Users: " + ", ".join(sorted(ledger["users"])[:10]))
+    parts.append(
+        "If a fact above already answers the scenario, CORRELATE around it (±minutes) "
+        "to get the story, then CONCLUDE citing those fo_ids — don't keep keyword-hunting.\n"
+    )
+    return "\n".join(parts)
+
+
+def _loose_json(raw: str):
+    """Best-effort parse of a JSON object from an LLM reply (handles ```fences```
+    and surrounding prose)."""
+    if not raw:
+        return None
+    import json as _j
+
+    t = raw.strip()
+    if t.startswith("```"):
+        t = t.split("```", 2)[1] if "```" in t[3:] else t[3:]
+        t = t.split("\n", 1)[-1] if t[:4].lower() == "json" else t
+    try:
+        return _j.loads(t)
+    except Exception:
+        i, jx = t.find("{"), t.rfind("}")
+        if 0 <= i < jx:
+            try:
+                return _j.loads(t[i : jx + 1])
+            except Exception:
+                return None
+    return None
+
+
+def _is_strong_event(ev: dict) -> bool:
+    """A finding worth auto-pulling its surrounding context for."""
+    if not isinstance(ev, dict):
+        return False
+    audit = ev.get("audit") or {}
+    if audit.get("type") == "ANOM_ABEND" or audit.get("sig"):
+        return True
+    if (ev.get("cti_match") or {}).get("ioc_value"):
+        return True
+    if ev.get("is_flagged"):
+        return True
+    lvl = str(ev.get("level") or (ev.get(ev.get("artifact_type", "")) or {}).get("level") or "").lower()
+    return lvl in ("high", "critical")
+
+
+def _conclusion_has_evidence(step: dict) -> bool:
+    return bool(step.get("evidence") or step.get("indicators") or step.get("mitre_techniques"))
+
+
+def _verify_conclusion(cfg, base_intro, step):
+    """Adversarial check: one skeptical LLM pass over the proposed verdict.
+    Returns {holds, issues[], adjusted_confidence} or None. Never raises."""
+    try:
+        import json as _j
+
+        view = {k: step.get(k) for k in ("verdict", "incident_confirmed", "evidence", "indicators", "hypotheses", "confidence")}
+        msg = (
+            base_intro
+            + "\nPROPOSED VERDICT (JSON):\n"
+            + _j.dumps(view, default=str)[:6000]
+            + "\n\nYou are a SKEPTICAL DFIR reviewer. Check this verdict against the evidence "
+            "actually gathered above. Is every claim backed by a cited fo_id/IOC? Any "
+            "unsupported leap, ignored benign explanation, or overstated confidence? "
+            'Return ONLY JSON: {"holds": true|false, "issues": ["…"], "adjusted_confidence": 0-100}.'
+        )
+        raw = _call_llm_with_system(
+            cfg, "You are a skeptical DFIR reviewer. Output only a JSON object.", msg,
+            max_tokens=600, json_mode=True,
+        )
+        v = _loose_json(raw)
+        return v if isinstance(v, dict) else None
+    except Exception:
+        return None
+
+
 def _agent_run(
     case_id: str,
     circumstance: str,
@@ -4006,6 +4199,13 @@ def _agent_run(
     except Exception:
         pass
 
+    # Real sample fields per artifact type — grounds the model in actual dotted
+    # field names so it stops guessing (source_ip, @timestamp, …).
+    try:
+        samples_block = _artifact_field_samples(case_id, ctx.get("artifact_types") or [])
+    except Exception:
+        samples_block = ""
+
     base_intro = (
         f"Case: {ctx['case_name']}\n"
         f"Events: {ctx['event_count']:,}\n"
@@ -4013,6 +4213,7 @@ def _agent_run(
         + density_block
         + mitre_block
         + modules_block
+        + samples_block
         + f"\nFull field list (use ONLY these — dotted, no aliases):\n"
         f"{', '.join(ctx.get('searchable_fields') or [])[:3500]}\n\n"
         + parent_hist
@@ -4020,6 +4221,10 @@ def _agent_run(
     )
     transcript: list[dict] = []
     final: dict | None = None
+    # Running findings ledger — confirmed facts/IOCs/hosts accumulated across
+    # steps and re-injected each turn so the model builds on what it found.
+    ledger: dict = {"facts": [], "iocs": set(), "hosts": set(), "users": set()}
+    conclude_gate_used = False  # evidence-cited conclude re-prompt fires at most once
 
     # Admin-configurable capability policy (Settings → Pilot). Disabled tools
     # are rejected at dispatch; web_search is implicitly off unless enabled +
@@ -4209,7 +4414,7 @@ def _agent_run(
                 for h in declared_h
             ]
             forced = _llm_forced_conclude(
-                cfg, system_prompt, base_intro, transcript,
+                cfg, system_prompt, base_intro + _render_ledger(ledger), transcript,
                 f"you've run {stale_run} no-progress steps across varied queries.",
             )
             if forced:
@@ -4271,7 +4476,7 @@ def _agent_run(
                 for h in declared_h
             ]
             forced = _llm_forced_conclude(
-                cfg, system_prompt, base_intro, transcript,
+                cfg, system_prompt, base_intro + _render_ledger(ledger), transcript,
                 f"you repeated the same query shape {deep_stale} times without new results.",
             )
             if forced:
@@ -4348,9 +4553,20 @@ def _agent_run(
             stale_nudge = "\n".join(stale_nudge_parts) + "\n"
         else:
             stale_nudge = ""
+        # Compress long runs: keep the last 24 steps verbatim; older steps are
+        # already distilled into the ledger above, so we just note the count.
+        _HIST = 24
+        if len(transcript) > _HIST:
+            hist = (
+                f"(… {len(transcript) - _HIST} earlier steps distilled into the LEDGER above …)\n\n"
+                + _agent_step_history(transcript[-_HIST:])
+            )
+        else:
+            hist = _agent_step_history(transcript)
         user_msg = (
             base_intro
-            + f"\nTranscript so far:\n{_agent_step_history(transcript)}\n"
+            + _render_ledger(ledger)
+            + f"\nTranscript so far:\n{hist}\n"
             + stale_nudge
             + f"\nThis is step {step_no} of {max_steps}. Output the next JSON object."
         )
@@ -4374,6 +4590,41 @@ def _agent_run(
         action = step.get("action") or "conclude"
 
         if action == "conclude":
+            # Evidence-cited gate: the model tried to conclude with NO evidence/
+            # indicators while the ledger holds confirmed facts — bounce it once
+            # to fold those facts (and their fo_ids) into the verdict instead of
+            # emitting a hollow "inconclusive".
+            if (
+                not _conclusion_has_evidence(step)
+                and ledger["facts"]
+                and not conclude_gate_used
+            ):
+                conclude_gate_used = True
+                regated = _llm_forced_conclude(
+                    cfg, system_prompt, base_intro + _render_ledger(ledger), transcript,
+                    "your conclude cited NO evidence, but the ledger above lists CONFIRMED facts — "
+                    "incorporate them (cite their fo_ids/IOCs) into evidence/indicators and re-judge "
+                    "the hypotheses.",
+                )
+                if regated and _conclusion_has_evidence(regated):
+                    regated["regated_from_empty"] = True
+                    step = regated
+                    step["step"] = step_no
+                    step["action"] = "conclude"
+
+            # Adversarial verify pass — one skeptical review of the verdict.
+            try:
+                v = _verify_conclusion(cfg, base_intro + _render_ledger(ledger), step)
+                if isinstance(v, dict):
+                    step["verification"] = v
+                    if v.get("adjusted_confidence") is not None:
+                        try:
+                            step["confidence"] = int(v["adjusted_confidence"])
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
             # Hypothesis reconciliation — if the agent declared a hypothesis
             # set via set_hypotheses earlier but the conclude block doesn't
             # echo all of them, merge the declared claims back in as
@@ -4495,6 +4746,33 @@ def _agent_run(
                     step["broaden_skipped"] = (
                         f"would-be {broader_count} hits — too generic; rephrase"
                     )
+
+        try:
+            _ledger_update(ledger, step)
+        except Exception:
+            pass
+
+        # Auto-correlate: when an inspect surfaces a STRONG finding (crash, CTI
+        # hit, flagged/high event), immediately pull the ±5-min context so the
+        # surrounding story arrives with the finding — the model doesn't have to
+        # remember to correlate (it usually doesn't) or get the host/ts right.
+        try:
+            ev = step.get("event") if action == "inspect" else None
+            if isinstance(ev, dict) and _is_strong_event(ev) and ev.get("timestamp") and not step.get("auto_context"):
+                _host = (ev.get("host") or {}).get("hostname")
+                _ctx = _tool_time_window(
+                    case_id,
+                    {"timestamp": ev["timestamp"], "host": _host, "minutes": 5},
+                )
+                if _ctx.get("query_status") == "ok" and _ctx.get("sample"):
+                    step["auto_context"] = {
+                        "around": ev["timestamp"],
+                        "host": _host,
+                        "hits": _ctx.get("result_count"),
+                        "sample": _ctx.get("sample", [])[:6],
+                    }
+        except Exception:
+            pass
 
         transcript.append(step)
         if run_id:
