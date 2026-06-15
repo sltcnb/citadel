@@ -981,6 +981,19 @@ export default function UserManagement() {
             </div>
           )}
 
+          {groups.length > 0 && (
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1 flex items-center gap-1.5">
+                <UsersRound size={12} /> Groups <span className="text-gray-400 font-normal">(optional)</span>
+              </label>
+              <CheckboxList
+                options={groups} selected={createForm.groups}
+                onChange={v => setCreateForm(f => ({ ...f, groups: v }))}
+                getId={g => g.id} getLabel={g => g.name} getDesc={g => g.description}
+              />
+            </div>
+          )}
+
           {createErr && (
             <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-center gap-1.5">
               <AlertTriangle size={12} /> {createErr}
@@ -1127,6 +1140,154 @@ export default function UserManagement() {
             <button type="button" onClick={() => setResetTarget(null)} className="btn-ghost text-xs">
               Cancel
             </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* ── Unified User Editor (role + groups + extra permissions) ── */}
+      <Modal open={!!userTarget} onClose={() => setUserTarget(null)} wide
+        title={`Edit — ${userTarget?.username}`}>
+        <form onSubmit={handleSaveUser} className="space-y-4">
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Role</label>
+            <select className="input text-xs" value={userForm.role}
+              onChange={e => setUserForm(f => ({ ...f, role: e.target.value }))}>
+              <option value="analyst">Analyst — full access, no Studio</option>
+              <option value="developer">Developer — Analyst + Studio</option>
+              <option value="guest">Guest — read-only</option>
+              <option value="admin">Admin — full access</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1 flex items-center gap-1.5">
+              <UsersRound size={12} /> Groups
+            </label>
+            <CheckboxList
+              options={groups} selected={userForm.groups}
+              onChange={v => setUserForm(f => ({ ...f, groups: v }))}
+              getId={g => g.id} getLabel={g => g.name} getDesc={g => g.description}
+              empty="No groups defined yet — create one in the Groups tab."
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1 flex items-center gap-1.5">
+              <KeySquare size={12} /> Extra permissions (on top of role + groups)
+            </label>
+            <CheckboxList
+              options={catalog.permissions} selected={userForm.extra_permissions}
+              onChange={v => setUserForm(f => ({ ...f, extra_permissions: v }))}
+              getId={p => p.id || p} getLabel={p => p.id || p} getDesc={p => p.description}
+            />
+          </div>
+
+          {/* Effective (resolved) access — read-only */}
+          <div className="rounded-lg bg-gray-50 border border-gray-200 px-3 py-2 text-[11px]">
+            <p className="font-semibold text-gray-600 mb-1 flex items-center gap-1.5">
+              <Layers size={12} /> Effective access {effLoading && <Loader2 size={10} className="animate-spin" />}
+            </p>
+            {effective ? (
+              <>
+                <p className="text-gray-600"><span className="text-gray-400">Permissions:</span> {(effective._effective_perms || effective.permissions || []).join(', ') || '—'}</p>
+                <p className="text-gray-600"><span className="text-gray-400">Companies:</span> {(effective._effective_companies || effective.companies || []).join(', ') || 'all (unrestricted)'}</p>
+              </>
+            ) : <p className="text-gray-400">{effLoading ? 'resolving…' : 'save to refresh'}</p>}
+          </div>
+
+          {userErr && (
+            <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-center gap-1.5">
+              <AlertTriangle size={12} /> {userErr}
+            </p>
+          )}
+          <div className="flex items-center gap-2 pt-1">
+            <button type="submit" disabled={userSaving} className="btn-primary text-xs">
+              {userSaving ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Save
+            </button>
+            <button type="button" onClick={() => setUserTarget(null)} className="btn-ghost text-xs">Cancel</button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* ── Group Editor (create + edit) ── */}
+      <Modal open={!!groupTarget} onClose={() => setGroupTarget(null)} wide
+        title={groupTarget?.id ? `Edit Group — ${groupTarget.name}` : 'New Group'}>
+        <form onSubmit={handleSaveGroup} className="space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Name</label>
+              <input className="input text-xs" value={groupForm.name} autoFocus
+                onChange={e => setGroupForm(f => ({ ...f, name: e.target.value }))} required />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Description</label>
+              <input className="input text-xs" value={groupForm.description}
+                onChange={e => setGroupForm(f => ({ ...f, description: e.target.value }))} />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Roles granted</label>
+            <CheckboxList
+              options={catalog.roles} selected={groupForm.roles}
+              onChange={v => setGroupForm(f => ({ ...f, roles: v }))}
+              getId={r => r.id || r} getLabel={r => r.id || r}
+            />
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs font-medium text-gray-600 flex items-center gap-1.5"><KeySquare size={12} /> Permissions</label>
+              <div className="flex items-center gap-1">
+                <span className="text-[10px] text-gray-400">fill from:</span>
+                {(catalog.roles || []).map(r => {
+                  const rid = r.id || r
+                  return (
+                    <button key={rid} type="button" onClick={() => fillFromPreset(rid)}
+                      className="text-[10px] px-1.5 py-0.5 rounded border border-gray-200 text-gray-500 hover:border-brand-accent hover:text-brand-accent flex items-center gap-0.5">
+                      <Wand2 size={9} /> {rid}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+            <CheckboxList
+              options={catalog.permissions} selected={groupForm.permissions}
+              onChange={v => setGroupForm(f => ({ ...f, permissions: v }))}
+              getId={p => p.id || p} getLabel={p => p.id || p} getDesc={p => p.description}
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1 flex items-center gap-1.5"><Building2 size={12} /> Companies</label>
+              <CheckboxList
+                options={companyList} selected={groupForm.companies}
+                onChange={v => setGroupForm(f => ({ ...f, companies: v }))}
+                empty="No companies defined."
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1 flex items-center gap-1.5"><Users size={12} /> Members</label>
+              <CheckboxList
+                options={users} selected={groupForm.members}
+                onChange={v => setGroupForm(f => ({ ...f, members: v }))}
+                getId={u => u.username} getLabel={u => u.username} getDesc={u => u.role}
+                empty="No users."
+              />
+            </div>
+          </div>
+
+          {groupErr && (
+            <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-center gap-1.5">
+              <AlertTriangle size={12} /> {groupErr}
+            </p>
+          )}
+          <div className="flex items-center gap-2 pt-1">
+            <button type="submit" disabled={groupSaving} className="btn-primary text-xs">
+              {groupSaving ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Save
+            </button>
+            <button type="button" onClick={() => setGroupTarget(null)} className="btn-ghost text-xs">Cancel</button>
           </div>
         </form>
       </Modal>

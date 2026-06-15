@@ -27,7 +27,7 @@ from typing import Any
 import redis
 import redis_keys as rk
 from auth.dependencies import get_current_user, require_admin, require_case_access
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
 from license.gate import require_feature
 from pydantic import BaseModel
 from services import module_runs as run_svc
@@ -3084,13 +3084,62 @@ def _native_web_search(query: str, max_results: int = 5) -> dict:
     provider = (cfg.get("provider") or "").lower()
     model = cfg.get("model", "")
     api_key = cfg.get("api_key", "")
-    if provider != "anthropic":
+    base_url = (cfg.get("base_url") or "").rstrip("/")
+
+    if provider == "ollama":
         return {
             "status": "error",
-            "error": f"native web search needs an Anthropic LLM (current: {provider or 'none'}); "
-            "use the tavily/brave provider instead.",
+            "error": "ollama has no web search; use the tavily/brave provider instead.",
             "results": [],
         }
+
+    # OpenAI-compatible providers (custom / OpenRouter / Qwen behind an OpenAI
+    # API, etc). OpenRouter exposes web search via the `plugins:[{id:web}]`
+    # hint and returns url_citation annotations; other gateways ignore it. If no
+    # citations come back we DON'T pass the model's prose off as web data —
+    # we report that this endpoint didn't actually search.
+    if provider != "anthropic":
+        url = base_url or "https://api.openai.com/v1"
+        body = json.dumps(
+            {
+                "model": model,
+                "max_tokens": 1024,
+                "messages": [
+                    {"role": "user", "content": f"Search the web and answer concisely with sources. Query: {query}"}
+                ],
+                "plugins": [{"id": "web", "max_results": max(1, min(10, max_results))}],
+            }
+        ).encode()
+        req = _ur.Request(
+            f"{url}/chat/completions",
+            data=body,
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+            method="POST",
+        )
+        try:
+            with _ur.urlopen(req, timeout=60) as resp:
+                data = json.loads(resp.read())
+        except Exception as exc:
+            return {"status": "error", "error": str(exc)[:160], "results": []}
+        msg = (data.get("choices") or [{}])[0].get("message", {}) or {}
+        answer = (msg.get("content") or "").strip()
+        results = []
+        for ann in msg.get("annotations", []) or []:
+            cit = ann.get("url_citation") or {}
+            if cit.get("url"):
+                results.append({"title": cit.get("title", ""), "url": cit["url"], "snippet": (cit.get("content", "") or "")[:300]})
+        usage = data.get("usage", {})
+        _track_llm_usage(url, model, usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0))
+        if not results:
+            return {
+                "status": "error",
+                "error": "this provider returned no web citations — it may not support native web "
+                "search. Use the tavily/brave provider (works with any model).",
+                "results": [],
+                "answer": answer,
+            }
+        return {"status": "ok", "provider": "model", "answer": answer, "results": results[:max_results]}
+
     body = json.dumps(
         {
             "model": model,
@@ -3186,6 +3235,39 @@ def _tool_web_search(case_id: str, step: dict) -> dict:
     if res.get("answer"):
         out["answer"] = res["answer"][:1500]
     return out
+
+
+@router.post("/pilot/web-search/test", dependencies=_admin_dep)
+def test_web_search(body: dict = Body(default={})):
+    """Run a one-shot web search against the SAVED Pilot config so an admin can
+    verify it works (esp. whether a custom/Qwen LLM actually supports native
+    search) before enabling it. Bypasses the enabled gate."""
+    q = (body.get("query") or "latest critical CVE this week").strip()
+    try:
+        from routers.pilot_settings import get_pilot_config
+
+        pcfg = get_pilot_config()
+    except Exception as exc:
+        return {"ok": False, "error": f"config unavailable: {exc}"}
+    provider = pcfg.get("web_search_provider", "model")
+    max_results = int(pcfg.get("web_search_max_results", 5) or 5)
+    if provider == "model":
+        res = _native_web_search(q, max_results)
+    else:
+        from services.web_search import web_search as _ws
+
+        res = _ws(q, ignore_enabled=True)
+    ok = res.get("status") == "ok"
+    return {
+        "ok": ok,
+        "provider": provider,
+        "result_count": len(res.get("results") or []),
+        "sample": [
+            f"{r.get('title', '')} — {r.get('url', '')}" for r in (res.get("results") or [])[:5]
+        ],
+        "answer": (res.get("answer") or "")[:600],
+        "error": None if ok else res.get("error", "web search failed"),
+    }
 
 
 AGENT_LAUNCH_CAP = 3  # default max launch_module calls per case per 10-min window
@@ -3787,6 +3869,14 @@ def _agent_run(
         cap_note += "Disabled tools (do not call): " + ", ".join(
             sorted(disabled_tools - {"web_search"})
         ) + "\n"
+    # Pacing: the step budget is a CEILING, not a target. Conclude the moment
+    # the two mandate questions are answered — most cases need far fewer steps.
+    cap_note += (
+        f"\nPacing: you have up to {max_steps} steps but you do NOT have to use them. "
+        "STOP and conclude as soon as you can answer (a) did it happen and (b) what's "
+        "linked — typically 8-15 steps. Spend extra steps only if a hypothesis is "
+        "genuinely still open; don't pad the investigation to reach the cap.\n"
+    )
     system_prompt = _AGENT_PROMPT + cap_note
 
     # Track which approaches have already been tried so the diversify nudge
