@@ -797,7 +797,18 @@ export default function CaseAiPanel({ caseId, onClose, onSearchQuery, onOpenRepo
   const [analyzeErr, setAnalyzeErr]   = useState(null)
 
   // ── Investigation state
-  const [circumstance, setCircumstance]       = useState('')
+  // The scenario/context is SAVED per case (localStorage) so it survives panel
+  // close, reload, and browser restart — analysts don't retype it.
+  const _circKey = `fo_ai_circ_${caseId}`
+  const [circumstance, setCircumstance]       = useState(() => {
+    try { return localStorage.getItem(`fo_ai_circ_${caseId}`) || '' } catch { return '' }
+  })
+  useEffect(() => {
+    try {
+      if (circumstance) localStorage.setItem(_circKey, circumstance)
+      else localStorage.removeItem(_circKey)
+    } catch { /* ignore quota/availability */ }
+  }, [circumstance, _circKey])
   const [investigations, setInvestigations]   = useState([])
   const [investigating, setInvestigating]     = useState(false)
   const [investigateErr, setInvestigateErr]   = useState(null)

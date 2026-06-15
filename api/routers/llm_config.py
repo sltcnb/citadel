@@ -4051,6 +4051,112 @@ def _render_ledger(ledger: dict) -> str:
     return "\n".join(parts)
 
 
+def _autolaunch_modules(case_id: str) -> str:
+    """Deterministically launch the analysis modules that FIT this case but
+    haven't run yet — instead of hoping the LLM decides to. Citadel kicks off
+    cti_match + the top file-matched scanners (hayabusa/regripper/…) at the
+    start of an investigation; the agent then reads their detections. Returns a
+    note for the prompt, or "" if nothing launched. Never raises."""
+    try:
+        from routers.pilot_settings import get_pilot_config
+
+        pcfg = get_pilot_config()
+        if not pcfg.get("allow_module_launch", True):
+            return ""
+        cap = int(pcfg.get("module_launch_cap", 3) or 3)
+    except Exception:
+        cap = 3
+
+    try:
+        from services import module_runs as _run_svc
+        from services.jobs import list_case_jobs as _list_case_jobs
+        from routers.modules import (
+            CreateModuleRunRequest,
+            SourceFileRef,
+            _get_custom_modules,
+            _get_modules_by_id,
+            create_module_run,
+            recommend_modules,
+        )
+    except Exception:
+        return ""
+
+    # Modules that already have a run (any status) — don't relaunch.
+    already = set()
+    try:
+        for run in _run_svc.list_case_module_runs(case_id) or []:
+            if run.get("module_id"):
+                already.add(run["module_id"])
+    except Exception:
+        pass
+
+    # Pick: cti_match (IOC DB) first if not run, then file-matched scanners.
+    wanted: list[str] = []
+    if "cti_match" not in already:
+        wanted.append("cti_match")
+    try:
+        rec = recommend_modules(case_id)
+        for m in (rec.get("recommended") or []):
+            mid = m.get("id")
+            if mid and mid not in already and mid not in wanted:
+                wanted.append(mid)
+    except Exception:
+        pass
+    wanted = wanted[:cap]
+    if not wanted:
+        return ""
+
+    # Wire completed source files once (cti_match ignores them).
+    sources = []
+    try:
+        for j in _list_case_jobs(case_id) or []:
+            if j.get("status") in ("COMPLETED", "SKIPPED") and j.get("minio_object_key"):
+                sources.append(
+                    {
+                        "job_id": j["job_id"],
+                        "filename": j.get("original_filename", ""),
+                        "minio_key": j.get("minio_object_key", ""),
+                    }
+                )
+    except Exception:
+        pass
+
+    mods_by_id = {}
+    try:
+        mods_by_id = _get_modules_by_id()
+        for m in _get_custom_modules():
+            mods_by_id.setdefault(m.get("id"), m)
+    except Exception:
+        pass
+
+    launched = []
+    for mid in wanted:
+        mod = mods_by_id.get(mid)
+        if mod and not mod.get("available", True):
+            continue
+        if not sources and mid != "cti_match":
+            continue  # scanners need files
+        try:
+            req = CreateModuleRunRequest(
+                module_id=mid,
+                source_files=[SourceFileRef(**s) for s in sources] if mid != "cti_match" else [],
+            )
+            run = create_module_run(case_id, req)
+            launched.append(f"{mid} (run_id={run.get('run_id')})")
+        except Exception:
+            continue
+
+    if not launched:
+        return ""
+    return (
+        "\nCitadel AUTO-LAUNCHED these analysis modules for this investigation "
+        "(running in the background): " + ", ".join(launched) + ".\n"
+        "  → Read their detections with read_module_result run_id=…, or search "
+        "their output (e.g. artifact_type:cti_match, artifact_type:hayabusa) in a "
+        "few steps once they finish. Factor them into your conclusion.\n"
+    )
+
+
 def _loose_json(raw: str):
     """Best-effort parse of a JSON object from an LLM reply (handles ```fences```
     and surrounding prose)."""
@@ -4206,6 +4312,10 @@ def _agent_run(
     except Exception:
         samples_block = ""
 
+    # Deterministically launch relevant modules at the START (don't rely on the
+    # LLM to do it). Fresh runs only — follow-ups inherit the prior run's launches.
+    autolaunch_block = "" if parent_transcript else _autolaunch_modules(case_id)
+
     base_intro = (
         f"Case: {ctx['case_name']}\n"
         f"Events: {ctx['event_count']:,}\n"
@@ -4213,6 +4323,7 @@ def _agent_run(
         + density_block
         + mitre_block
         + modules_block
+        + autolaunch_block
         + samples_block
         + f"\nFull field list (use ONLY these — dotted, no aliases):\n"
         f"{', '.join(ctx.get('searchable_fields') or [])[:3500]}\n\n"
