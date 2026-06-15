@@ -12,6 +12,7 @@ import {
   AlertTriangle, Upload, Copy, FolderOpen,
 } from 'lucide-react'
 import { api } from '../api/client'
+import ArtifactSelector from '../components/shared/ArtifactSelector'
 
 function _currentUser() {
   try { return JSON.parse(localStorage.getItem('fo_user')) } catch { return null }
@@ -443,17 +444,6 @@ export default function Collector() {
     return ordered.map(g => ({ group: g, items: buckets.get(g) }))
   }, [artifacts, platformDef, groupOrder])
 
-  // Select/deselect every artifact in one section.
-  function toggleGroup(items) {
-    const keys = items.map(a => a.key)
-    const allOn = keys.every(k => selected.has(k))
-    setSelected(prev => {
-      const next = new Set(prev)
-      keys.forEach(k => allOn ? next.delete(k) : next.add(k))
-      return next
-    })
-  }
-
   // file_search patterns — split on newlines/commas, only relevant when selected
   const fetchPatternList = useMemo(
     () => (selected.has('file_search')
@@ -741,74 +731,28 @@ export default function Collector() {
         {/* ── Step 2: Artifacts ─────────────────────────────────────── */}
         {step === 2 && platformDef && (
           <div className="card p-5">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h3 className="text-sm font-semibold text-brand-text">
-                  {platformDef.label} artifact selection
-                </h3>
-                <p className="text-xs text-gray-500 mt-0.5">
-                  {selected.size} of {artifacts.length} artifact types selected
-                </p>
-              </div>
-              <button className="btn-ghost text-xs py-1" onClick={toggleAll}>
-                {selected.size === artifacts.length ? 'Deselect all' : 'Select all'}
-              </button>
+            <div className="mb-4">
+              <h3 className="text-sm font-semibold text-brand-text">
+                {platformDef.label} artifact selection
+              </h3>
+              <p className="text-xs text-gray-500 mt-0.5">
+                {selected.size} of {artifacts.length} artifact types selected
+              </p>
             </div>
 
-            <div className="space-y-5">
-              {groupedArtifacts.map(({ group, items }) => {
-                const onCount = items.filter(a => selected.has(a.key)).length
-                const allOn   = onCount === items.length
-                return (
-                  <div key={group}>
-                    <div className="flex items-center justify-between mb-1.5 pb-1 border-b border-gray-100">
-                      <h4 className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">
-                        {group}
-                        <span className="ml-1.5 font-normal normal-case tracking-normal text-gray-400">
-                          {onCount}/{items.length}
-                        </span>
-                      </h4>
-                      <button
-                        type="button"
-                        className="text-[11px] text-brand-accent hover:underline"
-                        onClick={() => toggleGroup(items)}
-                      >
-                        {allOn ? 'Clear section' : 'Select section'}
-                      </button>
-                    </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      {items.map(a => {
-                        const checked = selected.has(a.key)
-                        return (
-                          <label
-                            key={a.key}
-                            className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
-                              checked
-                                ? a.warn ? 'border-amber-400 bg-amber-50' : 'border-brand-accent/40 bg-brand-accentlight'
-                                : 'border-gray-200 hover:border-gray-300'
-                            }`}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              onChange={() => toggleArtifact(a.key)}
-                              className="mt-0.5 accent-brand-accent cursor-pointer flex-shrink-0"
-                            />
-                            <div>
-                              <div className="flex items-center gap-1.5">
-                                <span className="text-sm font-medium text-brand-text">{a.label}</span>
-                                {a.warn && <AlertTriangle size={11} className="text-amber-500 flex-shrink-0" />}
-                              </div>
-                              <div className="text-xs text-gray-500 mt-0.5">{a.desc}</div>
-                            </div>
-                          </label>
-                        )
-                      })}
-                    </div>
-                  </div>
-                )
+            {/* Shared picker — same component the Harvest tab uses */}
+            <ArtifactSelector
+              groups={groupedArtifacts}
+              selected={selected}
+              onToggle={toggleArtifact}
+              onToggleGroup={(keys) => setSelected(prev => {
+                const next = new Set(prev)
+                const allOn = keys.every(k => next.has(k))
+                keys.forEach(k => allOn ? next.delete(k) : next.add(k))
+                return next
               })}
-            </div>
+              onSelectAll={toggleAll}
+            />
             {selected.has('memory') && (
               <div className="mt-3 flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
                 <AlertTriangle size={13} className="flex-shrink-0 mt-0.5 text-amber-500" />

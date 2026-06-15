@@ -1980,6 +1980,22 @@ def _verify_queries(case_id: str, queries: list) -> list:
 # diversify-nudge so the agent keeps trying different angles.
 AGENT_MAX_STEPS = 50
 
+
+def _effective_agent_max_steps() -> int:
+    """Effective per-run step ceiling: the smaller of the AGENT_MAX_STEPS hard
+    cap and the admin-configurable platform value. Fails open to the constant
+    on any Redis/resolver error so a hiccup never breaks agent launches."""
+    try:
+        from routers.platform_settings import get_platform_config
+
+        configured = int(get_platform_config()["agent_max_steps"])
+        if configured >= 1:
+            return min(AGENT_MAX_STEPS, configured)
+    except Exception:
+        pass
+    return AGENT_MAX_STEPS
+
+
 _AGENT_PROMPT = """You are an autonomous DFIR investigation agent.
 
 The analyst hands you a scenario. You investigate by calling TOOLS — one
@@ -4057,7 +4073,8 @@ def ai_agent_case(case_id: str, req: CaseAgentRequest):
         raise HTTPException(400, "LLM not configured. Go to Settings → AI Analysis.")
     if not req.circumstance.strip():
         raise HTTPException(400, "circumstance must not be empty")
-    max_steps = min(AGENT_MAX_STEPS, max(1, req.max_steps or AGENT_MAX_STEPS))
+    _ceiling = _effective_agent_max_steps()
+    max_steps = min(_ceiling, max(1, req.max_steps or _ceiling))
     parent_t = _parent_transcript_or_none(case_id, req.parent_run_idx)
 
     last_doc = None
@@ -4086,7 +4103,8 @@ def ai_agent_case_stream(case_id: str, req: CaseAgentRequest):
         raise HTTPException(400, "LLM not configured. Go to Settings → AI Analysis.")
     if not req.circumstance.strip():
         raise HTTPException(400, "circumstance must not be empty")
-    max_steps = min(AGENT_MAX_STEPS, max(1, req.max_steps or AGENT_MAX_STEPS))
+    _ceiling = _effective_agent_max_steps()
+    max_steps = min(_ceiling, max(1, req.max_steps or _ceiling))
     parent_t = _parent_transcript_or_none(case_id, req.parent_run_idx)
 
     def gen():
@@ -4139,7 +4157,8 @@ def launch_agent_run(
     circ = (circumstance or "").strip()
     if not circ:
         raise HTTPException(400, "circumstance must not be empty")
-    max_steps = min(AGENT_MAX_STEPS, max(1, max_steps or AGENT_MAX_STEPS))
+    _ceiling = _effective_agent_max_steps()
+    max_steps = min(_ceiling, max(1, max_steps or _ceiling))
     parent_t = _parent_transcript_or_none(case_id, parent_run_idx)
     run_id = _uuid.uuid4().hex
     lang = (language or "en").lower()

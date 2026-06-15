@@ -20,14 +20,18 @@ without Redis or HTTP; the route handlers only orchestrate them.
 
 from __future__ import annotations
 
+import json
 import logging
 import secrets
 import time
 import urllib.parse
 
+import redis_keys as rk
 import requests
-from fastapi import APIRouter, Request
+from auth.dependencies import require_admin
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
+from pydantic import BaseModel
 
 from auth import service
 from config import get_redis as _get_redis
@@ -36,6 +40,12 @@ from config import settings
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth/sso", tags=["sso"])
+
+# Admin config router (mounted under /api/v1, same as llm_config's /admin/*).
+admin_router = APIRouter(tags=["sso"])
+_admin_dep = [Depends(require_admin)]
+
+_VALID_ROLES = ("admin", "analyst", "developer", "guest")
 
 # Redis state TTL (CSRF token lifetime) and HTTP timeouts.
 _STATE_TTL_SECONDS = 600  # 10 minutes to complete the round-trip
@@ -61,6 +71,8 @@ PROVIDERS: dict[str, dict] = {
         "issuer": "https://accounts.google.com",
         "client_id_attr": "GOOGLE_CLIENT_ID",
         "client_secret_attr": "GOOGLE_CLIENT_SECRET",
+        "conf_id_key": "google_client_id",
+        "conf_secret_key": "google_client_secret",
     },
     "microsoft": {
         "name": "Microsoft",
@@ -72,21 +84,84 @@ PROVIDERS: dict[str, dict] = {
         "issuer": "https://login.microsoftonline.com/{tid}/v2.0",
         "client_id_attr": "MICROSOFT_CLIENT_ID",
         "client_secret_attr": "MICROSOFT_CLIENT_SECRET",
+        "conf_id_key": "microsoft_client_id",
+        "conf_secret_key": "microsoft_client_secret",
     },
 }
 
 
+# ── Config resolution: Redis overrides, env (settings.*) is the fallback ──────
+#
+# Every credential/policy value is resolved through _sso_conf(): the stored
+# Redis config (key fo:config:sso) takes precedence, and the corresponding
+# settings.* env var is the default. This keeps env vars working out of the box
+# while letting an admin override any field from the UI without a redeploy.
+
+
+def _stored_conf() -> dict:
+    """Load the Redis-backed SSO config (key fo:config:sso); {} if unset."""
+    try:
+        raw = _get_redis().get(rk.SSO_CONFIG)
+    except Exception:
+        return {}
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+        return data if isinstance(data, dict) else {}
+    except (json.JSONDecodeError, ValueError):
+        return {}
+
+
+def _sso_conf() -> dict:
+    """Merged effective SSO config: Redis values override env-var defaults.
+
+    Returns a dict with every field populated (Redis value if present and
+    non-empty, otherwise the settings.* default). ``allowed_domains`` is always
+    a lower-cased list.
+    """
+    stored = _stored_conf()
+
+    def pick(key: str, default):
+        val = stored.get(key)
+        # Treat empty string / None as "not set" so env default wins.
+        return val if (val not in ("", None)) else default
+
+    domains = stored.get("allowed_domains")
+    if not isinstance(domains, list) or not domains:
+        domains = settings.SSO_ALLOWED_DOMAINS
+    domains = [d.strip().lower() for d in domains if d and d.strip()]
+
+    auto = stored.get("auto_provision")
+    if auto is None:
+        auto = settings.SSO_AUTO_PROVISION
+
+    return {
+        "google_client_id": pick("google_client_id", settings.GOOGLE_CLIENT_ID),
+        "google_client_secret": pick("google_client_secret", settings.GOOGLE_CLIENT_SECRET),
+        "microsoft_client_id": pick("microsoft_client_id", settings.MICROSOFT_CLIENT_ID),
+        "microsoft_client_secret": pick(
+            "microsoft_client_secret", settings.MICROSOFT_CLIENT_SECRET
+        ),
+        "microsoft_tenant": pick("microsoft_tenant", settings.MICROSOFT_TENANT),
+        "redirect_base": pick("redirect_base", settings.SSO_REDIRECT_BASE).rstrip("/"),
+        "allowed_domains": domains,
+        "default_role": pick("default_role", settings.SSO_DEFAULT_ROLE),
+        "auto_provision": bool(auto),
+    }
+
+
 def _client_id(provider: str) -> str:
-    return getattr(settings, PROVIDERS[provider]["client_id_attr"], "") or ""
+    return _sso_conf().get(PROVIDERS[provider]["conf_id_key"], "") or ""
 
 
 def _client_secret(provider: str) -> str:
-    return getattr(settings, PROVIDERS[provider]["client_secret_attr"], "") or ""
+    return _sso_conf().get(PROVIDERS[provider]["conf_secret_key"], "") or ""
 
 
 def _resolve(url: str) -> str:
     """Substitute the Microsoft {tenant} placeholder; no-op for Google."""
-    return url.replace("{tenant}", settings.MICROSOFT_TENANT)
+    return url.replace("{tenant}", _sso_conf()["microsoft_tenant"])
 
 
 def is_configured(provider: str) -> bool:
@@ -108,7 +183,7 @@ def enabled_providers() -> list[dict]:
 
 def callback_url(provider: str) -> str:
     """The redirect_uri registered with the provider for this app."""
-    return f"{settings.SSO_REDIRECT_BASE}/api/v1/auth/sso/{provider}/callback"
+    return f"{_sso_conf()['redirect_base']}/api/v1/auth/sso/{provider}/callback"
 
 
 def build_authorize_url(provider: str, state: str, nonce: str) -> str:
@@ -130,7 +205,7 @@ def email_allowed(email: str) -> bool:
     """Enforce SSO_ALLOWED_DOMAINS (case-insensitive). Empty allowlist = allow."""
     if not email or "@" not in email:
         return False
-    allowed = settings.SSO_ALLOWED_DOMAINS
+    allowed = _sso_conf()["allowed_domains"]
     if not allowed:
         return True
     domain = email.rsplit("@", 1)[1].lower()
@@ -155,10 +230,11 @@ def provision_user(email: str, name: str, provider: str) -> bool:
         except Exception:
             pass
         return True
-    if not settings.SSO_AUTO_PROVISION:
+    conf = _sso_conf()
+    if not conf["auto_provision"]:
         return False
     random_pw = secrets.token_urlsafe(32)
-    service.create_user(email, random_pw, role=settings.SSO_DEFAULT_ROLE)
+    service.create_user(email, random_pw, role=conf["default_role"])
     try:
         _get_redis().hset(
             f"fo:user:{email}",
@@ -268,7 +344,7 @@ def verify_id_token(provider: str, id_token: str, nonce: str | None = None) -> d
 
 def _login_redirect(fragment: str) -> RedirectResponse:
     """307-redirect to the Login page with a #fragment (token or error)."""
-    base = settings.SSO_REDIRECT_BASE or ""
+    base = _sso_conf()["redirect_base"] or ""
     return RedirectResponse(url=f"{base}/login#{fragment}", status_code=307)
 
 
@@ -292,7 +368,7 @@ def sso_login(provider: str) -> RedirectResponse:
         return _error_redirect("unknown_provider")
     if not is_configured(provider):
         return _error_redirect("provider_not_configured")
-    if not settings.SSO_REDIRECT_BASE:
+    if not _sso_conf()["redirect_base"]:
         return _error_redirect("sso_not_configured")
     state = secrets.token_urlsafe(32)
     nonce = secrets.token_urlsafe(16)
@@ -367,9 +443,83 @@ def sso_callback(
     # 5. Mint a Citadel JWT and bounce back to the Login page via fragment.
     try:
         user = service.get_user(email) or {}
-        role = user.get("role", settings.SSO_DEFAULT_ROLE)
+        role = user.get("role", _sso_conf()["default_role"])
         jwt_token = service.create_token(email, role)
     except Exception:
         logger.exception("SSO: token minting failed")
         return _error_redirect("token_mint_failed")
     return _login_redirect(f"sso_token={urllib.parse.quote(jwt_token)}")
+
+
+# ── Admin config endpoints (Redis-backed, secret-redacted) ────────────────────
+#
+# Mirrors the llm_config /admin/llm-config GET/PUT convention: secrets are
+# redacted on GET (replaced by a *_set boolean), and a blank/absent secret on
+# PUT preserves the previously stored value (merge-on-blank).
+
+
+class SSOConfigIn(BaseModel):
+    google_client_id: str = ""
+    google_client_secret: str = ""  # blank/absent → keep existing
+    microsoft_client_id: str = ""
+    microsoft_client_secret: str = ""  # blank/absent → keep existing
+    microsoft_tenant: str = "common"
+    redirect_base: str = ""
+    allowed_domains: list[str] = []
+    default_role: str = "analyst"
+    auto_provision: bool = True
+
+
+def _config_out(conf: dict) -> dict:
+    """Build the redacted GET payload from a merged/effective config dict."""
+    base = (conf.get("redirect_base") or "").rstrip("/")
+    return {
+        "google_client_id": conf.get("google_client_id", ""),
+        "google_secret_set": bool(conf.get("google_client_secret")),
+        "microsoft_client_id": conf.get("microsoft_client_id", ""),
+        "microsoft_secret_set": bool(conf.get("microsoft_client_secret")),
+        "microsoft_tenant": conf.get("microsoft_tenant", "common"),
+        "redirect_base": base,
+        "allowed_domains": conf.get("allowed_domains", []),
+        "default_role": conf.get("default_role", "analyst"),
+        "auto_provision": bool(conf.get("auto_provision", True)),
+        # Hint so the admin knows the redirect_uri to register with each provider.
+        "callback_base": {
+            "google": f"{base}/api/v1/auth/sso/google/callback",
+            "microsoft": f"{base}/api/v1/auth/sso/microsoft/callback",
+        },
+    }
+
+
+@admin_router.get("/admin/sso-config", dependencies=_admin_dep)
+def get_sso_config() -> dict:
+    """Return the effective SSO config (Redis-over-env), secrets REDACTED."""
+    return _config_out(_sso_conf())
+
+
+@admin_router.put("/admin/sso-config", dependencies=_admin_dep)
+def update_sso_config(body: SSOConfigIn) -> dict:
+    """Persist the SSO config to Redis. Blank secrets preserve the stored value."""
+    if body.default_role not in _VALID_ROLES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"default_role must be one of {', '.join(_VALID_ROLES)}",
+        )
+
+    existing = _stored_conf()
+    cfg = {
+        "google_client_id": body.google_client_id,
+        # Merge-on-blank: keep existing secret if the new request omits it.
+        "google_client_secret": body.google_client_secret
+        or existing.get("google_client_secret", ""),
+        "microsoft_client_id": body.microsoft_client_id,
+        "microsoft_client_secret": body.microsoft_client_secret
+        or existing.get("microsoft_client_secret", ""),
+        "microsoft_tenant": body.microsoft_tenant or "common",
+        "redirect_base": (body.redirect_base or "").rstrip("/"),
+        "allowed_domains": [d.strip().lower() for d in body.allowed_domains if d and d.strip()],
+        "default_role": body.default_role,
+        "auto_provision": bool(body.auto_provision),
+    }
+    _get_redis().set(rk.SSO_CONFIG, json.dumps(cfg))
+    return _config_out(_sso_conf())

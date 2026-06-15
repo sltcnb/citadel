@@ -94,6 +94,7 @@ def yara_rule(rule_id: str) -> str:
 # ── Config ────────────────────────────────────────────────────────────────────
 CUCKOO_CONFIG = "fo:config:cuckoo"
 MALWOVERVIEW_CONFIG = "fo:config:malwoverview"
+SSO_CONFIG = "fo:config:sso"
 
 # ── S3 ────────────────────────────────────────────────────────────────────────
 S3_IMPORT_CONFIG = "fo:s3_config"

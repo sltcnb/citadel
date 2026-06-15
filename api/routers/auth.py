@@ -41,7 +41,16 @@ from config import get_redis as _get_redis
 
 
 def _check_login_rate_limit(request: Request) -> None:
-    """Block IPs that exceed 10 login attempts per 60 seconds."""
+    """Block IPs that exceed the configured login attempts per window
+    (admin-tunable via platform settings; defaults to 10 / 60s)."""
+    try:
+        from routers.platform_settings import get_platform_config
+
+        _cfg = get_platform_config()
+        limit = int(_cfg["login_rate_limit"])
+        window = int(_cfg["login_rate_window_seconds"])
+    except Exception:
+        limit, window = 10, 60
     client_ip = (request.headers.get("X-Forwarded-For") or "").split(",")[0].strip() or (
         request.client.host if request.client else "unknown"
     )
@@ -50,8 +59,8 @@ def _check_login_rate_limit(request: Request) -> None:
         redis = _get_redis()
         count = redis.incr(key)
         if count == 1:
-            redis.expire(key, 60)
-        if count > 10:
+            redis.expire(key, window)
+        if count > limit:
             raise HTTPException(
                 status_code=429,
                 detail="Too many login attempts. Try again in a minute.",
