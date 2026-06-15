@@ -4,7 +4,7 @@ import {
   LayoutDashboard, FolderOpen, Bell, FileCode, Shield, FlaskConical,
   Cpu, Code2, PackageOpen, Puzzle, BookOpen, Activity, Users, Settings2,
   LogOut, UserCircle, Sun, Moon, ChevronDown, Loader2,
-  X, Menu, Plus, Search, ListChecks, ScrollText, Boxes,
+  X, Menu, Plus, Search, ListChecks, ScrollText, Boxes, LayoutTemplate,
 } from 'lucide-react'
 import { api } from '../../api/client'
 import { useKeyboardShortcuts } from '../../hooks/useKeyboardShortcuts'
@@ -61,6 +61,7 @@ const DROPDOWN_GROUPS = [
     items: [
       { to: '/alert-rules', icon: Bell,       label: 'Alert Rules' },
       { to: '/yara-rules',  icon: FileCode,   label: 'YARA Rules' },
+      { to: '/templates',   icon: LayoutTemplate, label: 'Templates' },
       { to: '/cti',         icon: Shield,     label: 'Threat Intel' },
       { to: '/watchlist',   icon: ListChecks, label: 'IOC Watchlist' },
     ],
