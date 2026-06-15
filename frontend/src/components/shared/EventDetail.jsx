@@ -343,6 +343,45 @@ export default function EventDetail({ event: initialEvent, caseId, onClose, onFi
           </div>
         )}
 
+        {/* CTI Match — threat-intel hit with enrichment + pivot to the events */}
+        {event.cti_match && (
+          <div className="rounded-lg border border-fuchsia-200 bg-fuchsia-50 p-2.5">
+            <p className="text-[10px] font-semibold text-fuchsia-700 uppercase tracking-wider mb-1.5 flex items-center gap-1">
+              <Shield size={9} /> Threat Intel Match
+            </p>
+            <div className="space-y-0.5 text-[11px]">
+              <p className="text-gray-700">
+                <span className="text-gray-400 w-20 inline-block">{event.cti_match.ioc_type}</span>
+                <span className="font-mono text-fuchsia-700">{event.cti_match.ioc_value}</span>
+              </p>
+              {event.cti_match.match_count != null && (
+                <p className="text-gray-700"><span className="text-gray-400 w-20 inline-block">matches</span>{Number(event.cti_match.match_count).toLocaleString()} event(s)</p>
+              )}
+              {event.cti_match.matched_field && (
+                <p className="text-gray-700"><span className="text-gray-400 w-20 inline-block">field</span><span className="font-mono">{event.cti_match.matched_field}</span></p>
+              )}
+              {event.cti_match.feed_name && (
+                <p className="text-gray-700"><span className="text-gray-400 w-20 inline-block">feed</span>{event.cti_match.feed_name}</p>
+              )}
+              {event.cti_match.threat_type && (
+                <p className="text-gray-700"><span className="text-gray-400 w-20 inline-block">threat</span>{event.cti_match.threat_type}</p>
+              )}
+              {event.cti_match.confidence !== undefined && event.cti_match.confidence !== '' && (
+                <p className="text-gray-700"><span className="text-gray-400 w-20 inline-block">confidence</span>{String(event.cti_match.confidence)}</p>
+              )}
+            </div>
+            {(event.cti_match.pivot_query || (event.cti_match.matched_field && event.cti_match.ioc_value)) && (
+              <button
+                onClick={() => pivot(event.cti_match.pivot_query || `${event.cti_match.matched_field}:"${String(event.cti_match.ioc_value).replace(/\\/g,'\\\\').replace(/"/g,'\\"')}"`)}
+                className="btn-ghost text-[11px] mt-2 flex items-center gap-1 text-fuchsia-600 hover:text-fuchsia-800 border border-fuchsia-200 rounded-lg"
+                title="Open all events matching this indicator"
+              >
+                <Search size={11} /> Pivot to matching events
+              </button>
+            )}
+          </div>
+        )}
+
         {/* AI explanation */}
         {explanation && (
           <div className={`rounded-lg p-2.5 text-xs ${explanation.error ? 'bg-red-50 border border-red-200' : 'bg-purple-50 border border-purple-200'}`}>

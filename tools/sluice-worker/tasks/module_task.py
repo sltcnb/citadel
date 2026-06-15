@@ -3401,69 +3401,73 @@ def _run_cti_match(
                 }
 
     results: list[dict] = []
-    capped_indicators = 0
 
-    def _record(ind, obj, ev, title):
+    def _record(ind, obj):
+        # ONE aggregated detection per indicator — never one-per-event. A single
+        # IP matching 452k events is one row with match_count=452434, plus a
+        # pivot_query the UI/agent uses to open the underlying events on demand.
+        n = ind["event_count"]
+        qualifier = " (own)" if ind["is_own"] else " (private)" if ind["is_private"] else ""
+        title = (
+            f"CTI Match{qualifier} — {ind['ioc_type']}: {ind['ioc_value'][:80]} "
+            f"({n} event{'s' if n != 1 else ''})"
+        )
+        field = ind["matched_field"]
+        # Lucene-safe value for the pivot query.
+        safe_val = str(ind["ioc_value"]).replace("\\", "\\\\").replace('"', '\\"')
+        pivot = f'{field}:"{safe_val}"' if field else ""
         return {
             "id": str(uuid.uuid4()),
-            "timestamp": ev.get("timestamp") or ind["timestamp"],
+            "timestamp": ind["timestamp"],
             "level": ind["sev"],
             "level_int": LEVEL_INT.get(ind["sev"], 4),
             "rule_title": title,
-            "computer": ev.get("host") or ind["computer"],
+            "computer": ind["computer"],
             "details_raw": json.dumps({
                 "ioc_type": ind["ioc_type"],
                 "ioc_value": ind["ioc_value"],
-                "matched_field": ind["matched_field"],
+                "matched_field": field,
+                "match_count": n,
+                "pivot_query": pivot,
+                "sample_fo_ids": ind.get("sample_fo_ids", []),
                 "indicator_id": obj.get("indicator_id", ""),
                 "feed_name": obj.get("feed_name", ""),
                 "threat_type": obj.get("threat_type", ""),
                 "confidence": obj.get("confidence", ""),
                 "tags": obj.get("tags", ""),
-                "event_fo_id": ev.get("fo_id", ""),
                 "is_own": ind["is_own"],
                 "is_private": ind["is_private"],
+                "allowlisted": ind["allowlisted"],
             }),
-            "event_fo_id": ev.get("fo_id", ""),
+            "event_fo_id": ind["event_fo_id"],
             "ioc_type": ind["ioc_type"],
             "ioc_value": ind["ioc_value"],
             "feed_name": obj.get("feed_name", ""),
-            "matched_field": ind["matched_field"],
+            "matched_field": field,
+            "match_count": n,
             "is_own": ind["is_own"],
             "is_private": ind["is_private"],
         }
 
     for ind in indicators.values():
         obj = ind["obj"]
-        qualifier = " (own)" if ind["is_own"] else " (private)" if ind["is_private"] else ""
-        base_title = f"CTI Match{qualifier} — {ind['ioc_type']}: {ind['ioc_value'][:80]}"
+        # A handful of sample event ids for quick drill-down/inspect (cheap);
+        # the full set is reachable via pivot_query.
         if ind["sev"] == "high":
-            # One detection per matching event (capped) — so each hit shows on the
-            # timeline at its own time, not a single "(N events)" summary.
-            evs = _cti_fetch_events(index, ind["matched_field"], ind["ioc_value"], _CTI_PER_INDICATOR_CAP)
-            if not evs:
-                evs = [{"fo_id": ind["event_fo_id"], "timestamp": ind["timestamp"], "host": ind["computer"]}]
-            if len(evs) >= _CTI_PER_INDICATOR_CAP:
-                capped_indicators += 1
-            for ev in evs:
-                results.append(_record(ind, obj, ev, base_title))
-        else:
-            # own/private/allowlisted → a single summary (don't explode noise).
-            n = ind["event_count"]
-            ev = {"fo_id": ind["event_fo_id"], "timestamp": ind["timestamp"], "host": ind["computer"]}
-            results.append(_record(ind, obj, ev, f"{base_title} ({n} event{'s' if n != 1 else ''})"))
+            evs = _cti_fetch_events(index, ind["matched_field"], ind["ioc_value"], 5)
+            ind["sample_fo_ids"] = [e.get("fo_id") for e in evs if e.get("fo_id")]
+        results.append(_record(ind, obj))
 
     real = sum(1 for i in indicators.values() if i["sev"] == "high")
     total_hits = sum(i["event_count"] for i in indicators.values())
-    if capped_indicators:
-        tool_meta["log"] += f"{capped_indicators} indicator(s) capped at {_CTI_PER_INDICATOR_CAP} events\n"
     tool_meta["log"] += (
-        f"{len(indicators)} distinct indicator(s) ({real} external) → {len(results)} timeline detection(s)\n"
+        f"{len(indicators)} distinct indicator(s) ({real} external) → "
+        f"{len(results)} aggregated detection(s)\n"
     )
     tool_meta["stdout"] += (
         f"IOCs in DB         : {total_iocs}\n"
         f"Distinct indicators: {len(indicators)} ({real} external, {len(indicators) - real} own/private)\n"
-        f"Timeline detections: {len(results)} (one per matching event)\n"
+        f"Timeline detections: {len(results)} (one aggregated row per indicator)\n"
         f"Total event hits   : {total_hits}\n"
     )
     return results
