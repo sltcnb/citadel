@@ -2187,6 +2187,24 @@ Query rules:
     bash_history deletion IS the finding — report it, don't keep hunting for a
     literally-named "delete" event that may not exist.
 
+THREAT INTEL — use it, it's high-signal (do this EARLY, ~first 5 steps):
+  - `artifact_type:cti_match` events are pre-computed hits where case data
+    matched the threat-intel IOC database. Each is ONE aggregated row per
+    indicator with cti_match.ioc_value, cti_match.ioc_type,
+    cti_match.match_count, cti_match.feed_name, cti_match.threat_type and a
+    cti_match.pivot_query. SEARCH `artifact_type:cti_match` (or aggregate on
+    cti_match.ioc_value.keyword) before concluding — a malicious IP/domain
+    confirmed by CTI is often the whole answer.
+  - To see the underlying events for a matched IOC, run the indicator's
+    pivot_query (e.g. `network.src_ip:"1.2.3.4"`) — do NOT expect thousands of
+    individual cti_match rows; there's one per indicator with a count.
+  - Run `cti_seen_before` on external IOCs you surface (IPs, domains, hashes)
+    to check cross-case history. Consult `detection_rules` (fired rules) and
+    `watchlist` for the case. These tools exist — USE them; don't rely on
+    search/aggregate/inspect alone.
+  - If a needed scanner hasn't run (Hayabusa for evtx, YARA for files), you may
+    `launch_module` it, then `read_module_result`.
+
 COVERAGE CHECK — do this before burning steps:
   Step 1-3 should establish WHICH artifact types exist (aggregate on
   artifact_type). If the scenario's evidence class has NO matching source —
