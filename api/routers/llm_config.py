@@ -2256,6 +2256,21 @@ RECOGNISE WHAT YOU FOUND: if a tool result already answers the question
 searching and pivot to CONFIRM/EXPLAIN it (inspect → correlate → conclude). The
 failure mode is finding the evidence then ignoring it to chase a keyword.
 
+DISCIPLINE — be precise, economical, and grounded:
+  • DON'T SPECULATE ON MECHANISM. State only what the evidence shows. If logs
+    show `malloc(… huge …) failed` / OOM, say "memory-exhaustion via oversized
+    allocation" — do NOT assert "HTTP/2 bomb" unless you actually see HTTP/2
+    frames/streams. Name the unproven theory as a HYPOTHESIS, not a fact.
+  • CITE OR DON'T CLAIM. Every assertion in a conclude maps to a fo_id you saw.
+    No fo_id → it's a hypothesis, label it so. Never invent IPs, paths, or CVEs.
+  • BE ECONOMICAL. Before each query, check the LEDGER — never re-fetch a known
+    fact. One good query beats five vague ones. ~8-15 steps is a good run.
+  • RESPECT THE WHITELIST. IPs/domains in the KNOWN-GOOD list are own/approved
+    infrastructure — don't treat them as the threat or investigate them in depth.
+  • EMPTY STRUCTURED FIELD ≠ MYSTERY. An nginx ERROR line has empty
+    http.request_path (the request is in `message`); a kernel nftables line has
+    no http.* — that's normal, not a lead. Don't loop trying to "fix" it.
+
 Your mandate — answer these in every conclude block:
   1. DID THE INCIDENT HAPPEN in this case? Yes / No / Partial / Inconclusive.
   2. WHAT IS LINKED to it? Other events, related hosts, related users,
@@ -4157,6 +4172,39 @@ def _autolaunch_modules(case_id: str) -> str:
     )
 
 
+def _whitelist_context(case_id: str) -> str:
+    """Hand the agent the case's known-good allowlist (global + case scope) so it
+    stops treating own/whitelisted infrastructure as a threat and wasting steps."""
+    try:
+        r = _redis()
+    except Exception:
+        return ""
+    ips, domains, other = set(), set(), set()
+    for scope in ("_global", case_id):
+        try:
+            ips |= {str(v) for v in r.smembers(f"fo:allowlist:{scope}:ip")}
+            domains |= {str(v) for v in r.smembers(f"fo:allowlist:{scope}:domain")}
+            for t in ("url", "hash", "email", "filename", "process"):
+                other |= {str(v) for v in r.smembers(f"fo:allowlist:{scope}:{t}")}
+        except Exception:
+            continue
+    if not (ips or domains or other):
+        return ""
+    parts = [
+        "\nKNOWN-GOOD / WHITELISTED — these are own/approved infrastructure. Do NOT "
+        "treat them as threats or burn steps investigating them; if one appears in a "
+        "finding, note it's whitelisted and move on:"
+    ]
+    if ips:
+        parts.append("  IPs: " + ", ".join(sorted(ips)[:50]))
+    if domains:
+        parts.append("  Domains: " + ", ".join(sorted(domains)[:30]))
+    if other:
+        parts.append("  Other: " + ", ".join(sorted(other)[:20]))
+    parts.append("  (cti_match already downgrades own/private/allowlisted indicators to info.)")
+    return "\n".join(parts) + "\n"
+
+
 _IP_RE_FOCUS = _re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
 
 
@@ -4329,6 +4377,12 @@ def _agent_run(
     # LLM to do it). Fresh runs only — follow-ups inherit the prior run's launches.
     autolaunch_block = "" if parent_transcript else _autolaunch_modules(case_id)
 
+    # Known-good allowlist so it doesn't chase own infrastructure.
+    try:
+        whitelist_block = _whitelist_context(case_id)
+    except Exception:
+        whitelist_block = ""
+
     base_intro = (
         f"Case: {ctx['case_name']}\n"
         f"Events: {ctx['event_count']:,}\n"
@@ -4337,6 +4391,7 @@ def _agent_run(
         + mitre_block
         + modules_block
         + autolaunch_block
+        + whitelist_block
         + samples_block
         + f"\nFull field list (use ONLY these — dotted, no aliases):\n"
         f"{', '.join(ctx.get('searchable_fields') or [])[:3500]}\n\n"
