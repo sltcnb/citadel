@@ -2174,6 +2174,10 @@ Query rules:
   - Forward slashes are handled for you — write paths/versions literally
     (`message:*HTTP/2*`, `http.request_path:*/app/129/*`). Do NOT try to
     escape them with backslashes; that only breaks the query.
+  - Queries are LUCENE/KQL, NOT Splunk SPL. NO pipes — `| stats`, `| sort`,
+    `| head`, `| table` are invalid and match nothing. For counts / top values
+    use the `aggregate` action (agg_field + agg_query). For "top source IPs"
+    that's aggregate agg_field=network.src_ip.
   - Hashes are usually indexed LOWERCASE — always lowercase hash values.
   - If a field:value query returns 0 twice, the FIELD is probably wrong —
     re-check the field list, then fall back to message:*value*.
@@ -2236,6 +2240,21 @@ Artifact playbook — where evidence actually lives:
     evtx 4688 / Sysmon 1, then amcache.
   - Browser activity: artifact_type:browser.
   - Persistence: artifact_type:persistence (scheduled tasks, run keys).
+  - LINUX PROCESS CRASH (segfault / OOM-kill / "it crashed"): the truth is in
+    artifact_type:audit_event, NOT a "segfault" string in syslog/kern_log. Look
+    for `audit.type:ANOM_ABEND` — that IS a process crash. Its fields tell you
+    everything: `audit.comm`/`audit.exe` = which process (e.g. nginx),
+    `audit.sig:11` = SIGSEGV (segmentation fault), `audit.sig:9` = SIGKILL
+    (often the OOM killer), `audit.pid`. So `artifact_type:audit_event AND
+    audit.type:ANOM_ABEND AND audit.comm:nginx` finds an nginx crash directly.
+    When you find one, that IS the answer — INSPECT it for the signal, then
+    CORRELATE ±a few minutes for what preceded it (the HTTP/2 traffic, the IP).
+    Do NOT keep grepping `message:*segfault*` — Linux doesn't log it there.
+
+RECOGNISE WHAT YOU FOUND: if a tool result already answers the question
+(an ANOM_ABEND for nginx, a `tar`/delete of logs, a CTI hit on a bad IP), STOP
+searching and pivot to CONFIRM/EXPLAIN it (inspect → correlate → conclude). The
+failure mode is finding the evidence then ignoring it to chase a keyword.
 
 Your mandate — answer these in every conclude block:
   1. DID THE INCIDENT HAPPEN in this case? Yes / No / Partial / Inconclusive.
@@ -2309,10 +2328,23 @@ def _normalize_hash_terms(query: str) -> str:
 
 
 # Field-name aliases the LLM reaches for out of habit but our schema doesn't
-# use. `@timestamp` (Elastic Common Schema) is the big one — our date field is
-# plain `timestamp`, so an `@timestamp:[...]` range silently matches nothing and
-# the agent wrongly concludes "no data for that day". Rewrite before querying.
-_FIELD_ALIASES = ((_re.compile(r"@timestamp\b"), "timestamp"),)
+# use. `@timestamp` (ECS) is the big one — our date field is plain `timestamp`,
+# so `@timestamp:[...]` silently matches nothing. The src/dst IP aliases catch
+# the common `source_ip`/`src_ip` habit (real field: network.src_ip). The
+# negative lookbehind `(?<![.\w])` stops us rewriting the tail of an already-
+# correct dotted field like `network.src_ip`.
+_FIELD_ALIASES = (
+    (_re.compile(r"@timestamp\b"), "timestamp"),
+    (_re.compile(r"(?<![.\w])source_ip\b"), "network.src_ip"),
+    (_re.compile(r"(?<![.\w])src_ip\b"), "network.src_ip"),
+    (_re.compile(r"(?<![.\w])dest_ip\b"), "network.dst_ip"),
+    (_re.compile(r"(?<![.\w])dst_ip\b"), "network.dst_ip"),
+)
+
+# Splunk SPL leaking into a Lucene query (`… | stats count by x | sort -count`).
+# ES treats the pipe as a literal term and silently returns 0 — the agent then
+# loops forever. Detect it and bounce back a clear "use aggregate" hint.
+_SPL_RE = _re.compile(r"\|\s*(stats|sort|head|limit|table|eval|where|rex|fields|dedup|top|rare|chart|timechart)\b", _re.I)
 
 
 def _normalize_agent_query(query: str) -> str:
@@ -2337,6 +2369,20 @@ def _tool_search(case_id: str, step: dict) -> dict:
 
     from services.elasticsearch import _request as _es_req
     from services.elasticsearch import escape_lucene_query
+
+    raw_q = step.get("query", "") or ""
+    if _SPL_RE.search(raw_q):
+        return {
+            "result_count": None,
+            "query_status": "invalid",
+            "query_error": (
+                "That's Splunk SPL — this engine is Lucene/KQL only, NO pipes "
+                "(`| stats`, `| sort`, `| head`). For counts/top-values use the "
+                "AGGREGATE action instead: {\"action\":\"aggregate\",\"agg_field\":"
+                "\"network.src_ip\",\"agg_query\":\"artifact_type:access_log AND "
+                "http.protocol.keyword:\\\"HTTP/2.0\\\"\"}. Drop everything after the `|`."
+            ),
+        }
 
     index = f"fo-case-{case_id}-*"
     try:
@@ -3871,7 +3917,7 @@ def _llm_forced_conclude(cfg, system_prompt, base_intro, transcript, reason):
             "the hypotheses with for/against evidence, and give an honest confidence. "
             "action MUST be 'conclude'."
         )
-        raw = _call_llm_with_system(cfg, system_prompt, msg, max_tokens=2000)
+        raw = _call_llm_with_system(cfg, system_prompt, msg, max_tokens=2000, json_mode=True)
         step = _parse_agent_step(raw)
         if step.get("action") == "conclude":
             return step
@@ -4312,7 +4358,7 @@ def _agent_run(
             # Conclude blocks can be long (hypotheses array + evidence + IOCs +
             # MITRE + next_steps); 900 tokens was hitting cap and producing
             # truncated JSON. 2000 leaves headroom without becoming wasteful.
-            raw = _call_llm_with_system(cfg, system_prompt, user_msg, max_tokens=2000)
+            raw = _call_llm_with_system(cfg, system_prompt, user_msg, max_tokens=2000, json_mode=True)
         except Exception as exc:
             err_step = {"step": step_no, "action": "error", "thought": f"LLM failed: {exc}"}
             transcript.append(err_step)
@@ -5356,9 +5402,15 @@ def generate_final_report(case_id: str, body: FinalReportRequest = None):
 
 
 def _call_llm_with_system(
-    cfg: dict, system_prompt: str, user_msg: str, max_tokens: int = 600
+    cfg: dict, system_prompt: str, user_msg: str, max_tokens: int = 600, json_mode: bool = False
 ) -> str:
-    """Generic LLM call with a custom system prompt."""
+    """Generic LLM call with a custom system prompt.
+
+    json_mode=True asks the provider to emit a strict JSON object (the agent
+    step contract) — kills the 'unparsed LLM reply' / SPL / prose-around-JSON
+    failures from looser models like Qwen. Honoured by OpenAI-compatible
+    (response_format) and Ollama (format) providers; Anthropic has no such knob
+    so it falls back to the prompt + salvage parser."""
     provider = cfg.get("provider", "").lower()
     model = cfg.get("model", "")
     api_key = cfg.get("api_key", "")
@@ -5372,6 +5424,7 @@ def _call_llm_with_system(
     except Exception:
         pass
 
+    import urllib.error
     import urllib.request as _ur
 
     if provider == "anthropic":
@@ -5402,16 +5455,17 @@ def _call_llm_with_system(
         return data["content"][0]["text"]
     elif provider == "ollama":
         url = base_url or "http://localhost:11434"
-        body = json.dumps(
-            {
-                "model": model,
-                "stream": False,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_msg},
-                ],
-            }
-        ).encode()
+        _body = {
+            "model": model,
+            "stream": False,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_msg},
+            ],
+        }
+        if json_mode:
+            _body["format"] = "json"
+        body = json.dumps(_body).encode()
         req_http = _ur.Request(
             f"{url}/api/chat",
             data=body,
@@ -5430,25 +5484,39 @@ def _call_llm_with_system(
         return data["message"]["content"]
     else:
         url = base_url or "https://api.openai.com/v1"
-        body = json.dumps(
-            {
-                "model": model,
-                "max_tokens": max_tokens,
-                "temperature": 0.2,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_msg},
-                ],
-            }
-        ).encode()
-        req_http = _ur.Request(
-            f"{url}/chat/completions",
-            data=body,
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
-            method="POST",
-        )
-        with _ur.urlopen(req_http, timeout=60) as resp:
-            data = json.loads(resp.read())
+        _body = {
+            "model": model,
+            "max_tokens": max_tokens,
+            "temperature": 0.2,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_msg},
+            ],
+        }
+        if json_mode:
+            # OpenAI/vLLM/OpenRouter JSON mode. Requires the word "json" in the
+            # prompt (the agent prompt already says "return ONE JSON object").
+            _body["response_format"] = {"type": "json_object"}
+        def _post_openai(payload: dict) -> dict:
+            req_http = _ur.Request(
+                f"{url}/chat/completions",
+                data=json.dumps(payload).encode(),
+                headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+                method="POST",
+            )
+            with _ur.urlopen(req_http, timeout=60) as resp:
+                return json.loads(resp.read())
+
+        try:
+            data = _post_openai(_body)
+        except urllib.error.HTTPError as exc:
+            # Some gateways reject response_format — retry once without it so
+            # JSON mode degrades gracefully instead of breaking the agent.
+            if json_mode and exc.code in (400, 422) and "response_format" in _body:
+                _body.pop("response_format", None)
+                data = _post_openai(_body)
+            else:
+                raise
         usage = data.get("usage", {})
         # Some APIs (OpenRouter, etc.) report actual cost in usage
         actual_cost = usage.get("total_cost") or usage.get("cost") or usage.get("price")
