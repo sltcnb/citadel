@@ -52,6 +52,7 @@ KNOWN_TOOLS = (
     "detection_rules",
     "watchlist",
     "module_runs",
+    "list_modules",
     "launch_module",
     "read_module_result",
     "web_search",
