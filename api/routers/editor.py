@@ -22,6 +22,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from auth.dependencies import require_admin
+from services.safe_paths import UnsafePathError, safe_join
 
 # Writing built-in processor/ingester/module source = arbitrary code that the
 # worker imports and executes (RCE). The router is developer-or-admin, but these
@@ -55,7 +56,10 @@ def _safe(base: Path, name: str, suffix: str) -> Path:
         raise HTTPException(400, f"File name must end with '{suffix}'")
     if any(c in name for c in ("/", "\\", "..")):
         raise HTTPException(400, "Invalid file name")
-    return base / name
+    try:
+        return safe_join(base, name)
+    except UnsafePathError:
+        raise HTTPException(400, "Invalid file name")
 
 
 def _read_priority(path: Path):
@@ -110,7 +114,10 @@ def _safe_plugin(base: Path, name: str, suffix: str) -> Path:
         raise HTTPException(400, "Invalid file path")
     if not name.endswith(suffix):
         raise HTTPException(400, f"File name must end with '{suffix}'")
-    return base / name
+    try:
+        return safe_join(base, name)
+    except UnsafePathError:
+        raise HTTPException(400, "Invalid file path")
 
 
 def _read(path: Path) -> str:
@@ -286,7 +293,10 @@ def delete_builtin_ingester(name: str):
 def _safe_yaml(name: str) -> Path:
     if not name.endswith(".yaml") or any(c in name for c in ("/", "\\", "..")):
         raise HTTPException(400, "Invalid file name — must end with .yaml")
-    return MODULES_REG_DIR / name
+    try:
+        return safe_join(MODULES_REG_DIR, name)
+    except UnsafePathError:
+        raise HTTPException(400, "Invalid file name — must end with .yaml")
 
 
 @router.get("/editor/builtin-modules")
@@ -341,7 +351,10 @@ def _safe_processor(name: str) -> Path:
         raise HTTPException(400, "Invalid file path")
     if not name.endswith(".py"):
         raise HTTPException(400, "File must be a .py file")
-    return PROCESSOR_DIR / name
+    try:
+        return safe_join(PROCESSOR_DIR, name)
+    except UnsafePathError:
+        raise HTTPException(400, "Invalid file path")
 
 
 @router.get("/editor/processor-files")

@@ -178,7 +178,7 @@ function AgentStepRow({ step: s, onPivot }) {
                     <span className="tabular-nums text-gray-700 w-14 text-right">{b.count.toLocaleString()}</span>
                     {onPivot && (
                       <button
-                        onClick={() => onPivot(`${s.agg_field}:"${String(b.value).replace(/"/g,'\\"')}"`)}
+                        onClick={() => onPivot(`${s.agg_field}:"${String(b.value).replace(/\\/g,'\\\\').replace(/"/g,'\\"')}"`)}
                         className="text-[10px] text-brand-accent hover:underline"
                         title={`Pivot timeline to ${s.agg_field}:${b.value}`}
                       >

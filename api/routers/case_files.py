@@ -354,6 +354,11 @@ def search_file_contents(
     """
     if not body.query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty")
+    # Cap the pattern length — a user-supplied regex (body.regex=True) is compiled
+    # directly, so a huge/crafted pattern is the main ReDoS lever. Bounding length
+    # keeps catastrophic backtracking off the table for case-file scans.
+    if len(body.query) > 500:
+        raise HTTPException(status_code=400, detail="Query too long (max 500 chars)")
 
     try:
         flags = re.IGNORECASE
