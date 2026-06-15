@@ -52,6 +52,7 @@ from routers import (
     modules,
     notes,
     pilot_memory,
+    pilot_settings,
     platform_settings,
     plugins,
     process_tree,
@@ -655,6 +656,7 @@ app.include_router(s3_integration.router, prefix="/api/v1", dependencies=_admin_
 app.include_router(admin_utils.router, prefix="/api/v1", dependencies=_admin_only)
 app.include_router(admin_logs.router, prefix="/api/v1", dependencies=_admin_only)
 app.include_router(platform_settings.router, prefix="/api/v1")
+app.include_router(pilot_settings.router, prefix="/api/v1")
 app.include_router(webhooks.router, prefix="/api/v1", dependencies=_admin_only)
 app.include_router(companies.router, prefix="/api/v1", dependencies=_analyst_or_admin)
 app.include_router(metrics.router, prefix="/api/v1", dependencies=_analyst_or_admin)

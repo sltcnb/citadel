@@ -324,6 +324,11 @@ export const api = {
     setConfig:    (data) => request('PUT', '/admin/platform-config', data),
   },
 
+  pilotConfig: {
+    getConfig:    ()     => request('GET', '/admin/pilot-config'),
+    setConfig:    (data) => request('PUT', '/admin/pilot-config', data),
+  },
+
   llm: {
     getConfig:         ()     => request('GET',    '/admin/llm-config'),
     updateConfig:      (data) => request('PUT',    '/admin/llm-config', data),

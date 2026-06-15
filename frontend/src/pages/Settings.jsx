@@ -78,6 +78,169 @@ const TABS = [
   { id: 'license',      label: 'License',      icon: Award,     tool: 'Platform' },
 ]
 
+/* ── Pilot (autonomous DFIR agent) capabilities ──────────────────────────────── */
+
+function PilotSettingsSection() {
+  const [cfg, setCfg]         = useState(null)
+  const [form, setForm]       = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving]   = useState(false)
+  const [saved, setSaved]     = useState(false)
+  const [error, setError]     = useState('')
+  const [showKey, setShowKey] = useState(false)
+
+  function hydrate(c) {
+    setCfg(c)
+    setForm({
+      disabled_tools:         c.disabled_tools || [],
+      allow_module_launch:    c.allow_module_launch !== false,
+      module_launch_cap:      c.module_launch_cap ?? 3,
+      web_search_enabled:     !!c.web_search_enabled,
+      web_search_provider:    c.web_search_provider || 'tavily',
+      web_search_api_key:     '',  // never echoed; blank = keep stored
+      web_search_max_results: c.web_search_max_results ?? 5,
+    })
+  }
+
+  useEffect(() => {
+    api.pilotConfig.getConfig()
+      .then(hydrate)
+      .catch(err => setError(err.message || 'Failed to load Pilot settings'))
+      .finally(() => setLoading(false))
+  }, [])
+
+  function setF(k, v) { setForm(f => ({ ...f, [k]: v })); setSaved(false) }
+
+  function toggleTool(t) {
+    setForm(f => {
+      const off = f.disabled_tools.includes(t)
+      return { ...f, disabled_tools: off ? f.disabled_tools.filter(x => x !== t) : [...f.disabled_tools, t] }
+    })
+    setSaved(false)
+  }
+
+  async function save(e) {
+    e?.preventDefault?.()
+    setSaving(true); setSaved(false); setError('')
+    try { hydrate(await api.pilotConfig.setConfig(form)); setSaved(true) }
+    catch (err) { setError(err.message || 'Failed to save') }
+    finally { setSaving(false) }
+  }
+
+  // Tools the admin can toggle on/off (web_search has its own block below).
+  const toolList = (cfg?.known_tools || []).filter(t => t !== 'web_search')
+  const providers = cfg?.web_search_providers || ['tavily', 'brave']
+
+  return (
+    <section className="card p-5 space-y-4">
+      <div className="flex items-center gap-2">
+        <Sparkles size={15} className="text-fuchsia-500" />
+        <h2 className="font-semibold text-brand-text">Pilot · Agent Capabilities</h2>
+      </div>
+      <p className="text-xs text-gray-500">
+        Control what the autonomous investigation agent (Pilot) is allowed to do.
+        Tools are enabled by default. Web search is the only capability that
+        reaches off the appliance — it stays off until you enable it and supply a
+        provider key.
+      </p>
+
+      {loading ? (
+        <div className="flex items-center gap-2 text-gray-500 py-2">
+          <Loader2 size={14} className="animate-spin" /> Loading…
+        </div>
+      ) : form && (
+        <form onSubmit={save} className="space-y-5">
+          {/* Tool enable/disable */}
+          <div className="space-y-2">
+            <h3 className="text-xs font-semibold text-gray-700">Enabled tools</h3>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+              {toolList.map(t => {
+                const enabled = !form.disabled_tools.includes(t)
+                return (
+                  <label key={t} className="flex items-center gap-2 text-xs cursor-pointer select-none">
+                    <input type="checkbox" checked={enabled} onChange={() => toggleTool(t)} className="h-3.5 w-3.5" />
+                    <span className={enabled ? 'text-gray-700' : 'text-gray-400 line-through'}>{t}</span>
+                  </label>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* Module launching */}
+          <div className="space-y-2">
+            <h3 className="text-xs font-semibold text-gray-700">Module launching</h3>
+            <label className="flex items-center gap-2 text-xs cursor-pointer select-none">
+              <input type="checkbox" checked={form.allow_module_launch}
+                onChange={e => setF('allow_module_launch', e.target.checked)} className="h-3.5 w-3.5" />
+              <span className="text-gray-700">Allow the Pilot to launch modules</span>
+            </label>
+            {form.allow_module_launch && (
+              <label className="flex items-center gap-2 text-xs text-gray-600">
+                Max launches per case / 10 min
+                <input type="number" min={1} max={50} value={form.module_launch_cap}
+                  onChange={e => setF('module_launch_cap', parseInt(e.target.value || '1', 10))}
+                  className="w-16 border border-gray-200 rounded px-2 py-1 text-xs" />
+              </label>
+            )}
+          </div>
+
+          {/* Web search */}
+          <div className="space-y-2">
+            <h3 className="text-xs font-semibold text-gray-700">Web search (external)</h3>
+            <label className="flex items-center gap-2 text-xs cursor-pointer select-none">
+              <input type="checkbox" checked={form.web_search_enabled}
+                onChange={e => setF('web_search_enabled', e.target.checked)} className="h-3.5 w-3.5" />
+              <span className="text-gray-700">Let the Pilot search the public web</span>
+            </label>
+            {form.web_search_enabled && (
+              <div className="space-y-2 pl-1">
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-gray-600 w-20">Provider</label>
+                  <select value={form.web_search_provider} onChange={e => setF('web_search_provider', e.target.value)}
+                    className="text-xs border border-gray-200 rounded px-2 py-1">
+                    {providers.map(p => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                  <label className="text-xs text-gray-600 ml-2">Max results</label>
+                  <input type="number" min={1} max={20} value={form.web_search_max_results}
+                    onChange={e => setF('web_search_max_results', parseInt(e.target.value || '5', 10))}
+                    className="w-14 border border-gray-200 rounded px-2 py-1 text-xs" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                    API key {cfg?.web_search_api_key_set && <span className="text-gray-400">(set — leave blank to keep)</span>}
+                  </label>
+                  <div className="relative">
+                    <input type={showKey ? 'text' : 'password'} value={form.web_search_api_key}
+                      onChange={e => setF('web_search_api_key', e.target.value)}
+                      placeholder={cfg?.web_search_api_key_set ? '••••••••' : 'provider API key'}
+                      className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 pr-9" />
+                    <button type="button" onClick={() => setShowKey(s => !s)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                      {showKey ? <EyeOff size={14} /> : <Eye size={14} />}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center gap-3">
+            <button type="submit" disabled={saving} className="btn-primary text-xs flex items-center gap-1.5">
+              {saving ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Save
+            </button>
+            {saved && <span className="text-xs text-green-600 flex items-center gap-1"><Check size={12} /> Saved</span>}
+          </div>
+        </form>
+      )}
+      {error && (
+        <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-center gap-1.5">
+          <AlertCircle size={12} /> {error}
+        </p>
+      )}
+    </section>
+  )
+}
+
 /* ── SSO / Single Sign-On (Google + Microsoft OIDC) ──────────────────────────── */
 
 const SSO_ROLES = ['admin', 'analyst', 'developer', 'guest']
@@ -1894,6 +2057,9 @@ export default function Settings() {
 
         {/* SSO / Single Sign-On (Google + Microsoft OIDC) */}
         <SSOSettingsSection />
+
+        {/* Pilot agent capabilities */}
+        <PilotSettingsSection />
 
         {/* Report template */}
         <section className="card p-5 space-y-4">
