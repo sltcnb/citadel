@@ -12,6 +12,7 @@ const CaseFiles       = lazy(() => import('./pages/CaseFiles'))
 const CaseNotes       = lazy(() => import('./pages/CaseNotes'))
 const AlertLibrary    = lazy(() => import('./pages/AlertLibrary'))
 const YaraLibrary     = lazy(() => import('./pages/YaraLibrary'))
+const Templates       = lazy(() => import('./pages/Templates'))
 const Ingesters       = lazy(() => import('./pages/Ingesters'))
 const Modules         = lazy(() => import('./pages/Modules'))
 const Collector       = lazy(() => import('./pages/Collector'))
@@ -99,6 +100,7 @@ export default function App() {
             <Route path="cases/:caseId/search"       element={<SearchRedirect />} />
             <Route path="alert-rules"               element={<AlertLibrary />} />
             <Route path="yara-rules"                element={<YaraLibrary />} />
+            <Route path="templates"                 element={<Templates />} />
             <Route path="ingesters"                 element={<Ingesters />} />
             <Route path="modules"                   element={<Modules />} />
             <Route path="collector"                 element={<Collector />} />
