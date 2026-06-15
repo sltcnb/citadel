@@ -316,6 +316,16 @@ export const api = {
     yaraTest:  (caseId, jobId, rules) => request('POST', '/studio/yara-test', { case_id: caseId, job_id: jobId, rules }),
   },
 
+  sso: {
+    getConfig:    ()     => request('GET', '/admin/sso-config'),
+    setConfig:    (data) => request('PUT', '/admin/sso-config', data),
+  },
+
+  platform: {
+    getConfig:    ()     => request('GET', '/admin/platform-config'),
+    setConfig:    (data) => request('PUT', '/admin/platform-config', data),
+  },
+
   llm: {
     getConfig:         ()     => request('GET',    '/admin/llm-config'),
     updateConfig:      (data) => request('PUT',    '/admin/llm-config', data),

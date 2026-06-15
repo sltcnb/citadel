@@ -614,6 +614,21 @@ class StandaloneRunRequest(BaseModel):
 _MAX_MALWARE_UPLOAD = int(os.getenv("MAX_MALWARE_UPLOAD_BYTES", str(2 * 1024**3)))  # 2 GiB
 
 
+def _max_malware_upload_bytes() -> int:
+    """Effective upload cap in bytes. Derived from the admin-configurable
+    ``max_upload_gib`` platform setting at request time; falls back to the
+    env default on any Redis/resolver error so ingest never breaks."""
+    try:
+        from routers.platform_settings import get_platform_config
+
+        gib = int(get_platform_config()["max_upload_gib"])
+        if gib >= 1:
+            return gib * 1024**3
+    except Exception:
+        pass
+    return _MAX_MALWARE_UPLOAD
+
+
 @router.post("/malware-analysis/upload", status_code=201)
 async def upload_malware_file(file: UploadFile = File(...)):
     """
@@ -630,6 +645,7 @@ async def upload_malware_file(file: UploadFile = File(...)):
     filename = file.filename or "upload"
     minio_key = f"malware_analysis/uploads/{upload_id}/{filename}"
 
+    max_upload = _max_malware_upload_bytes()
     size = 0
     tmp = tempfile.NamedTemporaryFile(delete=False)
     tmp_path = tmp.name
@@ -639,10 +655,10 @@ async def upload_malware_file(file: UploadFile = File(...)):
             if not chunk:
                 break
             size += len(chunk)
-            if size > _MAX_MALWARE_UPLOAD:
+            if size > max_upload:
                 raise HTTPException(
                     status_code=413,
-                    detail=f"File exceeds the {_MAX_MALWARE_UPLOAD // 1024**3} GiB upload limit",
+                    detail=f"File exceeds the {max_upload // 1024**3} GiB upload limit",
                 )
             tmp.write(chunk)
         tmp.close()

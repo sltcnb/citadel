@@ -52,6 +52,7 @@ from routers import (
     modules,
     notes,
     pilot_memory,
+    platform_settings,
     plugins,
     process_tree,
     reports,
@@ -604,6 +605,7 @@ _admin_only = [Depends(require_admin)]
 app.include_router(health.router, prefix="/api/v1")
 app.include_router(auth_router.router, prefix="/api/v1")
 app.include_router(sso.router, prefix="/api/v1")  # OIDC SSO — endpoints are public by design (browser redirects)
+app.include_router(sso.admin_router, prefix="/api/v1")  # SSO admin config — gated by require_admin
 app.include_router(license_router, prefix="/api/v1")
 
 # RBAC group/permission management (gated inside the router via require_permission)
@@ -652,6 +654,7 @@ app.include_router(llm_config.router, prefix="/api/v1", dependencies=_analyst_or
 app.include_router(s3_integration.router, prefix="/api/v1", dependencies=_admin_only)
 app.include_router(admin_utils.router, prefix="/api/v1", dependencies=_admin_only)
 app.include_router(admin_logs.router, prefix="/api/v1", dependencies=_admin_only)
+app.include_router(platform_settings.router, prefix="/api/v1")
 app.include_router(webhooks.router, prefix="/api/v1", dependencies=_admin_only)
 app.include_router(companies.router, prefix="/api/v1", dependencies=_analyst_or_admin)
 app.include_router(metrics.router, prefix="/api/v1", dependencies=_analyst_or_admin)

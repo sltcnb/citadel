@@ -5,7 +5,7 @@ import {
   AlertCircle, Wifi, FlaskConical, Cpu, Info,
   Shield, Lock, Archive, Database, Upload, Server,
   Activity, Plus, Pencil, HardDrive, ChevronDown, ChevronRight,
-  KeyRound, RefreshCw, Award, Webhook, Send,
+  KeyRound, RefreshCw, Award, Webhook, Send, SlidersHorizontal,
 } from 'lucide-react'
 import { api } from '../api/client'
 import LicenseGate from '../components/LicenseGate'
@@ -137,6 +137,379 @@ function SigmaSettingsSection() {
           {saving && <Loader2 size={13} className="animate-spin text-gray-400" />}
         </label>
       )}
+      {error && (
+        <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-center gap-1.5">
+          <AlertCircle size={12} /> {error}
+        </p>
+      )}
+    </section>
+  )
+}
+
+/* ── SSO / Single Sign-On (Google + Microsoft OIDC) ──────────────────────────── */
+
+const SSO_ROLES = ['admin', 'analyst', 'developer', 'guest']
+
+function SSOSettingsSection() {
+  const [cfg, setCfg]       = useState(null)   // server view (with *_set flags)
+  const [form, setForm]     = useState(null)   // editable form
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved]   = useState(false)
+  const [error, setError]   = useState('')
+  const [showG, setShowG]   = useState(false)
+  const [showM, setShowM]   = useState(false)
+
+  function hydrate(c) {
+    setCfg(c)
+    setForm({
+      google_client_id:        c.google_client_id || '',
+      google_client_secret:    '',  // never echoed back; blank = keep
+      microsoft_client_id:     c.microsoft_client_id || '',
+      microsoft_client_secret: '',
+      microsoft_tenant:        c.microsoft_tenant || 'common',
+      redirect_base:           c.redirect_base || '',
+      allowed_domains:         (c.allowed_domains || []).join(', '),
+      default_role:            c.default_role || 'analyst',
+      auto_provision:          c.auto_provision !== false,
+    })
+  }
+
+  useEffect(() => {
+    api.sso.getConfig()
+      .then(hydrate)
+      .catch(err => setError(err.message || 'Failed to load SSO settings'))
+      .finally(() => setLoading(false))
+  }, [])
+
+  function setF(k, v) { setForm(f => ({ ...f, [k]: v })); setSaved(false) }
+
+  async function save(e) {
+    e?.preventDefault?.()
+    setSaving(true); setSaved(false); setError('')
+    try {
+      const payload = {
+        ...form,
+        allowed_domains: form.allowed_domains
+          .split(',').map(d => d.trim()).filter(Boolean),
+      }
+      const res = await api.sso.setConfig(payload)
+      hydrate(res)
+      setSaved(true)
+      setShowG(false); setShowM(false)
+    } catch (err) {
+      setError(err.message || 'Failed to save')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <section className="card p-5 space-y-4">
+      <div className="flex items-center gap-2">
+        <KeyRound size={15} className="text-amber-500" />
+        <h2 className="font-semibold text-brand-text">SSO · Single Sign-On</h2>
+      </div>
+      <p className="text-xs text-gray-500">
+        Configure Google and Microsoft OIDC sign-in. These override the
+        corresponding environment variables; leave a field blank to fall back to
+        the env default. A provider's login button only appears once both its
+        client ID and secret are set. Register the callback URL shown below with
+        each provider.
+      </p>
+
+      {loading ? (
+        <div className="flex items-center gap-2 text-gray-500 py-2">
+          <Loader2 size={14} className="animate-spin" /> Loading…
+        </div>
+      ) : form && (
+        <form onSubmit={save} className="space-y-4">
+          {/* Google */}
+          <div className="space-y-2">
+            <h3 className="text-xs font-semibold text-gray-700">Google</h3>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Client ID</label>
+              <input
+                type="text"
+                value={form.google_client_id}
+                onChange={e => setF('google_client_id', e.target.value)}
+                placeholder="xxxxx.apps.googleusercontent.com"
+                className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Client Secret</label>
+              <div className="relative">
+                <input
+                  type={showG ? 'text' : 'password'}
+                  value={form.google_client_secret}
+                  onChange={e => setF('google_client_secret', e.target.value)}
+                  placeholder={cfg?.google_secret_set ? '•••• set (leave blank to keep)' : 'not set'}
+                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 pr-9"
+                />
+                <button type="button" onClick={() => setShowG(s => !s)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400">
+                  {showG ? <EyeOff size={14} /> : <Eye size={14} />}
+                </button>
+              </div>
+            </div>
+            {cfg?.callback_base?.google && (
+              <p className="text-[10px] text-gray-500">
+                Authorized redirect URI: <code className="bg-gray-100 px-1 rounded">{cfg.callback_base.google}</code>
+              </p>
+            )}
+          </div>
+
+          {/* Microsoft */}
+          <div className="space-y-2 border-t border-gray-100 pt-3">
+            <h3 className="text-xs font-semibold text-gray-700">Microsoft</h3>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Client ID</label>
+              <input
+                type="text"
+                value={form.microsoft_client_id}
+                onChange={e => setF('microsoft_client_id', e.target.value)}
+                placeholder="application (client) ID"
+                className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Client Secret</label>
+              <div className="relative">
+                <input
+                  type={showM ? 'text' : 'password'}
+                  value={form.microsoft_client_secret}
+                  onChange={e => setF('microsoft_client_secret', e.target.value)}
+                  placeholder={cfg?.microsoft_secret_set ? '•••• set (leave blank to keep)' : 'not set'}
+                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 pr-9"
+                />
+                <button type="button" onClick={() => setShowM(s => !s)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400">
+                  {showM ? <EyeOff size={14} /> : <Eye size={14} />}
+                </button>
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Tenant</label>
+              <input
+                type="text"
+                value={form.microsoft_tenant}
+                onChange={e => setF('microsoft_tenant', e.target.value)}
+                placeholder="common | organizations | <tenant-guid>"
+                className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2"
+              />
+            </div>
+            {cfg?.callback_base?.microsoft && (
+              <p className="text-[10px] text-gray-500">
+                Authorized redirect URI: <code className="bg-gray-100 px-1 rounded">{cfg.callback_base.microsoft}</code>
+              </p>
+            )}
+          </div>
+
+          {/* Common policy */}
+          <div className="space-y-3 border-t border-gray-100 pt-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Redirect base URL</label>
+              <input
+                type="text"
+                value={form.redirect_base}
+                onChange={e => setF('redirect_base', e.target.value)}
+                placeholder="https://citadel.example.com"
+                className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2"
+              />
+              <p className="text-[10px] text-gray-500 mt-1">Public base URL of Citadel; used to build the callback URIs above.</p>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Allowed email domains</label>
+              <input
+                type="text"
+                value={form.allowed_domains}
+                onChange={e => setF('allowed_domains', e.target.value)}
+                placeholder="acme.com, partner.io  (blank = allow all)"
+                className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2"
+              />
+            </div>
+            <div className="flex gap-4">
+              <div className="flex-1">
+                <label className="block text-xs font-medium text-gray-600 mb-1">Default role</label>
+                <select
+                  value={form.default_role}
+                  onChange={e => setF('default_role', e.target.value)}
+                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white"
+                >
+                  {SSO_ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+                </select>
+              </div>
+              <label className="flex items-center gap-2 cursor-pointer select-none mt-5">
+                <input
+                  type="checkbox"
+                  checked={!!form.auto_provision}
+                  onChange={e => setF('auto_provision', e.target.checked)}
+                  className="h-4 w-4"
+                />
+                <span className="text-sm text-gray-700">Auto-provision new users</span>
+              </label>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3 pt-1">
+            <button type="submit" disabled={saving}
+              className="btn-primary text-sm px-4 py-2 flex items-center gap-2">
+              {saving && <Loader2 size={13} className="animate-spin" />}
+              Save SSO settings
+            </button>
+            {saved && <span className="text-xs text-green-600 flex items-center gap-1"><Check size={13} /> Saved</span>}
+          </div>
+        </form>
+      )}
+
+      {error && (
+        <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-center gap-1.5">
+          <AlertCircle size={12} /> {error}
+        </p>
+      )}
+    </section>
+  )
+}
+
+/* ── Platform runtime settings (admin-tunable knobs) ─────────────────────────── */
+
+const PLATFORM_LANGUAGES = [
+  { code: 'en', label: 'English' },
+  { code: 'fr', label: 'Français' },
+  { code: 'es', label: 'Español' },
+  { code: 'de', label: 'Deutsch' },
+  { code: 'it', label: 'Italiano' },
+  { code: 'pt', label: 'Português' },
+  { code: 'nl', label: 'Nederlands' },
+  { code: 'ja', label: '日本語' },
+  { code: 'zh', label: '中文' },
+]
+
+const PLATFORM_NUMERIC_FIELDS = [
+  {
+    key: 'jwt_expire_hours', label: 'JWT expiry (hours)', min: 1,
+    help: 'How long an access token stays valid after login. Takes effect for newly issued tokens.',
+  },
+  {
+    key: 'login_rate_limit', label: 'Login attempts per window', min: 1,
+    help: 'Max failed/total login attempts allowed from one IP within the window below before a 429.',
+  },
+  {
+    key: 'login_rate_window_seconds', label: 'Login rate window (seconds)', min: 1,
+    help: 'Length of the rolling window for the login attempt limit above.',
+  },
+  {
+    key: 'agent_max_steps', label: 'Pilot agent max steps', min: 1,
+    help: 'Per-run ceiling on autonomous Pilot agent steps (bounds cost). Capped by the server hard limit (50).',
+  },
+  {
+    key: 'max_upload_gib', label: 'Max upload size (GiB)', min: 1,
+    help: 'Upload cap for standalone malware/ingest files. Enforced per request.',
+  },
+  {
+    key: 'session_idle_minutes', label: 'Session idle timeout (minutes)', min: 0,
+    help: 'Advisory idle timeout. 0 disables it.',
+  },
+]
+
+function PlatformSettingsSection() {
+  const [form, setForm]       = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving]   = useState(false)
+  const [saved, setSaved]     = useState(false)
+  const [error, setError]     = useState('')
+
+  useEffect(() => {
+    api.platform.getConfig()
+      .then(setForm)
+      .catch(err => setError(err.message || 'Failed to load platform settings'))
+      .finally(() => setLoading(false))
+  }, [])
+
+  function setF(k, v) { setForm(f => ({ ...f, [k]: v })); setSaved(false) }
+
+  async function save(e) {
+    e?.preventDefault?.()
+    setSaving(true); setSaved(false); setError('')
+    try {
+      const payload = {
+        jwt_expire_hours:          Number(form.jwt_expire_hours),
+        login_rate_limit:          Number(form.login_rate_limit),
+        login_rate_window_seconds: Number(form.login_rate_window_seconds),
+        agent_max_steps:           Number(form.agent_max_steps),
+        default_report_language:   form.default_report_language,
+        max_upload_gib:            Number(form.max_upload_gib),
+        session_idle_minutes:      Number(form.session_idle_minutes),
+      }
+      const res = await api.platform.setConfig(payload)
+      setForm(res)
+      setSaved(true)
+    } catch (err) {
+      setError(err.message || 'Failed to save')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <section className="card p-5 space-y-4">
+      <div className="flex items-center gap-2">
+        <SlidersHorizontal size={15} className="text-sky-500" />
+        <h2 className="font-semibold text-brand-text">Platform</h2>
+      </div>
+      <p className="text-xs text-gray-500">
+        Runtime-configurable platform limits. These override the corresponding
+        environment defaults and take effect without a restart. Each setting falls
+        back to its env/const default if the store is unavailable.
+      </p>
+
+      {loading ? (
+        <div className="flex items-center gap-2 text-gray-500 py-2">
+          <Loader2 size={14} className="animate-spin" /> Loading…
+        </div>
+      ) : form && (
+        <form onSubmit={save} className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {PLATFORM_NUMERIC_FIELDS.map(f => (
+              <div key={f.key}>
+                <label className="block text-xs font-medium text-gray-600 mb-1">{f.label}</label>
+                <input
+                  type="number"
+                  min={f.min}
+                  value={form[f.key] ?? ''}
+                  onChange={e => setF(f.key, e.target.value)}
+                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2"
+                />
+                <p className="text-[10px] text-gray-500 mt-1">{f.help}</p>
+              </div>
+            ))}
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Default report language</label>
+              <select
+                value={form.default_report_language || 'en'}
+                onChange={e => setF('default_report_language', e.target.value)}
+                className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white"
+              >
+                {PLATFORM_LANGUAGES.map(l => (
+                  <option key={l.code} value={l.code}>{l.label}</option>
+                ))}
+              </select>
+              <p className="text-[10px] text-gray-500 mt-1">Default language for generated case reports.</p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3 pt-1">
+            <button type="submit" disabled={saving}
+              className="btn-primary text-sm px-4 py-2 flex items-center gap-2">
+              {saving && <Loader2 size={13} className="animate-spin" />}
+              Save platform settings
+            </button>
+            {saved && <span className="text-xs text-green-600 flex items-center gap-1"><Check size={13} /> Saved</span>}
+          </div>
+        </form>
+      )}
+
       {error && (
         <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-center gap-1.5">
           <AlertCircle size={12} /> {error}
@@ -1584,6 +1957,12 @@ export default function Settings() {
   function renderSystem() {
     return (
       <div className="space-y-6">
+        {/* Platform runtime knobs (admin-tunable) */}
+        <PlatformSettingsSection />
+
+        {/* SSO / Single Sign-On (Google + Microsoft OIDC) */}
+        <SSOSettingsSection />
+
         {/* Sigma detection rules global opt-out */}
         <SigmaSettingsSection />
 

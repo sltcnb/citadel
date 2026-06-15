@@ -46,7 +46,13 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 
 def create_token(username: str, role: str) -> str:
-    expire = datetime.now(UTC) + timedelta(hours=settings.JWT_EXPIRE_HOURS)
+    try:
+        from routers.platform_settings import get_platform_config
+
+        hours = int(get_platform_config()["jwt_expire_hours"])
+    except Exception:
+        hours = settings.JWT_EXPIRE_HOURS
+    expire = datetime.now(UTC) + timedelta(hours=hours)
     payload = {"sub": username, "role": role, "exp": expire, "jti": str(uuid.uuid4())}
     return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
 
