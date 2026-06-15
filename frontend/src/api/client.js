@@ -325,8 +325,9 @@ export const api = {
   },
 
   pilotConfig: {
-    getConfig:    ()     => request('GET', '/admin/pilot-config'),
-    setConfig:    (data) => request('PUT', '/admin/pilot-config', data),
+    getConfig:    ()      => request('GET', '/admin/pilot-config'),
+    setConfig:    (data)  => request('PUT', '/admin/pilot-config', data),
+    testWebSearch:(query) => request('POST', '/pilot/web-search/test', { query }),
   },
 
   llm: {

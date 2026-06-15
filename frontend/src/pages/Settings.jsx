@@ -88,6 +88,15 @@ function PilotSettingsSection() {
   const [saved, setSaved]     = useState(false)
   const [error, setError]     = useState('')
   const [showKey, setShowKey] = useState(false)
+  const [testing, setTesting]       = useState(false)
+  const [testResult, setTestResult] = useState(null)
+
+  async function testWebSearch() {
+    setTesting(true); setTestResult(null)
+    try { setTestResult(await api.pilotConfig.testWebSearch('latest critical CVE')) }
+    catch (e) { setTestResult({ ok: false, error: e.message || 'test failed' }) }
+    finally { setTesting(false) }
+  }
 
   function hydrate(c) {
     setCfg(c)
@@ -221,7 +230,7 @@ function PilotSettingsSection() {
                 {form.web_search_provider === 'model' ? (
                   <p className="text-[11px] text-gray-500 flex items-center gap-1.5">
                     <Info size={12} className="text-sky-500 flex-shrink-0" />
-                    Uses the configured LLM's own web search (no separate key). Needs an Anthropic provider in the AI Analysis section above.
+                    Uses the configured LLM's own web search (no separate key). Works with Anthropic and OpenRouter-style endpoints; for other custom models (e.g. a plain Qwen server) use tavily/brave — the model just calls the tool and we run the search.
                   </p>
                 ) : (
                   <div>
@@ -239,6 +248,28 @@ function PilotSettingsSection() {
                       </button>
                     </div>
                   </div>
+                )}
+
+                {/* Test — runs against the SAVED config */}
+                <div className="flex items-center gap-2 pt-1">
+                  <button type="button" onClick={testWebSearch} disabled={testing}
+                    className="btn-outline text-xs flex items-center gap-1.5">
+                    {testing ? <Loader2 size={12} className="animate-spin" /> : <Wifi size={12} />}
+                    Test web search
+                  </button>
+                  <span className="text-[10px] text-gray-400">tests the saved config — Save first</span>
+                </div>
+                {testResult && (
+                  testResult.ok ? (
+                    <div className="text-[11px] text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2 space-y-0.5">
+                      <p className="flex items-center gap-1 font-semibold"><Check size={11} /> Works ({testResult.provider}) — {testResult.result_count} result(s)</p>
+                      {(testResult.sample || []).map((s, i) => <p key={i} className="text-gray-600 truncate">{s}</p>)}
+                    </div>
+                  ) : (
+                    <p className="text-[11px] text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-start gap-1.5">
+                      <AlertCircle size={11} className="mt-0.5 flex-shrink-0" /> {testResult.error}
+                    </p>
+                  )
                 )}
               </div>
             )}

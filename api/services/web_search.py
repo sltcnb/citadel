@@ -79,10 +79,12 @@ def _brave(query: str, key: str, max_results: int) -> list[dict]:
 _PROVIDERS = {"tavily": _tavily, "brave": _brave}
 
 
-def web_search(query: str) -> dict:
+def web_search(query: str, ignore_enabled: bool = False) -> dict:
     """Run a public-web search using the admin-configured provider.
 
     Reads live config each call so an admin toggling it takes effect at once.
+    ``ignore_enabled=True`` skips the enabled gate (used by the Settings "test"
+    button so an admin can verify a key before turning the feature on).
     Never raises — returns a status the agent can reason about.
     """
     query = (query or "").strip()
@@ -96,7 +98,7 @@ def web_search(query: str) -> dict:
     except Exception as exc:  # config unreadable — treat as off
         return {"status": "disabled", "error": str(exc)[:120], "results": []}
 
-    if not cfg.get("web_search_enabled"):
+    if not ignore_enabled and not cfg.get("web_search_enabled"):
         return {"status": "disabled", "results": []}
     key = (cfg.get("web_search_api_key") or "").strip()
     if not key:
