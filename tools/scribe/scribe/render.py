@@ -52,12 +52,14 @@ TEMPLATE_DEFAULTS = {
     "max_flagged": 50,
     "sections": {
         "exec_summary": True,
-        "overview": True,   # NEW — graphical aggregates
+        "overview": True,   # graphical aggregates
+        "modules": True,    # analysis-module run results (hayabusa/yara/…)
+        "threat_intel": True,  # enriched CTI matches table
         "ai_report": True,
         "pinned": True,
         "flagged": True,
         "mitre": True,
-        "detections": True,
+        "detections": False,  # noisy — the AI report surfaces the meaningful ones
         "watchlist": True,
         "notes": True,
     },
@@ -165,21 +167,52 @@ def render_markdown(data: dict, tpl: dict | None = None) -> str:
         out.append("")
         if agg.get("total_events"):
             out.append(f"- **{int(agg['total_events']):,} total events** in scope.")
-        out.append(f"- **{len(pinned)} pinned event(s)** curated as key evidence.")
         out.append(f"- **{len(flagged)} flagged event(s)** under analyst review.")
-        out.append(f"- **{len(mitre.get('techniques', []))} MITRE ATT&CK techniques** evidenced.")
+        if agg.get("cti"):
+            out.append(f"- **{len(agg['cti'])} threat-intel indicator(s)** matched the intel DB.")
         if wl.get("hits"):
             out.append(f"- **{len(wl['hits'])} IOC watchlist hit(s)** in the latest sweep.")
-        if det.get("matches"):
-            out.append(f"- **{len(det['matches'])} detection rule(s)** fired.")
+        if pinned:
+            out.append(f"- **{len(pinned)} pinned event(s)** curated as key evidence.")
         out.append("")
 
     if sections.get("overview", True) and agg:
         out.append("## Activity overview")
         out.append("")
+        out += _agg_rows_md("Events over time", agg.get("timeline") or [], "events")
         out += _agg_rows_md("Artifact types", agg.get("artifact_types") or [])
         out += _agg_rows_md("Top source IPs", agg.get("top_src_ips") or [], "events")
-        out += _agg_rows_md("Threat-intel matches", agg.get("cti") or [], "hits")
+
+    modules = data.get("modules") or []
+    if sections.get("modules", True) and modules:
+        out.append("## Module analysis")
+        out.append("")
+        for r in modules[:40]:
+            lv = r.get("hits_by_level") or {}
+            sev = ", ".join(f"{int(n)} {k}" for k, n in lv.items() if n)
+            out.append(
+                f"- **{r.get('module_id', '?')}** ({r.get('status', '')}) — "
+                f"{r.get('total_hits', 0)} hit(s)" + (f" [{sev}]" if sev else "")
+            )
+        out.append("")
+
+    if sections.get("threat_intel", True) and agg.get("cti"):
+        out.append("## Threat-intel matches")
+        out.append("")
+        for it in agg["cti"][:60]:
+            ctx = []
+            if it.get("count"):
+                ctx.append(f"{it['count']} hit(s)")
+            if it.get("last_seen"):
+                ctx.append(f"last {_ts(it['last_seen'])}")
+            if it.get("feed"):
+                ctx.append(f"feed {it['feed']}")
+            if it.get("threat"):
+                ctx.append(str(it["threat"]))
+            if it.get("prior_cases"):
+                ctx.append(f"{it['prior_cases']} prior case(s)")
+            out.append(f"- `{it.get('value')}` ({it.get('type', 'ioc')}) — " + ", ".join(ctx))
+        out.append("")
 
     if sections.get("ai_report", True) and ai_report and (ai_report.get("content") or "").strip():
         out.append("---")
@@ -378,6 +411,61 @@ def _bar_chart(items: list[dict], unit: str = "") -> str:
     return f'<div class="bars">{"".join(rows)}</div>'
 
 
+def _module_table(runs: list[dict]) -> str:
+    """Analysis-module run results — what scanners ran and what they found."""
+    rows = []
+    for r in runs[:40]:
+        lv = r.get("hits_by_level") or {}
+        sev = " ".join(
+            f'<span class="tag">{int(n)} {k}</span>'
+            for k, n in (("high", lv.get("high")), ("medium", lv.get("medium")), ("low", lv.get("low")))
+            if n
+        )
+        rows.append(
+            "<tr>"
+            f"<td>{_e(r.get('module_id', '?'))}</td>"
+            f"<td>{_e(r.get('status', ''))}</td>"
+            f"<td>{_e(r.get('total_hits', 0))}</td>"
+            f"<td>{sev or '<span class=muted>—</span>'}</td>"
+            f"<td class=mono>{_e(_ts(r.get('started_at', '')))}</td>"
+            "</tr>"
+        )
+    return (
+        "<table class=mod><thead><tr><th>Module</th><th>Status</th><th>Hits</th>"
+        "<th>By severity</th><th>Run at</th></tr></thead><tbody>"
+        + "".join(rows)
+        + "</tbody></table>"
+    )
+
+
+def _cti_table(items: list[dict]) -> str:
+    """Enriched threat-intel match table: indicator + context (when/how often/
+    feed/threat-type/prior cases) instead of a wall of equal '1 hit' bars."""
+    rows = []
+    for it in items[:60]:
+        prior = it.get("prior_cases")
+        prior_cell = (
+            f'<span class="tag">{int(prior)} prior case(s)</span>' if prior else '<span class="muted">first seen</span>'
+        )
+        rows.append(
+            "<tr>"
+            f"<td class=mono>{_e(it.get('value'))}</td>"
+            f"<td>{_e(it.get('type', ''))}</td>"
+            f"<td>{_e(it.get('count', 0))}</td>"
+            f"<td class=mono>{_e(_ts(it.get('first_seen', '')))}</td>"
+            f"<td class=mono>{_e(_ts(it.get('last_seen', '')))}</td>"
+            f"<td>{_e(it.get('feed', '') or '—')}</td>"
+            f"<td>{_e(it.get('threat', '') or '—')}</td>"
+            f"<td>{prior_cell}</td>"
+            "</tr>"
+        )
+    return (
+        "<table class=cti><thead><tr><th>Indicator</th><th>Type</th><th>Hits</th>"
+        "<th>First seen</th><th>Last seen</th><th>Feed</th><th>Threat</th><th>History</th>"
+        "</tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
+    )
+
+
 def _event_table(events: list[dict], cap: int) -> str:
     rows = []
     for ev in events[:cap]:
@@ -460,24 +548,29 @@ def render_html(data: dict, tpl: dict | None = None) -> str:
         meta.append(f"Company: {_e(case['company'])}")
     b.append(f'<p class="meta">{" · ".join(meta)}</p>')
 
+    cti = agg.get("cti") or []
     if sections.get("exec_summary", True):
         b.append("<h2>Executive summary</h2>")
+        # Only the cards that actually carry signal — no 0-valued noise for
+        # things the investigation didn't use (pinned/MITRE) and detections the
+        # analyst doesn't want surfaced here.
         cards = []
         if agg.get("total_events"):
             cards.append(("Events", f"{int(agg['total_events']):,}"))
-        cards += [
-            ("Pinned", len(pinned)),
-            ("Flagged", len(flagged)),
-            ("MITRE techniques", len(mitre.get("techniques", []))),
-        ]
+        cards.append(("Flagged", len(flagged)))
+        if cti:
+            cards.append(("Threat-intel IPs", len(cti)))
         if wl.get("hits"):
             cards.append(("Watchlist hits", len(wl["hits"])))
-        if det.get("matches"):
-            cards.append(("Detections", len(det["matches"])))
+        if pinned:
+            cards.append(("Pinned", len(pinned)))
         b.append(_stat_cards(cards))
 
     if sections.get("overview", True) and agg:
         b.append("<h2>Activity overview</h2>")
+        if agg.get("timeline"):
+            b.append("<h3>Events over time</h3>")
+            b.append(_bar_chart(agg["timeline"], "events"))
         if agg.get("artifact_types"):
             b.append("<h3>Artifact types</h3>")
             b.append(_bar_chart(agg["artifact_types"]))
@@ -487,9 +580,20 @@ def render_html(data: dict, tpl: dict | None = None) -> str:
         if agg.get("severity"):
             b.append("<h3>Severity</h3>")
             b.append(_bar_chart(agg["severity"]))
-        if agg.get("cti"):
-            b.append("<h3>Threat-intel matches</h3>")
-            b.append(_bar_chart(agg["cti"], "hits"))
+
+    modules = data.get("modules") or []
+    if sections.get("modules", True) and modules:
+        b.append("<h2>Module analysis</h2>")
+        b.append('<p class="meta">Forensic scanners run against this case and what they found.</p>')
+        b.append(_module_table(modules))
+
+    if sections.get("threat_intel", True) and cti:
+        b.append("<h2>Threat-intel matches</h2>")
+        b.append(
+            '<p class="meta">Indicators in this case that matched the intel database '
+            "— with context (when, how often, what feed, prior cases).</p>"
+        )
+        b.append(_cti_table(cti))
 
     if sections.get("ai_report", True) and ai_report and (ai_report.get("content") or "").strip():
         b.append("<hr/><h2>AI Autopilot investigation</h2>")
@@ -558,8 +662,12 @@ def render_html(data: dict, tpl: dict | None = None) -> str:
     if (tpl.get("footer_md") or "").strip():
         b.append(f'<p class="meta">{_md_to_html(tpl["footer_md"].strip())}</p>')
 
-    return (
+    page = (
         "<!doctype html><html><head><meta charset=utf-8/>"
         f"<title>{_e(name)} — Citadel report</title><style>{_HTML_CSS}</style>"
         f"</head><body>{''.join(b)}</body></html>"
     )
+    # Charset-proof: emit pure ASCII with non-ASCII (—, ·, accents…) as numeric
+    # HTML entities, so the document renders correctly no matter how it's served
+    # or embedded (download, iframe, srcdoc, proxy). Fixes the "â€"" mojibake.
+    return page.encode("ascii", "xmlcharrefreplace").decode("ascii")
