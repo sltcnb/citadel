@@ -24,6 +24,11 @@ COPY api/ .
 COPY tools/citadel_contracts/ /app/citadel_contracts/
 RUN pip install --no-cache-dir /app/citadel_contracts
 
+# Scribe — report rendering engine (Markdown / graphical HTML). Tool code lives
+# in tools/scribe; the API only gathers data and calls it.
+COPY tools/scribe/ /app/scribe_pkg/
+RUN pip install --no-cache-dir /app/scribe_pkg
+
 # Sigil detection-rule content (its own repo/submodule at tools/sigil).
 COPY tools/sigil/ /app/sigil/
 ENV CITADEL_RULES_DIR=/app/sigil

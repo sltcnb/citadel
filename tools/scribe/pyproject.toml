@@ -1,0 +1,23 @@
+[project]
+name = "scribe"
+version = "0.5.0"
+description = "Scribe — Citadel report engine (case data -> Markdown / graphical HTML)"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+    { name = "Citadel" },
+]
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["scribe*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
