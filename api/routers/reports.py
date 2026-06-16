@@ -22,7 +22,7 @@ from services.elasticsearch import _request as es_req
 from config import get_redis
 
 # Rendering engine lives in the Scribe tool package (pip-installed into the image).
-from scribe import TEMPLATE_DEFAULTS, merge_template, render_html, render_markdown
+from scribe import TEMPLATE_DEFAULTS, merge_template, proofread, render_html, render_markdown
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["reports"])
@@ -162,12 +162,41 @@ def _safe_name(case: dict, case_id: str) -> str:
     return (case.get("name") or case_id).replace("/", "_")[:80]
 
 
+def _recheck(data: dict) -> dict:
+    """Run Scribe's proofread pass over the error-prone free-text (AI report +
+    analyst notes) using the configured LLM, then return the cleaned data. Used
+    when ?review=1. Best-effort — never raises, falls back to originals."""
+    try:
+        from routers.llm_config import _call_llm_with_system, _get_config
+
+        cfg = _get_config(get_redis())
+        if not cfg or not cfg.get("enabled", True):
+            return data
+
+        def _llm(system, user):
+            return _call_llm_with_system(cfg, system, user, max_tokens=4000)
+
+        ai = data.get("ai_report")
+        if ai and (ai.get("content") or "").strip():
+            ai = dict(ai)
+            ai["content"] = proofread(ai["content"], _llm)
+            data["ai_report"] = ai
+        if (data.get("notes") or "").strip():
+            data["notes"] = proofread(data["notes"], _llm)
+    except Exception:
+        logger.warning("report recheck failed; serving unreviewed", exc_info=True)
+    return data
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 
 @router.get("/cases/{case_id}/report.md")
-def report_markdown(case_id: str, case: dict = Depends(require_case_access)):
-    md = render_markdown(_build_report_data(case, case_id), _load_template())
+def report_markdown(case_id: str, review: bool = False, case: dict = Depends(require_case_access)):
+    data = _build_report_data(case, case_id)
+    if review:
+        data = _recheck(data)
+    md = render_markdown(data, _load_template())
     return Response(
         content=md,
         media_type="text/markdown; charset=utf-8",
@@ -176,9 +205,12 @@ def report_markdown(case_id: str, case: dict = Depends(require_case_access)):
 
 
 @router.get("/cases/{case_id}/report.html")
-def report_html(case_id: str, case: dict = Depends(require_case_access)):
+def report_html(case_id: str, review: bool = False, case: dict = Depends(require_case_access)):
     """Graphical, printable HTML — stat cards, bar charts, real tables."""
-    page = render_html(_build_report_data(case, case_id), _load_template())
+    data = _build_report_data(case, case_id)
+    if review:
+        data = _recheck(data)
+    page = render_html(data, _load_template())
     return Response(
         content=page,
         media_type="text/html; charset=utf-8",

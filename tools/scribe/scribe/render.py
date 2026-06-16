@@ -6,6 +6,43 @@ import html
 import re
 from datetime import UTC, datetime
 
+# ── Proofread / recheck ──────────────────────────────────────────────────────
+
+_PROOFREAD_SYSTEM = (
+    "You are a meticulous DFIR report editor. You output ONLY the corrected text, "
+    "nothing else — no preamble, no commentary."
+)
+
+
+def proofread(text: str, llm_call) -> str:
+    """Recheck a report section to remove errors that slipped through.
+
+    `llm_call(system, user) -> str` is injected by the caller (Scribe stays
+    IO-free). The editor only CLEANS — it must not invent facts/IOCs/verdicts —
+    so a failed/empty call falls back to the original text unchanged.
+    """
+    if not text or not text.strip() or llm_call is None:
+        return text
+    try:
+        prompt = (
+            "Proofread this investigation-report section. FIX ONLY: broken or "
+            "half-rendered markdown/tables, duplicated or contradictory lines, "
+            "dangling/empty references, malformed timestamps, and claims that "
+            "contradict each other within the text. DO NOT add new facts, IPs, "
+            "hostnames, CVEs or conclusions, and DO NOT remove real findings, "
+            "fo_ids or IOCs. Preserve the structure and headings. If it's already "
+            "clean, return it unchanged. Return ONLY the corrected text.\n\n"
+            "----- BEGIN -----\n" + text + "\n----- END -----"
+        )
+        out = llm_call(_PROOFREAD_SYSTEM, prompt)
+        out = (out or "").strip()
+        # Guard against the model echoing the delimiters or refusing.
+        for marker in ("----- BEGIN -----", "----- END -----"):
+            out = out.replace(marker, "").strip()
+        return out if out else text
+    except Exception:
+        return text
+
 # ── Template ─────────────────────────────────────────────────────────────────
 
 TEMPLATE_DEFAULTS = {
