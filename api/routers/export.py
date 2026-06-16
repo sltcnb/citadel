@@ -212,66 +212,115 @@ def import_archive_from_s3(body: dict):
 # ── CSV export ────────────────────────────────────────────────────────────────
 
 
+def _flatten_doc(obj, prefix=""):
+    """Flatten a nested ES _source into dotted keys, skipping bulky raw blobs."""
+    out = {}
+    for k, v in (obj or {}).items():
+        key = f"{prefix}{k}"
+        if key.startswith("raw"):
+            continue
+        if isinstance(v, dict):
+            out.update(_flatten_doc(v, key + "."))
+        else:
+            out[key] = v
+    return out
+
+
+def _csv_cell(v) -> str:
+    if v is None:
+        return ""
+    if isinstance(v, (list, tuple)):
+        return ", ".join(str(x) for x in v)
+    if isinstance(v, dict):
+        return json.dumps(v, ensure_ascii=False)
+    return str(v)
+
+
+def _scroll_query(idx: str, query: dict):
+    """Yield every _source matching `query` via the scroll API (no 10k window)."""
+    body = {"query": query, "size": 1000, "sort": ["_doc"]}
+    try:
+        resp = es_req("POST", f"/{idx}/_search?scroll=2m", body)
+    except Exception as exc:
+        logger.warning("CSV scroll init failed (%s): %s", idx, exc)
+        return
+    scroll_id = resp.get("_scroll_id")
+    hits = resp.get("hits", {}).get("hits", [])
+    while hits:
+        for h in hits:
+            yield h.get("_source", {})
+        if not scroll_id:
+            break
+        try:
+            resp = es_req("POST", "/_search/scroll", {"scroll": "2m", "scroll_id": scroll_id})
+        except Exception as exc:
+            logger.warning("CSV scroll continuation failed: %s", exc)
+            break
+        scroll_id = resp.get("_scroll_id")
+        hits = resp.get("hits", {}).get("hits", [])
+    if scroll_id:
+        try:
+            es_req("DELETE", "/_search/scroll", {"scroll_id": scroll_id})
+        except Exception:
+            pass
+
+
+_CSV_PREFERRED = [
+    "timestamp", "timestamp_desc", "artifact_type", "message",
+    "host.hostname", "host.ip", "user.name", "user.domain",
+    "process.name", "process.command_line", "process.pid",
+    "network.src_ip", "network.dst_ip", "network.protocol",
+    "http.method", "http.request_path", "http.status_code", "http.user_agent",
+    "is_flagged", "is_pinned", "tags", "analyst_note", "fo_id",
+]
+
+
 @router.get(
     "/cases/{case_id}/export/csv",
     dependencies=[Depends(require_feature("export")), Depends(require_case_access)],
 )
 def export_csv(case_id: str, artifact_type: str = "", flagged_only: bool = False, q: str = ""):
-    """Export case events as CSV (max 10 000 rows)."""
+    """Stream ALL matching case events as CSV — no 10k cap, every populated
+    column (nested fields flattened to dotted keys; stragglers in `_extra`)."""
     idx = f"fo-case-{case_id}-{artifact_type}" if artifact_type else f"fo-case-{case_id}-*"
     must = []
     if q:
-        safe_q = q[:512]
-        must.append({"query_string": {"query": safe_q, "default_operator": "AND", "lenient": True}})
+        must.append({"query_string": {"query": q[:512], "default_operator": "AND", "lenient": True}})
     if flagged_only:
         must.append({"term": {"is_flagged": True}})
-    body = {
-        "query": {"bool": {"must": must}} if must else {"match_all": {}},
-        "sort": [{"timestamp": "asc"}],
-        "size": 10000,
-        "_source": [
-            "timestamp",
-            "artifact_type",
-            "message",
-            "host",
-            "user",
-            "is_flagged",
-            "tags",
-            "analyst_note",
-        ],
-    }
-    try:
-        resp = es_req("POST", f"/{idx}/_search", body)
-    except Exception as exc:
-        logger.warning("ES query failed for CSV export (case %s): %s", case_id, exc)
-        resp = {"hits": {"hits": []}}
+    query = {"bool": {"must": must}} if must else {"match_all": {}}
 
-    buf = io.StringIO()
-    w = csv.writer(buf)
-    w.writerow(
-        ["timestamp", "artifact_type", "host", "user", "message", "flagged", "tags", "analyst_note"]
-    )
-    for h in resp["hits"]["hits"]:
-        s = h["_source"]
-        host = s.get("host") or {}
-        user = s.get("user") or {}
-        w.writerow(
-            [
-                s.get("timestamp", ""),
-                s.get("artifact_type", ""),
-                host.get("hostname", "") if isinstance(host, dict) else host,
-                user.get("name", "") if isinstance(user, dict) else user,
-                s.get("message", ""),
-                s.get("is_flagged", False),
-                ",".join(s.get("tags") or []),
-                s.get("analyst_note", ""),
-            ]
-        )
-    buf.seek(0)
+    # Discover columns from a sample, then stream everything.
+    keys: set[str] = set()
+    try:
+        sample = es_req("POST", f"/{idx}/_search", {"query": query, "size": 200})
+        for h in sample.get("hits", {}).get("hits", []):
+            keys |= set(_flatten_doc(h.get("_source", {})).keys())
+    except Exception as exc:
+        logger.warning("CSV column sample failed (case %s): %s", case_id, exc)
+    cols = [c for c in _CSV_PREFERRED if c in keys]
+    cols += sorted(k for k in keys if k not in cols)
+    colset = set(cols)
+    header = cols + ["_extra"]
+
+    def _row(values) -> str:
+        out = io.StringIO()
+        csv.writer(out).writerow(values)
+        return out.getvalue()
+
+    def gen():
+        yield _row(header)
+        for src in _scroll_query(idx, query):
+            flat = _flatten_doc(src)
+            row = [_csv_cell(flat.get(c)) for c in cols]
+            extra = {k: v for k, v in flat.items() if k not in colset}
+            row.append(json.dumps(extra, ensure_ascii=False) if extra else "")
+            yield _row(row)
+
     name = f"case-{case_id[:8]}-{artifact_type or 'all'}.csv"
     return StreamingResponse(
-        iter([buf.getvalue()]),
-        media_type="text/csv",
+        gen(),
+        media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f"attachment; filename={name}"},
     )
 
