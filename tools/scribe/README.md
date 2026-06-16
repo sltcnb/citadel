@@ -2,22 +2,23 @@
 
 > Turn a case into a shareable artifact for any audience.
 
-**Status: partial** (rendering lives in `api/routers/reports.py` + `export.py` today; this tool extracts a standalone multi-format engine.)
+**Status: active** — the rendering engine lives HERE (`scribe/render.py`), pip-installed
+into the API image. `api/routers/reports.py` only gathers case data (ES/Redis) and calls
+`render_markdown` / `render_html`. No duplicate rendering code in the API.
 
-## Standalone
-```
-scribe report --case CASE_ID -f pdf -o report.pdf
+```python
+from scribe import render_markdown, render_html, merge_template, TEMPLATE_DEFAULTS
 ```
 
 ## Capabilities
 - [●] Markdown report
+- [●] Graphical HTML report — stat cards, bar charts, real tables (print-to-PDF)
+- [●] Activity overview aggregates (artifact types, top IPs, severity, CTI hits)
 - [●] Org template + branding + section toggles
 - [●] Flagged / pinned / MITRE / watchlist / detection / notes sections
-- [●] LLM-assisted executive summary
-- [●] Multi-language output
-- [●] Browser print-to-PDF
-- [ ] Standalone multi-format engine (HTML / PDF / STIX / MISP / JSON)
+- [●] Markdown pipe-table rendering (notes / AI report)
+- [ ] Standalone CLI multi-format engine (PDF / STIX / MISP / JSON)
 - [ ] Scheduled auto-report on case close
-- [ ] Embedded timeline + chart visualizations
+- [ ] Embedded timeline visualization
 
 **Done when:** standalone CLI renders all formats; scheduled-on-close works.
