@@ -20,8 +20,9 @@ The data bundle is a dict:
 from .render import (
     TEMPLATE_DEFAULTS,
     merge_template,
+    proofread,
     render_html,
     render_markdown,
 )
 
-__all__ = ["render_markdown", "render_html", "TEMPLATE_DEFAULTS", "merge_template"]
+__all__ = ["render_markdown", "render_html", "TEMPLATE_DEFAULTS", "merge_template", "proofread"]

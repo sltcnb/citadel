@@ -2265,6 +2265,11 @@ DISCIPLINE — be precise, economical, and grounded:
     No fo_id → it's a hypothesis, label it so. Never invent IPs, paths, or CVEs.
   • BE ECONOMICAL. Before each query, check the LEDGER — never re-fetch a known
     fact. One good query beats five vague ones. ~8-15 steps is a good run.
+  • DON'T REPEAT QUERIES. The same query gives the same answer. If a result is
+    marked DUPLICATE, you already ran it — use it or move on, don't run it again.
+  • "N+" HITS ARE CAPPED. A count like 10000+ means MORE than that exist — the
+    query is too broad to be evidence. Narrow it (time window, host, filter)
+    before concluding; never read a capped count as "I've seen them all".
   • RESPECT THE WHITELIST. IPs/domains in the KNOWN-GOOD list are own/approved
     infrastructure — don't treat them as the threat or investigate them in depth.
   • EMPTY STRUCTURED FIELD ≠ MYSTERY. An nginx ERROR line has empty
@@ -2430,7 +2435,11 @@ def _tool_search(case_id: str, step: dict) -> dict:
             },
         )
         hits = res.get("hits", {})
-        total = (hits.get("total") or {}).get("value", 0)
+        total_obj = hits.get("total") or {}
+        total = total_obj.get("value", 0)
+        # relation "gte" → ES stopped counting at its cap (10000). The true count
+        # is HIGHER; the query is too broad to be useful as-is.
+        capped = total_obj.get("relation") == "gte"
         samples = []
         sample_ids = []
         for h in hits.get("hits", []):
@@ -2444,10 +2453,17 @@ def _tool_search(case_id: str, step: dict) -> dict:
             samples.append(f"[{src.get('artifact_type', '?')}] fo_id={fo_id} {msg}")
         out = {
             "result_count": int(total),
+            "count_capped": capped,
             "sample": samples,
             "sample_ids": sample_ids,
             "query_status": "ok",
         }
+        if capped:
+            out["note"] = (
+                f"{total:,}+ matches (CAPPED — there are MORE than {total:,}). This query "
+                "is too broad to be evidence; narrow it (add a time window, host, or filter) "
+                "before drawing conclusions."
+            )
         # No CTI hits because the matcher never ran ≠ no threat intel. Nudge the
         # agent to launch the module instead of giving up on the cti_match angle.
         if total == 0 and "cti_match" in (step.get("query") or ""):
@@ -3571,8 +3587,11 @@ def _agent_step_history(transcript: list[dict]) -> str:
     for s in transcript:
         action = s.get("action", "?")
         line = f"Step {s['step']} [{action}] thought={s.get('thought', '')[:140]}"
+        # "N+" when ES capped the count (relation gte) — signals MORE exist, not exact.
+        _rc = s.get("result_count")
+        hits_str = (f"{_rc:,}+" if s.get("count_capped") else f"{_rc:,}") if isinstance(_rc, int) else str(_rc if _rc is not None else "?")
         if action == "search":
-            line += f"\n  query={s.get('query', '')}\n  hits={s.get('result_count', '?')}"
+            line += f"\n  query={s.get('query', '')}\n  hits={hits_str}"
         elif action == "aggregate":
             line += f"\n  agg={s.get('agg_field', '')} (q={s.get('agg_query', '*')})"
             if s.get("field_absent"):
@@ -3604,17 +3623,17 @@ def _agent_step_history(transcript: list[dict]) -> str:
             line += (
                 f"\n  host={w.get('host') or '(any)'} "
                 f"window=[{w.get('from', '?')[11:19]}..{w.get('to', '?')[11:19]}] "
-                f"hits={s.get('result_count', '?')}"
+                f"hits={hits_str}"
             )
         elif action == "correlate":
             w = s.get("window", {})
             line += (
                 f"\n  host={w.get('host') or '-'} user={w.get('user') or '-'} "
                 f"window=[{w.get('from', '?')[11:19]}..{w.get('to', '?')[11:19]}] "
-                f"hits={s.get('result_count', '?')}"
+                f"hits={hits_str}"
             )
         elif action == "mitre_hits":
-            line += f"\n  technique={s.get('technique_id', '')} hits={s.get('result_count', '?')}"
+            line += f"\n  technique={s.get('technique_id', '')} hits={hits_str}"
         # Common sample preview for any tool that returned events
         if s.get("sample"):
             line += "\n  sample=" + " | ".join(_sanitize_evidence(x, 160) for x in s["sample"][:3])
@@ -3629,6 +3648,8 @@ def _agent_step_history(transcript: list[dict]) -> str:
                 line += f"\n      {_sanitize_evidence(x, 160)}"
         if s.get("query_status") == "invalid":
             line += f"\n  ⚠ invalid: {s.get('query_error', '')[:140]}"
+        if s.get("note"):
+            line += f"\n  ⚠ {s['note'][:180]}"
         parts.append(line)
     return "\n\n".join(parts) if parts else "(no prior steps)"
 
@@ -4404,6 +4425,7 @@ def _agent_run(
     # steps and re-injected each turn so the model builds on what it found.
     ledger: dict = {"facts": [], "iocs": set(), "hosts": set(), "users": set()}
     conclude_gate_used = False  # evidence-cited conclude re-prompt fires at most once
+    query_cache: dict = {}  # (action,args) → {step, result} for same-query dedup
 
     # Admin-configurable capability policy (Settings → Pilot). Disabled tools
     # are rejected at dispatch; web_search is implicitly off unless enabled +
@@ -4926,8 +4948,33 @@ def _agent_run(
         for m in _re_at.findall(r"artifact_type\s*:\s*([\w_]+)", q_text):
             tried_artifact_types.add(m)
 
-        result = tool(case_id, step)
-        step.update(result)
+        # Same-query dedup: read-only tools with identical args return the same
+        # answer — don't re-hit ES/Redis. Replay the cached result with a note so
+        # a forgetful model still SEES the data, but is told it already ran it.
+        _CACHEABLE = {
+            "search", "aggregate", "inspect", "time_window", "correlate",
+            "mitre_hits", "module_runs", "detection_rules", "watchlist",
+            "list_modules", "cti_seen_before", "entity_graph", "stack_rare",
+        }
+        sig = (
+            action,
+            tuple((k, step.get(k)) for k in _ARG_KEYS if step.get(k) is not None),
+        )
+        if action in _CACHEABLE and sig in query_cache:
+            cached = query_cache[sig]
+            step.update(cached["result"])
+            step["cached_from_step"] = cached["step"]
+            step["note"] = (
+                f"DUPLICATE — you already ran this exact query at step {cached['step']}. "
+                "Same result shown again below. Do NOT repeat it; use these results, "
+                "try a DIFFERENT query, or conclude."
+            )
+            result = cached["result"]
+        else:
+            result = tool(case_id, step)
+            step.update(result)
+            if action in _CACHEABLE and step.get("query_status") == "ok":
+                query_cache[sig] = {"step": step_no, "result": result}
 
         # Auto-broaden: if a `search` returned 0 hits, try once more after
         # dropping the most-specific clause (last AND term). Beats wasting a
