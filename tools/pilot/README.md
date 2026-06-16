@@ -2,15 +2,18 @@
 
 > An LLM agent that investigates a case the way an analyst would.
 
-**Status: built** (logic lives in the `api` LLM layer — `api/routers/llm_config.py`, agent loop, `frontend` CaseAiPanel. This dir is the extraction target.)
+**Status: active** — the engine lives HERE (`pilot/service.py`): LLM client, agent
+loop, the investigation tools, prompts, ledger/sample/whitelist/auto-launch
+helpers, loop guards, and the run lifecycle. It's pip-installed into the API
+image; `api/routers/llm_config.py` is a thin re-export shim so existing routes
+and imports keep working. The agent reaches Elasticsearch/Redis/modules through
+the API app on `PYTHONPATH=/app` (same model as the other in-image tools).
 
-## Standalone
-```
-pilot investigate --case CASE_ID --provider anthropic
-```
+(Still in `api/routers/` for now, as they're thin HTTP layers: `pilot_settings.py`,
+`pilot_memory.py`. Frontend: `CaseAiPanel.jsx`.)
 
 ## Capabilities
-- [●] Agent loop with 12 investigation tools
+- [●] Agent loop with 17 investigation tools
 - [●] Multi-hypothesis reasoning
 - [●] Loop detection / force-conclude
 - [●] Streaming + polling transports
