@@ -101,6 +101,77 @@ def _agg_terms(case_id: str, field: str, size: int = 12) -> list[dict]:
         return []
 
 
+def _fetch_timeline(case_id: str) -> list[dict]:
+    """Events-per-day for the 'events over time' chart (last ~30 active days)."""
+    body = {
+        "size": 0,
+        "aggs": {
+            "t": {
+                "date_histogram": {
+                    "field": "timestamp",
+                    "calendar_interval": "day",
+                    "min_doc_count": 1,
+                }
+            }
+        },
+    }
+    try:
+        r = es_req("POST", f"/fo-case-{case_id}-*/_search", body)
+        buckets = r.get("aggregations", {}).get("t", {}).get("buckets", [])
+        return [
+            {"value": (b.get("key_as_string") or "")[:10], "count": b.get("doc_count", 0)}
+            for b in buckets
+        ][-30:]
+    except Exception:
+        return []
+
+
+def _fetch_cti(case_id: str, size: int = 60) -> list[dict]:
+    """Enriched threat-intel matches: one row per indicator with context
+    (hits, last seen, feed, threat type) + cross-case 'seen before' history."""
+    body = {
+        "size": size,
+        "query": {"term": {"artifact_type": "cti_match"}},
+        "sort": [{"cti_match.match_count": {"order": "desc", "unmapped_type": "long"}}],
+        "_source": ["timestamp", "cti_match"],
+    }
+    try:
+        r = es_req("POST", f"/fo-case-{case_id}-*/_search", body)
+        hits = r.get("hits", {}).get("hits", [])
+    except Exception:
+        return []
+    out = []
+    for h in hits:
+        src = h.get("_source", {}) or {}
+        cm = src.get("cti_match") or {}
+        if not cm.get("ioc_value"):
+            continue
+        out.append(
+            {
+                "value": cm.get("ioc_value"),
+                "type": cm.get("ioc_type", ""),
+                "count": cm.get("match_count") or 0,
+                "last_seen": src.get("timestamp", ""),
+                "first_seen": "",
+                "feed": cm.get("feed_name", ""),
+                "threat": cm.get("threat_type", ""),
+            }
+        )
+    # Cross-case memory — "have we seen this IOC in OTHER cases?" (best-effort).
+    try:
+        from services import pilot_memory as pm
+
+        vals = [o["value"] for o in out if o.get("value")]
+        seen = {s.get("value"): s for s in (pm.seen_before(vals, current_case=case_id) or [])}
+        for o in out:
+            s = seen.get(o["value"])
+            if s:
+                o["prior_cases"] = s.get("count") or len(s.get("cases", []) or [])
+    except Exception:
+        pass
+    return out
+
+
 def _fetch_aggregates(case_id: str) -> dict:
     """Activity aggregates for the graphical overview — each agg is best-effort
     (text fields fall back to .keyword; failures just omit that chart)."""
@@ -110,7 +181,8 @@ def _fetch_aggregates(case_id: str) -> dict:
         case_id, "network.src_ip.keyword"
     )
     agg["severity"] = _agg_terms(case_id, "level") or _agg_terms(case_id, "level.keyword")
-    agg["cti"] = _agg_terms(case_id, "cti_match.ioc_value.keyword")
+    agg["timeline"] = _fetch_timeline(case_id)
+    agg["cti"] = _fetch_cti(case_id)
     try:
         c = es_req("GET", f"/fo-case-{case_id}-*/_count")
         agg["total_events"] = c.get("count", 0)
@@ -144,12 +216,40 @@ def _fetch_ai_report(case_id: str) -> dict | None:
     return _fetch_redis_json(f"case:{case_id}:ai:report") or None
 
 
+def _fetch_module_runs(case_id: str) -> list[dict]:
+    """Completed analysis-module runs (hayabusa/yara/cti_match/…) + hit counts,
+    so the report shows what scanners ran and what they found."""
+    try:
+        from services import module_runs as run_svc
+
+        runs = run_svc.list_case_module_runs(case_id) or []
+    except Exception:
+        return []
+    out = []
+    for r in runs:
+        if r.get("status") not in ("COMPLETED", "completed", None):
+            # still surface running/failed, but completed first
+            pass
+        out.append(
+            {
+                "module_id": r.get("module_id"),
+                "status": r.get("status"),
+                "total_hits": r.get("total_hits", 0),
+                "hits_by_level": r.get("hits_by_level", {}),
+                "started_at": r.get("started_at") or r.get("created_at", ""),
+            }
+        )
+    out.sort(key=lambda m: -(m.get("total_hits") or 0))
+    return out
+
+
 def _build_report_data(case: dict, case_id: str) -> dict:
     return {
         "case": case,
         "pinned": _fetch_events(case_id, "is_pinned"),
         "flagged": _fetch_events(case_id, "is_flagged"),
         "mitre": _fetch_mitre(case_id),
+        "modules": _fetch_module_runs(case_id),
         "watchlist": _fetch_redis_json(f"fo:watchlist_runs:{case_id}"),
         "detections": _fetch_redis_json(rk.case_alert_run(case_id)),
         "notes": _fetch_notes(case_id),
