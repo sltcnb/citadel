@@ -1,0 +1,26 @@
+[project]
+name = "pilot"
+version = "0.5.0"
+description = "Pilot — Citadel autonomous DFIR investigation agent (LLM loop + tools)"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+    { name = "Citadel" },
+]
+# Runtime deps (fastapi, redis, …) are provided by the API image that installs
+# this package; the agent reaches Elasticsearch/Redis/modules via the api app
+# on PYTHONPATH=/app, exactly like the other in-image tools.
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["pilot*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

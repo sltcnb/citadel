@@ -29,6 +29,12 @@ RUN pip install --no-cache-dir /app/citadel_contracts
 COPY tools/scribe/ /app/scribe_pkg/
 RUN pip install --no-cache-dir /app/scribe_pkg
 
+# Pilot — autonomous DFIR agent engine (LLM loop + tools). Tool code lives in
+# tools/pilot; api/routers/llm_config.py is a thin re-export shim. The engine
+# reaches ES/Redis/modules via the api app already on PYTHONPATH=/app.
+COPY tools/pilot/ /app/pilot_pkg/
+RUN pip install --no-cache-dir /app/pilot_pkg
+
 # Sigil detection-rule content (its own repo/submodule at tools/sigil).
 COPY tools/sigil/ /app/sigil/
 ENV CITADEL_RULES_DIR=/app/sigil
