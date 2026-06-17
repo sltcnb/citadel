@@ -59,3 +59,22 @@ def test_entity_graph_summarizes(monkeypatch):
     assert r["node_counts"] == {"host": 1, "user": 2}
     assert r["edge_count"] == 1
     assert "host:A" in r["sample"][0]
+
+
+def test_escape_value_colons_fixes_wildcard_colon():
+    # `message:*client:*` is the #1 HTTP-400 cause — the trailing colon must be
+    # escaped while real field separators and date ranges stay intact.
+    q = ("artifact_type:access_log AND message:*malloc* AND message:*client:* "
+         "AND timestamp:[2026-06-09T07:12:00Z TO 2026-06-09T07:22:00Z]")
+    out = lc._escape_value_colons(q)
+    assert "message:*client\\:*" in out
+    assert "artifact_type:access_log" in out          # field separator preserved
+    assert "[2026-06-09T07:12:00Z TO" in out          # range colons untouched
+
+
+def test_escape_value_colons_leaves_clean_queries():
+    for q in ("message:*powershell*",
+              "network.src_ip:1.2.3.4",
+              'http.protocol.keyword:"HTTP/2.0"',
+              "message:(*IPC$* OR *ADMIN$*)"):
+        assert lc._escape_value_colons(q) == q
