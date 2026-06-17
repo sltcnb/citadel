@@ -2331,6 +2331,20 @@ class CaseAgentRequest(BaseModel):
 _HEX_HASH_RE = _re.compile(r"\b[A-Fa-f0-9]{32}\b|\b[A-Fa-f0-9]{40}\b|\b[A-Fa-f0-9]{64}\b")
 
 
+def _source_basename(source_file: str | None) -> str:
+    """`source_file` is the MinIO key `cases/<case>/<job>/<orig/path>`. Return
+    the original file's basename ("sso.log") so the agent can attribute evidence
+    to where it came from. Empty string when unknown."""
+    if not source_file or not isinstance(source_file, str):
+        return ""
+    s = source_file.split("?", 1)[0].split("#", 1)[0]
+    m = _re.match(r"^cases/[^/]+/[^/]+/(.+)$", s)
+    if m:
+        s = m.group(1)
+    parts = [p for p in s.split("/") if p]
+    return parts[-1] if parts else s
+
+
 def _normalize_hash_terms(query: str) -> str:
     """Hashes index lowercase in most pipelines but LLMs copy them verbatim
     from AV consoles (uppercase). Expand any mixed/upper-case hex token to
@@ -2443,7 +2457,7 @@ def _tool_search(case_id: str, step: dict) -> dict:
     import urllib.error
 
     from services.elasticsearch import _request as _es_req
-    from services.elasticsearch import escape_lucene_query
+    from services.elasticsearch import escape_lucene_query, validate_lucene_query
 
     raw_q = step.get("query", "") or ""
     if _SPL_RE.search(raw_q):
@@ -2457,6 +2471,16 @@ def _tool_search(case_id: str, step: dict) -> dict:
                 "\"network.src_ip\",\"agg_query\":\"artifact_type:access_log AND "
                 "http.protocol.keyword:\\\"HTTP/2.0\\\"\"}. Drop everything after the `|`."
             ),
+        }
+
+    # Structural pre-check — bounce obvious syntax errors back with a clear fix
+    # instead of letting ES return an opaque 400 the model can't learn from.
+    _struct_err = validate_lucene_query(_normalize_agent_query(_normalize_hash_terms(raw_q)))
+    if _struct_err:
+        return {
+            "result_count": None,
+            "query_status": "invalid",
+            "query_error": f"Query rejected before search: {_struct_err} Do NOT resend it unchanged.",
         }
 
     index = f"fo-case-{case_id}-*"
@@ -2482,6 +2506,7 @@ def _tool_search(case_id: str, step: dict) -> dict:
                     "host.hostname",
                     "user.name",
                     "process.name",
+                    "source_file",
                     "fo_id",
                 ],
                 "sort": [
@@ -2505,7 +2530,11 @@ def _tool_search(case_id: str, step: dict) -> dict:
             # Full fo_id in the sample line so the LLM can copy-paste it into
             # an `inspect` action — earlier code truncated to 8 chars + "…",
             # which the model then sent verbatim and inspect would fail.
-            samples.append(f"[{src.get('artifact_type', '?')}] fo_id={fo_id} {msg}")
+            # The source-file basename tells the model WHERE the log came from
+            # ("from sso.log") so it can attribute evidence to its origin.
+            origin = _source_basename(src.get("source_file"))
+            origin_str = f" «{origin}»" if origin else ""
+            samples.append(f"[{src.get('artifact_type', '?')}]{origin_str} fo_id={fo_id} {msg}")
         out = {
             "result_count": int(total),
             "count_capped": capped,
@@ -2721,11 +2750,15 @@ def _tool_inspect(case_id: str, step: dict) -> dict:
             for k, v in src.items()
             if not k.startswith("raw")
         }
-        return {
+        out = {
             "event": compact,
             "query_status": "ok",
             "fo_id": src.get("fo_id") or hits[0].get("_id", fo_id),
         }
+        origin = _source_basename(src.get("source_file"))
+        if origin:
+            out["source_file"] = origin  # "this event came from sso.log"
+        return out
     except (urllib.error.HTTPError, Exception) as exc:
         return {"query_status": "invalid", "query_error": str(exc)[:200]}
 
@@ -4654,6 +4687,7 @@ def _agent_run(
         # straight to the force-conclude path.
         invalid_streak = 0
         _inv_action = None
+        _inv_queries: list[str] = []
         for s in reversed(transcript):
             if s.get("query_status") != "invalid":
                 break
@@ -4662,7 +4696,14 @@ def _agent_run(
             if s.get("action") != _inv_action:
                 break
             invalid_streak += 1
-        if invalid_streak >= 5:
+            _inv_queries.append((s.get("query") or s.get("agg_query") or "").strip())
+        # Resending the BYTE-IDENTICAL query after it was already rejected is
+        # hopeless — the error is deterministic. Trip immediately on the 2nd
+        # identical attempt rather than waiting out the generic streak.
+        identical_resend = (
+            len(_inv_queries) >= 2 and _inv_queries[0] and _inv_queries[0] == _inv_queries[1]
+        )
+        if identical_resend or invalid_streak >= 3:
             stale_run = max(stale_run, 12)  # trips STALE_BUDGET_CAP below → force-conclude
 
         # Entity-fixation guard: the worst loop isn't repeated queries — it's
@@ -5834,6 +5875,7 @@ def generate_final_report(case_id: str, body: FinalReportRequest = None):
                     "tags": src.get("tags", []),
                     "note": src.get("analyst_note", ""),
                     "host": (src.get("host") or {}).get("hostname", ""),
+                    "source": _source_basename(src.get("source_file")),
                 }
             )
     except Exception:
@@ -5914,6 +5956,7 @@ def generate_final_report(case_id: str, body: FinalReportRequest = None):
     flagged_text = (
         "\n".join(
             f"[{e['ts']}] {e['host']} {e['msg']}"
+            + (f" (source: {e['source']})" if e.get("source") else "")
             + (f" [tags: {','.join(e['tags'])}]" if e["tags"] else "")
             + (f" [note: {e['note']}]" if e["note"] else "")
             for e in flagged_events

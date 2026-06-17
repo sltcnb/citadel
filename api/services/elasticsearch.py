@@ -92,6 +92,69 @@ _request = es_request
 _BALANCED_REGEX_RE = re.compile(r"/(?:[^/\\]|\\.)+/")
 
 
+def validate_lucene_query(query: str) -> str | None:
+    """Cheap structural pre-check for a Lucene ``query_string`` expression.
+
+    Catches the syntax mistakes that make Elasticsearch return a bare HTTP 400
+    *before* we spend a round-trip — and lets the caller hand back a clear,
+    actionable message instead of "Bad Request". Returns an error string on a
+    problem, or ``None`` when the query looks structurally sound. This is a
+    structural check only (balance + dangling operators); it does NOT validate
+    field names or semantics, and it deliberately ignores escaped/quoted spans.
+
+    Empty / whitespace-only queries are valid (they mean match-all upstream).
+    """
+    if not query or not query.strip():
+        return None
+
+    # Walk the string, tracking quote and escape state so brackets/parens inside
+    # a quoted phrase or escaped with a backslash don't count toward balance.
+    paren = 0
+    square = 0
+    in_quote = False
+    escaped = False
+    for ch in query:
+        if escaped:
+            escaped = False
+            continue
+        if ch == "\\":
+            escaped = True
+            continue
+        if ch == '"':
+            in_quote = not in_quote
+            continue
+        if in_quote:
+            continue
+        if ch == "(":
+            paren += 1
+        elif ch == ")":
+            paren -= 1
+            if paren < 0:
+                return "unbalanced parentheses — a ')' has no matching '('."
+        elif ch == "[":
+            square += 1
+        elif ch == "]":
+            square -= 1
+            if square < 0:
+                return "unbalanced range brackets — a ']' has no matching '['."
+    if in_quote:
+        return 'unterminated quote — a \'"\' is never closed.'
+    if paren > 0:
+        return "unbalanced parentheses — a '(' is never closed."
+    if square > 0:
+        return "unbalanced range brackets — a '[' is never closed (use [START TO END])."
+
+    # Dangling boolean operator: `… AND`, `foo OR`, `NOT` alone, or a leading
+    # `AND foo`. These all 400 in query_string.
+    stripped = query.strip()
+    if re.search(r"(?:^|\s)(AND|OR|NOT|&&|\|\|)\s*$", stripped):
+        return "query ends with a dangling boolean operator (AND/OR/NOT) — remove it or add the missing clause."
+    if re.match(r"^(AND|OR|&&|\|\|)\b", stripped):
+        return "query starts with a boolean operator — remove the leading AND/OR."
+
+    return None
+
+
 def escape_lucene_query(query: str, preserve_regex: bool = False) -> str:
     """Neutralise stray forward slashes in a Lucene ``query_string``.
 

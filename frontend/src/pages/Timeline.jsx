@@ -13,12 +13,12 @@ import StatsPopover from '../components/shared/StatsPopover'
 // or the AI assist — none of which are guaranteed to be valid ISO. Calling
 // `new Date(bad).toISOString()` throws RangeError ("Invalid time value") and
 // crashes the whole page. These helpers fail soft instead.
-function safeIso(v) {
+export function safeIso(v) {
   if (!v) return ''
   const d = new Date(v)
   return isNaN(d.getTime()) ? '' : d.toISOString()
 }
-function safeDateLabel(v) {
+export function safeDateLabel(v) {
   if (!v) return ''
   const d = new Date(v)
   return isNaN(d.getTime()) ? '' : d.toLocaleDateString()
@@ -94,10 +94,22 @@ const ALL_COLUMNS = [
   { id: 'mitre',       label: 'MITRE',       defaultOn: false },
   { id: 'channel',     label: 'Channel',     defaultOn: false },
   { id: 'rule',        label: 'Rule',        defaultOn: false },
+  { id: 'source',      label: 'Source file', defaultOn: false },
   { id: 'message',     label: 'Message',     defaultOn: true  },
   { id: 'tags',        label: 'Tags',        defaultOn: true  },
   { id: 'raw_data',    label: 'Raw',         defaultOn: false },
 ]
+
+// `source_file` is the MinIO key `cases/<case>/<job>/<orig/path>`; analysts care
+// about the original file's basename ("sso.log"), so strip the bookkeeping prefix.
+export function sourceFileName(srcFile) {
+  if (!srcFile || typeof srcFile !== 'string') return ''
+  let s = srcFile.split(/[?#]/)[0]
+  const m = s.match(/^cases\/[^/]+\/[^/]+\/(.+)$/)
+  if (m) s = m[1]
+  const parts = s.split('/').filter(Boolean)
+  return parts.length ? parts[parts.length - 1] : s
+}
 
 const DEFAULT_COLUMNS = ALL_COLUMNS.filter(c => c.defaultOn).map(c => c.id)
 const LS_KEY       = 'timeline_visible_cols'
@@ -281,6 +293,7 @@ function getColValue(colId, ev) {
     case 'mitre':       return getMitreValue(ev, art)
     case 'channel':     return art.channel || ev.channel || ''
     case 'rule':        return art.rule_title || ev.rule_title || ''
+    case 'source':      return sourceFileName(ev.source_file)
     default:            return ''
   }
 }
@@ -299,6 +312,7 @@ const COLUMN_ES_FIELD = {
   pid:         'process.pid',
   cmdline:     'process.command_line',
   proc_path:   'process.path',
+  source:      'source_file',
   parent_proc: 'process.parent_name',
   parent_pid:  'process.parent_pid',
   host_ip:     'host.ip',
