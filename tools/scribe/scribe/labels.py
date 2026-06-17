@@ -1,0 +1,165 @@
+"""Localised UI strings for the deterministic report shell.
+
+Only the report *chrome* (section titles, table headers, fixed phrases) lives
+here — the free-text content (AI report, analyst notes) is already written in
+the analyst-chosen language by the LLM, so we never translate it.
+
+English is the source of truth and the fallback: any language without a key,
+or any key missing from a language, resolves to English. Add a language by
+adding its dict; partial dicts are fine.
+"""
+
+from __future__ import annotations
+
+# Canonical key → English string. Every other catalogue is a (possibly partial)
+# override of these keys.
+_EN: dict[str, str] = {
+    "title_prefix": "Investigation report",
+    "generated": "Generated",
+    "company": "Company",
+    "exec_summary": "Executive summary",
+    "total_events": "{n} total events in scope.",
+    "flagged_review": "{n} flagged event(s) under analyst review.",
+    "cti_matched": "{n} threat-intel indicator(s) matched the intel DB.",
+    "wl_hits": "{n} IOC watchlist hit(s) in the latest sweep.",
+    "pinned_curated": "{n} pinned event(s) curated as key evidence.",
+    "activity_overview": "Activity overview",
+    "events_over_time": "Events over time",
+    "artifact_types": "Artifact types",
+    "top_src_ips": "Top source IPs",
+    "severity": "Severity",
+    "module_analysis": "Module analysis",
+    "module_blurb": "Forensic scanners run against this case and what they found.",
+    "threat_intel_matches": "Threat-intel matches",
+    "threat_intel_blurb": "Indicators in this case that matched the intel database — with context (when, how often, what feed, prior cases).",
+    "ai_investigation": "AI Autopilot investigation",
+    "ai_generated": "generated",
+    "key_evidence": "Key evidence (pinned events)",
+    "flagged_events": "Flagged events",
+    "and_more": "…and {n} more.",
+    "mitre_coverage": "MITRE ATT&CK coverage",
+    "detections_fired": "Detection rules that fired",
+    "last_run": "Last run",
+    "watchlist_hits": "IOC watchlist hits",
+    "auto_sweep": "Auto-sweep",
+    "query": "Query",
+    "analyst_notes": "Analyst notes",
+    "unknown": "Unknown",
+    "c_events": "Events",
+    # units / inline
+    "u_events": "events",
+    "u_hits": "hit(s)",
+    "u_matches": "match(es)",
+    "u_event": "event(s)",
+    "last": "last",
+    "feed": "feed",
+    "prior_cases": "{n} prior case(s)",
+    "first_seen_lbl": "first seen",
+    # table headers
+    "h_module": "Module",
+    "h_status": "Status",
+    "h_hits": "Hits",
+    "h_by_severity": "By severity",
+    "h_run_at": "Run at",
+    "h_indicator": "Indicator",
+    "h_type": "Type",
+    "h_first_seen": "First seen",
+    "h_last_seen": "Last seen",
+    "h_feed": "Feed",
+    "h_threat": "Threat",
+    "h_history": "History",
+    "h_time": "Time",
+    "h_host": "Host",
+    "h_user": "User",
+    "h_source": "Source",
+    "h_message": "Message",
+    "h_rule": "Rule",
+    "h_matches": "Matches",
+    "h_description": "Description",
+    "h_label": "Label",
+    "h_kind": "Kind",
+    "h_query": "Query",
+}
+
+_FR: dict[str, str] = {
+    "title_prefix": "Rapport d'investigation",
+    "generated": "Généré le",
+    "company": "Société",
+    "exec_summary": "Résumé exécutif",
+    "total_events": "{n} événements au total dans le périmètre.",
+    "flagged_review": "{n} événement(s) signalé(s) en cours d'analyse.",
+    "cti_matched": "{n} indicateur(s) de renseignement menace ont correspondu à la base.",
+    "wl_hits": "{n} correspondance(s) de liste de surveillance IOC lors du dernier balayage.",
+    "pinned_curated": "{n} événement(s) épinglé(s) retenus comme preuves clés.",
+    "activity_overview": "Aperçu de l'activité",
+    "events_over_time": "Événements dans le temps",
+    "artifact_types": "Types d'artefacts",
+    "top_src_ips": "Principales IP sources",
+    "severity": "Gravité",
+    "module_analysis": "Analyse des modules",
+    "module_blurb": "Scanners forensiques exécutés sur ce dossier et leurs résultats.",
+    "threat_intel_matches": "Correspondances de renseignement menace",
+    "threat_intel_blurb": "Indicateurs de ce dossier ayant correspondu à la base de renseignement — avec contexte (quand, fréquence, flux, dossiers antérieurs).",
+    "ai_investigation": "Investigation IA Autopilot",
+    "ai_generated": "généré le",
+    "key_evidence": "Preuves clés (événements épinglés)",
+    "flagged_events": "Événements signalés",
+    "and_more": "…et {n} de plus.",
+    "mitre_coverage": "Couverture MITRE ATT&CK",
+    "detections_fired": "Règles de détection déclenchées",
+    "last_run": "Dernière exécution",
+    "watchlist_hits": "Correspondances de liste de surveillance IOC",
+    "auto_sweep": "Balayage automatique",
+    "query": "Requête",
+    "analyst_notes": "Notes de l'analyste",
+    "unknown": "Inconnu",
+    "c_events": "Événements",
+    "u_events": "événements",
+    "u_hits": "occurrence(s)",
+    "u_matches": "correspondance(s)",
+    "u_event": "événement(s)",
+    "last": "dernier",
+    "feed": "flux",
+    "prior_cases": "{n} dossier(s) antérieur(s)",
+    "first_seen_lbl": "première observation",
+    "h_module": "Module",
+    "h_status": "Statut",
+    "h_hits": "Occurrences",
+    "h_by_severity": "Par gravité",
+    "h_run_at": "Exécuté le",
+    "h_indicator": "Indicateur",
+    "h_type": "Type",
+    "h_first_seen": "Première observation",
+    "h_last_seen": "Dernière observation",
+    "h_feed": "Flux",
+    "h_threat": "Menace",
+    "h_history": "Historique",
+    "h_time": "Heure",
+    "h_host": "Hôte",
+    "h_user": "Utilisateur",
+    "h_source": "Source",
+    "h_message": "Message",
+    "h_rule": "Règle",
+    "h_matches": "Correspondances",
+    "h_description": "Description",
+    "h_label": "Libellé",
+    "h_kind": "Type",
+    "h_query": "Requête",
+}
+
+_CATALOGUES: dict[str, dict[str, str]] = {
+    "en": _EN,
+    "fr": _FR,
+}
+
+
+class Labels:
+    """Resolve a label key for a language, falling back to English."""
+
+    def __init__(self, language: str | None):
+        self.lang = (language or "en").lower()
+        self.cat = _CATALOGUES.get(self.lang, _EN)
+
+    def __call__(self, key: str, **fmt) -> str:
+        s = self.cat.get(key) or _EN.get(key) or key
+        return s.format(**fmt) if fmt else s

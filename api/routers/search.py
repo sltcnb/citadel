@@ -108,6 +108,13 @@ def search(
     if not get_case(case_id):
         raise HTTPException(status_code=404, detail="Case not found")
 
+    # Bounce obvious Lucene syntax errors with a clear message instead of letting
+    # ES return an opaque 400 (skip when the box is in regex mode).
+    if q and not regexp:
+        _qerr = es.validate_lucene_query(q)
+        if _qerr:
+            raise HTTPException(status_code=400, detail=f"Invalid query: {_qerr}")
+
     sa = None
     if search_after:
         try:
@@ -188,6 +195,10 @@ def get_facets(
     """
     if not get_case(case_id):
         raise HTTPException(status_code=404, detail="Case not found")
+    if q:
+        _qerr = es.validate_lucene_query(q)
+        if _qerr:
+            raise HTTPException(status_code=400, detail=f"Invalid query: {_qerr}")
 
     aggs = es.get_search_facets(
         case_id, query=q, artifact_type=artifact_type, from_ts=from_ts, to_ts=to_ts
@@ -656,6 +667,11 @@ def aggregate(
 
     from services.elasticsearch import build_bool_query, total_hits_setting
     from services.elasticsearch import es_request as es_req
+
+    if q:
+        _qerr = es.validate_lucene_query(q)
+        if _qerr:
+            raise HTTPException(status_code=400, detail=f"Invalid query: {_qerr}")
 
     fields_list = [f.strip() for f in field.split(",") if f.strip()] if agg == "terms" else [field]
     if not fields_list:

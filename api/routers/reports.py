@@ -292,11 +292,11 @@ def _recheck(data: dict) -> dict:
 
 
 @router.get("/cases/{case_id}/report.md")
-def report_markdown(case_id: str, review: bool = False, case: dict = Depends(require_case_access)):
+def report_markdown(case_id: str, review: bool = False, language: str | None = None, case: dict = Depends(require_case_access)):
     data = _build_report_data(case, case_id)
     if review:
         data = _recheck(data)
-    md = render_markdown(data, _load_template())
+    md = render_markdown(data, _load_template(), language=language)
     return Response(
         content=md,
         media_type="text/markdown; charset=utf-8",
@@ -305,12 +305,12 @@ def report_markdown(case_id: str, review: bool = False, case: dict = Depends(req
 
 
 @router.get("/cases/{case_id}/report.html")
-def report_html(case_id: str, review: bool = False, case: dict = Depends(require_case_access)):
+def report_html(case_id: str, review: bool = False, language: str | None = None, case: dict = Depends(require_case_access)):
     """Graphical, printable HTML — stat cards, bar charts, real tables."""
     data = _build_report_data(case, case_id)
     if review:
         data = _recheck(data)
-    page = render_html(data, _load_template())
+    page = render_html(data, _load_template(), language=language)
     return Response(
         content=page,
         media_type="text/html; charset=utf-8",
