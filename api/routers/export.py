@@ -279,16 +279,32 @@ _CSV_PREFERRED = [
     "/cases/{case_id}/export/csv",
     dependencies=[Depends(require_feature("export")), Depends(require_case_access)],
 )
-def export_csv(case_id: str, artifact_type: str = "", flagged_only: bool = False, q: str = ""):
-    """Stream ALL matching case events as CSV — no 10k cap, every populated
-    column (nested fields flattened to dotted keys; stragglers in `_extra`)."""
+def export_csv(
+    case_id: str,
+    artifact_type: str = "",
+    flagged_only: bool = False,
+    q: str = "",
+    from_ts: str | None = None,
+    to_ts: str | None = None,
+):
+    """Stream the events MATCHING THE CURRENT SEARCH as CSV — same query + time
+    range the analyst sees in the timeline, no 10k cap, every populated column
+    (nested fields flattened to dotted keys; stragglers in `_extra`)."""
     idx = f"fo-case-{case_id}-{artifact_type}" if artifact_type else f"fo-case-{case_id}-*"
-    must = []
+    must: list[dict] = []
+    filt: list[dict] = []
     if q:
         must.append({"query_string": {"query": q[:512], "default_operator": "AND", "lenient": True}})
     if flagged_only:
-        must.append({"term": {"is_flagged": True}})
-    query = {"bool": {"must": must}} if must else {"match_all": {}}
+        filt.append({"term": {"is_flagged": True}})
+    if from_ts or to_ts:
+        rng: dict = {}
+        if from_ts:
+            rng["gte"] = from_ts
+        if to_ts:
+            rng["lte"] = to_ts
+        filt.append({"range": {"timestamp": rng}})
+    query = {"bool": {"must": must or [{"match_all": {}}], "filter": filt}} if (must or filt) else {"match_all": {}}
 
     # Discover columns from a sample, then stream everything.
     keys: set[str] = set()
