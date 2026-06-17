@@ -3104,8 +3104,8 @@ ul,ol{padding-left:1.5em;}li{margin:2px 0;}
     try {
       const token = getToken()
       const url = fmt === 'html'
-        ? `/api/v1/cases/${caseId}/report.html`
-        : `/api/v1/cases/${caseId}/report.md`
+        ? `/api/v1/cases/${caseId}/report.html?language=${reportLang}`
+        : `/api/v1/cases/${caseId}/report.md?language=${reportLang}`
       const res = await fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const blob = await res.blob()
