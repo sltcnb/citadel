@@ -2267,9 +2267,9 @@ DISCIPLINE — be precise, economical, and grounded:
     fact. One good query beats five vague ones. ~8-15 steps is a good run.
   • DON'T REPEAT QUERIES. The same query gives the same answer. If a result is
     marked DUPLICATE, you already ran it — use it or move on, don't run it again.
-  • "N+" HITS ARE CAPPED. A count like 10000+ means MORE than that exist — the
-    query is too broad to be evidence. Narrow it (time window, host, filter)
-    before concluding; never read a capped count as "I've seen them all".
+  • HUGE COUNTS ≠ EVIDENCE. Hit counts are now EXACT (no cap), but a query that
+    returns tens of thousands+ is too broad to be evidence on its own. Narrow it
+    (time window, host, filter) before concluding.
   • RESPECT THE WHITELIST. IPs/domains in the KNOWN-GOOD list are own/approved
     infrastructure — don't treat them as the threat or investigate them in depth.
   • EMPTY STRUCTURED FIELD ≠ MYSTERY. An nginx ERROR line has empty
@@ -2490,6 +2490,9 @@ def _tool_search(case_id: str, step: dict) -> dict:
             f"/{index}/_search",
             {
                 "size": 3,
+                # Exact total — no 10k cap, so the agent reasons on real counts
+                # instead of a "10000+" stub it can't reason about.
+                "track_total_hits": True,
                 "query": {
                     "query_string": {
                         "query": escape_lucene_query(_normalize_agent_query(_normalize_hash_terms(step.get("query", "")))),

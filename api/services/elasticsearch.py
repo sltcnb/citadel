@@ -15,6 +15,11 @@ logger = logging.getLogger(__name__)
 
 ES_URL = settings.ELASTICSEARCH_URL
 
+# Paging ceiling for fo-case-* indices. Replaces Elasticsearch's 10k default so
+# analysts can page/jump arbitrarily deep; search_after stays the cheaper path
+# for sequential deep paging. Overridable via env for very large deployments.
+MAX_RESULT_WINDOW = int(getattr(settings, "ES_MAX_RESULT_WINDOW", 0) or 1_000_000)
+
 INDEX_TEMPLATE = {
     "index_patterns": ["fo-case-*"],
     "template": {
@@ -23,6 +28,11 @@ INDEX_TEMPLATE = {
             "number_of_replicas": 0,
             "refresh_interval": "5s",
             "index.mapping.total_fields.limit": 2000,
+            # Lift the default 10k from+size paging wall. DFIR cases routinely
+            # have millions of events and analysts need to page/jump past 10k.
+            # Deep paging still prefers search_after (cheaper), but this removes
+            # the hard ceiling for shallow paging and big result windows.
+            "index.max_result_window": MAX_RESULT_WINDOW,
             "codec": "best_compression",
         },
         "mappings": {
@@ -197,7 +207,7 @@ def build_bool_query(
     return {"bool": bool_body}
 
 
-def paginate(page: int, size: int, max_window: int = 10000) -> dict:
+def paginate(page: int, size: int, max_window: int = MAX_RESULT_WINDOW) -> dict:
     """Return ``{"from": ..., "size": ...}`` clamped so ``from + size`` never
     exceeds ``max_window``. ``from`` is clamped to ``max(0, max_window - size)``."""
     frm = page * size
@@ -221,6 +231,17 @@ def apply_index_template() -> None:
         logger.info("Applied fo-cases-template")
     except Exception as exc:
         logger.warning("Could not apply index template: %s", exc)
+    # The template only takes effect for indices created AFTER it's applied, so
+    # push the raised paging window onto any already-existing case indices too.
+    try:
+        _request(
+            "PUT",
+            "/fo-case-*/_settings",
+            {"index.max_result_window": MAX_RESULT_WINDOW},
+        )
+        logger.info("Raised max_result_window=%s on existing fo-case-* indices", MAX_RESULT_WINDOW)
+    except Exception as exc:
+        logger.warning("Could not raise max_result_window on existing indices: %s", exc)
 
 
 def list_case_indices(case_id: str) -> list[str]:
@@ -433,11 +454,10 @@ def search_events(
             {"_doc": {"order": "asc"}},
         ],
         "_source": {"excludes": ["raw.xml"]},
-        # Exact hit count when there's a real query/filter (bounded result set —
-        # the user wants the true "N results"). For an unfiltered whole-case view
-        # (match_all over millions of events), an exact count would force ES to
-        # count everything on every page → cap it to stay fast.
-        **total_hits_setting(None if (must_clauses or filter_clauses) else 100000),
+        # Always report the EXACT total — no 10k (or 100k) cap. For match_all this
+        # is cheap (Lucene knows the segment doc counts); for filtered queries the
+        # analyst gets the true "N results" instead of a "10000+" stub.
+        **total_hits_setting(None),
     }
     # search_after = cursor pagination (deep, O(1)) — required past the 10k
     # max_result_window. Falls back to shallow `from` only for the first pages.
