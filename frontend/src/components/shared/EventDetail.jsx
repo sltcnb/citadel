@@ -5,6 +5,19 @@ import { api, getToken } from '../../api/client'
 import { extractIocs, iocSearchQuery } from '../../utils/ioc'
 import { getMitre, TACTIC_COLORS } from '../../utils/mitre'
 
+// `source_file` is the MinIO object key the ingest worker stored:
+// `cases/<case>/<job>/<path/to/original.log>`. Analysts only care about the
+// original file the event was parsed from, so strip the bookkeeping prefix and
+// show the basename ("sso.log") — full key available on hover.
+function sourceFileName(srcFile) {
+  if (!srcFile || typeof srcFile !== 'string') return ''
+  let s = srcFile.split(/[?#]/)[0]                  // drop any query/fragment
+  const m = s.match(/^cases\/[^/]+\/[^/]+\/(.+)$/)  // strip cases/<case>/<job>/
+  if (m) s = m[1]
+  const parts = s.split('/').filter(Boolean)
+  return parts.length ? parts[parts.length - 1] : s
+}
+
 // ── Find-in-panel highlight ───────────────────────────────────────────────────
 
 function Highlight({ text, query }) {
@@ -273,6 +286,17 @@ export default function EventDetail({ event: initialEvent, caseId, onClose, onFi
             )}
           </div>
           <p className="text-xs text-brand-text break-words line-clamp-2 text-gray-500 italic">{event.message}</p>
+          {event.source_file && (
+            <p
+              className="flex items-center gap-1 mt-1 text-[10px] text-gray-400 truncate"
+              title={event.source_file}
+            >
+              <FileText size={10} className="flex-shrink-0" />
+              <span className="truncate">
+                from <span className="font-medium text-gray-600">{sourceFileName(event.source_file)}</span>
+              </span>
+            </p>
+          )}
         </div>
         <button onClick={onClose} className="btn-ghost p-1 flex-shrink-0">
           <X size={14} />
@@ -705,7 +729,8 @@ export default function EventDetail({ event: initialEvent, caseId, onClose, onFi
           title="Metadata"
           fields={{
             'Ingest Job': event.ingest_job_id,
-            Source:       event.source_file,
+            'Source file': sourceFileName(event.source_file) || undefined,
+            'Source path': event.source_file,
             Ingested:     event.ingested_at,
           }}
           findText={findText}

@@ -2367,12 +2367,67 @@ _FIELD_ALIASES = (
 _SPL_RE = _re.compile(r"\|\s*(stats|sort|head|limit|table|eval|where|rex|fields|dedup|top|rare|chart|timechart)\b", _re.I)
 
 
+def _escape_value_colons(query: str) -> str:
+    """Escape colons that live *inside* a value rather than separating a field.
+
+    `message:*client:*` is the #1 cause of HTTP 400s from the agent: Lucene reads
+    `message:*client` then chokes on the dangling `:*`. The first colon is a real
+    field separator; the second is a literal that belongs to the value and must be
+    backslash-escaped. We can't rely on the model to know this, so we fix it here.
+
+    Heuristic: a `:` is a field separator only when the bareword immediately before
+    it (back to the last whitespace / paren / operator) is a plain field name with
+    NO wildcard. If that segment already contains a `*` — or is empty — the colon
+    is inside a value, so we escape it. Colons inside a `[… TO …]` range (date
+    ranges like `07:12:00`) are left untouched.
+    """
+    if not query or ":" not in query:
+        return query
+    out: list[str] = []
+    term: list[str] = []  # chars since the last delimiter
+    bracket = 0
+    for ch in query:
+        if ch == "[":
+            bracket += 1
+            out.append(ch)
+            term = []
+            continue
+        if ch == "]":
+            bracket = max(0, bracket - 1)
+            out.append(ch)
+            term = []
+            continue
+        if ch in " \t()":
+            out.append(ch)
+            term = []
+            continue
+        if ch == ":" and bracket == 0:
+            seg = "".join(term)
+            if seg.endswith("\\"):
+                # Already-escaped colon — leave as the model wrote it.
+                out.append(ch)
+                term.append(ch)
+            elif seg and "*" not in seg and "?" not in seg:
+                # Real `field:` separator (bareword, no wildcard) → value starts fresh.
+                out.append(ch)
+                term = []
+            else:
+                # Colon inside a value (wildcard term or empty field) → escape.
+                out.append("\\:")
+                term.append(ch)
+            continue
+        out.append(ch)
+        term.append(ch)
+    return "".join(out)
+
+
 def _normalize_agent_query(query: str) -> str:
     if not query:
         return query
     out = query
     for pat, repl in _FIELD_ALIASES:
         out = pat.sub(repl, out)
+    out = _escape_value_colons(out)
     return out
 
 
@@ -2480,11 +2535,37 @@ def _tool_search(case_id: str, step: dict) -> dict:
         # query_string doesn't support. Without the hint the LLM retries
         # the same shape verbatim.
         q = step.get("query", "") or ""
-        if "400" in err and _re.search(r"[\w.]+\.\*\s*:", q):
-            err += (
-                " | HINT: wildcard FIELD names are not supported — "
-                "query a concrete field or use message:*term* instead."
-            )
+        if "400" in err:
+            # Teach instead of just failing — without a concrete fix the model
+            # retries the same broken shape verbatim until the invalid-streak guard
+            # force-concludes the run.
+            if _re.search(r"[\w.]+\.\*\s*:", q):
+                err += (
+                    " | HINT: wildcard FIELD names are not supported — "
+                    "query a concrete field or use message:*term* instead."
+                )
+            elif _re.search(r":\s*\*[^\s()]*:", q):
+                # e.g. message:*client:* — a colon buried in a wildcard value.
+                err += (
+                    " | HINT: a colon inside a value (e.g. message:*client:*) breaks "
+                    "the parser. Drop the trailing colon: message:*client* — or to "
+                    "require several substrings, group them: "
+                    "message:(*malloc* AND *failed* AND *client*)."
+                )
+            elif q.count("message:") > 1:
+                err += (
+                    " | HINT: repeating message:*…* clauses is fragile. Group the "
+                    "substrings in one field instead: "
+                    "message:(*term1* AND *term2* AND *term3*)."
+                )
+            else:
+                err += (
+                    " | HINT: query failed to parse. Simplify it — one field with a "
+                    "single wildcard value (message:*term*), grouped alternatives "
+                    "(message:(*a* OR *b*)), or a timestamp range "
+                    "(timestamp:[2026-06-09T07:12:00Z TO 2026-06-09T07:22:00Z]). "
+                    "Do NOT resend the same query unchanged."
+                )
         return {"result_count": None, "query_status": "invalid", "query_error": err}
 
 
@@ -5714,6 +5795,10 @@ Write a structured markdown report:
 
 class FinalReportRequest(BaseModel):
     run_ids: list[str] | None = None  # selected module run IDs to include
+    # Output language for the report prose, ISO 639-1 ("en", "fr", …). Chosen at
+    # report-generation time (not at investigation time) so the same case can be
+    # re-rendered in any language without re-running the agent. Default English.
+    language: str | None = None
 
 
 @router.post("/cases/{case_id}/ai/report", dependencies=[Depends(require_feature("ai_assist"))])
@@ -5926,8 +6011,18 @@ def generate_final_report(case_id: str, body: FinalReportRequest = None):
         "Write the final incident report following the evidence rules above."
     )
 
+    lang = (body.language or "en").lower()
+    system_prompt = _FINAL_REPORT_PROMPT
+    if lang != "en":
+        lang_label = _LANG_LABELS.get(lang, "English")
+        system_prompt += (
+            f"\n\nLANGUAGE: write the entire report in {lang_label}. Keep technical "
+            "field names (Lucene fields, MITRE IDs, file paths, hashes, IPs) verbatim "
+            "in their original form — translate only the prose."
+        )
+
     try:
-        raw = _call_llm_with_system(cfg, _FINAL_REPORT_PROMPT, user_msg, max_tokens=2500)
+        raw = _call_llm_with_system(cfg, system_prompt, user_msg, max_tokens=2500)
     except Exception as exc:
         raise HTTPException(502, f"LLM call failed: {exc}")
 
@@ -5936,6 +6031,7 @@ def generate_final_report(case_id: str, body: FinalReportRequest = None):
         "generated_at": datetime.now(UTC).isoformat(),
         "model_used": f"{cfg.get('provider', '?')}/{cfg.get('model', '?')}",
         "flagged_count": len(flagged_events),
+        "language": lang,
     }
     r.set(f"case:{case_id}:ai:report", json.dumps(result))
     return result
