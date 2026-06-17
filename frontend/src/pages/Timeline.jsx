@@ -9,6 +9,21 @@ import { api } from '../api/client'
 import EventDetail from '../components/shared/EventDetail'
 import StatsPopover from '../components/shared/StatsPopover'
 
+// Date-range filter state (fromTs/toTs) can arrive from URL params, localStorage
+// or the AI assist — none of which are guaranteed to be valid ISO. Calling
+// `new Date(bad).toISOString()` throws RangeError ("Invalid time value") and
+// crashes the whole page. These helpers fail soft instead.
+function safeIso(v) {
+  if (!v) return ''
+  const d = new Date(v)
+  return isNaN(d.getTime()) ? '' : d.toISOString()
+}
+function safeDateLabel(v) {
+  if (!v) return ''
+  const d = new Date(v)
+  return isNaN(d.getTime()) ? '' : d.toLocaleDateString()
+}
+
 const ARTIFACT_COLORS = {
   evtx:          'badge-evtx',
   prefetch:      'badge-prefetch',
@@ -540,8 +555,10 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
     Object.assign(params, facetFilters)
     // Scope the activity histogram to the zoomed range so it rescales
     // (days → hours → minutes) instead of always bucketing by day.
-    if (fromTs) params.from_ts = new Date(fromTs).toISOString()
-    if (toTs)   params.to_ts   = new Date(toTs).toISOString()
+    const fromIso = safeIso(fromTs)
+    const toIso   = safeIso(toTs)
+    if (fromIso) params.from_ts = fromIso
+    if (toIso)   params.to_ts   = toIso
     api.search.facets(caseId, params)
       .then(r => {
         const f = r.facets || {}
@@ -793,8 +810,9 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
     const widthMs = histogram.length > 1
       ? (histogram[1].key - histogram[0].key)
       : 86400000
-    const fromIso = new Date(histogram[a].key).toISOString()
-    const toIso   = new Date(histogram[b].key + widthMs).toISOString()
+    const fromIso = safeIso(histogram[a]?.key)
+    const toIso   = safeIso(Number(histogram[b]?.key) + widthMs)
+    if (!fromIso || !toIso) return  // malformed bucket keys — don't crash the brush
     // Toggle: re-selecting the exact active range clears the filter
     if (fromTs === fromIso && toTs === toIso) {
       setFromTs('')
@@ -1231,9 +1249,9 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
             {(fromTs || toTs) && (
               <div className="mt-1.5 flex items-center gap-1 text-[10px] text-gray-500 bg-gray-50 rounded px-1.5 py-1">
                 <span className="flex-1 truncate">
-                  {fromTs ? new Date(fromTs).toLocaleDateString() : '…'}
+                  {fromTs ? (safeDateLabel(fromTs) || '…') : '…'}
                   {' → '}
-                  {toTs ? new Date(toTs).toLocaleDateString() : 'now'}
+                  {toTs ? (safeDateLabel(toTs) || 'now') : 'now'}
                 </span>
                 <button onClick={() => applyPreset(null)} className="text-gray-500 hover:text-red-500 flex-shrink-0">
                   <X size={9} />
@@ -1636,8 +1654,8 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
               caseId={caseId}
               onApply={(q, fts, tts) => {
                 setInputVal(q); setQuery(q)
-                if (fts) setFromTs(fts)
-                if (tts) setToTs(tts)
+                if (fts) setFromTs(safeIso(fts))
+                if (tts) setToTs(safeIso(tts))
                 setShowAiAssist(false)
               }}
               onClose={() => setShowAiAssist(false)}

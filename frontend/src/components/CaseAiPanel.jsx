@@ -816,17 +816,17 @@ export default function CaseAiPanel({ caseId, onClose, onSearchQuery, onOpenRepo
   // ── Autopilot agent state
   const [agentRuns, setAgentRuns]   = useState([])
   const [agentErr,  setAgentErr]    = useState(null)
-  // Report language. Defaults to browser locale (first 2 chars) if it's one
-  // of the supported set, else English. Persisted to localStorage so it
-  // sticks across panel reopens.
+  // Language for the autopilot's auto-drafted report. The analyst picks the real
+  // report language at generation time (Report tab, persisted as fo_report_lang);
+  // we reuse that choice here so the quick auto-draft matches, falling back to
+  // browser locale then English. No selector lives in this panel anymore.
   const SUPPORTED_LANGS = ['en','fr','es','de','it','pt','nl','ja','zh']
-  const [language, setLanguage] = useState(() => {
-    const saved = localStorage.getItem('fo_ai_report_lang')
+  const language = (() => {
+    const saved = localStorage.getItem('fo_report_lang') || localStorage.getItem('fo_ai_report_lang')
     if (saved && SUPPORTED_LANGS.includes(saved)) return saved
     const auto = (navigator.language || 'en').slice(0,2).toLowerCase()
     return SUPPORTED_LANGS.includes(auto) ? auto : 'en'
-  })
-  useEffect(() => { localStorage.setItem('fo_ai_report_lang', language) }, [language])
+  })()
   // Background-run state. Maps run_id → { meta, steps, since }. Multiple
   // can be in flight (e.g. follow-up while another is still running). Each
   // polls /progress every 2s; auto-stops once the meta.status leaves
@@ -1091,25 +1091,8 @@ export default function CaseAiPanel({ caseId, onClose, onSearchQuery, onOpenRepo
                 />
                 <p className="text-[10px] text-gray-500 mt-1 text-center italic">
                   The context stays here after each run — rerun, refine, or build follow-ups on the same investigation.
+                  Report language is chosen when you generate the report (Report tab).
                 </p>
-                <div className="flex items-center justify-center gap-1.5 mt-2">
-                  <label className="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">
-                    Report language
-                  </label>
-                  <select
-                    value={language}
-                    onChange={e => setLanguage(e.target.value)}
-                    className="text-[11px] border border-gray-200 rounded px-1.5 py-0.5 bg-white focus:border-purple-400 focus:outline-none"
-                  >
-                    {[
-                      ['en','English'], ['fr','Français'], ['es','Español'],
-                      ['de','Deutsch'], ['it','Italiano'], ['pt','Português'],
-                      ['nl','Nederlands'], ['ja','日本語'], ['zh','中文'],
-                    ].map(([code, label]) => (
-                      <option key={code} value={code}>{label}</option>
-                    ))}
-                  </select>
-                </div>
               </div>
               <div className="grid grid-cols-2 gap-2 mb-4 max-w-xl mx-auto">
                 <button

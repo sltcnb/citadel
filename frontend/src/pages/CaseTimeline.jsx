@@ -3033,6 +3033,21 @@ function ReportPanel({ caseId, onClose }) {
   const [runsLoading, setRunsLoading] = useState(true)
   const [selectedRunIds, setSelectedRunIds] = useState(new Set())
 
+  // Report language is a generation-time choice (not an investigation-time one):
+  // the agent always reasons in English, and we localise the prose only when the
+  // report is produced — so the same case can be re-rendered in any language.
+  const REPORT_LANGS = [
+    ['en', 'English'], ['fr', 'Français'], ['es', 'Español'], ['de', 'Deutsch'],
+    ['it', 'Italiano'], ['pt', 'Português'], ['nl', 'Nederlands'], ['ja', '日本語'], ['zh', '中文'],
+  ]
+  const [reportLang, setReportLang] = useState(() => {
+    const saved = localStorage.getItem('fo_report_lang')
+    if (saved && REPORT_LANGS.some(([c]) => c === saved)) return saved
+    const auto = (navigator.language || 'en').slice(0, 2).toLowerCase()
+    return REPORT_LANGS.some(([c]) => c === auto) ? auto : 'en'
+  })
+  useEffect(() => { localStorage.setItem('fo_report_lang', reportLang) }, [reportLang])
+
   useEffect(() => {
     api.cases.aiResults(caseId)
       .then(d => { if (d.report) setAiReport(d.report) })
@@ -3057,7 +3072,7 @@ function ReportPanel({ caseId, onClose }) {
     setAiGen(true); setAiError(null)
     try {
       const runIds = selectedRunIds.size > 0 ? [...selectedRunIds] : undefined
-      const res = await api.cases.aiReport(caseId, runIds)
+      const res = await api.cases.aiReport(caseId, runIds, reportLang)
       setAiReport(res)
     } catch (e) {
       setAiError(e.message || 'Report generation failed.')
@@ -3191,6 +3206,19 @@ ul,ol{padding-left:1.5em;}li{margin:2px 0;}
                       <Trash2 size={11} />
                     </button>
                   </>
+                )}
+                {aiEnabled && (
+                  <select
+                    value={reportLang}
+                    onChange={e => setReportLang(e.target.value)}
+                    disabled={aiGenerating}
+                    title="Report language — applied when the report is generated"
+                    className="text-[11px] border border-gray-200 rounded-md px-1.5 py-1 bg-white text-gray-600 focus:outline-none focus:ring-1 focus:ring-brand-accent"
+                  >
+                    {REPORT_LANGS.map(([code, label]) => (
+                      <option key={code} value={code}>{label}</option>
+                    ))}
+                  </select>
                 )}
                 {aiEnabled && (
                   <button
