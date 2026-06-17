@@ -885,14 +885,17 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
   }
 
   function downloadCsv() {
+    // Export exactly what the analyst is looking at: the search box AND every
+    // left-sidebar filter (type, level, flagged, facets) folded into one Lucene
+    // query, plus the active time range. Without this the CSV dumped the whole
+    // case regardless of the current filters.
     const params = {}
-    let csvQ = query
-    const typesArr = selectedTypesStr ? selectedTypesStr.split(',') : []
-    if (typesArr.length > 0) {
-      const typeQ = `artifact_type:(${typesArr.join(' OR ')})`
-      csvQ = csvQ ? `(${csvQ}) AND ${typeQ}` : typeQ
-    }
+    const csvQ = buildEffectiveQuery()
     if (csvQ) params.q = csvQ
+    const fromIso = safeIso(fromTs)
+    const toIso = safeIso(toTs)
+    if (fromIso) params.from_ts = fromIso
+    if (toIso) params.to_ts = toIso
     window.open(api.export.csv(caseId, params))
   }
 

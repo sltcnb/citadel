@@ -537,14 +537,6 @@ async def _on_startup():
         ensure_artifacts_index()
     except Exception as _startup_exc:
         logger.warning("Could not ensure fo-artifacts index at startup: %s", _startup_exc)
-    try:
-        # Register the fo-case-* template and lift the 10k paging window on any
-        # already-existing case indices. Idempotent — safe to run every boot.
-        from services.elasticsearch import apply_index_template
-
-        apply_index_template()
-    except Exception as _startup_exc:
-        logger.warning("Could not apply fo-cases index template at startup: %s", _startup_exc)
 
     # Log the tool capability declarations so the admin console (Tool Logs)
     # shows what each tool advertised when plugged in — live confirmation of the

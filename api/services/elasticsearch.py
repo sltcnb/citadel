@@ -15,11 +15,6 @@ logger = logging.getLogger(__name__)
 
 ES_URL = settings.ELASTICSEARCH_URL
 
-# Paging ceiling for fo-case-* indices. Replaces Elasticsearch's 10k default so
-# analysts can page/jump arbitrarily deep; search_after stays the cheaper path
-# for sequential deep paging. Overridable via env for very large deployments.
-MAX_RESULT_WINDOW = int(getattr(settings, "ES_MAX_RESULT_WINDOW", 0) or 1_000_000)
-
 INDEX_TEMPLATE = {
     "index_patterns": ["fo-case-*"],
     "template": {
@@ -28,11 +23,6 @@ INDEX_TEMPLATE = {
             "number_of_replicas": 0,
             "refresh_interval": "5s",
             "index.mapping.total_fields.limit": 2000,
-            # Lift the default 10k from+size paging wall. DFIR cases routinely
-            # have millions of events and analysts need to page/jump past 10k.
-            # Deep paging still prefers search_after (cheaper), but this removes
-            # the hard ceiling for shallow paging and big result windows.
-            "index.max_result_window": MAX_RESULT_WINDOW,
             "codec": "best_compression",
         },
         "mappings": {
@@ -207,7 +197,7 @@ def build_bool_query(
     return {"bool": bool_body}
 
 
-def paginate(page: int, size: int, max_window: int = MAX_RESULT_WINDOW) -> dict:
+def paginate(page: int, size: int, max_window: int = 10000) -> dict:
     """Return ``{"from": ..., "size": ...}`` clamped so ``from + size`` never
     exceeds ``max_window``. ``from`` is clamped to ``max(0, max_window - size)``."""
     frm = page * size
@@ -231,17 +221,6 @@ def apply_index_template() -> None:
         logger.info("Applied fo-cases-template")
     except Exception as exc:
         logger.warning("Could not apply index template: %s", exc)
-    # The template only takes effect for indices created AFTER it's applied, so
-    # push the raised paging window onto any already-existing case indices too.
-    try:
-        _request(
-            "PUT",
-            "/fo-case-*/_settings",
-            {"index.max_result_window": MAX_RESULT_WINDOW},
-        )
-        logger.info("Raised max_result_window=%s on existing fo-case-* indices", MAX_RESULT_WINDOW)
-    except Exception as exc:
-        logger.warning("Could not raise max_result_window on existing indices: %s", exc)
 
 
 def list_case_indices(case_id: str) -> list[str]:

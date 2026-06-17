@@ -6,9 +6,6 @@ import os
 class Settings:
     # ── Infrastructure ─────────────────────────────────────────────────────
     ELASTICSEARCH_URL: str = os.getenv("ELASTICSEARCH_URL", "http://elasticsearch-service:9200")
-    # Paging ceiling for fo-case-* indices (replaces ES's 10k default). 0 → use
-    # the built-in 1,000,000 default in services.elasticsearch.
-    ES_MAX_RESULT_WINDOW: int = int(os.getenv("ES_MAX_RESULT_WINDOW", "0") or 0)
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://redis-service:6379/0")
     MINIO_ENDPOINT: str = os.getenv("MINIO_ENDPOINT", "minio-service:9000")
     MINIO_ACCESS_KEY: str = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
