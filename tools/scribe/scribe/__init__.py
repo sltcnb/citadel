@@ -34,10 +34,24 @@ def render_docx(data, tpl=None, language=None):
     return _impl(data, tpl, language)
 
 
+# ── Standalone single-markdown-body documents (e.g. the AI LLM report) ──────────
+from .document import render_html_document, render_markdown_document  # noqa: E402
+
+
+def render_docx_document(title, markdown, meta_lines=None):
+    """Lazy DOCX wrapper for a single markdown body (needs python-docx)."""
+    from .document import render_docx_document as _impl
+
+    return _impl(title, markdown, meta_lines)
+
+
 __all__ = [
     "render_markdown",
     "render_html",
     "render_docx",
+    "render_markdown_document",
+    "render_html_document",
+    "render_docx_document",
     "TEMPLATE_DEFAULTS",
     "merge_template",
     "proofread",
