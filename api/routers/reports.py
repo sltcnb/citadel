@@ -22,7 +22,14 @@ from services.elasticsearch import _request as es_req
 from config import get_redis
 
 # Rendering engine lives in the Scribe tool package (pip-installed into the image).
-from scribe import TEMPLATE_DEFAULTS, merge_template, proofread, render_html, render_markdown
+from scribe import (
+    TEMPLATE_DEFAULTS,
+    merge_template,
+    proofread,
+    render_docx,
+    render_html,
+    render_markdown,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["reports"])
@@ -53,6 +60,69 @@ def _fetch_events(case_id: str, field: str, size: int = 200) -> list[dict]:
         return [h["_source"] for h in r.get("hits", {}).get("hits", [])]
     except Exception:
         return []
+
+
+def _fetch_saved_searches(case_id: str, per_query_samples: int = 5) -> list[dict]:
+    """Each saved search, RE-RUN now, with its exact hit count + a few samples.
+    Saved searches store only the query string, so the report shows live results
+    (a no-LLM analyst deliverable: 'here's what each bookmarked query matches')."""
+    try:
+        raw = get_redis().get(rk.case_saved_searches(case_id))
+        searches = json.loads(raw) if raw else []
+    except Exception:
+        return []
+    out: list[dict] = []
+    for s in searches[:25]:
+        q = (s.get("query") or "").strip()
+        entry = {"name": s.get("name") or q or "(unnamed)", "query": q, "count": 0, "samples": []}
+        if q:
+            body = {
+                "size": per_query_samples,
+                "track_total_hits": True,  # exact count, no 10k cap
+                "query": {"query_string": {"query": q[:512], "default_operator": "AND", "lenient": True}},
+                "sort": [{"timestamp": {"order": "desc", "unmapped_type": "keyword", "missing": "_last"}}],
+                "_source": ["timestamp", "artifact_type", "message", "host.hostname", "user.name"],
+            }
+            try:
+                r = es_req("POST", f"/fo-case-{case_id}-*/_search", body)
+                hits = r.get("hits", {})
+                entry["count"] = (hits.get("total") or {}).get("value", 0)
+                entry["samples"] = [h.get("_source", {}) for h in hits.get("hits", [])]
+            except Exception:
+                pass
+        out.append(entry)
+    return out
+
+
+def _fetch_killchains(case_id: str, max_anchors: int = 5, window_minutes: int = 60) -> list[dict]:
+    """Correlation view: assemble the reverse kill chain around the top flagged
+    events (confirmed-bad anchors). Bounded + best-effort so a slow/empty case
+    never blocks the report."""
+    try:
+        from services.killchain import assemble_chain
+    except Exception:
+        return []
+    anchors = _fetch_events(case_id, "is_flagged", size=max_anchors)
+    chains: list[dict] = []
+    for ev in anchors[:max_anchors]:
+        fo_id = ev.get("fo_id")
+        if not fo_id:
+            continue
+        try:
+            chain = assemble_chain(case_id, fo_id=fo_id, window_minutes=window_minutes)
+        except Exception:
+            continue
+        steps = chain.get("steps") or []
+        if not steps:
+            continue
+        chains.append(
+            {
+                "anchor": chain.get("anchor") or {"fo_id": fo_id},
+                "tactics_covered": chain.get("tactics_covered") or [],
+                "steps": steps,
+            }
+        )
+    return chains
 
 
 def _fetch_mitre(case_id: str) -> dict:
@@ -244,17 +314,49 @@ def _fetch_module_runs(case_id: str) -> list[dict]:
 
 
 def _build_report_data(case: dict, case_id: str) -> dict:
+    from datetime import UTC, datetime
+
+    pinned = _fetch_events(case_id, "is_pinned")
+    flagged = _fetch_events(case_id, "is_flagged")
+    modules = _fetch_module_runs(case_id)
+    saved = _fetch_saved_searches(case_id)
+    killchains = _fetch_killchains(case_id)
+    notes = _fetch_notes(case_id)
+    ai_report = _fetch_ai_report(case_id)
+    aggregates = _fetch_aggregates(case_id)
+
+    # Manifest — a plain-language inventory of EXACTLY what this report was built
+    # from, so "based idk what" becomes "based on these N inputs". Rendered as the
+    # report's opening block.
+    modules_with_hits = [m for m in modules if int(m.get("total_hits") or 0) > 0]
+    manifest = {
+        "generated_at": datetime.now(UTC).isoformat(),
+        "flagged_count": len(flagged),
+        "pinned_count": len(pinned),
+        "module_run_count": len(modules),
+        "module_hit_run_count": len(modules_with_hits),
+        "saved_search_count": len([s for s in saved if s.get("query")]),
+        "killchain_count": len(killchains),
+        "total_events": (aggregates or {}).get("total_events", 0),
+        "has_ai": bool(ai_report and (ai_report.get("content") or "").strip()),
+        "ai_model": (ai_report or {}).get("model_used", ""),
+        "ai_generated_at": (ai_report or {}).get("generated_at", ""),
+    }
+
     return {
         "case": case,
-        "pinned": _fetch_events(case_id, "is_pinned"),
-        "flagged": _fetch_events(case_id, "is_flagged"),
+        "manifest": manifest,
+        "pinned": pinned,
+        "flagged": flagged,
         "mitre": _fetch_mitre(case_id),
-        "modules": _fetch_module_runs(case_id),
+        "modules": modules,
+        "saved_searches": saved,
+        "killchains": killchains,
         "watchlist": _fetch_redis_json(f"fo:watchlist_runs:{case_id}"),
         "detections": _fetch_redis_json(rk.case_alert_run(case_id)),
-        "notes": _fetch_notes(case_id),
-        "ai_report": _fetch_ai_report(case_id),
-        "aggregates": _fetch_aggregates(case_id),
+        "notes": notes,
+        "ai_report": ai_report,
+        "aggregates": aggregates,
     }
 
 
@@ -318,6 +420,57 @@ def report_html(case_id: str, review: bool = False, language: str | None = None,
             "Content-Disposition": f'attachment; filename="{_safe_name(case, case_id)}-report.html"',
             "X-Content-Type-Options": "nosniff",
         },
+    )
+
+
+@router.get("/cases/{case_id}/report.pdf")
+def report_pdf(case_id: str, review: bool = False, language: str | None = None, case: dict = Depends(require_case_access)):
+    """Native PDF — renders the graphical HTML, then WeasyPrint → PDF (same
+    layout as the HTML, no browser print step)."""
+    try:
+        from weasyprint import HTML  # type: ignore
+    except Exception:
+        raise HTTPException(
+            status_code=503,
+            detail="PDF export unavailable — the WeasyPrint dependency is not installed in this build.",
+        )
+    data = _build_report_data(case, case_id)
+    if review:
+        data = _recheck(data)
+    html = render_html(data, _load_template(), language=language)
+    try:
+        pdf = HTML(string=html).write_pdf()
+    except Exception as exc:
+        logger.warning("PDF render failed for case %s: %s", case_id, exc)
+        raise HTTPException(status_code=500, detail=f"PDF render failed: {exc}")
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{_safe_name(case, case_id)}-report.pdf"'},
+    )
+
+
+@router.get("/cases/{case_id}/report.docx")
+def report_docx(case_id: str, review: bool = False, language: str | None = None, case: dict = Depends(require_case_access)):
+    """Native Word document (.docx) — built from the report data, not converted
+    from HTML, so analysts can edit/co-sign in Office."""
+    data = _build_report_data(case, case_id)
+    if review:
+        data = _recheck(data)
+    try:
+        blob = render_docx(data, _load_template(), language=language)
+    except ImportError:
+        raise HTTPException(
+            status_code=503,
+            detail="DOCX export unavailable — the python-docx dependency is not installed in this build.",
+        )
+    except Exception as exc:
+        logger.warning("DOCX render failed for case %s: %s", case_id, exc)
+        raise HTTPException(status_code=500, detail=f"DOCX render failed: {exc}")
+    return Response(
+        content=blob,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{_safe_name(case, case_id)}-report.docx"'},
     )
 
 

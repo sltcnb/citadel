@@ -10,6 +10,9 @@ ENV PYTHONPATH=/app
 # parser is discovered here for the UI, so its import must succeed too.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc g++ libmagic1 libtsk-dev \
+    # WeasyPrint (report.pdf) runtime libs — Pango/Cairo/GDK-Pixbuf + font stack
+    libpango-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf-2.0-0 libcairo2 \
+    libffi8 shared-mime-info fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 # Build context is the repo root — copy api/ sources first
