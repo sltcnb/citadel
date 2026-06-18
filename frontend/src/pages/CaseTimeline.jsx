@@ -3025,6 +3025,14 @@ function ReportPanel({ caseId, onClose }) {
   const [aiLoading, setAiLoading] = useState(true)
   const [aiGenerating, setAiGen]  = useState(false)
   const [aiError, setAiError]     = useState(null)
+  const [reportHistory, setReportHistory] = useState([])
+  const [showHistory, setShowHistory] = useState(false)
+
+  function refreshHistory() {
+    api.cases.aiReportHistory(caseId)
+      .then(d => setReportHistory(d.reports || []))
+      .catch(() => {})
+  }
 
   // ── Module-run selection — feeds the AI report's prompt. Empty = include
   //    every completed run. Lives here (not in CaseNotes) because choosing
@@ -3054,6 +3062,8 @@ function ReportPanel({ caseId, onClose }) {
       .catch(() => {})
       .finally(() => setAiLoading(false))
 
+    refreshHistory()
+
     api.modules.listRuns(caseId)
       .then(r => setModuleRuns((r.runs || []).filter(x => x.status === 'COMPLETED')))
       .catch(() => {})
@@ -3074,11 +3084,25 @@ function ReportPanel({ caseId, onClose }) {
       const runIds = selectedRunIds.size > 0 ? [...selectedRunIds] : undefined
       const res = await api.cases.aiReport(caseId, runIds, reportLang)
       setAiReport(res)
+      refreshHistory()
     } catch (e) {
       setAiError(e.message || 'Report generation failed.')
     } finally {
       setAiGen(false)
     }
+  }
+
+  // Human-readable "based on" line from a report's manifest.
+  function manifestSummary(m) {
+    if (!m) return ''
+    const bits = []
+    if (m.flagged_count != null) bits.push(`${m.flagged_count} flagged`)
+    if (m.module_detections) bits.push(`${m.module_detections} module detection${m.module_detections > 1 ? 's' : ''}`)
+    if (m.ioc_lines) bits.push(`${m.ioc_lines} IOC line${m.ioc_lines > 1 ? 's' : ''}`)
+    if (m.investigations) bits.push('investigations')
+    if (m.notes) bits.push('notes')
+    if (m.run_ids?.length) bits.push(`${m.run_ids.length} pinned run${m.run_ids.length > 1 ? 's' : ''}`)
+    return bits.join(' · ')
   }
 
   function printAiReport() {
@@ -3099,20 +3123,24 @@ ul,ol{padding-left:1.5em;}li{margin:2px 0;}
     setTimeout(() => { win.print() }, 250)
   }
 
-  async function download(fmt) {
-    setBusy(fmt); setError(null)
+  // ext: 'md' | 'html' | 'pdf' | 'docx' — all share the same server-rendered
+  // report data, just a different renderer.
+  async function download(ext) {
+    setBusy(ext); setError(null)
     try {
       const token = getToken()
-      const url = fmt === 'html'
-        ? `/api/v1/cases/${caseId}/report.html?language=${reportLang}`
-        : `/api/v1/cases/${caseId}/report.md?language=${reportLang}`
+      const url = `/api/v1/cases/${caseId}/report.${ext}?language=${reportLang}`
       const res = await fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      if (!res.ok) {
+        let detail = `HTTP ${res.status}`
+        try { const j = await res.json(); if (j.detail) detail = j.detail } catch { /* not json */ }
+        throw new Error(detail)
+      }
       const blob = await res.blob()
       const objectUrl = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = objectUrl
-      a.download = `case-${caseId}-report.${fmt === 'html' ? 'html' : 'md'}`
+      a.download = `case-${caseId}-report.${ext}`
       document.body.appendChild(a); a.click(); a.remove()
       setTimeout(() => URL.revokeObjectURL(objectUrl), 10_000)
     } catch (e) {
@@ -3247,11 +3275,17 @@ ul,ol{padding-left:1.5em;}li{margin:2px 0;}
               </div>
             ) : aiReport ? (
               <>
-                <div className="text-[10px] text-gray-500 mb-2">
+                <div className="text-[10px] text-gray-500 mb-1">
                   Generated {new Date(aiReport.generated_at).toLocaleString()}
                   {aiReport.model_used && <> · {aiReport.model_used}</>}
-                  {typeof aiReport.flagged_count === 'number' && <> · {aiReport.flagged_count} flagged</>}
+                  {aiReport.language && <> · {aiReport.language.toUpperCase()}</>}
+                  {aiReport.source && <> · {aiReport.source}</>}
                 </div>
+                {manifestSummary(aiReport.manifest) && (
+                  <div className="text-[10px] text-gray-600 mb-2 bg-gray-50 border border-gray-200 rounded px-2 py-1">
+                    <span className="font-semibold text-gray-500">Based on:</span> {manifestSummary(aiReport.manifest)}
+                  </div>
+                )}
                 <pre className="text-[11px] text-gray-700 leading-relaxed bg-gray-50 border border-gray-200 rounded-lg p-3 whitespace-pre-wrap font-mono overflow-auto max-h-[50vh]">
                   {aiReport.content}
                 </pre>
@@ -3264,6 +3298,56 @@ ul,ol{padding-left:1.5em;}li{margin:2px 0;}
               <div className="text-[11px] text-gray-500 italic text-center py-3">
                 AI summaries require an AI-enabled licence tier. The downloadable
                 Markdown / HTML artifact below still works on every tier.
+              </div>
+            )}
+
+            {/* Report history — prior generations, newest first */}
+            {reportHistory.length > 1 && (
+              <div className="mt-3 border-t border-gray-100 pt-2">
+                <button
+                  onClick={() => setShowHistory(v => !v)}
+                  className="text-[10px] text-gray-500 hover:text-gray-700 flex items-center gap-1"
+                >
+                  {showHistory ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+                  Previous reports ({reportHistory.length})
+                </button>
+                {showHistory && (
+                  <div className="mt-1.5 space-y-1">
+                    {reportHistory.map((h, i) => (
+                      <div
+                        key={i}
+                        className={`flex items-center gap-2 text-[10px] rounded px-2 py-1 ${
+                          aiReport && h.generated_at === aiReport.generated_at
+                            ? 'bg-brand-accent/5 border border-brand-accent/30'
+                            : 'bg-gray-50 border border-gray-100'
+                        }`}
+                      >
+                        <button
+                          onClick={() => setAiReport(h)}
+                          className="flex-1 text-left min-w-0 hover:text-brand-accent"
+                          title="Open this report"
+                        >
+                          <span className="text-gray-700">{new Date(h.generated_at).toLocaleString()}</span>
+                          {h.language && <span className="text-gray-400"> · {h.language.toUpperCase()}</span>}
+                          {h.source && <span className="text-gray-400"> · {h.source}</span>}
+                          {manifestSummary(h.manifest) && (
+                            <span className="block text-gray-400 truncate">{manifestSummary(h.manifest)}</span>
+                          )}
+                        </button>
+                        <button
+                          onClick={async () => {
+                            try { await api.cases.aiDeleteReportHistory(caseId, i); refreshHistory() }
+                            catch (e) { setAiError(e.message || 'Failed to delete') }
+                          }}
+                          className="text-gray-400 hover:text-red-600 flex-shrink-0"
+                          title="Delete this history entry"
+                        >
+                          <Trash2 size={10} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -3285,8 +3369,8 @@ ul,ol{padding-left:1.5em;}li{margin:2px 0;}
                 </div>
                 <div className="text-[10px] text-gray-500">
                   {selectedRunIds.size === 0
-                    ? 'None ticked → AI sees all completed runs.'
-                    : `${selectedRunIds.size} run${selectedRunIds.size > 1 ? 's' : ''} pinned for the AI report.`}
+                    ? 'None ticked → report auto-includes every completed run that found hits.'
+                    : `${selectedRunIds.size} run${selectedRunIds.size > 1 ? 's' : ''} pinned (overrides the auto-include).`}
                 </div>
               </div>
               {selectedRunIds.size > 0 && (
@@ -3358,53 +3442,46 @@ ul,ol{padding-left:1.5em;}li{margin:2px 0;}
               <div>
                 <div className="text-sm font-semibold text-gray-900">Formal report</div>
                 <div className="text-[10px] text-gray-500">
-                  Notes + flagged + pinned + IOCs + module runs. Server-rendered.
+                  Manifest + flagged + pinned + module detections + saved searches +
+                  correlations + IOCs + notes. Server-rendered, works without AI. Language: {reportLang.toUpperCase()}.
                 </div>
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-2">
-              {/* Markdown card */}
-              <div className="border border-gray-200 rounded-lg p-3">
-                <div className="text-xs font-semibold text-gray-900 mb-0.5">Markdown</div>
-                <p className="text-[10px] text-gray-500 mb-2">
-                  Diff-friendly. Paste into a ticket or commit to a case repo.
-                </p>
-                <button
-                  onClick={() => download('md')}
-                  disabled={busy === 'md'}
-                  className="btn-primary text-xs flex items-center gap-1.5 w-full justify-center"
-                >
-                  {busy === 'md' ? <Loader2 size={11} className="animate-spin" /> : <Download size={11} />}
-                  .md
-                </button>
-              </div>
+            <div className="flex items-center justify-between mb-2">
+              <button
+                onClick={openHtml}
+                disabled={busy === 'html-view'}
+                className="btn-secondary text-xs flex items-center gap-1 justify-center"
+                title="Open the HTML report in a new tab"
+              >
+                {busy === 'html-view' ? <Loader2 size={11} className="animate-spin" /> : <ExternalLink size={11} />}
+                Preview
+              </button>
+              <span className="text-[10px] text-gray-400">Download as</span>
+            </div>
 
-              {/* HTML card */}
-              <div className="border border-gray-200 rounded-lg p-3">
-                <div className="text-xs font-semibold text-gray-900 mb-0.5">HTML</div>
-                <p className="text-[10px] text-gray-500 mb-2">
-                  Printable. Browser → Print → Save as PDF for legal-hold.
-                </p>
-                <div className="flex gap-1">
-                  <button
-                    onClick={openHtml}
-                    disabled={busy === 'html-view'}
-                    className="btn-secondary text-xs flex items-center gap-1 flex-1 justify-center"
-                  >
-                    {busy === 'html-view' ? <Loader2 size={11} className="animate-spin" /> : <ExternalLink size={11} />}
-                    Preview
-                  </button>
-                  <button
-                    onClick={() => download('html')}
-                    disabled={busy === 'html'}
-                    className="btn-primary text-xs flex items-center gap-1 flex-1 justify-center"
-                  >
-                    {busy === 'html' ? <Loader2 size={11} className="animate-spin" /> : <Download size={11} />}
-                    .html
-                  </button>
-                </div>
-              </div>
+            <div className="grid grid-cols-4 gap-2">
+              {[
+                ['pdf', 'PDF', 'Court-ready, native'],
+                ['docx', 'Word', 'Editable .docx'],
+                ['html', 'HTML', 'Graphical'],
+                ['md', 'Markdown', 'Diff-friendly'],
+              ].map(([ext, label, hint]) => (
+                <button
+                  key={ext}
+                  onClick={() => download(ext)}
+                  disabled={busy === ext}
+                  title={hint}
+                  className="border border-gray-200 rounded-lg p-2 flex flex-col items-center gap-1 hover:border-brand-accent hover:bg-brand-accent/5 transition-colors disabled:opacity-50"
+                >
+                  {busy === ext
+                    ? <Loader2 size={14} className="animate-spin text-brand-accent" />
+                    : <Download size={14} className="text-brand-accent" />}
+                  <span className="text-[11px] font-semibold text-gray-900">{label}</span>
+                  <span className="text-[9px] text-gray-400 text-center leading-tight">{hint}</span>
+                </button>
+              ))}
             </div>
           </div>
         </div>

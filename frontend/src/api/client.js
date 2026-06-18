@@ -87,6 +87,8 @@ export const api = {
     aiDeleteReport:     (id)                    => request('DELETE', `/cases/${id}/ai/report`),
     aiDeleteAgentRuns:  (id)                    => request('DELETE', `/cases/${id}/ai/agent_runs`),
     aiDeleteInvestigation: (id, idx) => request('DELETE', `/cases/${id}/ai/investigation/${idx}`),
+    aiReportHistory:    (id)      => request('GET',    `/cases/${id}/ai/report_history`),
+    aiDeleteReportHistory: (id, idx) => request('DELETE', `/cases/${id}/ai/report_history/${idx}`),
     aiReport:    (id, runIds, language) => request('POST', `/cases/${id}/ai/report`, {
                                               ...(runIds?.length ? { run_ids: runIds } : {}),
                                               ...(language ? { language } : {}),

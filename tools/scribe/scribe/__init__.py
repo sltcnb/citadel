@@ -25,4 +25,20 @@ from .render import (
     render_markdown,
 )
 
-__all__ = ["render_markdown", "render_html", "TEMPLATE_DEFAULTS", "merge_template", "proofread"]
+
+def render_docx(data, tpl=None, language=None):
+    """Lazy wrapper — imports python-docx only when DOCX is actually requested,
+    so the package stays importable without the optional dependency."""
+    from .docx_render import render_docx as _impl
+
+    return _impl(data, tpl, language)
+
+
+__all__ = [
+    "render_markdown",
+    "render_html",
+    "render_docx",
+    "TEMPLATE_DEFAULTS",
+    "merge_template",
+    "proofread",
+]

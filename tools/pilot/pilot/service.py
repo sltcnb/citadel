@@ -2620,6 +2620,9 @@ def _tool_aggregate(case_id: str, step: dict) -> dict:
             f"/{index}/_search",
             {
                 "size": 0,
+                # Exact matched-doc total — without this the agg's "total" caps at
+                # 10000 and the agent under-counts how much its filter matched.
+                "track_total_hits": True,
                 "query": {
                     "query_string": {
                         "query": qstr,
@@ -2807,6 +2810,7 @@ def _tool_time_window(case_id: str, step: dict) -> dict:
             f"/{index}/_search",
             {
                 "size": 10,
+                "track_total_hits": True,
                 "query": {"bool": {"must": must}},
                 "_source": [
                     "timestamp",
@@ -2884,6 +2888,7 @@ def _tool_correlate(case_id: str, step: dict) -> dict:
             f"/{index}/_search",
             {
                 "size": 10,
+                "track_total_hits": True,
                 "query": {
                     "bool": {
                         "must": [{"range": {"timestamp": {"gte": lo, "lte": hi}}}],
@@ -3867,7 +3872,7 @@ def _auto_write_report_from_run(case_id: str, run: dict, cfg: dict, language: st
             "language": language,
             "run_circumstance": run.get("circumstance", ""),
         }
-        _redis().set(f"case:{case_id}:ai:report", json.dumps(report_doc))
+        _save_report_with_history(case_id, report_doc)
         return
 
     # ── Fallback: deterministic render from transcript ──────────────────
@@ -3972,7 +3977,7 @@ def _auto_write_report_from_run(case_id: str, run: dict, cfg: dict, language: st
         "source": "autopilot",
         "run_circumstance": run.get("circumstance", ""),
     }
-    _redis().set(f"case:{case_id}:ai:report", json.dumps(report_doc))
+    _save_report_with_history(case_id, report_doc)
 
 
 _AGENT_ACTIVE_KEY = lambda case_id: f"case:{case_id}:ai:agent_active"
@@ -5718,6 +5723,47 @@ def ai_agent_feedback_list(case_id: str):
     return {"feedback": out}
 
 
+_REPORT_HISTORY_MAX = 20
+
+
+def _save_report_with_history(case_id: str, doc: dict) -> None:
+    """Set the current report AND append it to a capped history list, so analysts
+    can see/reopen prior reports instead of silently overwriting on regenerate."""
+    r = _redis()
+    r.set(f"case:{case_id}:ai:report", json.dumps(doc))
+    try:
+        key = f"case:{case_id}:ai:report_history"
+        r.lpush(key, json.dumps(doc))
+        r.ltrim(key, 0, _REPORT_HISTORY_MAX - 1)
+    except Exception:
+        pass
+
+
+@router.get("/cases/{case_id}/ai/report_history")
+def get_report_history(case_id: str):
+    """Metadata for past generated reports (newest first) — ts, model, language,
+    manifest, source. Content included so the UI can re-open without another call."""
+    r = _redis()
+    out = []
+    for raw in r.lrange(f"case:{case_id}:ai:report_history", 0, _REPORT_HISTORY_MAX - 1):
+        try:
+            out.append(json.loads(raw))
+        except Exception:
+            pass
+    return {"reports": out}
+
+
+@router.delete("/cases/{case_id}/ai/report_history/{idx}")
+def delete_report_history(case_id: str, idx: int):
+    """Remove one history entry by index (0 = newest)."""
+    r = _redis()
+    key = f"case:{case_id}:ai:report_history"
+    items = r.lrange(key, 0, -1)
+    if 0 <= idx < len(items):
+        r.lrem(key, 1, items[idx])
+    return {"ok": True}
+
+
 @router.get("/cases/{case_id}/ai/results")
 def get_ai_results(case_id: str):
     r = _redis()
@@ -5819,22 +5865,23 @@ def delete_ai_investigation(case_id: str, idx: int):
 _FINAL_REPORT_PROMPT = """You are a senior digital forensics analyst writing an official incident report.
 
 STRICT EVIDENCE RULES — violating these is a critical error:
-1. CONFIRMED EVIDENCE: only the content of the FLAGGED EVENTS section. Every factual claim must be traceable to a specific event entry there. If no flagged events exist, state "No events were flagged for review."
+1. CONFIRMED EVIDENCE: the FLAGGED EVENTS section AND the ANALYSIS MODULE DETECTIONS section. Every factual claim must trace to a specific entry in one of those. If neither has content, state "No confirmed evidence — no events flagged and no module detections."
 2. ANALYST HYPOTHESES: the AI RISK ASSESSMENT and INVESTIGATION SESSIONS sections contain the analyst's working theories and questions fed to an AI assistant. These are NOT confirmed facts. Reference them only as "the analyst noted..." or "a hypothesis under investigation was..." — never state them as facts or findings.
 3. ANALYST NOTES: the analyst's own written observations. Summarise faithfully but do not elevate speculation to fact.
-4. MODULE RESULTS: objective counts only (files processed, events indexed). Do not interpret.
-5. NEVER invent, infer, or extrapolate: do not mention IPs, hostnames, user accounts, process names, domains, hashes, or any technical detail that does not appear verbatim in the FLAGGED EVENTS section or the OBSERVED IOCs section.
+4. ANALYSIS MODULE DETECTIONS: objective scanner output (hayabusa/yara/cti_match). You MAY cite these as confirmed findings WITH their severity (e.g. "Hayabusa flagged 3 high-severity events"). Do not invent detail beyond what each entry states. DATA SOURCES is provenance only (which files were parsed) — never interpret it.
+5. NEVER invent, infer, or extrapolate: do not mention IPs, hostnames, user accounts, process names, domains, hashes, or any technical detail that does not appear verbatim in the FLAGGED EVENTS, ANALYSIS MODULE DETECTIONS, or OBSERVED IOCs sections.
 6. If evidence is absent for a section, write "Insufficient evidence" — do not fill the gap with AI analysis content.
 
 Write a structured markdown report:
 1. Executive Summary (what is confirmed, what is under investigation — be explicit about the distinction)
 2. Incident Timeline (flagged events only, chronological — omit if none)
-3. Key Findings (confirmed from flagged events only)
-4. Indicators of Compromise (from flagged events only — omit if none confirmed)
-5. MITRE ATT&CK Techniques (from flagged events only — omit if none confirmed)
-6. Analyst Notes Summary (faithful summary of written notes)
-7. Hypotheses Under Investigation (brief summary of AI investigation scenarios — clearly marked as unconfirmed)
-8. Conclusions & Recommendations"""
+3. Key Findings (confirmed from flagged events AND analysis-module detections)
+4. Detections by Analysis Modules (summarise the ANALYSIS MODULE DETECTIONS section — module, hit counts, severity, notable rules — omit if none ran)
+5. Indicators of Compromise (from flagged events only — omit if none confirmed)
+6. MITRE ATT&CK Techniques (from flagged events only — omit if none confirmed)
+7. Analyst Notes Summary (faithful summary of written notes)
+8. Hypotheses Under Investigation (brief summary of AI investigation scenarios — clearly marked as unconfirmed)
+9. Conclusions & Recommendations"""
 
 
 class FinalReportRequest(BaseModel):
@@ -5938,7 +5985,7 @@ def generate_final_report(case_id: str, body: FinalReportRequest = None):
             pass
     investigations_text = "\n---\n".join(inv_parts) if inv_parts else "None."
 
-    # ── Module results (all completed jobs)
+    # ── Ingest jobs (data provenance — which files were parsed)
     module_results = ""
     try:
         from services import jobs as job_svc
@@ -5955,6 +6002,47 @@ def generate_final_report(case_id: str, body: FinalReportRequest = None):
         )
     except Exception:
         pass
+
+    # ── Analysis module runs (hayabusa/yara/cti_match/…) — the DETECTION findings.
+    # These are objective scanner results, so they ARE confirmed evidence. Default
+    # to every completed run that found something; an explicit run_ids selection
+    # narrows to just those. Clean (0-hit) runs are noted as "ran, nothing found".
+    module_analysis_text = ""
+    try:
+        from services.module_runs import list_case_module_runs
+
+        all_runs = [
+            r for r in list_case_module_runs(case_id)
+            if str(r.get("status", "")).upper() in ("COMPLETED", "DONE")
+        ]
+        if body.run_ids:
+            sel = set(body.run_ids)
+            chosen = [r for r in all_runs if r.get("run_id") in sel]
+        else:
+            chosen = [r for r in all_runs if int(r.get("total_hits") or 0) > 0]
+        parts = []
+        for run in chosen:
+            mid = run.get("module_id", run.get("run_id", "?"))
+            total = int(run.get("total_hits") or 0)
+            hits = run.get("hits_by_level") or {}
+            line = f"- {mid}: {total} hit(s)"
+            if hits:
+                line += " (" + ", ".join(f"{lvl}: {cnt}" for lvl, cnt in hits.items() if cnt) + ")"
+            for p in (run.get("results_preview") or [])[:8]:
+                if isinstance(p, dict):
+                    rule_n = p.get("rule_name") or p.get("title") or p.get("name") or ""
+                    level = p.get("level") or p.get("severity") or ""
+                    msg = p.get("message") or p.get("description") or ""
+                    line += f"\n    [{level}] {rule_n}: {msg}"[:160]
+                elif isinstance(p, str):
+                    line += f"\n    {p}"[:160]
+            parts.append(line)
+        clean = [r.get("module_id", "?") for r in all_runs if int(r.get("total_hits") or 0) == 0]
+        if not body.run_ids and clean:
+            parts.append(f"- Ran with no findings: {', '.join(sorted(set(clean)))}")
+        module_analysis_text = "\n".join(parts) or "No analysis modules have run."
+    except Exception:
+        module_analysis_text = "No analysis modules have run."
 
     flagged_text = (
         "\n".join(
@@ -6008,35 +6096,6 @@ def generate_final_report(case_id: str, body: FinalReportRequest = None):
         ioc_text = "IOC extraction unavailable."
 
     # ── Selected module run results
-    selected_runs_text = ""
-    if body.run_ids:
-        from services.module_runs import get_module_run
-
-        run_parts = []
-        for rid in body.run_ids:
-            run = get_module_run(rid)
-            if not run:
-                continue
-            mid = run.get("module_id", rid)
-            hits = run.get("hits_by_level") or {}
-            total = run.get("total_hits", 0)
-            preview = run.get("results_preview") or []
-            part = f"Module: {mid} | Total hits: {total}"
-            if hits:
-                part += " | " + ", ".join(f"{lvl}: {cnt}" for lvl, cnt in hits.items() if cnt)
-            if preview:
-                # Include first 10 preview entries
-                for p in preview[:10]:
-                    if isinstance(p, dict):
-                        rule_n = p.get("rule_name") or p.get("title") or p.get("name") or ""
-                        level = p.get("level") or p.get("severity") or ""
-                        msg = p.get("message") or p.get("description") or ""
-                        part += f"\n  [{level}] {rule_n}: {msg}"[:120]
-                    elif isinstance(p, str):
-                        part += f"\n  {p}"[:120]
-            run_parts.append(part)
-        selected_runs_text = "\n\n".join(run_parts) or "None selected."
-
     user_msg = (
         f"Case: {ctx['case_name']} (status: {ctx['status']})\n"
         f"Artifacts: {', '.join(ctx['artifact_types']) or 'none'}\n"
@@ -6044,6 +6103,10 @@ def generate_final_report(case_id: str, body: FinalReportRequest = None):
         f"=== CONFIRMED EVIDENCE — FLAGGED EVENTS ({len(flagged_events)}) ===\n"
         f"(These are the ONLY facts you may state as confirmed findings)\n"
         f"{flagged_text}\n\n"
+        f"=== CONFIRMED EVIDENCE — ANALYSIS MODULE DETECTIONS ===\n"
+        f"(Objective scanner output — hayabusa/yara/cti_match etc. You MAY cite these "
+        f"detections as confirmed findings, with their severity.)\n"
+        f"{module_analysis_text}\n\n"
         f"=== CONFIRMED EVIDENCE — OBSERVED IOCs (extracted from artifact data) ===\n"
         f"(You may cite these values as observed — but only state significance if a flagged event supports it)\n"
         f"{ioc_text}\n\n"
@@ -6051,9 +6114,8 @@ def generate_final_report(case_id: str, body: FinalReportRequest = None):
         f"{prior_analysis or 'Not performed.'}\n\n"
         f"=== ANALYST HYPOTHESES — INVESTIGATION SESSIONS (unconfirmed, do NOT treat as facts) ===\n"
         f"{investigations_text}\n\n"
-        f"=== MODULE RESULTS (objective counts only) ===\n{module_results}\n\n"
-        + (f"=== SELECTED MODULE RUN DETAILS ===\n{selected_runs_text}\n\n" if body.run_ids else "")
-        + f"=== ANALYST WRITTEN NOTES ===\n{notes_body or '(none)'}\n\n"
+        f"=== DATA SOURCES (ingested files — provenance only) ===\n{module_results}\n\n"
+        f"=== ANALYST WRITTEN NOTES ===\n{notes_body or '(none)'}\n\n"
         "Write the final incident report following the evidence rules above."
     )
 
@@ -6078,8 +6140,19 @@ def generate_final_report(case_id: str, body: FinalReportRequest = None):
         "model_used": f"{cfg.get('provider', '?')}/{cfg.get('model', '?')}",
         "flagged_count": len(flagged_events),
         "language": lang,
+        "source": "manual",
+        # Manifest — exactly what this report drew on, so the panel can show
+        # "based on X" instead of leaving the analyst guessing.
+        "manifest": {
+            "flagged_count": len(flagged_events),
+            "module_detections": module_analysis_text.count("\n-") + (1 if module_analysis_text.startswith("-") else 0),
+            "ioc_lines": ioc_text.count("\n") + 1 if ioc_text and ioc_text != "None." else 0,
+            "investigations": investigations_text != "None.",
+            "notes": bool(notes_body),
+            "run_ids": list(body.run_ids or []),
+        },
     }
-    r.set(f"case:{case_id}:ai:report", json.dumps(result))
+    _save_report_with_history(case_id, result)
     return result
 
 
