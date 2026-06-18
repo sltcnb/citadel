@@ -3123,6 +3123,36 @@ ul,ol{padding-left:1.5em;}li{margin:2px 0;}
     setTimeout(() => { win.print() }, 250)
   }
 
+  // Export the AI LLM narrative report itself (not the Scribe bundle) as the
+  // final deliverable in any format. base='ai/report' vs 'report'.
+  async function downloadDoc(base, ext, lang) {
+    const key = `${base}:${ext}`
+    setBusy(key); setError(null)
+    try {
+      const token = getToken()
+      const langQ = lang ? `?language=${lang}` : ''
+      const res = await fetch(`/api/v1/cases/${caseId}/${base}.${ext}${langQ}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+      if (!res.ok) {
+        let detail = `HTTP ${res.status}`
+        try { const j = await res.json(); if (j.detail) detail = j.detail } catch { /* not json */ }
+        throw new Error(detail)
+      }
+      const blob = await res.blob()
+      const objectUrl = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = objectUrl
+      a.download = `case-${caseId}-${base.includes('ai') ? 'ai-' : ''}report.${ext}`
+      document.body.appendChild(a); a.click(); a.remove()
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 10_000)
+    } catch (e) {
+      setAiError(e.message || 'Export failed.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
   // ext: 'md' | 'html' | 'pdf' | 'docx' — all share the same server-rendered
   // report data, just a different renderer.
   async function download(ext) {
@@ -3188,8 +3218,9 @@ ul,ol{padding-left:1.5em;}li{margin:2px 0;}
 
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
           <p className="text-[11px] text-gray-500">
-            One place for all case deliverables — AI narrative summary on top,
-            downloadable artifacts below. Both pull from current case state.
+            Two deliverables: the AI investigation report (final, narrative —
+            export to PDF/Word/HTML/Markdown) and a no-AI case bundle below.
+            Both pull from current case state.
           </p>
 
           {error && (
@@ -3204,10 +3235,10 @@ ul,ol{padding-left:1.5em;}li{margin:2px 0;}
                   <Sparkles size={14} className="text-purple-600" />
                 </div>
                 <div>
-                  <div className="text-sm font-semibold text-gray-900">AI investigation summary</div>
+                  <div className="text-sm font-semibold text-gray-900">AI investigation report (final)</div>
                   <div className="text-[10px] text-gray-500">
                     {aiEnabled
-                      ? 'Generated from flagged events + module findings'
+                      ? 'Complete deliverable from flagged events + module detections + IOCs. Export below.'
                       : 'Available on Pro / Enterprise / MSSP tiers'}
                   </div>
                 </div>
@@ -3289,6 +3320,31 @@ ul,ol{padding-left:1.5em;}li{margin:2px 0;}
                 <pre className="text-[11px] text-gray-700 leading-relaxed bg-gray-50 border border-gray-200 rounded-lg p-3 whitespace-pre-wrap font-mono overflow-auto max-h-[50vh]">
                   {aiReport.content}
                 </pre>
+                {/* Export the LLM report as the final deliverable */}
+                <div className="mt-2">
+                  <div className="text-[10px] text-gray-400 mb-1">Export this report as</div>
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {[
+                      ['pdf', 'PDF', 'Court-ready, native'],
+                      ['docx', 'Word', 'Editable .docx'],
+                      ['html', 'HTML', 'Graphical'],
+                      ['md', 'Markdown', 'Diff-friendly'],
+                    ].map(([ext, label, hint]) => (
+                      <button
+                        key={ext}
+                        onClick={() => downloadDoc('ai/report', ext)}
+                        disabled={busy === `ai/report:${ext}`}
+                        title={hint}
+                        className="border border-gray-200 rounded-lg p-2 flex flex-col items-center gap-1 hover:border-purple-400 hover:bg-purple-50 transition-colors disabled:opacity-50"
+                      >
+                        {busy === `ai/report:${ext}`
+                          ? <Loader2 size={13} className="animate-spin text-purple-600" />
+                          : <Download size={13} className="text-purple-600" />}
+                        <span className="text-[10px] font-semibold text-gray-900">{label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </>
             ) : aiEnabled ? (
               <div className="text-[11px] text-gray-500 italic text-center py-3">
@@ -3440,7 +3496,7 @@ ul,ol{padding-left:1.5em;}li{margin:2px 0;}
                 <FileText size={14} className="text-indigo-600" />
               </div>
               <div>
-                <div className="text-sm font-semibold text-gray-900">Formal report</div>
+                <div className="text-sm font-semibold text-gray-900">Case bundle (no AI)</div>
                 <div className="text-[10px] text-gray-500">
                   Manifest + flagged + pinned + module detections + saved searches +
                   correlations + IOCs + notes. Server-rendered, works without AI. Language: {reportLang.toUpperCase()}.

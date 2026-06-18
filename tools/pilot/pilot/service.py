@@ -5862,7 +5862,7 @@ def delete_ai_investigation(case_id: str, idx: int):
     return {"ok": True}
 
 
-_FINAL_REPORT_PROMPT = """You are a senior digital forensics analyst writing an official incident report.
+_FINAL_REPORT_PROMPT = """You are a senior digital forensics analyst writing the OFFICIAL, FINAL incident report — the deliverable handed to the client/court. It must stand on its own: complete, self-contained, and professional. Do not write "see the dashboard" or assume the reader has the tool. Be thorough — cover every section that has evidence in depth; do not be terse.
 
 STRICT EVIDENCE RULES — violating these is a critical error:
 1. CONFIRMED EVIDENCE: the FLAGGED EVENTS section AND the ANALYSIS MODULE DETECTIONS section. Every factual claim must trace to a specific entry in one of those. If neither has content, state "No confirmed evidence — no events flagged and no module detections."
@@ -5872,16 +5872,20 @@ STRICT EVIDENCE RULES — violating these is a critical error:
 5. NEVER invent, infer, or extrapolate: do not mention IPs, hostnames, user accounts, process names, domains, hashes, or any technical detail that does not appear verbatim in the FLAGGED EVENTS, ANALYSIS MODULE DETECTIONS, or OBSERVED IOCs sections.
 6. If evidence is absent for a section, write "Insufficient evidence" — do not fill the gap with AI analysis content.
 
-Write a structured markdown report:
-1. Executive Summary (what is confirmed, what is under investigation — be explicit about the distinction)
-2. Incident Timeline (flagged events only, chronological — omit if none)
-3. Key Findings (confirmed from flagged events AND analysis-module detections)
-4. Detections by Analysis Modules (summarise the ANALYSIS MODULE DETECTIONS section — module, hit counts, severity, notable rules — omit if none ran)
-5. Indicators of Compromise (from flagged events only — omit if none confirmed)
-6. MITRE ATT&CK Techniques (from flagged events only — omit if none confirmed)
-7. Analyst Notes Summary (faithful summary of written notes)
-8. Hypotheses Under Investigation (brief summary of AI investigation scenarios — clearly marked as unconfirmed)
-9. Conclusions & Recommendations"""
+Write a COMPLETE, well-structured markdown report with a top-level `# ` title and `## ` sections. Include every section below that has supporting evidence; write each in full prose (not one-liners). Use markdown tables for the timeline and detections where it aids clarity.
+1. Title + one-line case identifier
+2. Executive Summary (3–6 sentences: what happened, severity, what is confirmed vs under investigation)
+3. Scope & Data Sources (what was examined — artifact types, ingested files from DATA SOURCES, total events)
+4. Incident Timeline (flagged events, chronological, as a table: time | host | event — omit if none)
+5. Key Findings (confirmed, drawn from flagged events AND analysis-module detections — each finding a short paragraph)
+6. Detections by Analysis Modules (per module: hit counts, severity breakdown, notable rules from the ANALYSIS MODULE DETECTIONS section — omit if none ran)
+7. Indicators of Compromise (from flagged events / observed IOCs — omit if none)
+8. MITRE ATT&CK Techniques (from flagged events — omit if none)
+9. Analyst Notes Summary (faithful summary of written notes)
+10. Hypotheses Under Investigation (AI investigation scenarios — clearly marked UNCONFIRMED)
+11. Conclusions & Recommendations (actionable next steps, containment/remediation where warranted)
+
+This is the final report — make it comprehensive and ready to deliver as-is."""
 
 
 class FinalReportRequest(BaseModel):
@@ -6130,7 +6134,9 @@ def generate_final_report(case_id: str, body: FinalReportRequest = None):
         )
 
     try:
-        raw = _call_llm_with_system(cfg, system_prompt, user_msg, max_tokens=2500)
+        # Generous budget — this is the FINAL deliverable, not a teaser. 8k tokens
+        # lets the model cover every section in depth without truncation.
+        raw = _call_llm_with_system(cfg, system_prompt, user_msg, max_tokens=8000)
     except Exception as exc:
         raise HTTPException(502, f"LLM call failed: {exc}")
 

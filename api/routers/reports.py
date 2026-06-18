@@ -14,7 +14,7 @@ import logging
 
 import redis_keys as rk
 from auth.dependencies import require_admin, require_case_access
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
 from services.elasticsearch import _request as es_req
@@ -27,8 +27,11 @@ from scribe import (
     merge_template,
     proofread,
     render_docx,
+    render_docx_document,
     render_html,
+    render_html_document,
     render_markdown,
+    render_markdown_document,
 )
 
 logger = logging.getLogger(__name__)
@@ -471,6 +474,120 @@ def report_docx(case_id: str, review: bool = False, language: str | None = None,
         content=blob,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={"Content-Disposition": f'attachment; filename="{_safe_name(case, case_id)}-report.docx"'},
+    )
+
+
+# ── AI LLM report export (the narrative deliverable, any format) ───────────────
+
+
+def _load_ai_report(case_id: str) -> dict:
+    """Fetch the stored AI LLM report doc, or raise 404."""
+    try:
+        raw = get_redis().get(f"case:{case_id}:ai:report")
+        doc = json.loads(raw) if raw else None
+    except Exception:
+        doc = None
+    if not doc or not (doc.get("content") or "").strip():
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=404, detail="No AI report generated yet — click Generate first.")
+    return doc
+
+
+def _ai_report_meta(doc: dict) -> tuple[str, list[str]]:
+    """(title, meta_lines) for the AI report export header."""
+    title = "Investigation Report"
+    meta = []
+    if doc.get("generated_at"):
+        meta.append(f"Generated {doc['generated_at'][:19].replace('T', ' ')} UTC")
+    if doc.get("model_used"):
+        meta.append(str(doc["model_used"]))
+    if doc.get("language"):
+        meta.append(str(doc["language"]).upper())
+    m = doc.get("manifest") or {}
+    bits = []
+    if m.get("flagged_count") is not None:
+        bits.append(f"{m['flagged_count']} flagged")
+    if m.get("module_detections"):
+        bits.append(f"{m['module_detections']} module detections")
+    if m.get("ioc_lines"):
+        bits.append(f"{m['ioc_lines']} IOC lines")
+    if bits:
+        meta.append("based on " + ", ".join(bits))
+    return title, meta
+
+
+@router.get("/cases/{case_id}/ai/report.md")
+def ai_report_md(case_id: str, case: dict = Depends(require_case_access)):
+    doc = _load_ai_report(case_id)
+    title, meta = _ai_report_meta(doc)
+    md = render_markdown_document(title, doc["content"], meta)
+    return Response(
+        content=md,
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{_safe_name(case, case_id)}-ai-report.md"'},
+    )
+
+
+@router.get("/cases/{case_id}/ai/report.html")
+def ai_report_html(case_id: str, case: dict = Depends(require_case_access)):
+    doc = _load_ai_report(case_id)
+    title, meta = _ai_report_meta(doc)
+    page = render_html_document(title, doc["content"], meta)
+    return Response(
+        content=page,
+        media_type="text/html; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{_safe_name(case, case_id)}-ai-report.html"',
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@router.get("/cases/{case_id}/ai/report.pdf")
+def ai_report_pdf(case_id: str, case: dict = Depends(require_case_access)):
+    try:
+        from weasyprint import HTML  # type: ignore
+    except Exception:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=503, detail="PDF export unavailable — WeasyPrint not installed in this build.")
+    doc = _load_ai_report(case_id)
+    title, meta = _ai_report_meta(doc)
+    html = render_html_document(title, doc["content"], meta)
+    try:
+        pdf = HTML(string=html).write_pdf()
+    except Exception as exc:
+        from fastapi import HTTPException
+
+        logger.warning("AI report PDF failed (case %s): %s", case_id, exc)
+        raise HTTPException(status_code=500, detail=f"PDF render failed: {exc}")
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{_safe_name(case, case_id)}-ai-report.pdf"'},
+    )
+
+
+@router.get("/cases/{case_id}/ai/report.docx")
+def ai_report_docx(case_id: str, case: dict = Depends(require_case_access)):
+    doc = _load_ai_report(case_id)
+    title, meta = _ai_report_meta(doc)
+    try:
+        blob = render_docx_document(title, doc["content"], meta)
+    except ImportError:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=503, detail="DOCX export unavailable — python-docx not installed in this build.")
+    except Exception as exc:
+        from fastapi import HTTPException
+
+        logger.warning("AI report DOCX failed (case %s): %s", case_id, exc)
+        raise HTTPException(status_code=500, detail=f"DOCX render failed: {exc}")
+    return Response(
+        content=blob,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{_safe_name(case, case_id)}-ai-report.docx"'},
     )
 
 
