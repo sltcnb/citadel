@@ -36,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Correct detection counts above 10 000; surfaced previously-silent rule failures; fixed an empty MITRE report section; atomic archive restore; resolved concurrent-edit races on rule/feed/config storage.
 - Heavy work (intel polling, malware upload, log streaming, chunked ingest) moved off the request path for a more responsive API.
+- **Talon collector reliability** — the harvester now tees a full execution log to `<output>.collector.log` from the first line and uploads it to S3 alongside the archive (second presigned URL), so a crash, an OOM/IO kill, or a `SIGTERM` still leaves a post-mortem. Signal handlers and a wrapping `try/finally` guarantee the log ships on any exit. The collector refuses to upload an empty (~22-byte stub) archive — it ships the log instead and exits non-zero. Free space on the output and staging volumes is logged up front (a full disk is the usual cause of truncated archives and mid-run kills), packaging detects `ENOSPC` and stops with a clear "DISK FULL" message instead of a silently truncated ZIP, and a dead-box `cryptsetup --version` probe can no longer hang the unlock.
 
 ## [1.0.0] — Initial release
 

@@ -34,6 +34,7 @@ EMBEDDED_CONFIG: dict = {}
 
 import argparse
 import datetime
+import errno
 import fnmatch
 import io
 import json
@@ -151,6 +152,7 @@ if not EMBEDDED_CONFIG:
                 "case_id": _raw.get("case_id", ""),
                 "api_token": _raw.get("api_token", ""),
                 "presigned_url": _raw.get("presigned_url", ""),
+                "presigned_log_url": _raw.get("presigned_log_url", ""),
                 "fetch_patterns": list(_raw.get("fetch_patterns", []) or []),
                 "fetch_roots": list(_raw.get("fetch_roots", []) or []),
                 "fetch_max_files": int(_raw.get("fetch_max_files", 0) or 0),
@@ -166,6 +168,169 @@ TS_NOW = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
 IS_WINDOWS = platform.system() == "Windows"
 IS_LINUX = platform.system() == "Linux"
 IS_MACOS = platform.system() == "Darwin"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Execution log — tee everything to a sibling .log file from the very first line,
+# so a crash, an OOM kill, or a SIGTERM still leaves (and uploads) a record of
+# how far collection got and why it stopped.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class _Tee:
+    """Mirror a stream to the original console *and* a log file.
+
+    Every write is flushed immediately so nothing is lost if the process is
+    killed mid-run. Never raises on the logging side — a broken log handle must
+    not take down collection.
+    """
+
+    def __init__(self, console, logfh):
+        self._console = console
+        self._logfh = logfh
+
+    def write(self, txt):
+        try:
+            self._console.write(txt)
+            self._console.flush()
+        except Exception:
+            pass
+        try:
+            self._logfh.write(txt)
+            self._logfh.flush()
+        except Exception:
+            pass
+
+    def flush(self):
+        for s in (self._console, self._logfh):
+            try:
+                s.flush()
+            except Exception:
+                pass
+
+    def __getattr__(self, n):
+        return getattr(self._console, n)
+
+
+# Module-level handle so signal handlers and the finally block can reach the log.
+_LOG_FH = None
+_LOG_PATH: Path | None = None
+
+
+def _setup_execution_log(output: Path) -> Path | None:
+    """Open <output>.collector.log and tee stdout+stderr into it. Returns the
+    log path (or None if the log file could not be opened — collection still
+    proceeds, just without an on-disk transcript)."""
+    global _LOG_FH, _LOG_PATH
+    try:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        log_path = output.with_suffix(output.suffix + ".collector.log")
+        fh = open(log_path, "w", encoding="utf-8", errors="replace", buffering=1)
+    except Exception as exc:
+        print(f"  [!] Could not open execution log: {exc}", file=sys.stderr)
+        return None
+    _LOG_FH = fh
+    _LOG_PATH = log_path
+    fh.write(
+        f"# Talon execution log — host={HOSTNAME} ts={TS_NOW} "
+        f"os={platform.system()} {platform.release()} pid={os.getpid()}\n"
+    )
+    fh.flush()
+    sys.stdout = _Tee(sys.stdout, fh)
+    sys.stderr = _Tee(sys.stderr, fh)
+    return log_path
+
+
+def _close_execution_log() -> None:
+    global _LOG_FH
+    if _LOG_FH is not None:
+        try:
+            _LOG_FH.flush()
+            _LOG_FH.close()
+        except Exception:
+            pass
+        _LOG_FH = None
+
+
+class _Killed(SystemExit):
+    """Raised by the signal handler so main()'s finally block runs (flush +
+    upload the log) before the process exits on SIGTERM/SIGINT."""
+
+
+def _install_signal_handlers() -> None:
+    import signal
+
+    def _handler(signum, _frame):
+        # Don't do heavy work in the handler — just record and unwind to finally.
+        try:
+            print(
+                f"\n  [!] Received signal {signum} — flushing execution log and aborting.",
+                file=sys.stderr,
+            )
+        except Exception:
+            pass
+        raise _Killed(143 if signum == getattr(signal, "SIGTERM", None) else 130)
+
+    for _name in ("SIGTERM", "SIGINT", "SIGBREAK", "SIGHUP"):
+        _sig = getattr(signal, _name, None)
+        if _sig is not None:
+            try:
+                signal.signal(_sig, _handler)
+            except (ValueError, OSError, RuntimeError):
+                pass  # not on main thread / not supported on this OS
+
+
+def _fmt_bytes(n: int) -> str:
+    f = float(n)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if f < 1024 or unit == "TB":
+            return f"{f:.1f} {unit}"
+        f /= 1024
+    return f"{f:.1f} TB"
+
+
+def _disk_free(path: Path) -> tuple[int, int] | None:
+    """(free_bytes, total_bytes) for the volume holding path, or None if it
+    can't be determined. Walks up to the nearest existing parent."""
+    p = path
+    for _ in range(8):
+        try:
+            if p.exists():
+                u = shutil.disk_usage(str(p))
+                return u.free, u.total
+        except Exception:
+            pass
+        if p.parent == p:
+            break
+        p = p.parent
+    return None
+
+
+# Refuse to start / keep going below this much free space on the output volume.
+_LOW_SPACE_BYTES = 200 * 1024 * 1024  # 200 MB
+
+
+def _log_disk_space(output: Path, staging: Path) -> None:
+    """Log free space on both the output volume and the staging/temp volume.
+    A full disk is the most common cause of a truncated 22-byte ZIP and of the
+    process being OOM/IO-killed mid-collection — so record it up front."""
+    for label, p in (("output", output.parent), ("staging", staging)):
+        info = _disk_free(p)
+        if info is None:
+            print(f"  Disk ({label}) : free space unknown for {p}")
+            continue
+        free, total = info
+        warn = "  ⚠ LOW" if free < _LOW_SPACE_BYTES else ""
+        print(
+            f"  Disk ({label}) : {_fmt_bytes(free)} free of {_fmt_bytes(total)}  "
+            f"[{p}]{warn}"
+        )
+        if free < _LOW_SPACE_BYTES:
+            print(
+                f"  [!] Only {_fmt_bytes(free)} free on the {label} volume — collection may "
+                "truncate or fail. Free space or point --output at a larger volume.",
+                file=sys.stderr,
+            )
 
 
 def _enable_backup_privilege() -> bool:
@@ -1203,12 +1368,39 @@ class Collector:
         print(f"\n  {n} file{'s' if n != 1 else ''} → {self.output.name}\n")
 
         self.output.parent.mkdir(parents=True, exist_ok=True)
+
+        # Pre-flight: do we plausibly have room? Sum the staged sizes (worst case,
+        # uncompressed) and compare to free space on the output volume. The ZIP
+        # is compressed so this is conservative — but a warning here beats a
+        # silently truncated archive.
+        try:
+            needed = sum(p.stat().st_size for _, p in self._items if p.exists())
+        except Exception:
+            needed = 0
+        free_info = _disk_free(self.output.parent)
+        if free_info and needed and free_info[0] < needed:
+            self._warn(
+                f"Output volume has {_fmt_bytes(free_info[0])} free but up to "
+                f"{_fmt_bytes(needed)} may be written — archive may be truncated."
+            )
+
+        self._disk_full = False
         last_bar = ""
         with zipfile.ZipFile(str(self.output), "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
             for i, (arcname, path) in enumerate(self._items, 1):
                 try:
                     zf.write(str(path), arcname)
-                except (PermissionError, OSError):
+                except (PermissionError, OSError) as exc:
+                    # Disk full is fatal to packaging — stop now and report it
+                    # clearly rather than emitting dozens of misleading per-file
+                    # "permission denied" warnings and a truncated ZIP.
+                    if getattr(exc, "errno", None) == errno.ENOSPC:
+                        self._disk_full = True
+                        self._warn(
+                            "DISK FULL while writing the archive — out of space on the "
+                            f"output volume ({self.output.parent}). Archive is incomplete."
+                        )
+                        break
                     # File was registered via direct _add() without staging.
                     # Try backup-semantics copy to a temp location first.
                     tmp_pkg = self.staging / f"_pkg_{i}_{path.name}"
@@ -3429,9 +3621,13 @@ class ExternalDiskCollector(Collector):
             f"      cryptsetup: key len={len(key_with_dash)} recovery_fmt={is_recovery_fmt} "
             f"preview={key_with_dash[:6]}...{key_with_dash[-6:]}"
         )
-        print(
-            f"      cryptsetup: version = {subprocess.run([cs_bin, '--version'], capture_output=True, text=True).stdout.strip()}"
-        )
+        try:
+            _ver = subprocess.run(
+                [cs_bin, "--version"], capture_output=True, text=True, timeout=10
+            ).stdout.strip()
+        except Exception as _vexc:
+            _ver = f"<version probe failed: {_vexc}>"
+        print(f"      cryptsetup: version = {_ver}")
 
         # cryptsetup reads passphrases from /dev/tty, ignoring piped stdin.
         # Use bash process substitution <(printf KEY) → /dev/fd/N.
@@ -4571,6 +4767,41 @@ def upload_via_presigned(zip_path: Path, presigned_url: str) -> None:
         sys.exit(1)
 
 
+def upload_log_via_presigned(log_path: Path, presigned_url: str) -> bool:
+    """Best-effort PUT of the execution log to its own presigned S3 object.
+    Returns True on success. Never raises — log upload must not mask the real
+    collection outcome or crash the finally block."""
+    import ssl
+    import urllib.error
+    import urllib.request
+
+    if not log_path or not log_path.exists():
+        return False
+    try:
+        data = log_path.read_bytes()
+    except Exception as exc:
+        print(f"  [!] Could not read execution log for upload: {exc}", file=sys.stderr)
+        return False
+
+    print(f"  [*] Uploading execution log {log_path.name} → S3")
+    req = urllib.request.Request(
+        presigned_url,
+        data=data,
+        headers={"Content-Type": "text/plain; charset=utf-8"},
+        method="PUT",
+    )
+    _ssl_ctx = ssl.create_default_context()
+    _ssl_ctx.check_hostname = False
+    _ssl_ctx.verify_mode = ssl.CERT_NONE
+    try:
+        with urllib.request.urlopen(req, timeout=120, context=_ssl_ctx) as resp:
+            print(f"  [+] Execution log uploaded  (HTTP {resp.status})")
+            return True
+    except Exception as exc:
+        print(f"  [!] Execution-log upload failed: {exc}", file=sys.stderr)
+        return False
+
+
 def upload_to_fo(zip_path: Path, api_url: str, case_id: str, api_token: str = "") -> None:
     import urllib.error
     import urllib.request
@@ -4750,6 +4981,7 @@ def main() -> None:
     case_id = cfg.get("case_id", "")
     api_token = cfg.get("api_token", "")
     presigned_url = cfg.get("presigned_url", "")
+    presigned_log_url = cfg.get("presigned_log_url", "")
     case_name = cfg.get("case_name", "") or ""
 
     # Build output path — case_name, hostname, date, OS type in filename
@@ -4770,6 +5002,11 @@ def main() -> None:
         name_parts += [HOSTNAME, date_str, os_type]
         filename = "-".join(name_parts) + ".zip"
         output = out_dir / filename
+
+    # Tee everything to <output>.collector.log from here on, and arrange for a
+    # SIGTERM/SIGINT/OOM-kill to unwind cleanly so the log still gets uploaded.
+    log_path = _setup_execution_log(output)
+    _install_signal_handlers()
 
     # Input source — config.json defaults, CLI overrides.
     path_arg = cfg.get("path", "") or ""
@@ -4897,89 +5134,144 @@ def main() -> None:
         print(f"  Unsupported OS: {platform.system()}", file=sys.stderr)
         sys.exit(1)
 
-    collector.collect_all()
-    t_collect = time.monotonic() - t_start
+    # Everything from collection onward is wrapped so that a crash, an
+    # exception, or a SIGTERM/SIGINT (→ _Killed) still runs the finally block:
+    # flush the execution log and upload it to S3. The log is the post-mortem
+    # when the archive is empty or the process is killed mid-run.
+    # Record free space on both volumes before we start writing — a full disk
+    # is the usual cause of truncated archives and mid-run kills.
+    _log_disk_space(output, collector.staging)
 
-    # ── Dry-run report ───────────────────────────────────────────────────────
-    if args.dry_run:
-        print(f"\n{_HR}")
-        print(f"  Dry run — {len(collector._items)} files would be archived")
-        print(_HR)
-        for arcname, _ in collector._items:
-            print(f"    {arcname}")
-        collector.cleanup()
-        return
+    rc = 0
+    try:
+        collector.collect_all()
+        t_collect = time.monotonic() - t_start
 
-    # ── Package ──────────────────────────────────────────────────────────────
-    collector.package()
-    t_total = time.monotonic() - t_start
+        # ── Dry-run report ─────────────────────────────────────────────────────
+        if args.dry_run:
+            print(f"\n{_HR}")
+            print(f"  Dry run — {len(collector._items)} files would be archived")
+            print(_HR)
+            for arcname, _ in collector._items:
+                print(f"    {arcname}")
+            return
 
-    # ── Bundle manifest (opt-in, Citadel contract) ────────────────────────────
-    # Routes the legacy collector through the pluggable ArtifactCollector
-    # interface to emit a contract-conformant manifest. Off by default so the
-    # standalone CLI / ForensicsOperator flow is unchanged.
-    if args.bundle_manifest:
-        try:
-            from artifact_collector import CollectorAdapter
-
-            adapter = CollectorAdapter(
-                collector,
-                session_id=HOSTNAME
-                + "-"
-                + datetime.datetime.now(datetime.UTC).strftime("%Y%m%dT%H%M%SZ"),
+        # ── Package ────────────────────────────────────────────────────────────
+        collector.package()
+        t_total = time.monotonic() - t_start
+        n_files = len(collector._items)
+        disk_full = getattr(collector, "_disk_full", False)
+        if disk_full:
+            # Archive is incomplete but may still hold useful artifacts — ship it
+            # AND flag it. The execution log records the disk-full event.
+            print(
+                "\n  [!] Archive is INCOMPLETE — ran out of disk space during packaging.",
+                file=sys.stderr,
             )
-            adapter.start()
-            adapter.finalize()  # legacy already collected/packaged; hash staged items
-            written = adapter.write_bundle_manifest(Path(args.bundle_manifest))
-            print(f"  Manifest  : {written}")
-        except Exception as exc:
-            print(f"  [!] bundle manifest failed: {exc}", file=sys.stderr)
+            rc = 3
 
-    # ── Upload ───────────────────────────────────────────────────────────────
-    if presigned_url:
-        upload_via_presigned(output, presigned_url)
-    elif api_url and case_id:
-        upload_to_fo(output, api_url, case_id, api_token=api_token)
-    elif api_url or case_id:
-        print("  Both --api-url and --case-id are required for upload.", file=sys.stderr)
+        # ── Bundle manifest (opt-in, Citadel contract) ──────────────────────────
+        # Routes the legacy collector through the pluggable ArtifactCollector
+        # interface to emit a contract-conformant manifest. Off by default so the
+        # standalone CLI / ForensicsOperator flow is unchanged.
+        if args.bundle_manifest and n_files:
+            try:
+                from artifact_collector import CollectorAdapter
 
-    collector.cleanup()
+                adapter = CollectorAdapter(
+                    collector,
+                    session_id=HOSTNAME
+                    + "-"
+                    + datetime.datetime.now(datetime.UTC).strftime("%Y%m%dT%H%M%SZ"),
+                )
+                adapter.start()
+                adapter.finalize()  # legacy already collected/packaged; hash staged items
+                written = adapter.write_bundle_manifest(Path(args.bundle_manifest))
+                print(f"  Manifest  : {written}")
+            except Exception as exc:
+                print(f"  [!] bundle manifest failed: {exc}", file=sys.stderr)
 
-    # ── Results summary ───────────────────────────────────────────────────────
-    results = collector._results
-    n_ok = sum(1 for r in results if r["ok"])
-    n_fail = len(results) - n_ok
-    n_files = len(collector._items)
-    n_warns = len(collector._errors)
+        # ── Upload ───────────────────────────────────────────────────────────────
+        # Never ship an empty archive. Zero collected files means the ZIP is a
+        # ~22-byte stub (end-of-central-directory record only); uploading it just
+        # hides the real failure. Skip the archive and let the finally block ship
+        # the execution log so the analyst can see *why* nothing was collected.
+        if n_files == 0:
+            print(
+                "\n  [!] No files were collected — refusing to upload an empty archive.",
+                file=sys.stderr,
+            )
+            print(
+                "      The execution log will be uploaded instead so the failure is visible.",
+                file=sys.stderr,
+            )
+            rc = 2
+        elif presigned_url:
+            upload_via_presigned(output, presigned_url)
+        elif api_url and case_id:
+            upload_to_fo(output, api_url, case_id, api_token=api_token)
+        elif api_url or case_id:
+            print("  Both --api-url and --case-id are required for upload.", file=sys.stderr)
 
-    print(f"\n{_HR}")
-    print("  Results")
-    print(_HR)
-    print()
+        # ── Results summary ───────────────────────────────────────────────────────
+        results = collector._results
+        n_ok = sum(1 for r in results if r["ok"])
+        n_fail = len(results) - n_ok
+        n_warns = len(collector._errors)
 
-    if n_fail == 0:
-        print(f"  ✓  All {n_ok} categories collected")
-    else:
-        print(f"  ✓  {n_ok} categor{'y' if n_ok == 1 else 'ies'} collected")
-        print(f"  ✗  {n_fail} categor{'y' if n_fail == 1 else 'ies'} found no files:")
-        for r in results:
-            if not r["ok"]:
-                hint = f"  ({r['errors'][0][:50]})" if r["errors"] else ""
-                print(f"       · {r['label']}{hint}")
+        print(f"\n{_HR}")
+        print("  Results")
+        print(_HR)
+        print()
 
-    print()
-    print(f"  Files     : {n_files}")
-    print(f"  Collection: {t_collect:.1f}s")
-    print(f"  Total     : {t_total:.1f}s")
+        if n_files == 0:
+            print("  ✗  NOTHING COLLECTED — archive not uploaded (see execution log).")
+        elif n_fail == 0:
+            print(f"  ✓  All {n_ok} categories collected")
+        else:
+            print(f"  ✓  {n_ok} categor{'y' if n_ok == 1 else 'ies'} collected")
+            print(f"  ✗  {n_fail} categor{'y' if n_fail == 1 else 'ies'} found no files:")
+            for r in results:
+                if not r["ok"]:
+                    hint = f"  ({r['errors'][0][:50]})" if r["errors"] else ""
+                    print(f"       · {r['label']}{hint}")
 
-    if n_warns:
-        print(f"\n  ⚠  {n_warns} warning(s):")
-        for msg in collector._errors[:8]:
-            print(f"       · {msg[:72]}")
-        if n_warns > 8:
-            print(f"       · … and {n_warns - 8} more")
+        print()
+        print(f"  Files     : {n_files}")
+        print(f"  Collection: {t_collect:.1f}s")
+        print(f"  Total     : {t_total:.1f}s")
 
-    print(f"\n{_HR}\n")
+        if n_warns:
+            print(f"\n  ⚠  {n_warns} warning(s):")
+            for msg in collector._errors[:8]:
+                print(f"       · {msg[:72]}")
+            if n_warns > 8:
+                print(f"       · … and {n_warns - 8} more")
+
+        print(f"\n{_HR}\n")
+
+    except _Killed as exc:
+        rc = exc.code if isinstance(exc.code, int) else 143
+        print(f"\n  [!] Collection aborted by signal — partial results. Exit {rc}.", file=sys.stderr)
+    except BaseException as exc:  # noqa: BLE001 — last-resort: log then propagate intent
+        rc = 1
+        import traceback
+
+        print(f"\n  [!] FATAL: {type(exc).__name__}: {exc}", file=sys.stderr)
+        traceback.print_exc()
+    finally:
+        try:
+            collector.cleanup()
+        except Exception:
+            pass
+        # Always flush + ship the execution log (success, empty, crash, or kill).
+        if not args.dry_run and presigned_log_url and _LOG_PATH:
+            upload_log_via_presigned(_LOG_PATH, presigned_log_url)
+        elif not args.dry_run and _LOG_PATH:
+            print(f"  Execution log: {_LOG_PATH}")
+        _close_execution_log()
+
+    sys.exit(rc)
 
 
 if __name__ == "__main__":
