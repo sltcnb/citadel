@@ -454,10 +454,16 @@ def download_harvester_package(
         _ts = _dt.now(UTC).strftime("%Y%m%d-%H%M%S")
         _cn_slug = _re2.sub(r"[^\w.\-]", "_", (case_name or "collection").strip())[:60]
         _key = f"uploads/{_ts}-{_cn_slug}.zip"
+        _log_key = f"uploads/{_ts}-{_cn_slug}.collector.log"
         _expires = _td(hours=max(1, min(presign_expires_hours, 168)))
         try:
             config["presigned_url"] = _mc.presigned_put_object(
                 _s3cfg["bucket"], _key, expires=_expires
+            )
+            # Second URL: the execution log lands next to the archive in S3 so a
+            # crashed / killed / empty-archive run still leaves a post-mortem.
+            config["presigned_log_url"] = _mc.presigned_put_object(
+                _s3cfg["bucket"], _log_key, expires=_expires
             )
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"Could not generate presigned URL: {exc}")
