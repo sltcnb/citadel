@@ -9,7 +9,7 @@ import {
   Monitor, HardDrive, Globe, Brain,
   Binary, Bug, Network, FileImage, TextSearch, Tag,
   GitBranch, Target, Activity, LayoutTemplate, FileDown,
-  Printer, FileBarChart, Layers, Bot, Pencil, Copy,
+  Printer, FileBarChart, Layers, Bot, Pencil, Copy, Zap,
 } from 'lucide-react'
 
 const MOD_CATEGORY_ICONS = {
@@ -48,6 +48,7 @@ import CoPilotPanel from '../components/shared/CoPilotPanel'
 import ToolbarMenu from '../components/shared/ToolbarMenu'
 import { useLicense } from '../contexts/LicenseContext'
 import { useCollab } from '../hooks/useCollab'
+import { usePersistedState } from '../hooks/usePersistedState'
 import { severityStyle } from '../utils/severity'
 import { statusStyle } from '../utils/status'
 
@@ -392,6 +393,29 @@ function LevelGroup({ level, hits, totalInLevel, defaultOpen, caseId, runId, nav
 // ─────────────────────────────────────────────────────────────────────────────
 // ModuleLaunchModal
 // ─────────────────────────────────────────────────────────────────────────────
+// Resilient fetch: aborts each attempt after `timeoutMs` and retries with
+// linear backoff. Tolerates cold-starting / slow API instead of giving up
+// after a single short window. `fn` receives an AbortSignal.
+async function withRetry(fn, { attempts = 4, timeoutMs = 15000, onAttempt } = {}) {
+  let lastErr
+  for (let i = 0; i < attempts; i++) {
+    if (onAttempt) onAttempt(i + 1, attempts)
+    const ctrl = new AbortController()
+    const to = setTimeout(() => ctrl.abort(), timeoutMs)
+    try {
+      return await fn(ctrl.signal)
+    } catch (e) {
+      lastErr = e
+      if (i < attempts - 1) {
+        await new Promise(r => setTimeout(r, Math.min(1500 * (i + 1), 5000)))
+      }
+    } finally {
+      clearTimeout(to)
+    }
+  }
+  throw lastErr
+}
+
 function ModuleLaunchModal({ caseId, onClose, onRunCreated }) {
   const [modules, setModules]               = useState([])
   const [sources, setSources]               = useState([])
@@ -416,6 +440,11 @@ function ModuleLaunchModal({ caseId, onClose, onRunCreated }) {
 
   // Recommendation state — module_id → number of compatible case files
   const [recommendedCounts, setRecommendedCounts] = useState({})
+  const [retrying, setRetrying]             = useState(false)   // loading attempt > 1
+  const [sourcesLoading, setSourcesLoading] = useState(true)
+  const [sourcesError, setSourcesError]     = useState(null)
+  const mountedRef                          = useRef(true)
+  useEffect(() => () => { mountedRef.current = false }, [])
 
   // Grep-specific state
   const [grepPatterns, setGrepPatterns]   = useState('')
@@ -447,36 +476,57 @@ function ModuleLaunchModal({ caseId, onClose, onRunCreated }) {
     setGrepPatterns(preset.patterns)
   }
 
+  // Modules (left panel) and sources (right panel) load INDEPENDENTLY so a slow
+  // sources scan never blanks the module list, and each retries on its own with
+  // backoff to ride out a cold-starting API.
+  const loadModules = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const r = await withRetry(
+        signal => api.modules.list({ signal }),
+        { onAttempt: n => { if (mountedRef.current) setRetrying(n > 1) } },
+      )
+      if (!mountedRef.current) return
+      setModules((r.modules || []).filter(m => m.available))
+    } catch (e) {
+      if (mountedRef.current)
+        setError('Could not load modules: ' + (e?.message || 'server unreachable') + ' — retry below.')
+    } finally {
+      if (mountedRef.current) { setLoading(false); setRetrying(false) }
+    }
+  }, [])
+
+  const loadSources = useCallback(async () => {
+    setSourcesLoading(true)
+    setSourcesError(null)
+    try {
+      const r = await withRetry(signal => api.modules.listSources(caseId, { signal }))
+      if (!mountedRef.current) return
+      setSources(r.sources || [])
+    } catch (e) {
+      if (mountedRef.current)
+        setSourcesError(e?.message || 'Could not load case files')
+    } finally {
+      if (mountedRef.current) setSourcesLoading(false)
+    }
+  }, [caseId])
+
+  useEffect(() => { loadModules() }, [loadModules])
+  useEffect(() => { loadSources() }, [loadSources])
+
   useEffect(() => {
-    const settled = Promise.allSettled([api.modules.list(), api.modules.listSources(caseId)])
-    const timer   = new Promise(resolve => setTimeout(() => resolve('__timeout__'), 8000))
-
-    Promise.race([settled, timer]).then(result => {
-      if (result === '__timeout__') {
-        setError('Request timed out — the API may be starting up. Close and try again.')
-        setLoading(false)
-        return
-      }
-      const [modResult, srcResult] = result
-      if (modResult.status === 'fulfilled') {
-        setModules((modResult.value.modules || []).filter(m => m.available))
-      } else {
-        setError('Could not load modules: ' + (modResult.reason?.message || 'server error'))
-      }
-      if (srcResult.status === 'fulfilled') {
-        setSources(srcResult.value.sources || [])
-      }
-      setLoading(false)
-    })
-
     // Best-effort: ranked module suggestions for this case's file mix
-    api.modules.recommended(caseId)
+    let cancelled = false
+    withRetry(signal => api.modules.recommended(caseId, { signal }), { attempts: 2 })
       .then(r => {
+        if (cancelled) return
         const counts = {}
         for (const m of r.recommended || []) counts[m.id] = m.matched_files
         setRecommendedCounts(counts)
       })
       .catch(() => {})
+    return () => { cancelled = true }
   }, [caseId])
 
   // Load YARA library rules when YARA module is selected
@@ -698,8 +748,18 @@ function ModuleLaunchModal({ caseId, onClose, onRunCreated }) {
         </div>
 
         {loading ? (
-          <div className="flex-1 flex items-center justify-center text-gray-500">
-            <Loader2 size={20} className="animate-spin mr-2" /> Loading…
+          <div className="flex-1 flex flex-col items-center justify-center text-gray-500 gap-1">
+            <div className="flex items-center"><Loader2 size={20} className="animate-spin mr-2" /> Loading modules…</div>
+            {retrying && <p className="text-[11px] text-gray-400">API waking up — retrying…</p>}
+          </div>
+        ) : error && modules.length === 0 ? (
+          <div className="flex-1 flex flex-col items-center justify-center text-gray-500 gap-3 px-8 text-center">
+            <AlertTriangle size={22} className="text-amber-500" />
+            <p className="text-sm text-brand-text font-medium">Couldn’t load modules</p>
+            <p className="text-xs text-gray-500 max-w-sm">{error}</p>
+            <button onClick={() => { loadModules(); loadSources() }} className="btn-primary text-xs px-4 py-1.5 flex items-center gap-1.5">
+              <RefreshCw size={12} /> Retry
+            </button>
           </div>
         ) : (
           <div className="flex-1 flex overflow-hidden min-h-0">
@@ -853,7 +913,18 @@ function ModuleLaunchModal({ caseId, onClose, onRunCreated }) {
                     )}
                   </div>
 
-                  {compatibleSources.length === 0 ? (
+                  {sourcesLoading ? (
+                    <div className="mx-4 mb-3 p-3 text-xs text-gray-500 flex items-center gap-2">
+                      <Loader2 size={14} className="animate-spin" /> Loading case files…
+                    </div>
+                  ) : sourcesError ? (
+                    <div className="mx-4 mb-3 p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-600 flex items-center justify-between gap-2">
+                      <span className="truncate" title={sourcesError}>Couldn’t load case files: {sourcesError}</span>
+                      <button onClick={loadSources} className="btn-outline text-[11px] px-2 py-1 flex items-center gap-1 flex-shrink-0">
+                        <RefreshCw size={10} /> Retry
+                      </button>
+                    </div>
+                  ) : compatibleSources.length === 0 ? (
                     <div className="mx-4 mb-3 p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700">
                       <p className="font-medium mb-0.5">No compatible files ingested yet</p>
                       <p className="text-[11px]">
@@ -1042,9 +1113,17 @@ function ModuleLaunchModal({ caseId, onClose, onRunCreated }) {
           </button>
 
           {error && (
-            <p className="flex-1 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-1.5 truncate" title={error}>
-              {error}
-            </p>
+            <div className="flex-1 flex items-center gap-2 min-w-0">
+              <p className="flex-1 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-1.5 truncate" title={error}>
+                {error}
+              </p>
+              <button
+                onClick={() => { loadModules(); loadSources() }}
+                className="btn-outline text-xs px-2.5 py-1.5 flex items-center gap-1 flex-shrink-0"
+              >
+                <RefreshCw size={11} /> Retry
+              </button>
+            </div>
           )}
 
           <div className="ml-auto flex items-center gap-2">
@@ -1993,22 +2072,31 @@ export default function CaseTimeline() {
   const [availableCompanies, setAvailableCompanies] = useState([])
   const [showIngest, setShowIngest]         = useState(false)
   const [runningAlerts, setRunningAlerts]   = useState(false)
-  const [showModules, setShowModules]       = useState(false)
-  const [showModuleRuns, setShowModuleRuns] = useState(false)
-  const [showAlertRules, setShowAlertRules] = useState(false)
-  const [showNotes, setShowNotes]           = useState(false)
-  const [showIocs, setShowIocs]             = useState(false)
-  const [showTemplates, setShowTemplates]   = useState(false)
-  const [showReport, setShowReport]         = useState(false)
-  const [showAnomaly, setShowAnomaly]       = useState(false)
-  const [showProcessTree, setShowProcessTree] = useState(false)
-  const [showMitre, setShowMitre]           = useState(false)
-  const [showBaseline, setShowBaseline]     = useState(false)
-  const [showGraph, setShowGraph]           = useState(false)
-  const [showKillChain, setShowKillChain]   = useState(false)
-  const [showEvidence, setShowEvidence]     = useState(false)
-  const [showCoPilot, setShowCoPilot]       = useState(false)
-  const [showAI, setShowAI]                 = useState(false)
+  // Panel open/close state — persisted per-case (fo_panel_<name>_<caseId>) so the
+  // analyst's Detect / Investigate / Case / AI workspace survives reload, nav, and
+  // browser restart. Each case keeps its own layout.
+  const [showModules, setShowModules]       = usePersistedState(`fo_panel_modules_${caseId}`, false)
+  const [showModuleRuns, setShowModuleRuns] = usePersistedState(`fo_panel_moduleRuns_${caseId}`, false)
+  const [showAlertRules, setShowAlertRules] = usePersistedState(`fo_panel_alertRules_${caseId}`, false)
+  const [showNotes, setShowNotes]           = usePersistedState(`fo_panel_notes_${caseId}`, false)
+  const [showIocs, setShowIocs]             = usePersistedState(`fo_panel_iocs_${caseId}`, false)
+  const [showTemplates, setShowTemplates]   = usePersistedState(`fo_panel_templates_${caseId}`, false)
+  const [showReport, setShowReport]         = usePersistedState(`fo_panel_report_${caseId}`, false)
+  const [showAnomaly, setShowAnomaly]       = usePersistedState(`fo_panel_anomaly_${caseId}`, false)
+  const [showProcessTree, setShowProcessTree] = usePersistedState(`fo_panel_ptree_${caseId}`, false)
+  const [showMitre, setShowMitre]           = usePersistedState(`fo_panel_mitre_${caseId}`, false)
+  const [showBaseline, setShowBaseline]     = usePersistedState(`fo_panel_baseline_${caseId}`, false)
+  const [showGraph, setShowGraph]           = usePersistedState(`fo_panel_graph_${caseId}`, false)
+  const [showKillChain, setShowKillChain]   = usePersistedState(`fo_panel_killchain_${caseId}`, false)
+  const [showEvidence, setShowEvidence]     = usePersistedState(`fo_panel_evidence_${caseId}`, false)
+  const [showCoPilot, setShowCoPilot]       = usePersistedState(`fo_panel_copilot_${caseId}`, false)
+  const [showAI, setShowAI]                 = usePersistedState(`fo_panel_ai_${caseId}`, false)
+  // Auto-pilot: kick off an autonomous AI investigation the moment evidence
+  // ingestion finishes (active jobs fall to 0). Persisted opt-out per case.
+  const [autoPilot, setAutoPilot]           = usePersistedState(`fo_autopilot_${caseId}`, true)
+  const autoPilotRef                        = useRef(autoPilot)
+  useEffect(() => { autoPilotRef.current = autoPilot }, [autoPilot])
+  const prevActiveRef                       = useRef(null)
   const [iocPivotQuery, setIocPivotQuery]   = useState(null)
   // When react-router pushes a new location.state.pivotQuery (time-window pivot,
   // tag click, IOC search, …), clear the panel-driven iocPivotQuery so the new
@@ -2021,12 +2109,32 @@ export default function CaseTimeline() {
   const [jobSummary, setJobSummary]         = useState({ active: 0, failed: 0, eventsPerSec: null, totalEvents: 0 })
   const prevJobSnap                         = useRef(null)
 
+  // Auto-launch an autonomous AI run when ingest completes. Best-effort:
+  // skips if an agent is already running, reuses the analyst's saved scenario
+  // (fo_ai_circ_<caseId>) if present, else a generic triage prompt. Opens the
+  // AI panel so the live run is visible on return.
+  const launchAutoPilot = useCallback(async () => {
+    try {
+      const active = await api.cases.aiAgentActive(caseId).catch(() => null)
+      if (active?.runs?.some(r => r.status === 'running')) { setShowAI(true); return }
+      let circ = ''
+      try { circ = localStorage.getItem(`fo_ai_circ_${caseId}`) || '' } catch { /* ignore */ }
+      const scenario = circ.trim() ||
+        'Evidence ingestion just completed. Perform an autonomous triage of this case: ' +
+        'identify suspicious activity, likely attacker actions, lateral movement, persistence, ' +
+        'and notable IOCs. Conclude with a risk assessment.'
+      await api.cases.aiAgentStart(caseId, scenario)
+      setShowAI(true)
+    } catch { /* best-effort — analyst can launch manually */ }
+  }, [caseId, setShowAI])
+
   // Poll job counts + compute live events/s rate when the IngestPanel is closed.
   // Suspended while the panel is open — IngestPanel runs its own 3 s batch poller.
   // Adaptive rate: 3s when jobs are active, 30s when all are terminal.
   useEffect(() => {
     if (showIngest) return
     prevJobSnap.current = null
+    prevActiveRef.current = null
     const ACTIVE = new Set(['RUNNING', 'PENDING', 'UPLOADING'])
     let tid = null
     let cancelled = false
@@ -2051,12 +2159,23 @@ export default function CaseTimeline() {
         }
         prevJobSnap.current = { total: totalEvents, ts: now }
 
+        const activeCount = jobs.filter(j => ACTIVE.has(j.status)).length
         setJobSummary({
-          active:      jobs.filter(j => ACTIVE.has(j.status)).length,
+          active:      activeCount,
           failed:      jobs.filter(j => j.status === 'FAILED').length,
           totalEvents,
           eventsPerSec,
         })
+
+        // Ingest-complete edge: active jobs just fell from >0 to 0. Auto-launch
+        // the AI investigation so a walked-away analyst returns to a finished
+        // (or in-flight) triage. Fires once per completion; guarded against an
+        // already-running agent inside launchAutoPilot.
+        const prevActive = prevActiveRef.current
+        prevActiveRef.current = activeCount
+        if (autoPilotRef.current && prevActive != null && prevActive > 0 && activeCount === 0) {
+          launchAutoPilot()
+        }
 
         if (!cancelled) tid = setTimeout(fetchSummary, hasActive ? 3000 : 30000)
       } catch {
@@ -2065,7 +2184,7 @@ export default function CaseTimeline() {
     }
     fetchSummary()
     return () => { cancelled = true; clearTimeout(tid) }
-  }, [caseId, showIngest])
+  }, [caseId, showIngest, launchAutoPilot])
 
   const loadCase = useCallback(() => {
     api.cases.get(caseId)
@@ -2239,6 +2358,17 @@ export default function CaseTimeline() {
           >
             <Sparkles size={14} />
             AI
+          </button>
+
+          {/* Auto-pilot — kick off the AI run automatically when ingest finishes */}
+          <button
+            onClick={() => setAutoPilot(v => !v)}
+            className={`btn-outline ${autoPilot ? 'bg-purple-50 border-purple-300 text-purple-700' : 'text-gray-400'}`}
+            title={autoPilot
+              ? 'Auto-pilot ON — AI investigation launches automatically when ingest completes'
+              : 'Auto-pilot OFF — click to auto-launch AI when ingest completes'}
+          >
+            <Zap size={14} />
           </button>
 
           {/* Detect — find what's suspicious */}

@@ -143,8 +143,9 @@ def _get_modules() -> list[dict]:
 
 def invalidate_modules_cache() -> None:
     """Force the YAML module registry to reload on next request."""
-    global _MODULES_CACHE
+    global _MODULES_CACHE, _CUSTOM_MODULES_CACHE
     _MODULES_CACHE = None
+    _CUSTOM_MODULES_CACHE = None
 
 
 def _get_modules_by_id() -> dict[str, dict]:
@@ -218,15 +219,27 @@ def _module_meta(text: str) -> dict[str, Any]:
     return meta
 
 
+_CUSTOM_MODULES_CACHE: list[dict] | None = None
+
+
 def _get_custom_modules() -> list[dict]:
     """Scan CUSTOM_MODULES_DIR and return metadata for each *_module.py file.
 
     Uses AST static analysis (see :func:`_module_meta`) rather than exec_module
     so this works in the API container which does not have processor-only
     packages (pefile, yara, etc.) installed.
+
+    Result is cached in-process — the directory contents are static for the
+    lifetime of the container, so re-reading + AST-parsing every file on each
+    /modules request (which made the request slow enough to time out the UI)
+    is wasteful. Cleared via invalidate_modules_cache().
     """
+    global _CUSTOM_MODULES_CACHE
+    if _CUSTOM_MODULES_CACHE is not None:
+        return _CUSTOM_MODULES_CACHE
     if not CUSTOM_MODULES_DIR.exists():
-        return []
+        _CUSTOM_MODULES_CACHE = []
+        return _CUSTOM_MODULES_CACHE
     built_in_ids = {m["id"] for m in _get_modules()}
     result = []
 
@@ -266,6 +279,7 @@ def _get_custom_modules() -> list[dict]:
                     "custom": is_custom,
                 }
             )
+    _CUSTOM_MODULES_CACHE = result
     return result
 
 
