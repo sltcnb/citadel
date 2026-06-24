@@ -109,3 +109,5 @@ charts/citadel/values-resources.generated.yaml
 # above would otherwise drop them, breaking the test gate in CI).
 !tools/babel/tests/golden/fixtures/
 !tools/babel/tests/golden/fixtures/**
+
+citadel admin password
