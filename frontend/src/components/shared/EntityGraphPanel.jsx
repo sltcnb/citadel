@@ -1,9 +1,7 @@
 import { useEffect, useState, useMemo } from 'react'
-import {
-  Network, Loader2, RefreshCw, AlertTriangle, X,
-} from 'lucide-react'
+import { Network, RefreshCw } from 'lucide-react'
 import { api } from '../../api/client'
-import PanelHelp from './PanelHelp'
+import PanelShell from './PanelShell'
 
 /**
  * Right-side drawer: entity graph / lateral-movement view.
@@ -112,166 +110,146 @@ export default function EntityGraphPanel({ caseId, onClose, onPivot }) {
     if (q) onPivot?.(q)
   }
 
-  return (
-    <div className="panel-backdrop" onClick={onClose}>
-      <div
-        className="panel-drawer md:w-[860px]"
-        onClick={e => e.stopPropagation()}
+  const actions = (
+    <>
+      <select
+        value={focus}
+        onChange={e => setFocus(e.target.value)}
+        className="input h-8 text-xs w-44"
+        title="Scope the graph to a single entity's neighborhood"
       >
-        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 flex-shrink-0">
-          <div className="flex items-center gap-2">
-            <Network size={16} className="text-brand-accent" />
-            <span className="font-semibold text-brand-text">Entity graph</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <select
-              value={focus}
-              onChange={e => setFocus(e.target.value)}
-              className="input h-8 text-xs w-44"
-              title="Scope the graph to a single entity's neighborhood"
-            >
-              <option value="">All entities</option>
-              {entities.hosts.length > 0 && (
-                <optgroup label="Hosts">
-                  {entities.hosts.map(h => (
-                    <option key={`h:${h.value}`} value={h.value}>{h.value} ({h.count})</option>
-                  ))}
-                </optgroup>
-              )}
-              {entities.users.length > 0 && (
-                <optgroup label="Users">
-                  {entities.users.map(u => (
-                    <option key={`u:${u.value}`} value={u.value}>{u.value} ({u.count})</option>
-                  ))}
-                </optgroup>
-              )}
-            </select>
-            <select
-              value={limit}
-              onChange={e => setLimit(+e.target.value || 50)}
-              className="input h-8 text-xs w-20"
-              title="Max relationships to fetch"
-            >
-              <option value={25}>25</option>
-              <option value={50}>50</option>
-              <option value={100}>100</option>
-            </select>
-            <button onClick={refresh} disabled={loading} className="btn-secondary text-xs flex items-center gap-1.5">
-              <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
-              Refresh
-            </button>
-            <button onClick={onClose} className="btn-ghost p-1.5 rounded-lg">
-              <X size={16} />
-            </button>
-          </div>
+        <option value="">All entities</option>
+        {entities.hosts.length > 0 && (
+          <optgroup label="Hosts">
+            {entities.hosts.map(h => (
+              <option key={`h:${h.value}`} value={h.value}>{h.value} ({h.count})</option>
+            ))}
+          </optgroup>
+        )}
+        {entities.users.length > 0 && (
+          <optgroup label="Users">
+            {entities.users.map(u => (
+              <option key={`u:${u.value}`} value={u.value}>{u.value} ({u.count})</option>
+            ))}
+          </optgroup>
+        )}
+      </select>
+      <select
+        value={limit}
+        onChange={e => setLimit(+e.target.value || 50)}
+        className="input h-8 text-xs w-20"
+        title="Max relationships to fetch"
+      >
+        <option value={25}>25</option>
+        <option value={50}>50</option>
+        <option value={100}>100</option>
+      </select>
+      <button onClick={refresh} disabled={loading} className="btn-secondary text-xs flex items-center gap-1.5">
+        <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+        Refresh
+      </button>
+    </>
+  )
+
+  return (
+    <PanelShell
+      icon={Network}
+      title="Entity graph"
+      onClose={onClose}
+      loading={loading}
+      error={error}
+      empty={!loading && !error && nodes.length === 0}
+      emptyText={`No host/user/IP relationships found${focus ? ` for "${focus}"` : ''}. Ingest events with host / user / ip fields, or widen the focus.`}
+      actions={actions}
+      help={{
+        use: 'Draws host ↔ user ↔ IP relationships straight from the events so lateral movement is visible at a glance.',
+        when: 'When you suspect an account or host pivoted to others and want to see the blast radius.',
+        data: ['Events carrying host.hostname and user.name', 'network.dst_ip for the host/user → IP edges'],
+        tip: "Set a focus host or user to scope the graph to that entity's neighborhood.",
+      }}
+      width="md:w-[900px]"
+    >
+      <p className="text-[11px] text-gray-500">
+        Host ↔ user ↔ ip relationships for spotting lateral movement. Click any node to pivot
+        the timeline to that entity's events.
+      </p>
+
+      {/* Legend + stats */}
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div className="flex items-center gap-3 text-[11px]">
+          <Legend color={TYPE_COLOR.host} label="host" />
+          <Legend color={TYPE_COLOR.user} label="user" />
+          <Legend color={TYPE_COLOR.ip}   label="ip" />
         </div>
-
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          <PanelHelp title="Entity graph"
-            use="Draws host ↔ user ↔ IP relationships straight from the events so lateral movement is visible at a glance."
-            when="When you suspect an account or host pivoted to others and want to see the blast radius."
-            data={['Events carrying host.hostname and user.name','network.dst_ip for the host/user → IP edges']}
-            tip="Set a focus host or user to scope the graph to that entity's neighborhood." />
-          <p className="text-[11px] text-gray-500">
-            Host ↔ user ↔ ip relationships for spotting lateral movement. Click any node to pivot
-            the timeline to that entity's events.
-          </p>
-
-          {/* Legend + stats */}
-          <div className="flex items-center justify-between flex-wrap gap-2">
-            <div className="flex items-center gap-3 text-[11px]">
-              <Legend color={TYPE_COLOR.host} label="host" />
-              <Legend color={TYPE_COLOR.user} label="user" />
-              <Legend color={TYPE_COLOR.ip}   label="ip" />
-            </div>
-            <div className="text-[11px] text-gray-500 tabular-nums">
-              {counts.host} hosts, {counts.user} users, {counts.ip} ips, {edges.length} links
-              {capped && <span className="ml-1 text-amber-600">· showing top {nodes.length} of {totalNodes}</span>}
-            </div>
-          </div>
-
-          {error && (
-            <div className="card p-3 text-xs text-red-700 bg-red-50 border-red-200 flex items-center gap-2">
-              <AlertTriangle size={14} /> {error}
-            </div>
-          )}
-
-          {loading ? (
-            <div className="card p-6 flex items-center justify-center text-sm text-gray-500 gap-2">
-              <Loader2 size={14} className="animate-spin" /> Loading…
-            </div>
-          ) : nodes.length === 0 ? (
-            <div className="card p-8 text-center text-xs text-gray-500">
-              No entity relationships found{focus ? ` for "${focus}"` : ''}. Ingest events with
-              host / user / ip fields, or widen the focus.
-            </div>
-          ) : (
-            <div className="card p-2 overflow-hidden">
-              <svg
-                viewBox={`0 0 ${layout.W} ${layout.H}`}
-                width="100%"
-                height={layout.H}
-                preserveAspectRatio="xMidYMin meet"
-                role="img"
-                aria-label="Entity relationship graph"
-              >
-                {/* Column captions */}
-                <text x={110} y={28} textAnchor="middle" className="fill-gray-400" style={{ fontSize: 10, fontWeight: 600, letterSpacing: 1 }}>HOSTS</text>
-                <text x={layout.W / 2} y={28} textAnchor="middle" className="fill-gray-400" style={{ fontSize: 10, fontWeight: 600, letterSpacing: 1 }}>USERS</text>
-                <text x={layout.W - 110} y={28} textAnchor="middle" className="fill-gray-400" style={{ fontSize: 10, fontWeight: 600, letterSpacing: 1 }}>IPS</text>
-
-                {/* Edges */}
-                {edges.map((e, i) => {
-                  const a = layout.pos[e.source]
-                  const b = layout.pos[e.target]
-                  if (!a || !b) return null
-                  const w = Math.min(4, 0.5 + Math.log2((e.count || 1) + 1))
-                  return (
-                    <line
-                      key={`e${i}`}
-                      x1={a.x} y1={a.y} x2={b.x} y2={b.y}
-                      stroke="#cbd5e1"
-                      strokeWidth={w}
-                      strokeOpacity={0.7}
-                    />
-                  )
-                })}
-
-                {/* Nodes */}
-                {Object.values(layout.pos).map(({ x, y, r, node }) => {
-                  const onLeft  = COLUMN_OF[node.type] === 2 // ip column → label to the left
-                  const labelX  = onLeft ? x - r - 6 : x + r + 6
-                  const anchor  = onLeft ? 'end' : 'start'
-                  return (
-                    <g
-                      key={node.id}
-                      onClick={() => handleNode(node)}
-                      style={{ cursor: 'pointer' }}
-                    >
-                      <title>{`${node.type}: ${node.label} (${node.count ?? 0})`}</title>
-                      <circle
-                        cx={x} cy={y} r={r}
-                        fill={TYPE_FILL[node.type] || '#f1f5f9'}
-                        stroke={TYPE_COLOR[node.type] || '#64748b'}
-                        strokeWidth={2}
-                      />
-                      <text
-                        x={labelX} y={y + 3}
-                        textAnchor={anchor}
-                        className="fill-gray-700"
-                        style={{ fontSize: 11 }}
-                      >
-                        {node.label}
-                      </text>
-                    </g>
-                  )
-                })}
-              </svg>
-            </div>
-          )}
+        <div className="text-[11px] text-gray-500 tabular-nums">
+          {counts.host} hosts, {counts.user} users, {counts.ip} ips, {edges.length} links
+          {capped && <span className="ml-1 text-amber-600">· showing top {nodes.length} of {totalNodes}</span>}
         </div>
       </div>
-    </div>
+
+      <div className="card p-2 overflow-hidden">
+        <svg
+          viewBox={`0 0 ${layout.W} ${layout.H}`}
+          width="100%"
+          height={layout.H}
+          preserveAspectRatio="xMidYMin meet"
+          role="img"
+          aria-label="Entity relationship graph"
+        >
+          {/* Column captions */}
+          <text x={110} y={28} textAnchor="middle" className="fill-gray-400" style={{ fontSize: 10, fontWeight: 600, letterSpacing: 1 }}>HOSTS</text>
+          <text x={layout.W / 2} y={28} textAnchor="middle" className="fill-gray-400" style={{ fontSize: 10, fontWeight: 600, letterSpacing: 1 }}>USERS</text>
+          <text x={layout.W - 110} y={28} textAnchor="middle" className="fill-gray-400" style={{ fontSize: 10, fontWeight: 600, letterSpacing: 1 }}>IPS</text>
+
+          {/* Edges */}
+          {edges.map((e, i) => {
+            const a = layout.pos[e.source]
+            const b = layout.pos[e.target]
+            if (!a || !b) return null
+            const w = Math.min(4, 0.5 + Math.log2((e.count || 1) + 1))
+            return (
+              <line
+                key={`e${i}`}
+                x1={a.x} y1={a.y} x2={b.x} y2={b.y}
+                stroke="#cbd5e1"
+                strokeWidth={w}
+                strokeOpacity={0.7}
+              />
+            )
+          })}
+
+          {/* Nodes */}
+          {Object.values(layout.pos).map(({ x, y, r, node }) => {
+            const onLeft  = COLUMN_OF[node.type] === 2 // ip column → label to the left
+            const labelX  = onLeft ? x - r - 6 : x + r + 6
+            const anchor  = onLeft ? 'end' : 'start'
+            return (
+              <g
+                key={node.id}
+                onClick={() => handleNode(node)}
+                style={{ cursor: 'pointer' }}
+              >
+                <title>{`${node.type}: ${node.label} (${node.count ?? 0})`}</title>
+                <circle
+                  cx={x} cy={y} r={r}
+                  fill={TYPE_FILL[node.type] || '#f1f5f9'}
+                  stroke={TYPE_COLOR[node.type] || '#64748b'}
+                  strokeWidth={2}
+                />
+                <text
+                  x={labelX} y={y + 3}
+                  textAnchor={anchor}
+                  className="fill-gray-700"
+                  style={{ fontSize: 11 }}
+                >
+                  {node.label}
+                </text>
+              </g>
+            )
+          })}
+        </svg>
+      </div>
+    </PanelShell>
   )
 }
 

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Cpu, Loader2, ChevronRight, ChevronDown, ExternalLink, X } from 'lucide-react'
+import { Cpu, ChevronRight, ChevronDown, ExternalLink } from 'lucide-react'
 import { api } from '../../api/client'
-import PanelHelp from './PanelHelp'
+import PanelShell from './PanelShell'
 
 /**
  * Right-side drawer version of the old Process Tree page.
@@ -15,13 +15,15 @@ export default function ProcessTreePanel({ caseId, onClose, onPivot }) {
   const [host, setHost]     = useState('')
   const [data, setData]     = useState(null)
   const [loading, setLoad]  = useState(true)
+  const [error, setError]   = useState('')
   const [filter, setFilter] = useState('')
 
   useEffect(() => {
     setLoad(true)
+    setError('')
     api.search.processTree(caseId, host)
       .then(d => { setData(d); if (!host && d?.selected_host) setHost(d.selected_host) })
-      .catch(() => setData(null))
+      .catch(e => { setData(null); setError(e?.message || 'Failed to load process tree') })
       .finally(() => setLoad(false))
   }, [caseId, host])
 
@@ -55,92 +57,68 @@ export default function ProcessTreePanel({ caseId, onClose, onPivot }) {
     return out
   }, [filterLower, data, nodesByPid])
 
+  const actions = data?.hosts?.length > 1 && (
+    <select
+      value={host}
+      onChange={e => setHost(e.target.value)}
+      className="input h-8 text-xs"
+    >
+      {data.hosts.map(h => <option key={h} value={h}>{h}</option>)}
+    </select>
+  )
+
+  const roots = data?.roots || []
+
   return (
-    <div className="panel-backdrop" onClick={onClose}>
-      <div
-        className="panel-drawer md:w-[1024px]"
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 flex-shrink-0">
-          <div className="flex items-center gap-2">
-            <Cpu size={16} className="text-brand-accent" />
-            <span className="font-semibold text-brand-text">Process tree</span>
-          </div>
-          <div className="flex items-center gap-2">
-            {data?.hosts?.length > 1 && (
-              <select
-                value={host}
-                onChange={e => setHost(e.target.value)}
-                className="input h-8 text-xs"
-              >
-                {data.hosts.map(h => <option key={h} value={h}>{h}</option>)}
-              </select>
-            )}
-            <button onClick={onClose} className="btn-ghost p-1.5 rounded-lg">
-              <X size={16} />
-            </button>
-          </div>
+    <PanelShell
+      icon={Cpu}
+      title="Process tree"
+      onClose={onClose}
+      loading={loading}
+      error={error}
+      empty={!loading && !error && roots.length === 0}
+      emptyText="No process-creation events (EVTX 4688 / Sysmon 1 / auditd execve) found."
+      actions={actions}
+      help={{
+        use: 'Reconstructs parent → child process chains from process-creation events.',
+        when: 'To trace what spawned a suspicious process, or what a process went on to launch.',
+        data: ['Process-creation events with pid/ppid — Windows EVTX 4688, Sysmon 1, or Linux auditd'],
+        tip: 'Pivot from a process name in the timeline, then walk its ancestry here.',
+      }}
+      width="md:w-[1024px]"
+    >
+      <p className="text-[11px] text-gray-500">
+        Reconstructed from Windows EVTX 4688, Sysmon (Windows + Linux), and auditd execve.
+        Click any process → pivot to timeline filtered by that PID.
+      </p>
+
+      <div className="card p-3 space-y-2">
+        <div className="flex items-center gap-2 mb-1">
+          <input
+            value={filter}
+            onChange={e => setFilter(e.target.value)}
+            placeholder="Filter by name / cmdline / user / pid"
+            className="input h-8 text-xs w-72"
+          />
+          <span className="text-[11px] text-gray-500 ml-auto">
+            {(data?.nodes || []).length.toLocaleString()} processes · {roots.length.toLocaleString()} roots
+          </span>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          <PanelHelp title="Process tree"
-            use="Reconstructs parent → child process chains from process-creation events."
-            when="To trace what spawned a suspicious process, or what a process went on to launch."
-            data={['Process-creation events with pid/ppid — Windows EVTX 4688, Sysmon 1, or Linux auditd']}
-            tip="Pivot from a process name in the timeline, then walk its ancestry here." />
-          <p className="text-[11px] text-gray-500">
-            Reconstructed from Windows EVTX 4688, Sysmon (Windows + Linux), and auditd execve.
-            Click any process → pivot to timeline filtered by that PID.
-          </p>
-
-          {loading && (
-            <div className="card p-6 flex items-center justify-center gap-2 text-gray-500 text-sm">
-              <Loader2 size={14} className="animate-spin" /> Loading process events…
-            </div>
-          )}
-
-          {!loading && (!data || (data.nodes || []).length === 0) && (
-            <div className="card p-6 text-center text-xs text-gray-500">
-              No process-creation events found. Ingest one of:
-              <div className="mt-2 space-y-0.5">
-                <div>· Windows EVTX with Security <code>4688</code> (Process Creation)</div>
-                <div>· Sysmon-Operational event ID <code>1</code> (Windows or Linux port)</div>
-                <div>· Linux auditd logs with <code>execve</code> / <code>execveat</code> syscalls</div>
-              </div>
-            </div>
-          )}
-
-          {!loading && (data?.nodes || []).length > 0 && (
-            <div className="card p-3 space-y-2">
-              <div className="flex items-center gap-2 mb-1">
-                <input
-                  value={filter}
-                  onChange={e => setFilter(e.target.value)}
-                  placeholder="Filter by name / cmdline / user / pid"
-                  className="input h-8 text-xs w-72"
-                />
-                <span className="text-[11px] text-gray-500 ml-auto">
-                  {data.nodes.length.toLocaleString()} processes · {data.roots.length.toLocaleString()} roots
-                </span>
-              </div>
-
-              <div className="font-mono text-[11px] max-h-[calc(100vh-260px)] overflow-y-auto overflow-x-auto">
-                {data.roots.map(pid => (
-                  <TreeNode
-                    key={pid}
-                    pid={pid}
-                    nodesByPid={nodesByPid}
-                    visiblePids={visiblePids}
-                    depth={0}
-                    onPivot={(p) => onPivot?.(`process.pid:${p.pid} AND host.hostname:"${data.selected_host}"`)}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
+        <div className="font-mono text-[11px] max-h-[calc(100vh-260px)] overflow-y-auto overflow-x-auto">
+          {roots.map(pid => (
+            <TreeNode
+              key={pid}
+              pid={pid}
+              nodesByPid={nodesByPid}
+              visiblePids={visiblePids}
+              depth={0}
+              onPivot={(p) => onPivot?.(`process.pid:${p.pid} AND host.hostname:"${data.selected_host}"`)}
+            />
+          ))}
         </div>
       </div>
-    </div>
+    </PanelShell>
   )
 }
 

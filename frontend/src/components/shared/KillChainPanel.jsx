@@ -1,10 +1,10 @@
 import { useEffect, useState, useCallback } from 'react'
 import {
-  Crosshair, Loader2, AlertTriangle, ExternalLink, X, Search,
+  Crosshair, Loader2, ExternalLink, Search,
 } from 'lucide-react'
 import { api } from '../../api/client'
 import { Badge } from './Badge'
-import PanelHelp from './PanelHelp'
+import PanelShell from './PanelShell'
 
 /**
  * Right-side drawer: reverse kill-chain reconstruction.
@@ -14,8 +14,6 @@ import PanelHelp from './PanelHelp'
  * Given an anchor event (fo_id) or a (host, timestamp) pair, the backend walks
  * backward to first access and forward to impact, returning an ordered,
  * ATT&CK-tagged timeline. Mounted next to the other per-case panels.
- *
- * Drawer shell mirrors AnomalyPanel (panel-backdrop, right-0 w-[860px], …).
  */
 
 // Canonical ATT&CK tactics, in enterprise kill-chain order.
@@ -146,205 +144,184 @@ export default function KillChainPanel({
   const covered  = new Set((data?.tactics_covered || []).map(tacticKey))
 
   return (
-    <div className="panel-backdrop" onClick={onClose}>
-      <div
-        className="panel-drawer md:w-[860px]"
-        onClick={e => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 flex-shrink-0">
-          <div className="flex items-center gap-2">
-            <Crosshair size={16} className="text-brand-accent" />
-            <span className="font-semibold text-brand-text">Kill chain</span>
+    <PanelShell
+      icon={Crosshair}
+      title="Kill chain"
+      onClose={onClose}
+      loading={loading}
+      error={error || ''}
+      empty={!loading && hasAnchor && data && steps.length === 0}
+      emptyText="No kill chain assembled — flag an anchor event first."
+      help={{
+        use: "From one confirmed-bad event it walks backward to first access and forward to impact, tagging each step with ATT&CK.",
+        when: "After you've found something malicious and need the full attack story for the report.",
+        data: ['An anchor: an event fo_id, or a host + timestamp', 'Same-host events around the anchor; process.ppid for ancestry'],
+        tip: "Open it from an event you're confident is malicious — the chain is only as good as its anchor.",
+      }}
+      width="md:w-[900px]"
+    >
+      <p className="text-[11px] text-gray-500">
+        Reconstructed attack progression around the anchor event — walked backward to
+        first access and forward to impact.
+      </p>
+
+      {/* Manual anchor form (only when no anchor prop supplied) */}
+      {!hasAnchor && (
+        <form onSubmit={onSubmitForm} className="card p-3 space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2">
+              <label className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">fo_id</label>
+              <input
+                type="text"
+                value={formFoId}
+                onChange={e => setFormFoId(e.target.value)}
+                placeholder="anchor event id"
+                className="input h-8 text-xs w-full"
+              />
+            </div>
+            <div className="col-span-2 text-[10px] text-gray-400 text-center -my-1">— or —</div>
+            <div>
+              <label className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">Host</label>
+              <input
+                type="text"
+                value={formHost}
+                onChange={e => setFormHost(e.target.value)}
+                placeholder="hostname"
+                className="input h-8 text-xs w-full"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">Timestamp</label>
+              <input
+                type="text"
+                value={formTs}
+                onChange={e => setFormTs(e.target.value)}
+                placeholder="2026-06-13T12:00:00Z"
+                className="input h-8 text-xs w-full"
+              />
+            </div>
           </div>
-          <button onClick={onClose} className="btn-ghost p-1.5 rounded-lg">
-            <X size={16} />
-          </button>
+          <div className="flex items-end gap-3">
+            <div>
+              <label className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">Window (min)</label>
+              <input
+                type="number" min={1} max={1440}
+                value={windowMinutes}
+                onChange={e => setWindow(+e.target.value || 60)}
+                className="input h-8 text-xs w-24"
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={loading}
+              className="btn-primary text-xs flex items-center gap-1.5 h-8"
+            >
+              {loading ? <Loader2 size={12} className="animate-spin" /> : <Search size={12} />}
+              Assemble
+            </button>
+          </div>
+        </form>
+      )}
+
+      {/* Anchor summary */}
+      {anchor && (
+        <div className="card p-3">
+          <div className="text-[9px] uppercase tracking-wide text-gray-500 font-medium mb-1">Anchor event</div>
+          <div className="text-xs text-gray-900">{anchor.summary || '—'}</div>
+          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[10px] text-gray-500 font-mono">
+            <span>{fmtTime(anchor.ts)}</span>
+            {anchor.host && <span>host: {anchor.host}</span>}
+            {anchor.user && <span>user: {anchor.user}</span>}
+            {anchor.window_minutes != null && <span>±{anchor.window_minutes}m</span>}
+          </div>
         </div>
+      )}
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          <PanelHelp title="Reverse kill chain"
-            use="From one confirmed-bad event it walks backward to first access and forward to impact, tagging each step with ATT&CK."
-            when="After you've found something malicious and need the full attack story for the report."
-            data={['An anchor: an event fo_id, or a host + timestamp','Same-host events around the anchor; process.ppid for ancestry']}
-            tip="Open it from an event you're confident is malicious — the chain is only as good as its anchor." />
-          <p className="text-[11px] text-gray-500">
-            Reconstructed attack progression around the anchor event — walked backward to
-            first access and forward to impact.
-          </p>
-
-          {/* Manual anchor form (only when no anchor prop supplied) */}
-          {!hasAnchor && (
-            <form onSubmit={onSubmitForm} className="card p-3 space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                <div className="col-span-2">
-                  <label className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">fo_id</label>
-                  <input
-                    type="text"
-                    value={formFoId}
-                    onChange={e => setFormFoId(e.target.value)}
-                    placeholder="anchor event id"
-                    className="input h-8 text-xs w-full"
-                  />
-                </div>
-                <div className="col-span-2 text-[10px] text-gray-400 text-center -my-1">— or —</div>
-                <div>
-                  <label className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">Host</label>
-                  <input
-                    type="text"
-                    value={formHost}
-                    onChange={e => setFormHost(e.target.value)}
-                    placeholder="hostname"
-                    className="input h-8 text-xs w-full"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">Timestamp</label>
-                  <input
-                    type="text"
-                    value={formTs}
-                    onChange={e => setFormTs(e.target.value)}
-                    placeholder="2026-06-13T12:00:00Z"
-                    className="input h-8 text-xs w-full"
-                  />
-                </div>
-              </div>
-              <div className="flex items-end gap-3">
-                <div>
-                  <label className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">Window (min)</label>
-                  <input
-                    type="number" min={1} max={1440}
-                    value={windowMinutes}
-                    onChange={e => setWindow(+e.target.value || 60)}
-                    className="input h-8 text-xs w-24"
-                  />
-                </div>
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="btn-primary text-xs flex items-center gap-1.5 h-8"
+      {/* Tactics covered — horizontal chip row */}
+      {data && (
+        <div className="card p-3">
+          <div className="text-[9px] uppercase tracking-wide text-gray-500 font-medium mb-2">ATT&amp;CK tactics covered</div>
+          <div className="flex flex-wrap gap-1.5">
+            {ATTACK_TACTICS.map(t => {
+              const on = covered.has(t.id)
+              return (
+                <Badge
+                  key={t.id}
+                  color={on ? tacticStyle(t.id) : 'text-gray-300 bg-gray-50 border-gray-100'}
+                  className={on ? 'font-semibold' : ''}
                 >
-                  {loading ? <Loader2 size={12} className="animate-spin" /> : <Search size={12} />}
-                  Assemble
-                </button>
-              </div>
-            </form>
-          )}
-
-          {error && (
-            <div className="card p-3 text-xs text-red-700 bg-red-50 border-red-200 flex items-center gap-2">
-              <AlertTriangle size={14} /> {error}
-            </div>
-          )}
-
-          {/* Anchor summary */}
-          {anchor && (
-            <div className="card p-3">
-              <div className="text-[9px] uppercase tracking-wide text-gray-500 font-medium mb-1">Anchor event</div>
-              <div className="text-xs text-gray-900">{anchor.summary || '—'}</div>
-              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[10px] text-gray-500 font-mono">
-                <span>{fmtTime(anchor.ts)}</span>
-                {anchor.host && <span>host: {anchor.host}</span>}
-                {anchor.user && <span>user: {anchor.user}</span>}
-                {anchor.window_minutes != null && <span>±{anchor.window_minutes}m</span>}
-              </div>
-            </div>
-          )}
-
-          {/* Tactics covered — horizontal chip row */}
-          {data && (
-            <div className="card p-3">
-              <div className="text-[9px] uppercase tracking-wide text-gray-500 font-medium mb-2">ATT&amp;CK tactics covered</div>
-              <div className="flex flex-wrap gap-1.5">
-                {ATTACK_TACTICS.map(t => {
-                  const on = covered.has(t.id)
-                  return (
-                    <Badge
-                      key={t.id}
-                      color={on ? tacticStyle(t.id) : 'text-gray-300 bg-gray-50 border-gray-100'}
-                      className={on ? 'font-semibold' : ''}
-                    >
-                      {t.label}
-                    </Badge>
-                  )
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* Loading */}
-          {loading && (
-            <div className="card p-6 flex items-center justify-center text-sm text-gray-500 gap-2">
-              <Loader2 size={14} className="animate-spin" /> Assembling kill chain…
-            </div>
-          )}
-
-          {/* Empty state */}
-          {!loading && data && steps.length === 0 && (
-            <div className="card p-6 text-center text-xs text-gray-500">
-              No related activity found in the window.
-            </div>
-          )}
-
-          {/* Vertical timeline */}
-          {!loading && steps.length > 0 && (
-            <div className="relative pl-6">
-              {/* vertical rail */}
-              <div className="absolute left-[7px] top-2 bottom-2 w-px bg-gray-200" aria-hidden />
-              <div className="space-y-3">
-                {steps.map((step, i) => (
-                  <div key={step.fo_id || `${step.ts}-${i}`} className="relative">
-                    {/* node on the rail */}
-                    <div
-                      className="absolute -left-[21px] top-3 w-3 h-3 rounded-full border-2 border-white ring-1 ring-gray-300 bg-brand-accent"
-                      aria-hidden
-                    />
-                    <div className="card p-3">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <Badge color={tacticStyle(step.tactic)} className="font-semibold">
-                            {tacticLabel(step.tactic)}
-                          </Badge>
-                          {step.phase && (
-                            <span className="text-[10px] text-gray-500">{step.phase}</span>
-                          )}
-                          {step.technique && (
-                            <span className="text-[10px] font-mono text-gray-600 bg-gray-100 rounded px-1.5 py-0.5">
-                              {step.technique}
-                            </span>
-                          )}
-                        </div>
-                        <button
-                          onClick={() => onPivot?.(stepQuery(step))}
-                          className="text-[10px] text-brand-accent hover:text-brand-accenthover inline-flex items-center gap-1 flex-shrink-0"
-                          title="Pivot to this event in the timeline"
-                        >
-                          <ExternalLink size={10} /> Pivot
-                        </button>
-                      </div>
-
-                      <div className="mt-1.5 text-xs text-gray-900">{step.summary || '—'}</div>
-
-                      <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[10px] text-gray-500 font-mono">
-                        <span>{fmtTime(step.ts)}</span>
-                        {step.host && <span>host: {step.host}</span>}
-                        {step.user && <span>user: {step.user}</span>}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Prompt to assemble when no anchor and nothing submitted yet */}
-          {!hasAnchor && !data && !loading && !error && (
-            <div className="card p-6 text-center text-xs text-gray-500">
-              Enter an anchor above and click <strong>Assemble</strong> to reconstruct the kill chain.
-            </div>
-          )}
+                  {t.label}
+                </Badge>
+              )
+            })}
+          </div>
         </div>
-      </div>
-    </div>
+      )}
+
+      {/* Empty state (manual mode, no submission yet handled below) */}
+      {hasAnchor && data && steps.length === 0 && (
+        <div className="card p-6 text-center text-xs text-gray-500">
+          No related activity found in the window.
+        </div>
+      )}
+
+      {/* Vertical timeline */}
+      {steps.length > 0 && (
+        <div className="relative pl-6">
+          {/* vertical rail */}
+          <div className="absolute left-[7px] top-2 bottom-2 w-px bg-gray-200" aria-hidden />
+          <div className="space-y-3">
+            {steps.map((step, i) => (
+              <div key={step.fo_id || `${step.ts}-${i}`} className="relative">
+                {/* node on the rail */}
+                <div
+                  className="absolute -left-[21px] top-3 w-3 h-3 rounded-full border-2 border-white ring-1 ring-gray-300 bg-brand-accent"
+                  aria-hidden
+                />
+                <div className="card p-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <Badge color={tacticStyle(step.tactic)} className="font-semibold">
+                        {tacticLabel(step.tactic)}
+                      </Badge>
+                      {step.phase && (
+                        <span className="text-[10px] text-gray-500">{step.phase}</span>
+                      )}
+                      {step.technique && (
+                        <span className="text-[10px] font-mono text-gray-600 bg-gray-100 rounded px-1.5 py-0.5">
+                          {step.technique}
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => onPivot?.(stepQuery(step))}
+                      className="text-[10px] text-brand-accent hover:text-brand-accenthover inline-flex items-center gap-1 flex-shrink-0"
+                      title="Pivot to this event in the timeline"
+                    >
+                      <ExternalLink size={10} /> Pivot
+                    </button>
+                  </div>
+
+                  <div className="mt-1.5 text-xs text-gray-900">{step.summary || '—'}</div>
+
+                  <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[10px] text-gray-500 font-mono">
+                    <span>{fmtTime(step.ts)}</span>
+                    {step.host && <span>host: {step.host}</span>}
+                    {step.user && <span>user: {step.user}</span>}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Prompt to assemble when no anchor and nothing submitted yet */}
+      {!hasAnchor && !data && (
+        <div className="card p-6 text-center text-xs text-gray-500">
+          Enter an anchor above and click <strong>Assemble</strong> to reconstruct the kill chain.
+        </div>
+      )}
+    </PanelShell>
   )
 }

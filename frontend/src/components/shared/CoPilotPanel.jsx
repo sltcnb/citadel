@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
 import {
-  Sparkles, Loader2, RefreshCw, AlertTriangle, X, CheckCircle2,
+  Bot, Loader2, RefreshCw, AlertTriangle, CheckCircle2,
   Eye, Search, ExternalLink, Clock, Brain, ListChecks,
 } from 'lucide-react'
 import { api } from '../../api/client'
-import PanelHelp from './PanelHelp'
+import PanelShell from './PanelShell'
 
 /**
  * Pilot "co-pilot" drawer.
@@ -105,36 +105,30 @@ export default function CoPilotPanel({ caseId, onClose, onPivot }) {
     { id: 'verdict', label: 'Verdict' },
   ]
 
+  const actions = (
+    <button onClick={loadWatch} disabled={watchLoading} className="btn-secondary text-xs flex items-center gap-1.5">
+      <RefreshCw size={12} className={watchLoading ? 'animate-spin' : ''} />
+      Refresh
+    </button>
+  )
+
   return (
-    <div className="panel-backdrop" onClick={onClose}>
-      <div
-        className="panel-drawer md:w-[860px]"
-        onClick={e => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 flex-shrink-0">
-          <div className="flex items-center gap-2">
-            <Sparkles size={16} className="text-brand-accent" />
-            <span className="font-semibold text-brand-text">Pilot co-pilot</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <button onClick={loadWatch} disabled={watchLoading} className="btn-secondary text-xs flex items-center gap-1.5">
-              <RefreshCw size={12} className={watchLoading ? 'animate-spin' : ''} />
-              Refresh
-            </button>
-            <button onClick={onClose} className="btn-ghost p-1.5 rounded-lg">
-              <X size={16} />
-            </button>
-          </div>
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-4 space-y-5">
-          <PanelHelp title="Pilot co-pilot"
-            use="Surfaces what's new since you last reviewed the case, and looks up IOCs across all past cases."
-            when="Returning to a long-running case, or checking whether an indicator has burned you before."
-            data={['Prior Pilot runs / sealed IOCs for the cross-case memory','Ongoing ingest for the since-you-last-looked delta']}
-            tip="Hit Mark reviewed once you've triaged the new events to reset the counter." />
-
+    <PanelShell
+      icon={Bot}
+      title="Pilot co-pilot"
+      onClose={onClose}
+      loading={false}
+      error=""
+      actions={actions}
+      help={{
+        use: "Surfaces what's new since you last reviewed the case, and looks up IOCs across all past cases.",
+        when: 'Returning to a long-running case, or checking whether an indicator has burned you before.',
+        data: ['Prior Pilot runs / sealed IOCs for the cross-case memory', 'Ongoing ingest for the since-you-last-looked delta'],
+        tip: "Hit Mark reviewed once you've triaged the new events to reset the counter.",
+      }}
+      width="md:w-[900px]"
+    >
+      <div className="space-y-5">
           {/* ── SECTION 1: Since you last looked ─────────────────────────────── */}
           <section className="space-y-2">
             <div className="flex items-center gap-2">
@@ -409,8 +403,7 @@ export default function CoPilotPanel({ caseId, onClose, onPivot }) {
               )
             )}
           </section>
-        </div>
       </div>
-    </div>
+    </PanelShell>
   )
 }
