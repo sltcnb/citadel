@@ -3,7 +3,7 @@ name = "rosetta"
 version = "0.1.0"
 description = "Rosetta — canonicalizer: ForensicEvent JSONL -> ECS v8 JSONL"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = { text = "PolyForm-Noncommercial-1.0.0" }
 authors = [
     { name = "Citadel" },
 ]

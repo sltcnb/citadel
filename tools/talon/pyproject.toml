@@ -3,7 +3,7 @@ name = "talon"
 version = "1.0.0"
 description = "Citadel collector (Talon) — endpoint artifact collection"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = { text = "PolyForm-Noncommercial-1.0.0" }
 authors = [
     { name = "Citadel" },
 ]

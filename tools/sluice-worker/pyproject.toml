@@ -3,7 +3,7 @@ name = "citadel-processor"
 version = "1.0.0"
 description = "Citadel processor — background worker"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = { text = "PolyForm-Noncommercial-1.0.0" }
 authors = [
     { name = "Citadel" },
 ]

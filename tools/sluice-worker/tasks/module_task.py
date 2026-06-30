@@ -493,6 +493,18 @@ def run_module(
                 logger.warning("[%s] ES indexing failed (non-fatal): %s", run_id, _es_exc)
                 tool_meta["log"] += f"\n[ES index warning: {_es_exc}]\n"
 
+            # Also land every hit in the unified findings store so module output
+            # is queryable / exportable / reportable / re-ingestable like any
+            # other analysis surface.
+            try:
+                nf = _index_module_findings_to_es(
+                    case_id, run_id, module_id, results, _index_at
+                )
+                if nf:
+                    tool_meta["log"] += f"\nWrote {nf} finding(s) to the case findings store\n"
+            except Exception as _fnd_exc:
+                logger.warning("[%s] findings write failed (non-fatal): %s", run_id, _fnd_exc)
+
         # ── 3. Upload full results to MinIO ───────────────────────────────────
         results_json = work_dir / "results.json"
         results_json.write_text(json.dumps(results, ensure_ascii=False))
@@ -1101,6 +1113,63 @@ def _generic_module_index_to_es(
         _flush(batch)
 
     return indexed
+
+
+def _index_module_findings_to_es(
+    case_id: str,
+    run_id: str,
+    module_id: str,
+    results: list[dict],
+    ingested_at: str,
+) -> int:
+    """Write module hits into the unified findings store (fo-case-{id}-finding).
+
+    Every analysis surface persists its output as a standardized Finding so the
+    analyst can query / export / report / re-ingest them the same way. A module
+    run is one such surface: each hit becomes a ``kind=module`` finding tagged
+    with the module that produced it. Best-effort, non-fatal.
+    """
+    try:
+        from citadel_contracts import Finding
+    except Exception as exc:  # pragma: no cover - contracts always present
+        logger.warning("[%s] findings contract unavailable: %s", run_id, exc)
+        return 0
+
+    index_name = f"fo-case-{case_id}-finding"
+    es_url = ELASTICSEARCH_URL.rstrip("/")
+    lines: list[str] = []
+    for hit in results:
+        title = hit.get("rule_title") or hit.get("message") or module_id
+        f = Finding(
+            kind="module",
+            title=title,
+            severity=hit.get("level", "informational"),
+            description=hit.get("description", "") or "",
+            source_feature=module_id,
+            timestamp=hit.get("timestamp") or ingested_at,
+            timestamp_desc=f"{module_id} module",
+            techniques=hit.get("techniques") or [],
+            evidence=[hit["fo_id"]] if hit.get("fo_id") else [],
+            tags=["module", module_id],
+            payload={k: v for k, v in hit.items() if k not in ("details_raw",)},
+            provenance={"run_id": run_id, "module_id": module_id},
+            dedup_key=f"{run_id}:{hit.get('fo_id') or title}",
+        )
+        doc = f.to_event(case_id, ingested_at=ingested_at)
+        lines.append(json.dumps({"index": {"_index": index_name, "_id": doc["fo_id"]}}))
+        lines.append(json.dumps(doc))
+    if not lines:
+        return 0
+    body = "\n".join(lines) + "\n"
+    req = urllib.request.Request(
+        f"{es_url}/_bulk",
+        data=body.encode("utf-8"),
+        headers={"Content-Type": "application/x-ndjson"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        json.loads(resp.read())
+    return len(results)
 
 
 def _parse_hayabusa_jsonl(path: Path, tool_meta: dict | None = None) -> list[dict]:

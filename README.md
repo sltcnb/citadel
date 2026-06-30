@@ -6,7 +6,7 @@
 
 **A DFIR platform built from independent, standalone tools — each useful on its own, all composed by Citadel.**
 
-[![License: MIT](https://img.shields.io/badge/source-MIT-yellow.svg)](LICENSE)
+[![License: PolyForm Noncommercial](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-orange.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/)
 [![React 18](https://img.shields.io/badge/React-18-61dafb.svg)](https://react.dev/)
 [![Elasticsearch 8](https://img.shields.io/badge/Elasticsearch-8-005571.svg)](https://www.elastic.co/)
@@ -114,4 +114,4 @@ Full documentation site (`mkdocs serve`): [`docs/`](docs/) — Installation · G
 
 ## Licensing
 
-**Open-core.** Source is **MIT** ([`LICENSE`](LICENSE)) — run, modify, self-host all of it. Premium runtime tiers (pro / enterprise / mssp) are unlocked by a commercial license key; no key → Community tier. The standalone tools + contracts are MIT with no gating. Detail: [`LICENSING.md`](LICENSING.md).
+**Source-available, noncommercial.** Source is licensed under the **PolyForm Noncommercial License 1.0.0** ([`LICENSE`](LICENSE)) — run, modify, and self-host for any **noncommercial** purpose (personal, research, education, nonprofits, government). **Any commercial use requires prior written authorization signed by the copyright holder** (any signed written grant — letter or agreement — suffices) — no commercial use is permitted without it. This applies to the whole repo, including the standalone tools under `tools/` and the shared `contracts/`. On top of the license, premium runtime tiers (pro / enterprise / mssp) are unlocked by a license key; no key → Community tier. Detail: [`LICENSING.md`](LICENSING.md).
