@@ -1,9 +1,7 @@
 import { useEffect, useState } from 'react'
-import {
-  Layers, Loader2, AlertTriangle, ExternalLink, Info, X,
-} from 'lucide-react'
+import { Layers, Loader2, ExternalLink, Info } from 'lucide-react'
 import { api } from '../../api/client'
-import PanelHelp from './PanelHelp'
+import PanelShell from './PanelShell'
 
 /**
  * Right-side drawer: baseline diff / least-frequency-of-occurrence "stacking".
@@ -71,169 +69,150 @@ export default function BaselinePanel({ caseId, onClose, onPivot }) {
   }
 
   return (
-    <div className="panel-backdrop" onClick={onClose}>
-      <div
-        className="panel-drawer md:w-[860px]"
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 flex-shrink-0">
-          <div className="flex items-center gap-2">
-            <Layers size={16} className="text-brand-accent" />
-            <span className="font-semibold text-brand-text">Baseline / rare artifacts</span>
+    <PanelShell
+      icon={Layers}
+      title="Baseline / rare artifacts"
+      onClose={onClose}
+      loading={loadingFields}
+      error={error}
+      help={{
+        use: 'Least-frequency-of-occurrence stacking — pick a field and see the values present on one host that are RARE across the whole case.',
+        when: 'On a busy host where the malicious artifact is the uncommon one — an odd service, a lone scheduled task, a one-off process.',
+        data: ['Multiple hosts ingested (stacking needs a population to compare against)', 'The chosen field populated on events (e.g. process.name, service.name)'],
+        tip: "Rare isn't automatically bad — but rare AND on your suspect host is where to look first.",
+      }}
+      width="md:w-[900px]"
+    >
+      <p className="text-[11px] text-gray-500">
+        Values present on the selected host that occur on ≤N hosts case-wide — the rare
+        ones are worth a look.
+      </p>
+
+      {/* Stack controls */}
+      <div className="card p-3">
+        <div className="flex items-end gap-3 flex-wrap">
+          <div>
+            <label className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">Field</label>
+            <select
+              value={field}
+              onChange={e => setField(e.target.value)}
+              disabled={loadingFields}
+              className="input h-8 text-xs w-56"
+            >
+              {fields.map(f => (
+                <option key={f.field} value={f.field}>{f.label || f.field}</option>
+              ))}
+            </select>
           </div>
-          <button onClick={onClose} className="btn-ghost p-1.5 rounded-lg">
-            <X size={16} />
+          <div>
+            <label className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">Host</label>
+            <select
+              value={host}
+              onChange={e => setHost(e.target.value)}
+              disabled={loadingFields}
+              className="input h-8 text-xs w-56"
+            >
+              {hosts.map(h => (
+                <option key={h} value={h}>{h}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">Max hosts</label>
+            <input
+              type="number" min={1} max={50}
+              value={maxHosts}
+              onChange={e => setMaxHosts(Math.min(50, Math.max(1, +e.target.value || 2)))}
+              className="input h-8 text-xs w-20"
+            />
+          </div>
+          <button
+            onClick={runStack}
+            disabled={stacking || loadingFields || !field || !host}
+            className="btn-primary text-xs flex items-center gap-1.5 h-8"
+          >
+            {stacking ? <Loader2 size={12} className="animate-spin" /> : <Layers size={12} />}
+            Stack
           </button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          <PanelHelp title="Baseline / rare artifacts"
-            use="Least-frequency-of-occurrence stacking — pick a field and see the values present on one host that are RARE across the whole case."
-            when="On a busy host where the malicious artifact is the uncommon one — an odd service, a lone scheduled task, a one-off process."
-            data={['Multiple hosts ingested (stacking needs a population to compare against)','The chosen field populated on events (e.g. process.name, service.name)']}
-            tip="Rare isn't automatically bad — but rare AND on your suspect host is where to look first." />
-          <p className="text-[11px] text-gray-500">
-            Values present on the selected host that occur on ≤N hosts case-wide — the rare
-            ones are worth a look.
-          </p>
-
-          {/* Stack controls */}
-          <div className="card p-3">
-            <div className="flex items-end gap-3 flex-wrap">
-              <div>
-                <label className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">Field</label>
-                <select
-                  value={field}
-                  onChange={e => setField(e.target.value)}
-                  disabled={loadingFields}
-                  className="input h-8 text-xs w-56"
-                >
-                  {fields.map(f => (
-                    <option key={f.field} value={f.field}>{f.label || f.field}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">Host</label>
-                <select
-                  value={host}
-                  onChange={e => setHost(e.target.value)}
-                  disabled={loadingFields}
-                  className="input h-8 text-xs w-56"
-                >
-                  {hosts.map(h => (
-                    <option key={h} value={h}>{h}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">Max hosts</label>
-                <input
-                  type="number" min={1} max={50}
-                  value={maxHosts}
-                  onChange={e => setMaxHosts(Math.min(50, Math.max(1, +e.target.value || 2)))}
-                  className="input h-8 text-xs w-20"
-                />
-              </div>
-              <button
-                onClick={runStack}
-                disabled={stacking || loadingFields || !field || !host}
-                className="btn-primary text-xs flex items-center gap-1.5 h-8"
-              >
-                {stacking ? <Loader2 size={12} className="animate-spin" /> : <Layers size={12} />}
-                Stack
-              </button>
-              <div className="ml-auto text-[10px] text-gray-500 flex items-center gap-1">
-                <Info size={10} />
-                Rare = on ≤{maxHosts} host{maxHosts === 1 ? '' : 's'}.
-              </div>
-            </div>
-          </div>
-
-          {error && (
-            <div className="card p-3 text-xs text-red-700 bg-red-50 border-red-200 flex items-center gap-2">
-              <AlertTriangle size={14} /> {error}
-            </div>
-          )}
-
-          {/* Summary */}
-          {meta && rare && (
-            <div className="grid grid-cols-3 gap-2">
-              <SummaryCard label="Rare values" value={(rare.length).toLocaleString()} />
-              <SummaryCard label="Values examined" value={(meta.values_examined ?? 0).toLocaleString()} />
-              <SummaryCard label="Target host" value={meta.target_host || host || '—'} />
-            </div>
-          )}
-
-          {/* Results */}
-          <div className="card overflow-hidden">
-            <div className="px-3 py-2 border-b border-gray-100 flex items-center justify-between">
-              <h3 className="text-[11px] font-semibold text-gray-700 uppercase tracking-wide">Rare values</h3>
-              {rare && <span className="text-[10px] text-gray-500">{rare.length.toLocaleString()} rows</span>}
-            </div>
-
-            {loadingFields ? (
-              <div className="p-6 flex items-center justify-center text-sm text-gray-500 gap-2">
-                <Loader2 size={14} className="animate-spin" /> Loading…
-              </div>
-            ) : stacking ? (
-              <div className="p-6 flex items-center justify-center text-sm text-gray-500 gap-2">
-                <Loader2 size={14} className="animate-spin" /> Stacking…
-              </div>
-            ) : rare === null ? (
-              <div className="p-6 text-center text-xs text-gray-500">
-                Pick a field and host, then click <strong>Stack</strong>.
-              </div>
-            ) : rare.length === 0 ? (
-              <div className="p-6 text-center text-xs text-gray-500">
-                No rare values — nothing on this host is unusual for the field.
-              </div>
-            ) : (
-              <table className="w-full text-[11px]">
-                <thead className="bg-gray-50 text-gray-600">
-                  <tr>
-                    <Th>Value</Th>
-                    <Th right>Spread</Th>
-                    <Th right>On this host</Th>
-                    <Th right>Total</Th>
-                    <Th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {rare.map((row, i) => (
-                    <tr key={`${row.value}-${i}`} className="border-t border-gray-100 hover:bg-gray-50">
-                      <Td className="font-mono max-w-[420px] truncate" title={String(row.value)}>
-                        {String(row.value)}
-                      </Td>
-                      <Td right>
-                        <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold tabular-nums text-amber-700 bg-amber-50">
-                          on {row.host_count} host{row.host_count === 1 ? '' : 's'}
-                        </span>
-                      </Td>
-                      <Td right className="tabular-nums text-gray-700">
-                        ×{(row.target_count ?? 0).toLocaleString()}
-                      </Td>
-                      <Td right className="tabular-nums text-gray-500">
-                        {(row.total_count ?? 0).toLocaleString()}
-                      </Td>
-                      <Td right>
-                        <button
-                          onClick={() => pivot(row.value)}
-                          className="text-[10px] text-brand-accent hover:text-brand-accenthover inline-flex items-center gap-1"
-                          title="Pivot to timeline"
-                        >
-                          <ExternalLink size={10} />
-                        </button>
-                      </Td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
+          <div className="ml-auto text-[10px] text-gray-500 flex items-center gap-1">
+            <Info size={10} />
+            Rare = on ≤{maxHosts} host{maxHosts === 1 ? '' : 's'}.
           </div>
         </div>
       </div>
-    </div>
+
+      {/* Summary */}
+      {meta && rare && (
+        <div className="grid grid-cols-3 gap-2">
+          <SummaryCard label="Rare values" value={(rare.length).toLocaleString()} />
+          <SummaryCard label="Values examined" value={(meta.values_examined ?? 0).toLocaleString()} />
+          <SummaryCard label="Target host" value={meta.target_host || host || '—'} />
+        </div>
+      )}
+
+      {/* Results */}
+      <div className="card overflow-hidden">
+        <div className="px-3 py-2 border-b border-gray-100 flex items-center justify-between">
+          <h3 className="text-[11px] font-semibold text-gray-700 uppercase tracking-wide">Rare values</h3>
+          {rare && <span className="text-[10px] text-gray-500">{rare.length.toLocaleString()} rows</span>}
+        </div>
+
+        {stacking ? (
+          <div className="p-6 flex items-center justify-center text-sm text-gray-500 gap-2">
+            <Loader2 size={14} className="animate-spin" /> Stacking…
+          </div>
+        ) : rare === null ? (
+          <div className="p-6 text-center text-xs text-gray-500">
+            Pick a field and host, then click <strong>Stack</strong>.
+          </div>
+        ) : rare.length === 0 ? (
+          <div className="p-6 text-center text-xs text-gray-500">
+            No rare values — nothing on this host is unusual for the field.
+          </div>
+        ) : (
+          <table className="w-full text-[11px]">
+            <thead className="bg-gray-50 text-gray-600">
+              <tr>
+                <Th>Value</Th>
+                <Th right>Spread</Th>
+                <Th right>On this host</Th>
+                <Th right>Total</Th>
+                <Th />
+              </tr>
+            </thead>
+            <tbody>
+              {rare.map((row, i) => (
+                <tr key={`${row.value}-${i}`} className="border-t border-gray-100 hover:bg-gray-50">
+                  <Td className="font-mono max-w-[420px] truncate" title={String(row.value)}>
+                    {String(row.value)}
+                  </Td>
+                  <Td right>
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold tabular-nums text-amber-700 bg-amber-50">
+                      on {row.host_count} host{row.host_count === 1 ? '' : 's'}
+                    </span>
+                  </Td>
+                  <Td right className="tabular-nums text-gray-700">
+                    ×{(row.target_count ?? 0).toLocaleString()}
+                  </Td>
+                  <Td right className="tabular-nums text-gray-500">
+                    {(row.total_count ?? 0).toLocaleString()}
+                  </Td>
+                  <Td right>
+                    <button
+                      onClick={() => pivot(row.value)}
+                      className="text-[10px] text-brand-accent hover:text-brand-accenthover inline-flex items-center gap-1"
+                      title="Pivot to timeline"
+                    >
+                      <ExternalLink size={10} />
+                    </button>
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </PanelShell>
   )
 }
 

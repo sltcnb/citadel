@@ -1,9 +1,9 @@
 import { useEffect, useState, useMemo } from 'react'
 import {
-  Activity, Loader2, RefreshCw, AlertTriangle, ExternalLink, Info, X,
+  Activity, Loader2, RefreshCw, ExternalLink, Info,
 } from 'lucide-react'
 import { api, getToken } from '../../api/client'
-import PanelHelp from './PanelHelp'
+import PanelShell from './PanelShell'
 
 // Map a list of anomaly events into the standard Findings store (idempotent).
 function persistAnomalyFindings(caseId, list) {
@@ -101,41 +101,36 @@ export default function AnomalyPanel({ caseId, onClose, onPivot }) {
     }
   }, [list])
 
+  const actions = (
+    <button onClick={refresh} disabled={loading} className="btn-secondary text-xs flex items-center gap-1.5">
+      <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+      Refresh
+    </button>
+  )
+
   return (
-    <div className="panel-backdrop" onClick={onClose}>
-      <div
-        className="panel-drawer md:w-[860px]"
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 flex-shrink-0">
-          <div className="flex items-center gap-2">
-            <Activity size={16} className="text-brand-accent" />
-            <span className="font-semibold text-brand-text">Anomaly detection</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <button onClick={refresh} disabled={loading} className="btn-secondary text-xs flex items-center gap-1.5">
-              <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
-              Refresh
-            </button>
-            <button onClick={onClose} className="btn-ghost p-1.5 rounded-lg">
-              <X size={16} />
-            </button>
-          </div>
-        </div>
+    <PanelShell
+      icon={Activity}
+      title="Anomaly detection"
+      onClose={onClose}
+      loading={loading}
+      error={error}
+      actions={actions}
+      help={{
+        use: "Flags host × event-id × day buckets whose volume is a statistical outlier (z-score) versus the case's own baseline.",
+        when: "To catch volume spikes — mass logons, beaconing, sudden process churn — that you'd miss scrolling a flat timeline.",
+        data: ['At least ~3 days of timestamped events per host', 'host.hostname plus an event id (e.g. EVTX event_id)'],
+        tip: 'Run the scan first; lower the threshold to surface subtler spikes.',
+      }}
+      width="md:w-[900px]"
+    >
+      <p className="text-[11px] text-gray-500">
+        Rolling z-score over (host, event_id, day). Scans the last N days, flags days that
+        deviate ≥ threshold σ from baseline.
+      </p>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          <PanelHelp title="Anomaly detection"
-            use="Flags host × event-id × day buckets whose volume is a statistical outlier (z-score) versus the case's own baseline."
-            when="To catch volume spikes — mass logons, beaconing, sudden process churn — that you'd miss scrolling a flat timeline."
-            data={['At least ~3 days of timestamped events per host','host.hostname plus an event id (e.g. EVTX event_id)']}
-            tip="Run the scan first; lower the threshold to surface subtler spikes." />
-          <p className="text-[11px] text-gray-500">
-            Rolling z-score over (host, event_id, day). Scans the last N days, flags days that
-            deviate ≥ threshold σ from baseline.
-          </p>
-
-          {/* Scan controls */}
-          <div className="card p-3">
+      {/* Scan controls */}
+      <div className="card p-3">
             <div className="flex items-end gap-3 flex-wrap">
               <div>
                 <label className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">Window (days)</label>
@@ -166,43 +161,34 @@ export default function AnomalyPanel({ caseId, onClose, onPivot }) {
                 Re-runs replace previous results.
               </div>
             </div>
+      </div>
+
+      {okMessage && (
+        <div className="card p-3 text-xs text-emerald-700 bg-emerald-50 border-emerald-200">{okMessage}</div>
+      )}
+
+      {/* Summary */}
+      {list.length > 0 && (
+        <div className="grid grid-cols-3 gap-2">
+          <SummaryCard label="Anomalies" value={list.length.toLocaleString()} />
+          <SummaryCard label="Max |z|"   value={stats.maxZ} />
+          <SummaryCard label="Hosts affected" value={stats.hosts.length} />
+        </div>
+      )}
+
+      {/* List */}
+      <div className="card overflow-hidden">
+        <div className="px-3 py-2 border-b border-gray-100 flex items-center justify-between">
+          <h3 className="text-[11px] font-semibold text-gray-700 uppercase tracking-wide">Anomalous days</h3>
+          <span className="text-[10px] text-gray-500">{list.length.toLocaleString()} entries</span>
+        </div>
+
+        {list.length === 0 ? (
+          <div className="p-6 text-center text-xs text-gray-500">
+            No anomalies indexed yet. Click <strong>Run scan</strong> above to generate them.
           </div>
-
-          {error && (
-            <div className="card p-3 text-xs text-red-700 bg-red-50 border-red-200 flex items-center gap-2">
-              <AlertTriangle size={14} /> {error}
-            </div>
-          )}
-          {okMessage && (
-            <div className="card p-3 text-xs text-emerald-700 bg-emerald-50 border-emerald-200">{okMessage}</div>
-          )}
-
-          {/* Summary */}
-          {list.length > 0 && (
-            <div className="grid grid-cols-3 gap-2">
-              <SummaryCard label="Anomalies" value={list.length.toLocaleString()} />
-              <SummaryCard label="Max |z|"   value={stats.maxZ} />
-              <SummaryCard label="Hosts affected" value={stats.hosts.length} />
-            </div>
-          )}
-
-          {/* List */}
-          <div className="card overflow-hidden">
-            <div className="px-3 py-2 border-b border-gray-100 flex items-center justify-between">
-              <h3 className="text-[11px] font-semibold text-gray-700 uppercase tracking-wide">Anomalous days</h3>
-              <span className="text-[10px] text-gray-500">{list.length.toLocaleString()} entries</span>
-            </div>
-
-            {loading ? (
-              <div className="p-6 flex items-center justify-center text-sm text-gray-500 gap-2">
-                <Loader2 size={14} className="animate-spin" /> Loading…
-              </div>
-            ) : list.length === 0 ? (
-              <div className="p-6 text-center text-xs text-gray-500">
-                No anomalies indexed yet. Click <strong>Run scan</strong> above to generate them.
-              </div>
-            ) : (
-              <table className="w-full text-[11px]">
+        ) : (
+          <table className="w-full text-[11px]">
                 <thead className="bg-gray-50 text-gray-600">
                   <tr>
                     <Th>Day</Th>
@@ -254,10 +240,8 @@ export default function AnomalyPanel({ caseId, onClose, onPivot }) {
                 </tbody>
               </table>
             )}
-          </div>
-        </div>
       </div>
-    </div>
+    </PanelShell>
   )
 }
 
