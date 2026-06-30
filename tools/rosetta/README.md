@@ -4,6 +4,17 @@
 
 **Status: partial** (standalone CLI works; daemon + OSSEM/ATT&CK enrichment pending).
 
+## Pipeline position
+
+```
+Babel ──ForensicEvent──▶ Rosetta ──ECS v8 + OSSEM──▶ store / Sigil / Anvil / Augur / timeline
+```
+
+Sits between parse and index so the timeline, search, Sigil, and Scribe all read **one** schema.
+
+- **Inputs** — a `ForensicEvent` JSONL stream (`contracts/forensic_event/v1.json`).
+- **Outputs** — ECS v8 documents + OSSEM/ATT&CK fields (`contracts/ecs_extension.md`), optionally GeoIP/ASN/rDNS-enriched.
+
 ## Install
 ```
 pip install -e .            # provides the `rosetta` console script

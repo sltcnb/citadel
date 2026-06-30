@@ -417,7 +417,7 @@ async function withRetry(fn, { attempts = 4, timeoutMs = 15000, onAttempt } = {}
   throw lastErr
 }
 
-function ModuleLaunchModal({ caseId, onClose, onRunCreated }) {
+function ModuleLaunchModal({ caseId, onClose, onRunCreated, onViewRuns }) {
   const [modules, setModules]               = useState([])
   const [sources, setSources]               = useState([])
   const [selectedModule, setSelectedModule] = useState(null)
@@ -740,12 +740,19 @@ function ModuleLaunchModal({ caseId, onClose, onRunCreated }) {
             </div>
             <div>
               <p className="font-semibold text-brand-text text-sm leading-tight">Run Analysis Module</p>
-              <p className="text-[11px] text-gray-500 leading-tight mt-px">Select module → pick files → launch</p>
+              <p className="text-[11px] text-gray-500 leading-tight mt-px">Select module → pick files → launch · results land in Findings</p>
             </div>
           </div>
-          <button onClick={onClose} className="btn-ghost p-1.5 rounded-lg">
-            <X size={15} />
-          </button>
+          <div className="flex items-center gap-1.5">
+            {onViewRuns && (
+              <button onClick={onViewRuns} className="btn-ghost text-[11px] px-2 py-1 rounded-lg flex items-center gap-1" title="See status / progress / failures of launched runs">
+                <Clock size={13} /> Run status
+              </button>
+            )}
+            <button onClick={onClose} className="btn-ghost p-1.5 rounded-lg">
+              <X size={15} />
+            </button>
+          </div>
         </div>
 
         {loading ? (
@@ -1495,41 +1502,30 @@ function ModuleRunCard({
             </div>
           )}
 
-          {/* Severity accordion groups */}
-          {filteredLevels.length === 0 && anyHitsInPreview && (
-            <div className="border-t border-gray-100 px-4 py-5 text-center">
-              <p className="text-xs text-gray-500">No detections match the active filters.</p>
-              <button
-                onClick={onResetFilter}
-                className="mt-1 text-[11px] text-brand-accent hover:underline"
-              >
-                Clear filters
-              </button>
-            </div>
-          )}
-          {filteredLevels.map(lvl => (
-            <LevelGroup
-              key={lvl}
-              level={lvl}
-              hits={hitsByLevel[lvl]}
-              totalInLevel={byLevel[lvl] || 0}
-              defaultOpen={lvl === 'critical' || lvl === 'high'}
-              caseId={caseId}
-              runId={run.run_id}
-              navigate={navigate}
-              buildQuery={buildQuery}
-            />
-          ))}
-
-          {/* Truncation / filter notice */}
+          {/* Results live in the single Findings store — this card shows run
+              STATUS only. The detections are written as findings (kind=module)
+              so they are queryable / exportable / reportable / re-ingestable in
+              one place instead of being a separate per-run output. */}
           {preview.length > 0 && (
-            <div className="border-t border-gray-100 px-4 py-1.5 text-center">
-              <p className="text-[10px] text-gray-500">
-                {filteredPreview.length !== preview.length
-                  ? <>{filteredPreview.length.toLocaleString()} matched / top {preview.length} by severity{run.total_hits > preview.length && <> of {run.total_hits.toLocaleString()} total</>}</>
-                  : <>Top {preview.length} by severity{run.total_hits > preview.length && <> of{' '}<span className="font-semibold text-gray-700">{run.total_hits.toLocaleString()}</span> total</>}</>
-                }
-              </p>
+            <div className="border-t border-gray-100 px-4 py-3 bg-amber-50/40">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <p className="text-xs text-gray-600">
+                  <span className="font-semibold text-gray-800">{run.total_hits.toLocaleString()}</span> detection{run.total_hits === 1 ? '' : 's'} —
+                  {Object.entries(byLevel).filter(([, n]) => n).length > 0 && (
+                    <span className="ml-1">
+                      {Object.entries(byLevel).filter(([, n]) => n)
+                        .map(([lvl, n]) => `${n} ${lvl}`).join(', ')}
+                    </span>
+                  )}
+                </p>
+                <button
+                  onClick={() => navigate(`/cases/${caseId}`, { state: { pivotQuery: `artifact_type:finding AND source_feature:"${run.module_id}"` } })}
+                  className="btn-ghost text-[11px] px-2 py-1 rounded-lg inline-flex items-center gap-1 text-amber-700"
+                  title="Open these results in the Findings store"
+                >
+                  <Search size={12} /> View {run.total_hits.toLocaleString()} in Findings
+                </button>
+              </div>
             </div>
           )}
 
@@ -1701,7 +1697,7 @@ function ModuleRunsPanel({ caseId, onClose }) {
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
           <div className="flex items-center gap-2">
             <Cpu size={16} className="text-brand-accent" />
-            <span className="font-semibold text-brand-text">Module Runs</span>
+            <span className="font-semibold text-brand-text">Module run status</span>
             {runs.length > 0 && (
               <span className="badge bg-gray-100 text-gray-600">
                 {filteredRuns.length !== runs.length
@@ -2077,6 +2073,9 @@ export default function CaseTimeline() {
   // analyst's Detect / Investigate / Case / AI workspace survives reload, nav, and
   // browser restart. Each case keeps its own layout.
   const [showModules, setShowModules]       = usePersistedState(`fo_panel_modules_${caseId}`, false)
+  // Module RUN STATUS (not an output) — status/progress/retry/logs for launched
+  // modules. Results land in Findings; this only answers "is it running / did it
+  // fail / retry it". Opened from the Modules launch flow, not the main toolbar.
   const [showModuleRuns, setShowModuleRuns] = usePersistedState(`fo_panel_moduleRuns_${caseId}`, false)
   const [showAlertRules, setShowAlertRules] = usePersistedState(`fo_panel_alertRules_${caseId}`, false)
   const [showNotes, setShowNotes]           = usePersistedState(`fo_panel_notes_${caseId}`, false)
@@ -2211,6 +2210,9 @@ export default function CaseTimeline() {
   }
 
   function handleRunCreated() {
+    // After launch, show RUN STATUS so the analyst can watch progress / catch a
+    // failure / retry. The status cards link to Findings (the single output)
+    // once a run completes.
     setShowModules(false)
     setShowModuleRuns(true)
   }
@@ -2367,10 +2369,11 @@ export default function CaseTimeline() {
             onClick={() => setAutoPilot(v => !v)}
             className={`btn-outline ${autoPilot ? 'bg-purple-50 border-purple-300 text-purple-700' : 'text-gray-400'}`}
             title={autoPilot
-              ? 'Auto-pilot ON — AI investigation launches automatically when ingest completes'
-              : 'Auto-pilot OFF — click to auto-launch AI when ingest completes'}
+              ? 'Auto-AI is ON — the AI investigation launches automatically when ingest completes. Click to turn off.'
+              : 'Auto-AI is OFF — click to auto-launch the AI investigation when ingest completes.'}
           >
             <Zap size={14} />
+            Auto-AI: {autoPilot ? 'ON' : 'OFF'}
           </button>
 
           {/* Findings — the unified output store (every analysis surface) */}
@@ -2450,24 +2453,13 @@ export default function CaseTimeline() {
           />
 
           <button
-            onClick={() => { setShowModules(true); setShowModuleRuns(false) }}
+            onClick={() => setShowModules(true)}
             className="btn-outline"
-            title="Run analysis modules (Hayabusa, YARA, CAPA, Volatility…)"
+            title="Run analysis modules (Hayabusa, YARA, CAPA, Volatility…). Results land in Findings."
           >
             <Cpu size={14} />
             Modules
           </button>
-
-          {/* View runs shortcut — only when runs panel is closed */}
-          {!showModuleRuns && (
-            <button
-              onClick={() => { setShowModuleRuns(true); setShowModules(false) }}
-              className="btn-ghost p-1.5 rounded-lg text-gray-500 hover:text-brand-accent"
-              title="View module runs"
-            >
-              <Clock size={14} />
-            </button>
-          )}
 
           {/* Delete case — two-click confirmation */}
           {confirmDelete ? (
@@ -2617,6 +2609,7 @@ export default function CaseTimeline() {
           caseId={caseId}
           onClose={() => setShowModules(false)}
           onRunCreated={handleRunCreated}
+          onViewRuns={() => { setShowModules(false); setShowModuleRuns(true) }}
         />
       )}
 

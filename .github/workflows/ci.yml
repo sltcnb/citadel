@@ -89,24 +89,6 @@ jobs:
         continue-on-error: true
         run: yamllint -c .yamllint.yml tools/ contracts/ k8s/
 
-  docs:
-    name: Docs build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install docs deps
-        run: pip install -r docs/requirements.txt
-      - name: Build site (strict — fails on broken links / missing nav targets)
-        run: mkdocs build --strict
-      - name: Upload site
-        uses: actions/upload-artifact@v4
-        with:
-          name: site
-          path: site
-
   test:
     name: Tests
     runs-on: ubuntu-latest

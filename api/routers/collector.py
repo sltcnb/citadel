@@ -247,33 +247,125 @@ def _valid_category_keys() -> set[str]:
     return {it["key"] for items in _build_catalog().values() for it in items}
 
 
+# Pinned portable-Python versions — kept in sync with services.python_embeds so
+# the runtime auto-download matches what the bundled (offline) embed would be.
+from services.python_embeds import CPY_VERSION as _COLLECTOR_PYVER  # noqa: E402
+from services.python_embeds import PBS_TAG as _COLLECTOR_PBS  # noqa: E402
+
+# ── Reusable Python-provisioning snippets (versions baked at import) ──────────
+# Strategy everywhere: bundled embed in the package → previously cached download
+# → system Python → (unless --offline) download a portable Python and use it.
+# Windows uses the python.org embeddable zip; macOS/Linux use the matching
+# python-build-standalone install_only tarball.
+
+_PROVISION_PS1 = r"""
+function Resolve-FoPython {
+    param([string]$BaseDir, [switch]$Offline)
+    $bundled = Join-Path $BaseDir "python-embed\python.exe"
+    if (Test-Path $bundled) { return $bundled }
+    $cache = Join-Path $BaseDir ".python\python-embed\python.exe"
+    if (Test-Path $cache) { return $cache }
+    foreach ($cmd in @("python","python3","py")) {
+        try { $v = & $cmd --version 2>&1; if ("$v" -match "Python 3") { return $cmd } } catch {}
+    }
+    if ($Offline) { throw "No Python found and -Offline set. Re-generate the package with Python bundled, or install Python 3." }
+    Write-Host "  No Python found - downloading portable Python @@PYVER@@ ..." -ForegroundColor Yellow
+    $url  = "https://www.python.org/ftp/python/@@PYVER@@/python-@@PYVER@@-embed-amd64.zip"
+    $dest = Join-Path $BaseDir ".python\python-embed"
+    New-Item -ItemType Directory -Path $dest -Force | Out-Null
+    $tmp = Join-Path $env:TEMP ("fopy-" + [System.Guid]::NewGuid().ToString("N").Substring(0,8) + ".zip")
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    (New-Object System.Net.WebClient).DownloadFile($url, $tmp)
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [System.IO.Compression.ZipFile]::ExtractToDirectory($tmp, $dest)
+    Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+    $py = Join-Path $dest "python.exe"
+    if (-not (Test-Path $py)) { throw "Portable Python download/extract failed." }
+    return $py
+}
+""".replace("@@PYVER@@", _COLLECTOR_PYVER)
+
+_PROVISION_SH = r"""
+fo_resolve_python() {
+    # echoes a python path on stdout; returns 1 if none could be provisioned.
+    base="$1"; offline="$2"
+    [ -x "$base/python3/bin/python3" ] && { echo "$base/python3/bin/python3"; return 0; }
+    [ -x "$base/.python/python/bin/python3" ] && { echo "$base/.python/python/bin/python3"; return 0; }
+    for c in python3 python; do
+        if command -v "$c" >/dev/null 2>&1; then
+            case "$("$c" --version 2>&1)" in "Python 3"*) command -v "$c"; return 0 ;; esac
+        fi
+    done
+    [ "$offline" = "1" ] && { echo "" ; return 1; }
+    os="$(uname -s)"; arch="$(uname -m)"
+    case "$os" in
+      Linux)  case "$arch" in x86_64|amd64) triple="x86_64-unknown-linux-gnu" ;; aarch64|arm64) triple="aarch64-unknown-linux-gnu" ;; *) echo "" ; return 1 ;; esac ;;
+      Darwin) case "$arch" in arm64) triple="aarch64-apple-darwin" ;; x86_64) triple="x86_64-apple-darwin" ;; *) echo "" ; return 1 ;; esac ;;
+      *) echo "" ; return 1 ;;
+    esac
+    url="https://github.com/astral-sh/python-build-standalone/releases/download/@@PBS@@/cpython-@@PYVER@@+@@PBS@@-${triple}-install_only.tar.gz"
+    echo "  No python3 found - downloading portable Python @@PYVER@@ (${triple}) ..." >&2
+    mkdir -p "$base/.python"
+    tb="$base/.python/py.tar.gz"
+    if command -v curl >/dev/null 2>&1; then curl -fsSL "$url" -o "$tb" || { echo "" ; return 1; }
+    elif command -v wget >/dev/null 2>&1; then wget -q "$url" -O "$tb" || { echo "" ; return 1; }
+    else echo "" ; return 1; fi
+    tar -xzf "$tb" -C "$base/.python" || { echo "" ; return 1; }
+    rm -f "$tb"
+    [ -x "$base/.python/python/bin/python3" ] && { echo "$base/.python/python/bin/python3"; return 0; }
+    echo "" ; return 1
+}
+""".replace("@@PYVER@@", _COLLECTOR_PYVER).replace("@@PBS@@", _COLLECTOR_PBS)
+
+# run.bat — thin launcher; all logic (incl. Python provisioning) lives in run.ps1
+# so Windows has one code path. Pass-through args; -Offline supported.
 _RUN_BAT = """\
 @echo off
-setlocal
-set "DIR=%~dp0"
-set "PY_LOCAL=%DIR%python-embed\\python.exe"
-echo ForensicsOperator Harvester - starting collection...
-if exist "%PY_LOCAL%" (
-    echo Using bundled Python: %PY_LOCAL%
-    "%PY_LOCAL%" "%DIR%fo-harvester.py" %*
-) else (
-    python "%DIR%fo-harvester.py" %*
-)
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0run.ps1" %*
 pause
 """
 
-_RUN_SH = """\
-#!/bin/sh
-# ForensicsOperator Harvester - run on Linux or macOS
-DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
-PY_LOCAL="$DIR/python3/bin/python3"
-if [ -x "$PY_LOCAL" ]; then
-    echo "Using bundled Python: $PY_LOCAL"
-    exec "$PY_LOCAL" "$DIR/fo-harvester.py" "$@"
-else
-    exec python3 "$DIR/fo-harvester.py" "$@"
-fi
+_RUN_PS1 = (
+    """#Requires -Version 5.1
+param([switch]$Offline)
+$ErrorActionPreference = "Stop"
+$DIR = $PSScriptRoot
+Write-Host "ForensicsOperator Harvester - starting collection..."
 """
+    + _PROVISION_PS1
+    + """
+$py = Resolve-FoPython -BaseDir $DIR -Offline:$Offline
+Write-Host "Using Python: $py"
+$rest = $args | Where-Object { $_ -ne "-Offline" }
+& $py (Join-Path $DIR "fo-harvester.py") @rest
+exit $LASTEXITCODE
+"""
+)
+
+_RUN_SH = (
+    """#!/bin/sh
+# ForensicsOperator Harvester - run on Linux or macOS.
+# Self-provisions Python: bundled -> system -> auto-download portable.
+# Pass --offline to forbid the download and require a bundled/system Python.
+DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
+OFFLINE=0
+for a in "$@"; do [ "$a" = "--offline" ] && OFFLINE=1; done
+"""
+    + _PROVISION_SH
+    + """
+PY="$(fo_resolve_python "$DIR" "$OFFLINE")"
+if [ -z "$PY" ]; then
+    echo "ERROR: no Python available and could not provision one." >&2
+    echo "Install Python 3, run online, or use a package built with Python bundled." >&2
+    exit 1
+fi
+echo "Using Python: $PY"
+# Strip our own --offline flag before handing args to the harvester.
+args=""
+for a in "$@"; do [ "$a" = "--offline" ] || args="$args \\"$a\\""; done
+eval exec "\\"$PY\\"" "\\"$DIR/fo-harvester.py\\"" $args
+"""
+)
 
 _README = """\
 ForensicsOperator Harvester — Self-contained collection package
@@ -505,6 +597,7 @@ def download_harvester_package(
             zf, f"{folder}/config.json", json.dumps(config, indent=2).encode("utf-8"), exe=False
         )
         _zwrite(zf, f"{folder}/run.bat", _RUN_BAT.encode("utf-8"), exe=False)
+        _zwrite(zf, f"{folder}/run.ps1", _RUN_PS1.encode("utf-8"), exe=False)
         _zwrite(zf, f"{folder}/run.sh", _RUN_SH.encode("utf-8"), exe=True)
         _zwrite(zf, f"{folder}/README.txt", _README.encode("utf-8"), exe=False)
 
@@ -841,7 +934,8 @@ _BOOTSTRAP_PS1 = """\
 param(
     [switch]$Local,
     [switch]$NoCleanup,
-    [switch]$NoS3Cleanup
+    [switch]$NoS3Cleanup,
+    [switch]$Offline
 )
 
 $ErrorActionPreference = "Stop"
@@ -859,19 +953,10 @@ if ($CASE_NAME)  { Write-Host "  Case    : $CASE_NAME"  }
 if ($EXPIRES_AT) { Write-Host "  Expires : $EXPIRES_AT" }
 Write-Host ""
 
-# ── Python check ──────────────────────────────────────────────────────────────
-$python = $null
-foreach ($cmd in @("python", "python3", "py")) {
-    try {
-        $ver = & $cmd --version 2>&1
-        if ("$ver" -match "Python 3") { $python = $cmd; break }
-    } catch {}
-}
-if (-not $python) {
-    Write-Host "ERROR: Python 3 not found. Install from https://python.org" -ForegroundColor Red
-    exit 1
-}
-Write-Host "  Python  : $(& $python --version 2>&1)" -ForegroundColor Green
+# ── Resolve Python (bundled / system / auto-download portable) ─────────────────
+# @@PROVISION_PS1@@
+$python = Resolve-FoPython -BaseDir $env:TEMP -Offline:$Offline
+Write-Host "  Python  : $python" -ForegroundColor Green
 
 # ── Temp directory ────────────────────────────────────────────────────────────
 $tmpDir  = Join-Path $env:TEMP ("fo-bootstrap-" + [System.Guid]::NewGuid().ToString("N").Substring(0, 8))
@@ -973,11 +1058,13 @@ EXPIRES_AT="TPLEXPIRES_AT"
 CASE_NAME="TPLCASE_NAME"
 LOCAL=0
 NO_S3_DEL=0
+OFFLINE=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --local)     LOCAL=1;     shift ;;
         --no-s3-del) NO_S3_DEL=1; shift ;;
+        --offline)   OFFLINE=1;   shift ;;
         *)           shift ;;
     esac
 done
@@ -990,18 +1077,15 @@ echo "============================================================="
 [ -n "$EXPIRES_AT" ] && echo "  Expires : $EXPIRES_AT"
 echo ""
 
-# ── Python check ───────────────────────────────────────────────────────────────
-PYTHON=""
-for cmd in python3 python; do
-    if command -v "$cmd" >/dev/null 2>&1; then
-        pyver=$("$cmd" --version 2>&1 || true)
-        case "$pyver" in "Python 3"*) PYTHON="$cmd"; break ;; esac
-    fi
-done
+# ── Resolve Python (bundled / system / auto-download portable) ───────────────
+# @@PROVISION_SH@@
+PYTHON="$(fo_resolve_python "${TMPDIR:-/tmp}/fo-python" "$OFFLINE")"
 if [ -z "$PYTHON" ]; then
-    echo "ERROR: Python 3 not found." >&2; exit 1
+    echo "ERROR: no Python available and could not provision one." >&2
+    echo "Install Python 3, run online, or use --offline with a bundled Python." >&2
+    exit 1
 fi
-echo "  Python  : $($PYTHON --version 2>&1)"
+echo "  Python  : $PYTHON"
 
 # ── Temp directory (auto-cleaned on exit) ────────────────────────────────────
 WORKDIR=$(mktemp -d)
@@ -1063,6 +1147,12 @@ else
 fi
 echo "============================================================="
 """
+
+# Inject the shared Python-provisioning logic into the bootstrap scripts so a
+# target with NO Python still works: the script auto-downloads a portable
+# interpreter (unless --offline / -Offline).
+_BOOTSTRAP_PS1 = _BOOTSTRAP_PS1.replace("# @@PROVISION_PS1@@", _PROVISION_PS1)
+_BOOTSTRAP_SH = _BOOTSTRAP_SH.replace("# @@PROVISION_SH@@", _PROVISION_SH)
 
 
 @router.get("/collector/s3-bootstrap", dependencies=[Depends(require_analyst_or_admin)])
@@ -1182,6 +1272,7 @@ def download_s3_bootstrap(
         zf.writestr(f"{folder}/fo-harvester.py", script_bytes)
         zf.writestr(f"{folder}/config.json", json.dumps(config, indent=2))
         zf.writestr(f"{folder}/run.bat", _RUN_BAT)
+        zf.writestr(f"{folder}/run.ps1", _RUN_PS1)
         zf.writestr(f"{folder}/run.sh", _RUN_SH)
     pkg_bytes = pkg_buf.getvalue()
 
