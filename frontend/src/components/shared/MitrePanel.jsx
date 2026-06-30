@@ -2,7 +2,6 @@ import { useEffect, useState, useMemo } from 'react'
 import { Target, ArrowRight, Loader2, X } from 'lucide-react'
 import { api } from '../../api/client'
 import PanelHelp from './PanelHelp'
-import SaveToFindings from './SaveToFindings'
 
 // Tactic ordering follows the ATT&CK Enterprise kill-chain
 const TACTIC_ORDER = [
@@ -20,7 +19,25 @@ export default function MitrePanel({ caseId, onClose, onPivot }) {
   useEffect(() => {
     setLoading(true)
     api.search.mitreCoverage(caseId)
-      .then(setData)
+      .then(d => {
+        setData(d)
+        // Auto-persist into the single Findings store (idempotent — replaceKind
+        // overwrites this case's prior mitre findings, so re-opening never piles
+        // up duplicates). No button: the panel is a live explorer, Findings is
+        // the durable output.
+        const items = (d?.techniques || []).map(t => ({
+          title: `${t.id || t.technique || '?'}${t.name ? ' — ' + t.name : ''}`,
+          severity: t.count >= 10 ? 'high' : t.count >= 3 ? 'medium' : 'low',
+          description: `${t.count} event(s) · tactic: ${t.tactic || 'Unknown'}`,
+          techniques: [t.id || t.technique].filter(Boolean),
+          payload: { count: t.count, tactic: t.tactic },
+          dedup_key: t.id || t.technique || t.name,
+        }))
+        if (items.length) {
+          api.findings.save(caseId, 'mitre', items,
+            { sourceFeature: 'mitre_coverage', replaceKind: true }).catch(() => {})
+        }
+      })
       .catch(e => setError(e?.message || 'Failed to load coverage'))
       .finally(() => setLoading(false))
   }, [caseId])
@@ -71,26 +88,9 @@ export default function MitrePanel({ caseId, onClose, onPivot }) {
               </span>
             )}
           </div>
-          <div className="flex items-center gap-2">
-            {data && (data.techniques || []).length > 0 && (
-              <SaveToFindings
-                caseId={caseId}
-                kind="mitre"
-                sourceFeature="mitre_coverage"
-                buildItems={() => (data.techniques || []).map(t => ({
-                  title: `${t.id || t.technique || '?'}${t.name ? ' — ' + t.name : ''}`,
-                  severity: t.count >= 10 ? 'high' : t.count >= 3 ? 'medium' : 'low',
-                  description: `${t.count} event(s) · tactic: ${t.tactic || 'Unknown'}`,
-                  techniques: [t.id || t.technique].filter(Boolean),
-                  payload: { count: t.count, tactic: t.tactic },
-                  dedup_key: t.id || t.technique || t.name,
-                }))}
-              />
-            )}
-            <button onClick={onClose} className="btn-ghost p-1.5 rounded-lg">
-              <X size={16} />
-            </button>
-          </div>
+          <button onClick={onClose} className="btn-ghost p-1.5 rounded-lg">
+            <X size={16} />
+          </button>
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-3">

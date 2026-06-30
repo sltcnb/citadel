@@ -4,6 +4,15 @@
 
 **Status: partial** (STIX/TAXII/MISP/VT bits live in `api/routers/` today; this tool extracts and grows them).
 
+## Pipeline position
+
+```
+Rosetta / case IOCs ──▶ Augur ──scored STIX / MISP──▶ entities / timeline
+```
+
+- **Inputs** — IOCs (file or case-extracted indicators).
+- **Outputs** — scored, sourced `EnrichedIOC`s exported as a STIX 2.1 bundle.
+
 ## Standalone
 ```
 augur enrich iocs.json -o enriched.stix.json

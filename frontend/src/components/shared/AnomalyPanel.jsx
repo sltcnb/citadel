@@ -4,7 +4,27 @@ import {
 } from 'lucide-react'
 import { api, getToken } from '../../api/client'
 import PanelHelp from './PanelHelp'
-import SaveToFindings from './SaveToFindings'
+
+// Map a list of anomaly events into the standard Findings store (idempotent).
+function persistAnomalyFindings(caseId, list) {
+  const items = (list || []).map(a => {
+    const z = Math.abs(a?.anomaly?.z_score ?? 0)
+    return {
+      title: a.message || `Anomaly: event ${a?.anomaly?.event_id} on ${a?.host?.hostname || '—'}`,
+      severity: z >= 6 ? 'high' : z >= 4 ? 'medium' : 'low',
+      description: `z=${a?.anomaly?.z_score} (μ=${a?.anomaly?.baseline_mean}, σ=${a?.anomaly?.baseline_stddev})`,
+      timestamp: a.timestamp,
+      host: a.host || {},
+      evidence: a.fo_id ? [a.fo_id] : [],
+      payload: a.anomaly || {},
+      dedup_key: `${a?.host?.hostname}:${a?.anomaly?.event_id}:${a?.anomaly?.day}`,
+    }
+  })
+  if (items.length) {
+    api.findings.save(caseId, 'anomaly', items,
+      { sourceFeature: 'anomaly_scan', replaceKind: true }).catch(() => {})
+  }
+}
 
 /**
  * Right-side drawer version of the old Anomaly page.
@@ -29,6 +49,7 @@ export default function AnomalyPanel({ caseId, onClose, onPivot }) {
     try {
       const r = await api.search.anomalies(caseId)
       setList(r.events || [])
+      persistAnomalyFindings(caseId, r.events || [])
     } catch (e) {
       setError(e.message || 'Failed to load anomalies.')
     } finally {
@@ -92,26 +113,6 @@ export default function AnomalyPanel({ caseId, onClose, onPivot }) {
             <span className="font-semibold text-brand-text">Anomaly detection</span>
           </div>
           <div className="flex items-center gap-2">
-            {list.length > 0 && (
-              <SaveToFindings
-                caseId={caseId}
-                kind="anomaly"
-                sourceFeature="anomaly_scan"
-                buildItems={() => list.map(a => {
-                  const z = Math.abs(a?.anomaly?.z_score ?? 0)
-                  return {
-                    title: a.message || `Anomaly: event ${a?.anomaly?.event_id} on ${a?.host?.hostname || '—'}`,
-                    severity: z >= 6 ? 'high' : z >= 4 ? 'medium' : 'low',
-                    description: `z=${a?.anomaly?.z_score} (μ=${a?.anomaly?.baseline_mean}, σ=${a?.anomaly?.baseline_stddev})`,
-                    timestamp: a.timestamp,
-                    host: a.host || {},
-                    evidence: a.fo_id ? [a.fo_id] : [],
-                    payload: a.anomaly || {},
-                    dedup_key: `${a?.host?.hostname}:${a?.anomaly?.event_id}:${a?.anomaly?.day}`,
-                  }
-                })}
-              />
-            )}
             <button onClick={refresh} disabled={loading} className="btn-secondary text-xs flex items-center gap-1.5">
               <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
               Refresh
