@@ -56,6 +56,7 @@ TEMPLATE_DEFAULTS = {
         "manifest": True,   # "built from" inventory header
         "exec_summary": True,
         "overview": True,   # graphical aggregates
+        "findings": True,   # unified findings store (ioc/anomaly/mitre/module/…)
         "modules": True,    # analysis-module run results (hayabusa/yara/…)
         "saved_searches": True,  # bookmarked queries re-run live
         "killchains": True,      # correlated reverse kill chains
@@ -242,6 +243,47 @@ def render_markdown(data: dict, tpl: dict | None = None, language: str | None = 
                 f"{r.get('total_hits', 0)} {L('u_hits')}" + (f" [{sev}]" if sev else "")
             )
         out.append("")
+
+    findings = data.get("findings") or {}
+    f_items = findings.get("items") or []
+    if sections.get("findings", True) and f_items:
+        out.append("## Findings")
+        out.append("")
+        by_kind = findings.get("by_kind") or {}
+        by_sev = findings.get("by_severity") or {}
+        out.append(
+            "_The unified findings store — every analysis surface's saved output "
+            "(IOCs, anomalies, MITRE coverage, kill chains, modules, co-pilot, "
+            "manual). " + f"{findings.get('total', len(f_items))} total._"
+        )
+        out.append("")
+        if by_kind:
+            out.append("- by kind: " + ", ".join(f"{k} ({n})" for k, n in by_kind.items()))
+        if by_sev:
+            out.append("- by severity: " + ", ".join(f"{k} ({n})" for k, n in by_sev.items()))
+        out.append("")
+        # Group the listed findings by kind, most-severe first within each.
+        grouped: dict[str, list] = {}
+        for it in f_items:
+            grouped.setdefault(it.get("kind", "other"), []).append(it)
+        for kind, rows in grouped.items():
+            out.append(f"### {kind} ({len(rows)})")
+            out.append("")
+            for it in rows[:50]:
+                sev = it.get("severity", "informational")
+                ts = _ts(it.get("timestamp", ""))
+                title = (it.get("message") or it.get("finding", {}).get("title") or "").strip()
+                src = it.get("source_feature", "")
+                line = f"- **{sev}** "
+                if ts:
+                    line += f"`{ts}` "
+                line += title
+                if src:
+                    line += f" _(via {src})_"
+                out.append(line)
+            if len(rows) > 50:
+                out.append(f"- _…and {len(rows) - 50} more_")
+            out.append("")
 
     saved = data.get("saved_searches") or []
     if sections.get("saved_searches", True) and saved:

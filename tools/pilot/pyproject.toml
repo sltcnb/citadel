@@ -3,7 +3,7 @@ name = "pilot"
 version = "0.5.0"
 description = "Pilot — Citadel autonomous DFIR investigation agent (LLM loop + tools)"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = { text = "PolyForm-Noncommercial-1.0.0" }
 authors = [
     { name = "Citadel" },
 ]

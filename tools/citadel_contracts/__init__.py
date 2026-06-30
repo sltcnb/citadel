@@ -24,6 +24,13 @@ from .validator import (  # noqa: F401
     is_valid_forensic_event,
     validate_forensic_event,
 )
+from .finding import (  # noqa: F401
+    ARTIFACT_TYPE as FINDING_ARTIFACT_TYPE,
+    KINDS as FINDING_KINDS,
+    SEVERITIES,
+    Finding,
+    make_finding,
+)
 from .logship import (  # noqa: F401
     JsonFormatter,
     RedisLogHandler,
@@ -93,5 +100,10 @@ __all__ = [
     "parser",
     "event",
     "Ctx",
+    "Finding",
+    "make_finding",
+    "SEVERITIES",
+    "FINDING_KINDS",
+    "FINDING_ARTIFACT_TYPE",
 ]
 __version__ = "1.0.0"

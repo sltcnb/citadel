@@ -39,6 +39,7 @@ from routers import (
     entity_graph,
     evidence_seal,
     export,
+    findings,
     global_alert_rules,
     groups,
     harvest,
@@ -633,6 +634,7 @@ app.include_router(cti.router, prefix="/api/v1", dependencies=_analyst_or_admin)
 app.include_router(watchlist.router, prefix="/api/v1", dependencies=_analyst_or_admin)
 app.include_router(reports.router, prefix="/api/v1", dependencies=_analyst_or_admin)
 app.include_router(anomaly.router, prefix="/api/v1", dependencies=_analyst_or_admin)
+app.include_router(findings.router, prefix="/api/v1", dependencies=_analyst_or_admin)
 app.include_router(process_tree.router, prefix="/api/v1", dependencies=_analyst_or_admin)
 app.include_router(baseline.router, prefix="/api/v1", dependencies=_analyst_or_admin)
 app.include_router(entity_graph.router, prefix="/api/v1", dependencies=_analyst_or_admin)

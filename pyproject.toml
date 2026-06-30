@@ -3,7 +3,7 @@ name = "citadel"
 version = "1.0.0"
 description = "Citadel — a DFIR platform built from standalone tools"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = { text = "PolyForm-Noncommercial-1.0.0" }
 authors = [
     { name = "Citadel" },
 ]

@@ -316,6 +316,25 @@ def _fetch_module_runs(case_id: str) -> list[dict]:
     return out
 
 
+def _fetch_findings(case_id: str) -> dict:
+    """The unified findings store — every analysis surface's saved output
+    (IOC / anomaly / MITRE / kill-chain / entity / process-tree / module /
+    co-pilot / manual), so the report covers them all from one source."""
+    try:
+        from services import findings as fnd
+
+        listing = fnd.list_findings(case_id, size=1000)
+        summary = fnd.findings_summary(case_id)
+        return {
+            "items": listing.get("findings", []),
+            "total": listing.get("total", 0),
+            "by_kind": summary.get("by_kind", {}),
+            "by_severity": summary.get("by_severity", {}),
+        }
+    except Exception:
+        return {"items": [], "total": 0, "by_kind": {}, "by_severity": {}}
+
+
 def _build_report_data(case: dict, case_id: str) -> dict:
     from datetime import UTC, datetime
 
@@ -327,6 +346,7 @@ def _build_report_data(case: dict, case_id: str) -> dict:
     notes = _fetch_notes(case_id)
     ai_report = _fetch_ai_report(case_id)
     aggregates = _fetch_aggregates(case_id)
+    findings = _fetch_findings(case_id)
 
     # Manifest — a plain-language inventory of EXACTLY what this report was built
     # from, so "based idk what" becomes "based on these N inputs". Rendered as the
@@ -341,6 +361,8 @@ def _build_report_data(case: dict, case_id: str) -> dict:
         "saved_search_count": len([s for s in saved if s.get("query")]),
         "killchain_count": len(killchains),
         "total_events": (aggregates or {}).get("total_events", 0),
+        "findings_count": findings.get("total", 0),
+        "findings_by_kind": findings.get("by_kind", {}),
         "has_ai": bool(ai_report and (ai_report.get("content") or "").strip()),
         "ai_model": (ai_report or {}).get("model_used", ""),
         "ai_generated_at": (ai_report or {}).get("generated_at", ""),
@@ -349,6 +371,7 @@ def _build_report_data(case: dict, case_id: str) -> dict:
     return {
         "case": case,
         "manifest": manifest,
+        "findings": findings,
         "pinned": pinned,
         "flagged": flagged,
         "mitre": _fetch_mitre(case_id),
