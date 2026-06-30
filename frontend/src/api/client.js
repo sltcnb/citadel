@@ -166,6 +166,34 @@ export const api = {
     noteEvent: (caseId, foId, note)  => request('PUT', `/cases/${caseId}/events/${foId}/note`, { note }),
   },
 
+  // Unified findings store — the one durable home for every analysis surface's
+  // output (IOC / anomaly / MITRE / kill-chain / entity / process-tree / module
+  // / co-pilot / manual). Save here → searchable, exportable, reportable,
+  // re-ingestable, all the same way.
+  findings: {
+    list:    (caseId, params = {}) => request('GET', withParams(`/cases/${caseId}/findings`, params)),
+    summary: (caseId)              => request('GET', `/cases/${caseId}/findings/summary`),
+    // Save a batch produced by one feature. `kind` is the batch default; each
+    // item may override. `replaceKind` makes the batch overwrite this kind.
+    save:    (caseId, kind, items, { sourceFeature = '', replaceKind = false } = {}) =>
+      request('POST', `/cases/${caseId}/findings`,
+              { kind, source_feature: sourceFeature, replace_kind: replaceKind, items }),
+    remove:  (caseId, { findingIds = null, kind = null } = {}) =>
+      request('DELETE', `/cases/${caseId}/findings`, { finding_ids: findingIds, kind }),
+    // Re-ingest a subset (finding_ids) or a whole kind back into the pipeline.
+    promote: (caseId, { findingIds = null, kind = null, filename = null } = {}) =>
+      request('POST', `/cases/${caseId}/findings/promote`,
+              { finding_ids: findingIds, kind, filename }),
+    // CSV of the findings — reuses the standard timeline export, scoped to
+    // artifact_type:finding (optionally one kind).
+    csvUrl:  (caseId, kind = null) => {
+      const token = getToken()
+      const q = new URLSearchParams({ q: kind ? `artifact_type:finding AND kind:${kind}` : 'artifact_type:finding' })
+      if (token) q.set('_token', token)
+      return `/api/v1/cases/${caseId}/export/csv?${q.toString()}`
+    },
+  },
+
   plugins: {
     list:   ()         => request('GET',  '/plugins'),
     reload: ()         => request('POST', '/plugins/reload'),

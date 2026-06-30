@@ -3,7 +3,7 @@ name = "augur"
 version = "0.5.0"
 description = "Augur — Citadel intel enrichment (IOCs -> scored, sourced STIX 2.1)"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = { text = "PolyForm-Noncommercial-1.0.0" }
 authors = [
     { name = "Citadel" },
 ]

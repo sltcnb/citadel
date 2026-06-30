@@ -43,6 +43,17 @@ INDEX_TEMPLATE = {
                 "tags": {"type": "keyword"},
                 "analyst_note": {"type": "text"},
                 "is_flagged": {"type": "boolean"},
+                # Unified findings substrate — every analysis surface writes its
+                # output as a `finding` event into fo-case-{id}-finding. Explicit
+                # keyword mappings so kind/severity/source aggregate cleanly.
+                "finding_id": {"type": "keyword"},
+                "kind": {"type": "keyword"},
+                "severity": {"type": "keyword"},
+                "severity_int": {"type": "integer"},
+                "source_feature": {"type": "keyword"},
+                "evidence": {"type": "keyword"},
+                "techniques": {"type": "keyword"},
+                "finding": {"type": "object", "dynamic": True},
                 "host": {"type": "object", "dynamic": True},
                 "user": {"type": "object", "dynamic": True},
                 "process": {"type": "object", "dynamic": True},

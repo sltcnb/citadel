@@ -2,6 +2,7 @@ import { useEffect, useState, useMemo } from 'react'
 import { Target, ArrowRight, Loader2, X } from 'lucide-react'
 import { api } from '../../api/client'
 import PanelHelp from './PanelHelp'
+import SaveToFindings from './SaveToFindings'
 
 // Tactic ordering follows the ATT&CK Enterprise kill-chain
 const TACTIC_ORDER = [
@@ -70,9 +71,26 @@ export default function MitrePanel({ caseId, onClose, onPivot }) {
               </span>
             )}
           </div>
-          <button onClick={onClose} className="btn-ghost p-1.5 rounded-lg">
-            <X size={16} />
-          </button>
+          <div className="flex items-center gap-2">
+            {data && (data.techniques || []).length > 0 && (
+              <SaveToFindings
+                caseId={caseId}
+                kind="mitre"
+                sourceFeature="mitre_coverage"
+                buildItems={() => (data.techniques || []).map(t => ({
+                  title: `${t.id || t.technique || '?'}${t.name ? ' — ' + t.name : ''}`,
+                  severity: t.count >= 10 ? 'high' : t.count >= 3 ? 'medium' : 'low',
+                  description: `${t.count} event(s) · tactic: ${t.tactic || 'Unknown'}`,
+                  techniques: [t.id || t.technique].filter(Boolean),
+                  payload: { count: t.count, tactic: t.tactic },
+                  dedup_key: t.id || t.technique || t.name,
+                }))}
+              />
+            )}
+            <button onClick={onClose} className="btn-ghost p-1.5 rounded-lg">
+              <X size={16} />
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-3">

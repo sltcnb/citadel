@@ -1694,6 +1694,43 @@ def _gather_case_context(case_id: str) -> dict:
     except Exception:
         pass
 
+    # Unified findings store — the durable, cross-feature output of every
+    # analysis surface (IOC / anomaly / MITRE / kill-chain / module / co-pilot /
+    # manual). Surfacing it here is what lets the LLM reason over EVERYTHING the
+    # analyst has saved, not just indexed detections.
+    findings_store = {"total": 0, "by_kind": {}, "by_severity": {}, "top": []}
+    try:
+        from services.elasticsearch import _request as _esfs
+
+        res = _esfs("POST", f"/fo-case-{case_id}-finding/_search", {
+            "size": 25,
+            "track_total_hits": True,
+            "sort": [{"severity_int": {"order": "desc", "unmapped_type": "integer"}}],
+            "aggs": {
+                "by_kind": {"terms": {"field": "kind", "size": 50}},
+                "by_severity": {"terms": {"field": "severity", "size": 10}},
+            },
+        })
+        findings_store["total"] = (res.get("hits", {}).get("total", {}) or {}).get("value", 0)
+        aggs = res.get("aggregations", {}) or {}
+        findings_store["by_kind"] = {
+            b["key"]: b["doc_count"] for b in aggs.get("by_kind", {}).get("buckets", [])
+        }
+        findings_store["by_severity"] = {
+            b["key"]: b["doc_count"] for b in aggs.get("by_severity", {}).get("buckets", [])
+        }
+        findings_store["top"] = [
+            {
+                "kind": h["_source"].get("kind"),
+                "severity": h["_source"].get("severity"),
+                "title": h["_source"].get("message"),
+                "source": h["_source"].get("source_feature"),
+            }
+            for h in res.get("hits", {}).get("hits", [])
+        ]
+    except Exception:
+        pass
+
     return {
         "case_name": case.get("name", case_id),
         "status": case.get("status", "unknown"),
@@ -1705,6 +1742,7 @@ def _gather_case_context(case_id: str) -> dict:
         "mitre_summary": mitre_summary,
         "alert_run": alert_run,
         "findings": findings,
+        "findings_store": findings_store,
         "notes_body": notes_body,
     }
 
@@ -1718,10 +1756,21 @@ def _build_case_analysis_prompt(ctx: dict) -> str:
     )
     fnd = ctx.get("findings", {}) or {}
     by_art = "".join(f"    - {a['type']}: {a['count']}\n" for a in fnd.get("by_artifact", [])[:8])
+    store = ctx.get("findings_store", {}) or {}
+    store_kinds = ", ".join(f"{k}: {n}" for k, n in (store.get("by_kind") or {}).items())
+    store_sev = ", ".join(f"{k}: {n}" for k, n in (store.get("by_severity") or {}).items())
+    store_top = "".join(
+        f"    - [{t.get('severity')}] {t.get('kind')}: {t.get('title')}\n"
+        for t in (store.get("top") or [])[:15]
+    )
     findings_text = (
         f"High/critical detections (indexed): {fnd.get('high_severity', 0)}\n"
         f"External CTI matches (high severity): {fnd.get('cti_high', 0)}\n"
         f"{by_art}"
+        f"Saved findings (unified store): {store.get('total', 0)} total"
+        + (f" — by kind: {store_kinds}" if store_kinds else "")
+        + (f"; by severity: {store_sev}" if store_sev else "")
+        + ("\n" + store_top if store_top else "\n")
     )
     return (
         f"Case: {ctx['case_name']} (status: {ctx['status']})\n"
@@ -2028,7 +2077,7 @@ At every step return ONE JSON object — no markdown, no commentary outside it:
 
   {
     "thought": "what you're trying to verify and why",
-    "action":  "search" | "aggregate" | "inspect" | "time_window" | "correlate" | "mitre_hits" | "entity_graph" | "stack_rare" | "cti_seen_before" | "conclude",
+    "action":  "search" | "aggregate" | "inspect" | "time_window" | "correlate" | "mitre_hits" | "entity_graph" | "stack_rare" | "cti_seen_before" | "findings" | "save_finding" | "conclude",
 
     // action=search — full Elasticsearch query_string against fo-case-{id}-*
     "query":   "host.hostname:DESKTOP-* AND artifact_type:evtx",
@@ -2126,10 +2175,18 @@ Tool playbook — chain these like a real DFIR analyst:
                        {"action":"stack_rare","field":"process.name.keyword","host":"WS01"}
   cti_seen_before    → cross-case memory: have these IOCs shown up in PRIOR cases?
                        ("this C2/hash burned us before"). {"values":["1.2.3.4","<hash>"]}
+  findings           → read the UNIFIED findings store — every analysis surface's
+                       saved output (ioc/anomaly/mitre/killchain/entity/proctree/
+                       module/copilot/manual). Check this FIRST to see what is
+                       already established. Optional {"kind":"ioc","severity":"high"}.
+  save_finding       → persist an observation you've established as a standardized
+                       finding so it joins the store and the report. Pass
+                       {"action":"save_finding","title":"...","severity":"high",
+                        "description":"...","evidence":["<fo_id>"]}.
   conclude           → wrap up — MUST address every hypothesis you declared.
 
   // Argument-free tools (just `{"action": "detection_rules"}`):
-  //   detection_rules, watchlist, module_runs.
+  //   detection_rules, watchlist, module_runs, findings.
   // set_hypotheses takes a `hypotheses: [...]` array.
   // launch_module takes a `module_id: str`.
   // read_module_result takes a `run_id: str`.
@@ -3553,7 +3610,72 @@ def test_web_search(body: dict = Body(default={})):
 
 AGENT_LAUNCH_CAP = 3  # default max launch_module calls per case per 10-min window
 
+def _tool_findings(case_id: str, step: dict) -> dict:
+    """Read the unified findings store — every analysis surface's saved output
+    (IOC / anomaly / MITRE / kill-chain / entity / process-tree / module /
+    co-pilot / manual). This is the one place to see EVERYTHING the analyst (or a
+    prior agent run) has already established about the case. Optional ``kind`` /
+    ``severity`` filters."""
+    try:
+        from services import findings as _fnd
+    except Exception as exc:
+        return {"query_status": "invalid", "query_error": f"findings unavailable: {exc}"}
+    kind = (step.get("kind") or "").strip() or None
+    severity = (step.get("severity") or "").strip() or None
+    listing = _fnd.list_findings(case_id, kind=kind, severity=severity, size=int(step.get("size", 100)))
+    summary = _fnd.findings_summary(case_id)
+    items = [
+        {
+            "kind": f.get("kind"),
+            "severity": f.get("severity"),
+            "title": f.get("message"),
+            "source": f.get("source_feature"),
+            "timestamp": f.get("timestamp"),
+            "evidence": f.get("evidence", []),
+        }
+        for f in listing.get("findings", [])
+    ]
+    return {
+        "findings": items,
+        "total": listing.get("total", 0),
+        "by_kind": summary.get("by_kind", {}),
+        "by_severity": summary.get("by_severity", {}),
+        "query_status": "ok",
+    }
+
+
+def _tool_save_finding(case_id: str, step: dict) -> dict:
+    """Persist an observation the agent has established as a standardized finding
+    (kind defaults to ``copilot``), so it joins the unified store and becomes
+    queryable / exportable / reportable / re-ingestable like any other output."""
+    try:
+        from citadel_contracts import Finding
+        from services import findings as _fnd
+    except Exception as exc:
+        return {"query_status": "invalid", "query_error": f"findings unavailable: {exc}"}
+    title = (step.get("title") or step.get("verdict") or "").strip()
+    if not title:
+        return {"query_status": "invalid", "query_error": "save_finding needs a title"}
+    f = Finding(
+        kind=(step.get("kind") or "copilot").strip(),
+        title=title[:300],
+        severity=(step.get("severity") or "informational").strip(),
+        description=(step.get("description") or "")[:4000],
+        source_feature="copilot",
+        techniques=step.get("techniques") or [],
+        evidence=step.get("evidence") or [],
+        tags=step.get("tags") or [],
+        payload=step.get("payload") or {},
+        provenance={"agent": True},
+        dedup_key=step.get("dedup_key"),
+    )
+    res = _fnd.index_findings(case_id, [f])
+    return {"saved": res.get("indexed", 0), "query_status": "ok" if res.get("indexed") else "invalid"}
+
+
 AGENT_TOOLS = {
+    "findings": _tool_findings,
+    "save_finding": _tool_save_finding,
     "entity_graph": _tool_entity_graph,
     "stack_rare": _tool_stack_rare,
     "cti_seen_before": _tool_cti_seen_before,

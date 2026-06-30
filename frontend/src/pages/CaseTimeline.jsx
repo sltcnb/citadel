@@ -9,7 +9,7 @@ import {
   Monitor, HardDrive, Globe, Brain,
   Binary, Bug, Network, FileImage, TextSearch, Tag,
   GitBranch, Target, Activity, LayoutTemplate, FileDown,
-  Printer, FileBarChart, Layers, Bot, Pencil, Copy, Zap,
+  Printer, FileBarChart, Layers, Bot, Pencil, Copy, Zap, ClipboardList,
 } from 'lucide-react'
 
 const MOD_CATEGORY_ICONS = {
@@ -45,6 +45,7 @@ import EntityGraphPanel from '../components/shared/EntityGraphPanel'
 import KillChainPanel from '../components/shared/KillChainPanel'
 import EvidencePanel from '../components/shared/EvidencePanel'
 import CoPilotPanel from '../components/shared/CoPilotPanel'
+import FindingsPanel from '../components/shared/FindingsPanel'
 import ToolbarMenu from '../components/shared/ToolbarMenu'
 import { useLicense } from '../contexts/LicenseContext'
 import { useCollab } from '../hooks/useCollab'
@@ -2090,6 +2091,7 @@ export default function CaseTimeline() {
   const [showKillChain, setShowKillChain]   = usePersistedState(`fo_panel_killchain_${caseId}`, false)
   const [showEvidence, setShowEvidence]     = usePersistedState(`fo_panel_evidence_${caseId}`, false)
   const [showCoPilot, setShowCoPilot]       = usePersistedState(`fo_panel_copilot_${caseId}`, false)
+  const [showFindings, setShowFindings]     = usePersistedState(`fo_panel_findings_${caseId}`, false)
   const [showAI, setShowAI]                 = usePersistedState(`fo_panel_ai_${caseId}`, false)
   // Auto-pilot: kick off an autonomous AI investigation the moment evidence
   // ingestion finishes (active jobs fall to 0). Persisted opt-out per case.
@@ -2371,6 +2373,16 @@ export default function CaseTimeline() {
             <Zap size={14} />
           </button>
 
+          {/* Findings — the unified output store (every analysis surface) */}
+          <button
+            onClick={() => setShowFindings(v => !v)}
+            className={`btn-outline ${showFindings ? 'bg-amber-50 border-amber-300 text-amber-700' : ''}`}
+            title="Findings — every analysis output in one place: query, export, report, re-ingest"
+          >
+            <ClipboardList size={14} />
+            Findings
+          </button>
+
           {/* Detect — find what's suspicious */}
           <ToolbarMenu
             label="Detect"
@@ -2650,6 +2662,14 @@ export default function CaseTimeline() {
           caseId={caseId}
           onClose={() => setShowMitre(false)}
           onPivot={q => { setIocPivotQuery(q); setShowMitre(false) }}
+        />
+      )}
+
+      {showFindings && (
+        <FindingsPanel
+          caseId={caseId}
+          onClose={() => setShowFindings(false)}
+          onPivot={q => { setIocPivotQuery(q); setShowFindings(false) }}
         />
       )}
 

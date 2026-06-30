@@ -4,6 +4,7 @@ import {
 } from 'lucide-react'
 import { api, getToken } from '../../api/client'
 import PanelHelp from './PanelHelp'
+import SaveToFindings from './SaveToFindings'
 
 /**
  * Right-side drawer version of the old Anomaly page.
@@ -91,6 +92,26 @@ export default function AnomalyPanel({ caseId, onClose, onPivot }) {
             <span className="font-semibold text-brand-text">Anomaly detection</span>
           </div>
           <div className="flex items-center gap-2">
+            {list.length > 0 && (
+              <SaveToFindings
+                caseId={caseId}
+                kind="anomaly"
+                sourceFeature="anomaly_scan"
+                buildItems={() => list.map(a => {
+                  const z = Math.abs(a?.anomaly?.z_score ?? 0)
+                  return {
+                    title: a.message || `Anomaly: event ${a?.anomaly?.event_id} on ${a?.host?.hostname || '—'}`,
+                    severity: z >= 6 ? 'high' : z >= 4 ? 'medium' : 'low',
+                    description: `z=${a?.anomaly?.z_score} (μ=${a?.anomaly?.baseline_mean}, σ=${a?.anomaly?.baseline_stddev})`,
+                    timestamp: a.timestamp,
+                    host: a.host || {},
+                    evidence: a.fo_id ? [a.fo_id] : [],
+                    payload: a.anomaly || {},
+                    dedup_key: `${a?.host?.hostname}:${a?.anomaly?.event_id}:${a?.anomaly?.day}`,
+                  }
+                })}
+              />
+            )}
             <button onClick={refresh} disabled={loading} className="btn-secondary text-xs flex items-center gap-1.5">
               <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
               Refresh

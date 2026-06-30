@@ -3,7 +3,7 @@ name = "citadel-api"
 version = "1.0.0"
 description = "Citadel API — FastAPI service"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = { text = "PolyForm-Noncommercial-1.0.0" }
 authors = [
     { name = "Citadel" },
 ]

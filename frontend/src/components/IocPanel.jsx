@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Loader2, Search, Copy, ChevronDown, ChevronRight, Download, Globe, X, Play, AlertTriangle, CheckCircle, ShieldCheck } from 'lucide-react'
 import { api } from '../api/client'
 import PanelHelp from './shared/PanelHelp'
+import SaveToFindings from './shared/SaveToFindings'
 
 // ── Threat-intel matching ─────────────────────────────────────────────────────
 // Runs the cti_match MODULE (one matching path) — results are indexed as
@@ -292,8 +293,24 @@ export default function IocPanel({ caseId, onSearch }) {
           </p>
         </div>
 
-        {/* Export dropdown */}
+        {/* Save to unified findings store + Export */}
         {!loading && totalIocs > 0 && (
+          <div className="flex items-center gap-2">
+          <SaveToFindings
+            caseId={caseId}
+            kind="ioc"
+            sourceFeature="ioc_extraction"
+            buildItems={() => CATEGORIES.flatMap(cat =>
+              (iocs[cat.key] || []).map(i => ({
+                title: i.value,
+                severity: 'informational',
+                description: `${cat.label} · ${i.count ?? 0} event(s)`,
+                network: cat.isIp ? { [cat.key === 'src_ips' ? 'src_ip' : 'dst_ip']: i.value } : {},
+                payload: { category: cat.key, field: cat.searchField, count: i.count },
+                dedup_key: `${cat.key}:${i.value}`,
+              }))
+            )}
+          />
           <div className="relative">
             <button
               onClick={() => setShowExport(v => !v)}
@@ -322,6 +339,7 @@ export default function IocPanel({ caseId, onSearch }) {
                 </button>
               </div>
             )}
+          </div>
           </div>
         )}
       </div>
