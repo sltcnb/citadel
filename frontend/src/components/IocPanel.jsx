@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react'
 import { Loader2, Search, Copy, ChevronDown, ChevronRight, Download, Globe, X, Play, AlertTriangle, CheckCircle, ShieldCheck } from 'lucide-react'
 import { api } from '../api/client'
 import PanelHelp from './shared/PanelHelp'
-import SaveToFindings from './shared/SaveToFindings'
 
 // ── Threat-intel matching ─────────────────────────────────────────────────────
 // Runs the cti_match MODULE (one matching path) — results are indexed as
@@ -43,8 +42,8 @@ function ThreatMatch({ caseId, onSearch }) {
       {open && (
         <div className="p-3 space-y-2">
           <p className="text-[10px] text-gray-500">
-            Matches the case against the IOC database. Results are indexed as
-            <span className="font-mono text-fuchsia-600"> cti_match</span> events — persistent and searchable in the timeline.
+            Matches the case against the IOC database. Matches are saved to
+            <span className="font-semibold text-fuchsia-600"> Findings</span> — the one place every result lands: searchable, exportable, in the report, re-ingestable.
           </p>
           <div className="flex items-center gap-1.5 flex-wrap">
             {['ip', 'domain', 'url', 'hash', 'email', 'filename'].map(t => {
@@ -54,10 +53,10 @@ function ThreatMatch({ caseId, onSearch }) {
                   className={`badge text-[10px] border ${on ? 'bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200' : 'bg-gray-100 text-gray-400 border-gray-200'}`}>{t}</button>
               )
             })}
-            <button onClick={() => onSearch('artifact_type:cti_match')}
+            <button onClick={() => onSearch('artifact_type:finding AND source_feature:cti_match')}
               className="text-[11px] text-fuchsia-600 hover:text-fuchsia-700 inline-flex items-center gap-1 ml-auto"
-              title="Show CTI matches in the timeline">
-              <Search size={10} /> View in timeline
+              title="Show CTI matches in Findings">
+              <Search size={10} /> View matches
             </button>
             <button onClick={run} disabled={status === 'running'} className="btn-primary text-[11px] py-0.5">
               {status === 'running' ? <Loader2 size={11} className="animate-spin" /> : <Play size={11} />} Run match
@@ -79,7 +78,7 @@ function ThreatMatch({ caseId, onSearch }) {
           {status?.error && <p className="text-[11px] text-red-500 flex items-center gap-1"><AlertTriangle size={11} /> {status.error}</p>}
           {status === 'started' && (
             <p className="text-[11px] text-green-700 flex items-center gap-1">
-              <CheckCircle size={11} /> Match started — results appear in the timeline + Module Runs shortly.
+              <CheckCircle size={11} /> Match started — results appear in Findings shortly.
             </p>
           )}
         </div>
@@ -293,24 +292,8 @@ export default function IocPanel({ caseId, onSearch }) {
           </p>
         </div>
 
-        {/* Save to unified findings store + Export */}
+        {/* Export dropdown */}
         {!loading && totalIocs > 0 && (
-          <div className="flex items-center gap-2">
-          <SaveToFindings
-            caseId={caseId}
-            kind="ioc"
-            sourceFeature="ioc_extraction"
-            buildItems={() => CATEGORIES.flatMap(cat =>
-              (iocs[cat.key] || []).map(i => ({
-                title: i.value,
-                severity: 'informational',
-                description: `${cat.label} · ${i.count ?? 0} event(s)`,
-                network: cat.isIp ? { [cat.key === 'src_ips' ? 'src_ip' : 'dst_ip']: i.value } : {},
-                payload: { category: cat.key, field: cat.searchField, count: i.count },
-                dedup_key: `${cat.key}:${i.value}`,
-              }))
-            )}
-          />
           <div className="relative">
             <button
               onClick={() => setShowExport(v => !v)}
@@ -339,7 +322,6 @@ export default function IocPanel({ caseId, onSearch }) {
                 </button>
               </div>
             )}
-          </div>
           </div>
         )}
       </div>

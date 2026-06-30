@@ -164,7 +164,7 @@ const PLATFORMS = [
     selectedBorder: 'border-blue-500',
     selectedBg: 'bg-blue-50',
     desc: 'Live system, mounted directory (--path), or external disk (--disk)',
-    tip: 'Requires Python 3.8+ on target. Build a zero-dependency EXE with build.bat.',
+    tip: 'No Python needed — run.bat auto-downloads a portable Python if the target has none (pass -Offline to require a bundled/system one).',
     artifacts: WINDOWS_ARTIFACTS,
   },
   {
@@ -178,7 +178,7 @@ const PLATFORMS = [
     selectedBorder: 'border-emerald-500',
     selectedBg: 'bg-emerald-50',
     desc: 'Workstation or server — run as root',
-    tip: 'Requires Python 3.8+ on target. Build a zero-dependency binary with ./build.sh.',
+    tip: 'No Python needed — run.sh auto-downloads a portable Python if the target has none (pass --offline to require a bundled/system one).',
     artifacts: LINUX_ARTIFACTS,
   },
   {
@@ -192,7 +192,7 @@ const PLATFORMS = [
     selectedBorder: 'border-sky-500',
     selectedBg: 'bg-sky-50',
     desc: 'Workstation or laptop — run as root or with sudo',
-    tip: 'Requires Python 3.8+ on target. SIP must allow /var/log access for full coverage.',
+    tip: 'No Python needed — run.sh auto-downloads a portable Python if absent. SIP must allow /var/log access for full coverage.',
     artifacts: MACOS_ARTIFACTS,
   },
   {

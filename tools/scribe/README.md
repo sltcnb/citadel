@@ -10,6 +10,20 @@ into the API image. `api/routers/reports.py` only gathers case data (ES/Redis) a
 from scribe import render_markdown, render_html, merge_template, TEMPLATE_DEFAULTS
 ```
 
+## Pipeline position
+
+```
+case (timeline · detections · findings · notes) ──▶ Scribe ──▶ HTML / PDF / Markdown / DOCX
+```
+
+- **Inputs** — a Citadel case: gathered ES/Redis data (events, detections, CTI hits, flagged/pinned items, notes, AI report).
+- **Outputs** — a shareable report (`artifact_type: report`) — graphical HTML (print-to-PDF), Markdown, DOCX; STIX/MISP/JSON planned.
+- **Dependencies** — Elasticsearch.
+
+## Run / use
+
+`api/routers/reports.py` gathers case data and calls the engine; `scribe --version` is the health check. The standalone multi-format CLI is in progress (see capabilities below).
+
 ## Capabilities
 - [●] Markdown report
 - [●] Graphical HTML report — stat cards, bar charts, real tables (print-to-PDF)
