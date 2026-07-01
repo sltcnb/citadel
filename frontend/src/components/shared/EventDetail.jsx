@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { X, Flag, Tag, Plus, Minus, Save, Search, Shield, AlertTriangle, Brain, Loader2, Clock, Download, FileText, Check, ChevronUp, ChevronDown, Code2, Copy, Bookmark } from 'lucide-react'
+import { useResizableWidth, DrawerResizeHandle } from './resizableDrawer'
 import { api, getToken } from '../../api/client'
 import { extractIocs, iocSearchQuery } from '../../utils/ioc'
 import { getMitre, TACTIC_COLORS } from '../../utils/mitre'
@@ -43,6 +44,7 @@ function Highlight({ text, query }) {
 }
 
 export default function EventDetail({ event: initialEvent, caseId, onClose, onFilterIn, onFilterOut, onFlagged }) {
+  const [detailWidth, resizeHandle] = useResizableWidth('eventDetail', 440, { min: 320 })
   const [event, setEvent]             = useState(initialEvent)
   const [note, setNote]               = useState(event.analyst_note || '')
   const [tagInput, setTagInput]       = useState('')
@@ -234,7 +236,11 @@ export default function EventDetail({ event: initialEvent, caseId, onClose, onFi
   )
 
   return (
-    <div className="w-[440px] flex-shrink-0 bg-white border-l border-gray-200 flex flex-col overflow-hidden">
+    <div
+      className="relative flex-shrink-0 bg-white border-l border-gray-200 flex flex-col overflow-hidden"
+      style={{ width: detailWidth }}
+    >
+      <DrawerResizeHandle {...resizeHandle} />
       {/* Find bar */}
       {findOpen && (
         <div className="flex items-center gap-1.5 px-2 py-1.5 bg-yellow-50 border-b border-yellow-200 flex-shrink-0">

@@ -2202,6 +2202,70 @@ export default function CaseTimeline() {
 
   const artifactTypes = caseData?.artifact_types || []
 
+  // ── Data-driven toolbar ─────────────────────────────────────────────────────
+  // The Detect / Investigate / Case menus are generated from a capability list
+  // rather than hard-coded, so the toolbar advertises only what THIS case + the
+  // active licence can actually do. `show` gates each item; a group with no
+  // visible items renders nothing. `hasEvents` = there is something to analyse.
+  const hasEvents = (caseData?.event_count || 0) > 0
+  const TOOLBAR_GROUPS = [
+    {
+      key: 'detect', label: 'Detect', icon: <Bell size={14} />,
+      items: [
+        { key: 'rules', label: 'Detection Rules', icon: <Bell size={13} />, active: showAlertRules,
+          title: 'Run the Sigma/EQL rule library against this case',
+          show: rulesEnabled && hasEvents, onClick: () => setShowAlertRules(v => !v) },
+        { key: 'anomaly', label: 'Anomalies', icon: <Activity size={13} />, active: showAnomaly,
+          title: 'Statistical z-score outliers (host × event_id × day)',
+          show: hasEvents, onClick: () => setShowAnomaly(true) },
+        { key: 'baseline', label: 'Baseline / rare artifacts', icon: <Layers size={13} />, active: showBaseline,
+          title: 'Stack a field; surface values rare across the case but present on a host',
+          show: hasEvents, onClick: () => setShowBaseline(true) },
+        { key: 'mitre', label: 'MITRE coverage', icon: <Target size={13} />, active: showMitre,
+          title: 'ATT&CK technique coverage for this case',
+          show: hasEvents, onClick: () => setShowMitre(true) },
+      ],
+    },
+    {
+      key: 'investigate', label: 'Investigate', icon: <Crosshair size={14} />,
+      items: [
+        { key: 'iocs', label: 'IOCs', icon: <Crosshair size={13} />, active: showIocs,
+          title: 'Observed indicators + threat-intel matching',
+          show: hasEvents, onClick: () => setShowIocs(v => !v) },
+        { key: 'ptree', label: 'Process Tree', icon: <GitBranch size={13} />, active: showProcessTree,
+          title: 'Parent→child process chains (EVTX / Sysmon / auditd)',
+          show: hasEvents, onClick: () => setShowProcessTree(true) },
+        { key: 'graph', label: 'Entity graph', icon: <Network size={13} />, active: showGraph,
+          title: 'Host ↔ user ↔ IP relationships (lateral movement)',
+          show: hasEvents, onClick: () => setShowGraph(true) },
+        { key: 'killchain', label: 'Kill chain', icon: <Crosshair size={13} />, active: showKillChain,
+          title: 'Assemble the attack story around an anchor event',
+          show: hasEvents, onClick: () => setShowKillChain(true) },
+        { key: 'copilot', label: 'Co-Pilot — watch & memory', icon: <Bot size={13} />, active: showCoPilot,
+          title: "What's new since you last looked + cross-case IOC memory",
+          show: true, onClick: () => setShowCoPilot(true) },
+      ],
+    },
+    {
+      key: 'case', label: 'Case', icon: <FileText size={14} />,
+      items: [
+        { key: 'notes', label: 'Notes', icon: <FileText size={13} />, active: showNotes,
+          title: 'Free-form case notes',
+          show: true, onClick: () => setShowNotes(v => !v) },
+        { key: 'templates', label: 'Templates', icon: <LayoutTemplate size={13} />,
+          title: 'Apply a pre-canned investigation template (ransomware / insider / phishing)',
+          show: true, onClick: () => setShowTemplates(true) },
+        { key: 'report', label: 'Report', icon: <FileDown size={13} />,
+          title: 'Generate a Markdown / HTML case report',
+          show: true, onClick: () => setShowReport(true) },
+        { key: 'evidence', label: 'Evidence chain', icon: <Shield size={13} />, active: showEvidence,
+          title: 'Signed chain-of-custody — verify integrity, export court-ready manifest',
+          show: true, onClick: () => setShowEvidence(true) },
+      ],
+    },
+  ].map(g => ({ ...g, items: g.items.filter(i => i.show) }))
+   .filter(g => g.items.length > 0)
+
   return (
     <div className="flex flex-col h-full">
 
@@ -2335,71 +2399,17 @@ export default function CaseTimeline() {
             </button>
           )}
 
-          {/* Detect — find what's suspicious */}
-          <ToolbarMenu
-            label="Detect"
-            icon={<Bell size={14} />}
-            anyActive={showAlertRules || showAnomaly || showBaseline || showMitre}
-            items={[
-              ...(rulesEnabled ? [{ key: 'rules', label: 'Detection Rules', icon: <Bell size={13} />, active: showAlertRules,
-                title: 'Run the Sigma/EQL rule library against this case',
-                onClick: () => setShowAlertRules(v => !v) }] : []),
-              { key: 'anomaly', label: 'Anomalies', icon: <Activity size={13} />, active: showAnomaly,
-                title: 'Statistical z-score outliers (host × event_id × day)',
-                onClick: () => setShowAnomaly(true) },
-              { key: 'baseline', label: 'Baseline / rare artifacts', icon: <Layers size={13} />, active: showBaseline,
-                title: 'Stack a field; surface values rare across the case but present on a host',
-                onClick: () => setShowBaseline(true) },
-              { key: 'mitre', label: 'MITRE coverage', icon: <Target size={13} />, active: showMitre,
-                title: 'ATT&CK technique coverage for this case',
-                onClick: () => setShowMitre(true) },
-            ]}
-          />
-
-          {/* Investigate — dig into and pivot around findings */}
-          <ToolbarMenu
-            label="Investigate"
-            icon={<Crosshair size={14} />}
-            anyActive={showIocs || showProcessTree || showGraph || showKillChain || showCoPilot}
-            items={[
-              { key: 'iocs', label: 'IOCs', icon: <Crosshair size={13} />, active: showIocs,
-                title: 'Observed indicators + threat-intel matching',
-                onClick: () => setShowIocs(v => !v) },
-              { key: 'ptree', label: 'Process Tree', icon: <GitBranch size={13} />, active: showProcessTree,
-                title: 'Parent→child process chains (EVTX / Sysmon / auditd)',
-                onClick: () => setShowProcessTree(true) },
-              { key: 'graph', label: 'Entity graph', icon: <Network size={13} />, active: showGraph,
-                title: 'Host ↔ user ↔ IP relationships (lateral movement)',
-                onClick: () => setShowGraph(true) },
-              { key: 'killchain', label: 'Kill chain', icon: <Crosshair size={13} />, active: showKillChain,
-                title: 'Assemble the attack story around an anchor event',
-                onClick: () => setShowKillChain(true) },
-              { key: 'copilot', label: 'Co-Pilot — watch & memory', icon: <Bot size={13} />, active: showCoPilot,
-                title: "What's new since you last looked + cross-case IOC memory",
-                onClick: () => setShowCoPilot(true) },
-            ]}
-          />
-
-          {/* Case — document, template, report, prove integrity */}
-          <ToolbarMenu
-            label="Case"
-            icon={<FileText size={14} />}
-            anyActive={showNotes || showTemplates || showReport || showEvidence}
-            items={[
-              { key: 'notes', label: 'Notes', icon: <FileText size={13} />, active: showNotes,
-                title: 'Free-form case notes',
-                onClick: () => setShowNotes(v => !v) },
-              { key: 'templates', label: 'Templates', icon: <LayoutTemplate size={13} />,
-                title: 'Apply a pre-canned investigation template (ransomware / insider / phishing)',
-                onClick: () => setShowTemplates(true) },
-              { key: 'report', label: 'Report', icon: <FileDown size={13} />,
-                title: 'Generate a Markdown / HTML case report',
-                onClick: () => setShowReport(true) },
-              { key: 'evidence', label: 'Evidence chain', icon: <Shield size={13} />, active: showEvidence,
-                title: 'Signed chain-of-custody — verify integrity, export court-ready manifest',
-                onClick: () => setShowEvidence(true) },
-            ]}
-          />
+          {/* Detect / Investigate / Case — generated from the capability list
+              above so the toolbar only advertises what this case can do. */}
+          {TOOLBAR_GROUPS.map(g => (
+            <ToolbarMenu
+              key={g.key}
+              label={g.label}
+              icon={g.icon}
+              anyActive={g.items.some(i => i.active)}
+              items={g.items}
+            />
+          ))}
 
           <button
             onClick={() => { setModulesView('launch'); setShowModules(true) }}
