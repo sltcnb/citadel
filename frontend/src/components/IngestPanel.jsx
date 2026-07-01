@@ -11,9 +11,10 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Upload, Cloud, X, RefreshCw, AlertTriangle,
   ChevronRight, ChevronDown, Folder, File, Loader2, Database, Download, Trash2,
-  HardDrive, Play, Crosshair, FolderOpen, MonitorSmartphone,
+  HardDrive, Play, Crosshair, FolderOpen, MonitorSmartphone, Zap,
 } from 'lucide-react'
 import PanelHelp from './shared/PanelHelp'
+import { ResizableDrawer } from './shared/resizableDrawer'
 import ArtifactSelector from './shared/ArtifactSelector'
 import { api } from '../api/client'
 import { useUpload } from '../contexts/UploadContext'
@@ -884,7 +885,7 @@ function HarvestTab({ caseId, onJobsAdded }) {
 
 const JOB_SORT_ORDER = { RUNNING: 0, UPLOADING: 1, PENDING: 2, COMPLETED: 3, SKIPPED: 4, FAILED: 5 }
 
-export default function IngestPanel({ caseId, onClose, onComplete }) {
+export default function IngestPanel({ caseId, onClose, onComplete, autoPilot, setAutoPilot }) {
   const [tab,          setTab]          = useState('upload')
   const [jobs,         setJobs]         = useState([])
   const [jobStatuses,  setJobStatuses]  = useState({})
@@ -1016,11 +1017,7 @@ export default function IngestPanel({ caseId, onClose, onComplete }) {
   ].filter(f => f.id === null || f.count > 0)
 
   return (
-    <div className="panel-backdrop" onClick={onClose}>
-      <div
-        className="panel-drawer md:w-[580px]"
-        onClick={e => e.stopPropagation()}
-      >
+    <ResizableDrawer slug="ingest" defaultWidth={580} onClose={onClose}>
         {/* ── Header + tabs ── */}
         <div className="flex items-center gap-3 px-5 py-3 border-b border-gray-200 flex-shrink-0">
           <Upload size={15} className="text-brand-accent flex-shrink-0" />
@@ -1044,7 +1041,7 @@ export default function IngestPanel({ caseId, onClose, onComplete }) {
             ))}
           </div>
 
-          <button onClick={onClose} className="btn-ghost p-1.5 rounded-lg ml-auto">
+          <button onClick={onClose} className="btn-ghost p-1.5 rounded-lg ml-auto" title="Close panel (Esc)">
             <X size={16} />
           </button>
         </div>
@@ -1058,6 +1055,37 @@ export default function IngestPanel({ caseId, onClose, onComplete }) {
               data={['Nothing — this is where data first enters the case']}
               tip="ZIP/TAR archives are extracted recursively; large files upload in resumable chunks." />
           </div>
+
+          {/* Auto-AI — same toggle as the case toolbar, surfaced here so you can
+              arm the autonomous investigation at the moment you add evidence. */}
+          {setAutoPilot && (
+            <div className="px-4 pb-3">
+              <button
+                onClick={() => setAutoPilot(v => !v)}
+                className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg border text-left transition-colors ${
+                  autoPilot
+                    ? 'bg-purple-50 border-purple-300 text-purple-700'
+                    : 'bg-white border-gray-200 text-gray-500 hover:border-gray-300'
+                }`}
+                title={autoPilot
+                  ? 'Auto-AI is ON — the AI investigation launches automatically when this ingest finishes. Click to turn off.'
+                  : 'Auto-AI is OFF — click to auto-launch the AI investigation when ingest completes.'}
+              >
+                <Zap size={14} className={autoPilot ? 'text-purple-600' : 'text-gray-400'} />
+                <span className="flex-1">
+                  <span className="text-xs font-semibold">Auto-AI: {autoPilot ? 'ON' : 'OFF'}</span>
+                  <span className="block text-[10px] opacity-80 font-normal">
+                    {autoPilot
+                      ? 'Autonomous triage will start when these jobs finish indexing.'
+                      : 'Launch the AI investigation automatically once ingest completes.'}
+                  </span>
+                </span>
+                <span className={`w-8 h-4 rounded-full flex-shrink-0 relative transition-colors ${autoPilot ? 'bg-purple-500' : 'bg-gray-300'}`}>
+                  <span className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all ${autoPilot ? 'left-4' : 'left-0.5'}`} />
+                </span>
+              </button>
+            </div>
+          )}
           {tab === 'upload'  && <UploadTab  caseId={caseId} onJobsAdded={addJobs} />}
           {tab === 's3'      && <S3Tab      caseId={caseId} onJobsAdded={addJobs} />}
           {tab === 'harvest' && <HarvestTab caseId={caseId} onJobsAdded={reloadJobs} />}
@@ -1168,7 +1196,6 @@ export default function IngestPanel({ caseId, onClose, onComplete }) {
             )}
           </div>
         </div>
-      </div>
-    </div>
+    </ResizableDrawer>
   )
 }

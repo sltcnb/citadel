@@ -1,5 +1,6 @@
 import { Loader2, X, AlertTriangle } from 'lucide-react'
 import PanelHelp from './PanelHelp'
+import { useResizableWidth, DrawerResizeHandle } from './resizableDrawer'
 
 /**
  * PanelShell — the ONE standard chrome for every case side-drawer panel.
@@ -12,14 +13,16 @@ import PanelHelp from './PanelHelp'
  *
  * Wrap a panel's body in <PanelShell> and you get, for free and identically
  * everywhere:
- *   • one drawer width + backdrop + click-out-to-close
+ *   • one backdrop + click-out-to-close
+ *   • a DRAGGABLE left edge — the analyst sizes the drawer to their screen and
+ *     it sticks (per-panel, in localStorage); double-click the edge resets it
  *   • a header: icon + title + optional count + an actions slot + close (X)
  *   • a collapsible "How to use this" (PanelHelp) when help props are passed
  *   • standard loading / error / empty states
  *
  * Props:
  *   icon       — a lucide icon component (e.g. Target)
- *   title      — panel title (string)
+ *   title      — panel title (string); also seeds the resize/help storage key
  *   count      — optional small count/subtitle node shown next to the title
  *   onClose    — close handler
  *   loading    — show the standard spinner
@@ -28,8 +31,22 @@ import PanelHelp from './PanelHelp'
  *   emptyText  — message for the empty state
  *   actions    — node rendered in the header right side (export / save buttons)
  *   help       — { use, when, data, tip } → renders a PanelHelp block
- *   width      — tailwind width class; defaults to the standard drawer width
+ *   width      — default desktop width; tailwind class (e.g. 'md:w-[900px]')
+ *                or a number of px. Used only as the initial/reset width — the
+ *                analyst's dragged width takes over once set.
+ *   resizeId   — override the localStorage key slug (defaults to the title)
  */
+function slugify(s) {
+  return (s || 'panel').toString().replace(/\s+/g, '_').replace(/[^\w-]/g, '').toLowerCase()
+}
+
+// Pull a pixel default out of whatever `width` shape the caller passed.
+function defaultWidthPx(width) {
+  if (typeof width === 'number') return width
+  const m = /\[(\d+)px\]/.exec(String(width || ''))
+  return m ? parseInt(m[1], 10) : 900
+}
+
 export default function PanelShell({
   icon: Icon,
   title,
@@ -42,11 +59,20 @@ export default function PanelShell({
   actions = null,
   help = null,
   width = 'md:w-[900px]',
+  resizeId,
   children,
 }) {
+  const slug = resizeId || slugify(title)
+  const [drawerWidth, handleProps] = useResizableWidth(slug, defaultWidthPx(width))
+
   return (
     <div className="panel-backdrop" onClick={onClose}>
-      <div className={`panel-drawer ${width}`} onClick={e => e.stopPropagation()}>
+      <div
+        className="panel-drawer"
+        style={{ width: drawerWidth, maxWidth: '96vw' }}
+        onClick={e => e.stopPropagation()}
+      >
+        <DrawerResizeHandle {...handleProps} />
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 flex-shrink-0">
           <div className="flex items-center gap-2 min-w-0">
             {Icon && <Icon size={16} className="text-brand-accent flex-shrink-0" />}
@@ -55,7 +81,7 @@ export default function PanelShell({
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
             {actions}
-            <button onClick={onClose} className="btn-ghost p-1.5 rounded-lg" title="Close">
+            <button onClick={onClose} className="btn-ghost p-1.5 rounded-lg" title="Close panel (Esc)">
               <X size={16} />
             </button>
           </div>

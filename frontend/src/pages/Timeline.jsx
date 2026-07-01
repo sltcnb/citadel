@@ -8,6 +8,7 @@ import {
 import { api } from '../api/client'
 import EventDetail from '../components/shared/EventDetail'
 import StatsPopover from '../components/shared/StatsPopover'
+import PanelHelp from '../components/shared/PanelHelp'
 
 // Date-range filter state (fromTs/toTs) can arrive from URL params, localStorage
 // or the AI assist — none of which are guaranteed to be valid ISO. Calling
@@ -423,6 +424,28 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
   const [sortField, setSortField]           = useState('timestamp')
   const [sortOrder, setSortOrder]           = useState('desc')
   const [colWidths, setColWidths]           = useState(loadSavedWidths)
+
+  // Draggable filter-sidebar width — analysts on wide facet lists want it wider,
+  // those chasing screen real-estate want it narrow. Persisted like the columns.
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    try { const n = parseInt(localStorage.getItem('timeline_sidebar_w'), 10); if (!isNaN(n) && n >= 140) return n } catch { /* ignore */ }
+    return 176
+  })
+  const sidebarWidthRef = useRef(sidebarWidth)
+  sidebarWidthRef.current = sidebarWidth
+  function onSidebarResizeStart(e) {
+    e.preventDefault()
+    const startX = e.clientX
+    const sw = sidebarWidthRef.current
+    function mv(ev) { setSidebarWidth(Math.max(140, Math.min(480, sw + ev.clientX - startX))) }
+    function up() {
+      document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up)
+      document.body.style.cursor = ''; document.body.style.userSelect = ''
+      try { localStorage.setItem('timeline_sidebar_w', String(sidebarWidthRef.current)) } catch { /* ignore */ }
+    }
+    document.body.style.cursor = 'col-resize'; document.body.style.userSelect = 'none'
+    document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up)
+  }
 
   const loaderRef       = useRef(null)
   const searchRef       = useRef(null)
@@ -1034,15 +1057,34 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
 
   return (
     <div className="flex h-full">
-      {/* ── Filter sidebar ─────────────────────────────── */}
-      <div className="w-44 flex-shrink-0 bg-gray-50 border-r border-gray-200 flex flex-col">
+      {/* ── Filter sidebar (draggable width) ───────────── */}
+      <div
+        className="relative flex-shrink-0 bg-gray-50 border-r border-gray-200 flex flex-col"
+        style={{ width: sidebarWidth }}
+      >
         <div className="p-3 border-b border-gray-200">
           <p className="flex items-center gap-1.5 text-xs font-semibold text-gray-500 uppercase tracking-widest">
             <Filter size={11} /> Filters
           </p>
         </div>
 
+        {/* Right-edge resize grip — drag to widen/narrow, self-labelled */}
+        <div
+          onMouseDown={onSidebarResizeStart}
+          onDoubleClick={() => { setSidebarWidth(176); try { localStorage.setItem('timeline_sidebar_w', '176') } catch { /* ignore */ } }}
+          title="Drag to resize the filter sidebar · double-click to reset"
+          className="group absolute right-0 top-0 bottom-0 w-1.5 -mr-0.5 cursor-col-resize z-20 flex items-center justify-center"
+        >
+          <div className="w-px h-full bg-transparent group-hover:bg-brand-accent/40 transition-colors" />
+        </div>
+
         <div className="p-3 space-y-3 flex-1 overflow-y-auto">
+          <PanelHelp
+            title="Timeline filters"
+            use="Narrows the event table by artifact type, time range, severity, flagged state and top facet values — all ANDed together."
+            when="Whenever the result set is too broad. Combine with the Lucene search box for precise pivots."
+            tip="Drag this sidebar's right edge to resize it. In the table, drag any column border to resize a column (double-click it to auto-fit)."
+          />
           {/* Artifact type — chips (≤6) or dropdown (>6) */}
           {(() => {
             const visibleTypes = artifactTypes.filter(at => !CHIP_BLACKLIST.has(at))
@@ -1154,6 +1196,7 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
                 <button
                   key={p.id}
                   onClick={() => applyPreset(p.id)}
+                  title={`Show only events from the last ${p.label}`}
                   className={`text-[10px] py-0.5 rounded border transition-colors ${
                     activePreset === p.id
                       ? 'bg-brand-accent text-white border-brand-accent'
@@ -1165,6 +1208,7 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
               ))}
               <button
                 onClick={() => { setShowCustomRange(v => !v); setActivePreset(null) }}
+                title="Set an explicit from/to range or a natural-language date"
                 className={`text-[10px] py-0.5 rounded border transition-colors col-span-3 mt-0.5 ${
                   showCustomRange
                     ? 'bg-brand-accent text-white border-brand-accent'
@@ -1293,6 +1337,9 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
                 <button
                   key={value || 'all'}
                   onClick={() => setSelectedLevel(value)}
+                  title={value === '' ? 'Show all severity levels'
+                    : value === 'none' ? 'Show only events with no severity level'
+                    : `Show only ${label} severity events`}
                   className={`text-[10px] px-1.5 py-0.5 rounded border transition-colors ${
                     selectedLevel === value
                       ? (value === '' || value === 'none') ? 'bg-gray-600 text-white border-gray-500' : cls
@@ -1309,6 +1356,7 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
           <div>
             <button
               onClick={() => setFlaggedOnly(v => !v)}
+              title="Show only events you've flagged as relevant"
               className={`flex items-center gap-2 w-full text-xs px-2 py-1.5 rounded-lg border transition-colors ${
                 flaggedOnly
                   ? 'bg-red-50 text-red-600 border-red-200'
@@ -1323,6 +1371,7 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
           {hasFilters && (
             <button
               onClick={() => { setSelectedTypesStr(''); setFromTs(''); setToTs(''); setFlaggedOnly(false); setSelectedLevel(''); setFacetFilters({}) }}
+              title="Reset every sidebar filter to default"
               className="btn-ghost w-full text-xs justify-center"
             >
               <X size={11} /> Clear all
@@ -1502,7 +1551,7 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
               <Sparkles size={13} />
             </button>
 
-            <button type="submit" className="btn-primary text-xs px-4">Search</button>
+            <button type="submit" className="btn-primary text-xs px-4" title="Run the Lucene query (Enter)">Search</button>
 
             {(query || inputVal) && (
               <button type="button" onClick={clearSearch} className="btn-ghost text-xs" title="Clear search">
