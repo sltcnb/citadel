@@ -9,7 +9,7 @@ import {
   Monitor, HardDrive, Globe, Brain,
   Binary, Bug, Network, FileImage, TextSearch, Tag,
   GitBranch, Target, Activity, LayoutTemplate, FileDown,
-  Printer, FileBarChart, Layers, Bot, Pencil, Copy, Zap, ClipboardList,
+  Printer, FileBarChart, Layers, Bot, Pencil, Copy, Zap,
 } from 'lucide-react'
 
 const MOD_CATEGORY_ICONS = {
@@ -45,8 +45,9 @@ import EntityGraphPanel from '../components/shared/EntityGraphPanel'
 import KillChainPanel from '../components/shared/KillChainPanel'
 import EvidencePanel from '../components/shared/EvidencePanel'
 import CoPilotPanel from '../components/shared/CoPilotPanel'
-import FindingsPanel from '../components/shared/FindingsPanel'
 import ToolbarMenu from '../components/shared/ToolbarMenu'
+import PanelHelp from '../components/shared/PanelHelp'
+import { ResizableDrawer } from '../components/shared/resizableDrawer'
 import { useLicense } from '../contexts/LicenseContext'
 import { useCollab } from '../hooks/useCollab'
 import { usePersistedState } from '../hooks/usePersistedState'
@@ -99,12 +100,7 @@ function AlertResultsPanel({ results, caseId, onClose }) {
   const navigate = useNavigate()
 
   return (
-    <div className="panel-backdrop" onClick={onClose}>
-      <div
-        className="absolute right-0 top-0 h-full w-[580px] bg-white border-l border-gray-200 flex flex-col"
-        style={{ boxShadow: '-4px 0 24px rgba(0,0,0,0.10)' }}
-        onClick={e => e.stopPropagation()}
-      >
+    <ResizableDrawer slug="alertResults" defaultWidth={580} onClose={onClose}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
           <div>
             <div className="flex items-center gap-2">
@@ -124,6 +120,12 @@ function AlertResultsPanel({ results, caseId, onClose }) {
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          <PanelHelp
+            title="Alert Results"
+            use="Shows which detection rules fired against this case, how many events each matched, and sample hits."
+            when="Right after running the rule library — to triage what lit up before diving into the timeline."
+            tip="Expand a rule, then click a sample event or 'View all…' to pivot the timeline to those hits."
+          />
           {matches.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-center">
               <CheckCircle size={40} className="text-green-400 mb-3" />
@@ -134,8 +136,7 @@ function AlertResultsPanel({ results, caseId, onClose }) {
             <AlertMatchCard key={m.rule?.rule_id ?? m.rule?.name ?? i} match={m} caseId={caseId} navigate={navigate} />
           ))}
         </div>
-      </div>
-    </div>
+    </ResizableDrawer>
   )
 }
 
@@ -297,7 +298,7 @@ async function withRetry(fn, { attempts = 4, timeoutMs = 15000, onAttempt } = {}
   throw lastErr
 }
 
-function ModuleLaunchModal({ caseId, onClose, onRunCreated, onViewRuns }) {
+function ModuleLaunchModal({ caseId, onClose, onRunCreated, onViewRuns, embedded = false }) {
   const [modules, setModules]               = useState([])
   const [sources, setSources]               = useState([])
   const [selectedModule, setSelectedModule] = useState(null)
@@ -605,14 +606,10 @@ function ModuleLaunchModal({ caseId, onClose, onRunCreated, onViewRuns }) {
   const yaraInvalid = selectedModule?.id === 'yara' && yaraValid && !yaraValid.valid
   const canRun = selectedModule && selectedJobs.size > 0 && !running && !yaraInvalid && !runningAll
 
-  return (
-    <div className="panel-backdrop" onClick={onClose}>
-      <div
-        className="absolute right-0 top-0 h-full w-[860px] bg-white border-l border-gray-200 flex flex-col"
-        style={{ boxShadow: '-6px 0 40px rgba(0,0,0,0.18)' }}
-        onClick={e => e.stopPropagation()}
-      >
+  const inner = (
+    <>
         {/* ── Header ────────────────────────────────────────────────────────── */}
+        {!embedded && (
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-200 bg-gray-50 flex-shrink-0">
           <div className="flex items-center gap-3">
             <div className="w-7 h-7 rounded-lg bg-brand-accent/15 flex items-center justify-center flex-shrink-0">
@@ -620,7 +617,7 @@ function ModuleLaunchModal({ caseId, onClose, onRunCreated, onViewRuns }) {
             </div>
             <div>
               <p className="font-semibold text-brand-text text-sm leading-tight">Run Analysis Module</p>
-              <p className="text-[11px] text-gray-500 leading-tight mt-px">Select module → pick files → launch · results land in Findings</p>
+              <p className="text-[11px] text-gray-500 leading-tight mt-px">Select module → pick files → launch · watch progress in Runs &amp; results</p>
             </div>
           </div>
           <div className="flex items-center gap-1.5">
@@ -629,11 +626,12 @@ function ModuleLaunchModal({ caseId, onClose, onRunCreated, onViewRuns }) {
                 <Clock size={13} /> Run status
               </button>
             )}
-            <button onClick={onClose} className="btn-ghost p-1.5 rounded-lg">
+            <button onClick={onClose} className="btn-ghost p-1.5 rounded-lg" title="Close panel (Esc)">
               <X size={15} />
             </button>
           </div>
         </div>
+        )}
 
         {loading ? (
           <div className="flex-1 flex flex-col items-center justify-center text-gray-500 gap-1">
@@ -1032,8 +1030,13 @@ function ModuleLaunchModal({ caseId, onClose, onRunCreated, onViewRuns }) {
             </button>
           </div>
         </div>
-      </div>
-    </div>
+    </>
+  )
+  if (embedded) return <div className="flex flex-col h-full min-h-0">{inner}</div>
+  return (
+    <ResizableDrawer slug="moduleLaunch" defaultWidth={860} onClose={onClose}>
+      {inner}
+    </ResizableDrawer>
   )
 }
 
@@ -1382,10 +1385,10 @@ function ModuleRunCard({
             </div>
           )}
 
-          {/* Results live in the single Findings store — this card shows run
-              STATUS only. The detections are written as findings (kind=module)
-              so they are queryable / exportable / reportable / re-ingestable in
-              one place instead of being a separate per-run output. */}
+          {/* Detections are indexed as findings (artifact_type:finding). The
+              card summarises them inline; the button pivots the timeline to this
+              run's detections. Pinning meaningful ones into the report happens
+              in the Report panel's "Module results to include" section. */}
           {preview.length > 0 && (
             <div className="border-t border-gray-100 px-4 py-3 bg-amber-50/40">
               <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -1399,11 +1402,11 @@ function ModuleRunCard({
                   )}
                 </p>
                 <button
-                  onClick={() => navigate(`/cases/${caseId}`, { state: { pivotQuery: `artifact_type:finding AND source_feature:"${run.module_id}"` } })}
+                  onClick={() => { onClose?.(); navigate(`/cases/${caseId}`, { state: { pivotQuery: `artifact_type:finding AND source_feature:"${run.module_id}"` } }) }}
                   className="btn-ghost text-[11px] px-2 py-1 rounded-lg inline-flex items-center gap-1 text-amber-700"
-                  title="Open these results in the Findings store"
+                  title="Show this run's detections in the timeline"
                 >
-                  <Search size={12} /> View {run.total_hits.toLocaleString()} in Findings
+                  <Search size={12} /> View {run.total_hits.toLocaleString()} in timeline
                 </button>
               </div>
             </div>
@@ -1478,7 +1481,7 @@ function ModuleRunCard({
 // ─────────────────────────────────────────────────────────────────────────────
 // ModuleRunsPanel
 // ─────────────────────────────────────────────────────────────────────────────
-function ModuleRunsPanel({ caseId, onClose }) {
+function ModuleRunsPanel({ caseId, onClose, embedded = false }) {
   const navigate              = useNavigate()
   const [runs, setRuns]       = useState([])
   const [loading, setLoading] = useState(true)
@@ -1566,18 +1569,13 @@ function ModuleRunsPanel({ caseId, onClose }) {
     }
   }, [filteredRuns])
 
-  return (
-    <div className="panel-backdrop" onClick={onClose}>
-      <div
-        className="absolute right-0 top-0 h-full w-[580px] bg-white border-l border-gray-200 flex flex-col"
-        style={{ boxShadow: '-4px 0 24px rgba(0,0,0,0.10)' }}
-        onClick={e => e.stopPropagation()}
-      >
+  const inner = (
+    <>
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
           <div className="flex items-center gap-2">
-            <Cpu size={16} className="text-brand-accent" />
-            <span className="font-semibold text-brand-text">Module run status</span>
+            {!embedded && <Cpu size={16} className="text-brand-accent" />}
+            <span className="font-semibold text-brand-text">{embedded ? 'Runs & results' : 'Module run status'}</span>
             {runs.length > 0 && (
               <span className="badge bg-gray-100 text-gray-600">
                 {filteredRuns.length !== runs.length
@@ -1587,20 +1585,22 @@ function ModuleRunsPanel({ caseId, onClose }) {
             )}
           </div>
           <div className="flex items-center gap-1.5">
-            <button onClick={fetchRuns} className="btn-ghost p-1.5 rounded-lg" title="Refresh">
+            <button onClick={fetchRuns} className="btn-ghost p-1.5 rounded-lg" title="Refresh run list">
               <RefreshCw size={14} />
             </button>
             <button
               onClick={() => setShowFilters(v => !v)}
-              title="Toggle filters"
+              title="Toggle filters — narrow by level, module, date, host, channel or MITRE tag"
               className={`btn-ghost p-1.5 rounded-lg flex items-center gap-1 text-xs transition-colors ${showFilters ? 'bg-brand-accent/10 text-brand-accent' : ''}`}
             >
               <Filter size={13} />
               {hasActiveFilters && <span className="w-1.5 h-1.5 rounded-full bg-brand-accent flex-shrink-0" />}
             </button>
-            <button onClick={onClose} className="btn-ghost p-1.5 rounded-lg">
-              <X size={16} />
-            </button>
+            {!embedded && (
+              <button onClick={onClose} className="btn-ghost p-1.5 rounded-lg" title="Close panel (Esc)">
+                <X size={16} />
+              </button>
+            )}
           </div>
         </div>
 
@@ -1866,6 +1866,13 @@ function ModuleRunsPanel({ caseId, onClose }) {
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          <PanelHelp
+            title="Module run status"
+            use="Live status of every module you launched — PENDING / RUNNING / COMPLETED / FAILED — with logs, retry, and cancel."
+            when="After launching modules, to confirm they finished (or catch and retry a failure), then open a run to see its detections."
+            data={['At least one launched module run for this case']}
+            tip="Use the funnel to filter by level, module, date, host, channel or MITRE tag. Auto-refreshes every 3s while runs are active."
+          />
 
           {loading ? (
             <div className="flex items-center justify-center py-16 text-gray-500">
@@ -1921,8 +1928,81 @@ function ModuleRunsPanel({ caseId, onClose }) {
             ))
           )}
         </div>
+    </>
+  )
+  if (embedded) return <div className="flex flex-col h-full min-h-0">{inner}</div>
+  return (
+    <ResizableDrawer slug="moduleRuns" defaultWidth={580} onClose={onClose}>
+      {inner}
+    </ResizableDrawer>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ModulesPanel — one home for module analysis: pick & launch, plus live run
+// status + logs + results. Two views behind a segmented switch so the whole
+// module workflow lives in a single, resizable, self-explaining panel.
+// ─────────────────────────────────────────────────────────────────────────────
+function ModulesPanel({ caseId, onClose, initialView = 'launch', onRunCreated }) {
+  const [view, setView] = usePersistedState(`fo_modulesview_${caseId}`, initialView)
+
+  return (
+    <ResizableDrawer slug="modules" defaultWidth={880} onClose={onClose}>
+      {/* Unified header — icon + title + segmented view switch + close */}
+      <div className="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-200 bg-gray-50 flex-shrink-0">
+        <div className="flex items-center gap-2 min-w-0">
+          <Cpu size={16} className="text-brand-accent flex-shrink-0" />
+          <span className="font-semibold text-brand-text">Modules</span>
+        </div>
+        <div className="flex items-center gap-1.5 flex-shrink-0">
+          <div className="flex gap-0.5 bg-gray-100 rounded-lg p-0.5">
+            {[
+              { id: 'launch', label: 'Launch', Icon: Play, title: 'Pick a module and files, then run it' },
+              { id: 'runs',   label: 'Runs & results', Icon: Clock, title: 'Live status, logs and detections of launched runs' },
+            ].map(({ id, label, Icon, title }) => (
+              <button
+                key={id}
+                onClick={() => setView(id)}
+                title={title}
+                className={`text-xs px-3 py-1 rounded-md transition-colors inline-flex items-center gap-1.5 ${
+                  view === id ? 'bg-white shadow-sm text-brand-text font-semibold' : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                <Icon size={12} /> {label}
+              </button>
+            ))}
+          </div>
+          <button onClick={onClose} className="btn-ghost p-1.5 rounded-lg" title="Close panel (Esc)">
+            <X size={16} />
+          </button>
+        </div>
       </div>
-    </div>
+
+      <div className="px-4 pt-3 flex-shrink-0">
+        <PanelHelp
+          title="Modules"
+          use="Runs forensic analysis tools (Hayabusa, YARA, CAPA, Volatility, RegRipper…) against ingested files. Launch here; watch progress, logs and detections under Runs & results."
+          when="After ingesting evidence — to extract detections a raw timeline scan would miss."
+          data={['Ingested case files matching a module’s declared inputs (the Launch view highlights compatible modules)']}
+          tip="Launch auto-switches to Runs & results. Meaningful detections can be pinned into the case report."
+        />
+      </div>
+
+      {/* Body — one embedded view at a time, both content-only (no own drawer) */}
+      <div className="flex-1 min-h-0 flex flex-col">
+        {view === 'launch' ? (
+          <ModuleLaunchModal
+            caseId={caseId}
+            embedded
+            onClose={onClose}
+            onRunCreated={(run) => { onRunCreated?.(run); setView('runs') }}
+            onViewRuns={() => setView('runs')}
+          />
+        ) : (
+          <ModuleRunsPanel caseId={caseId} embedded onClose={onClose} />
+        )}
+      </div>
+    </ResizableDrawer>
   )
 }
 
@@ -1937,6 +2017,11 @@ export default function CaseTimeline() {
   const _me = _currentUser()
   const { presence } = useCollab(useParams().caseId, _me)
   const { caseId } = useParams()
+  // Toolbar is agile: capabilities the current licence doesn't advertise are
+  // hidden rather than shown as dead buttons.
+  const license = useLicense()
+  const aiEnabled    = !!license?.features?.ai_assist
+  const rulesEnabled = license?.features?.alert_rules !== false
   const navigate = useNavigate()
   const location = useLocation()
   const [searchParams] = useSearchParams()
@@ -1952,11 +2037,10 @@ export default function CaseTimeline() {
   // Panel open/close state — persisted per-case (fo_panel_<name>_<caseId>) so the
   // analyst's Detect / Investigate / Case / AI workspace survives reload, nav, and
   // browser restart. Each case keeps its own layout.
+  // Unified Modules panel: launch + live run status/logs/results in one drawer.
+  // `modulesView` seeds which view it opens on ('launch' | 'runs').
   const [showModules, setShowModules]       = usePersistedState(`fo_panel_modules_${caseId}`, false)
-  // Module RUN STATUS (not an output) — status/progress/retry/logs for launched
-  // modules. Results land in Findings; this only answers "is it running / did it
-  // fail / retry it". Opened from the Modules launch flow, not the main toolbar.
-  const [showModuleRuns, setShowModuleRuns] = usePersistedState(`fo_panel_moduleRuns_${caseId}`, false)
+  const [modulesView, setModulesView]       = useState('launch')
   const [showAlertRules, setShowAlertRules] = usePersistedState(`fo_panel_alertRules_${caseId}`, false)
   const [showNotes, setShowNotes]           = usePersistedState(`fo_panel_notes_${caseId}`, false)
   const [showIocs, setShowIocs]             = usePersistedState(`fo_panel_iocs_${caseId}`, false)
@@ -1970,7 +2054,6 @@ export default function CaseTimeline() {
   const [showKillChain, setShowKillChain]   = usePersistedState(`fo_panel_killchain_${caseId}`, false)
   const [showEvidence, setShowEvidence]     = usePersistedState(`fo_panel_evidence_${caseId}`, false)
   const [showCoPilot, setShowCoPilot]       = usePersistedState(`fo_panel_copilot_${caseId}`, false)
-  const [showFindings, setShowFindings]     = usePersistedState(`fo_panel_findings_${caseId}`, false)
   const [showAI, setShowAI]                 = usePersistedState(`fo_panel_ai_${caseId}`, false)
   // Auto-pilot: kick off an autonomous AI investigation the moment evidence
   // ingestion finishes (active jobs fall to 0). Persisted opt-out per case.
@@ -2089,14 +2172,6 @@ export default function CaseTimeline() {
     }
   }
 
-  function handleRunCreated() {
-    // After launch, show RUN STATUS so the analyst can watch progress / catch a
-    // failure / retry. The status cards link to Findings (the single output)
-    // once a run completes.
-    setShowModules(false)
-    setShowModuleRuns(true)
-  }
-
   async function saveCompany() {
     setEditingCompany(false)
     try {
@@ -2211,6 +2286,7 @@ export default function CaseTimeline() {
           <button
             onClick={() => setShowIngest(true)}
             className="btn-primary"
+            title="Add evidence — upload files, import from S3, or run a server-side harvest"
           >
             <Upload size={14} />
             Ingest
@@ -2234,37 +2310,30 @@ export default function CaseTimeline() {
             )}
           </button>
 
-          {/* AI (Pilot) — autonomous investigation */}
-          <button
-            onClick={() => setShowAI(v => !v)}
-            className={`btn-outline ${showAI ? 'bg-purple-50 border-purple-300 text-purple-700' : ''}`}
-            title="Pilot — autonomous AI investigation of this case"
-          >
-            <Sparkles size={14} />
-            AI
-          </button>
+          {/* AI (Pilot) + Auto-pilot — only when the licence advertises ai_assist */}
+          {aiEnabled && (
+            <button
+              onClick={() => setShowAI(v => !v)}
+              className={`btn-outline ${showAI ? 'bg-purple-50 border-purple-300 text-purple-700' : ''}`}
+              title="Pilot — autonomous AI investigation of this case"
+            >
+              <Sparkles size={14} />
+              AI
+            </button>
+          )}
 
-          {/* Auto-pilot — kick off the AI run automatically when ingest finishes */}
-          <button
-            onClick={() => setAutoPilot(v => !v)}
-            className={`btn-outline ${autoPilot ? 'bg-purple-50 border-purple-300 text-purple-700' : 'text-gray-400'}`}
-            title={autoPilot
-              ? 'Auto-AI is ON — the AI investigation launches automatically when ingest completes. Click to turn off.'
-              : 'Auto-AI is OFF — click to auto-launch the AI investigation when ingest completes.'}
-          >
-            <Zap size={14} />
-            Auto-AI: {autoPilot ? 'ON' : 'OFF'}
-          </button>
-
-          {/* Findings — the unified output store (every analysis surface) */}
-          <button
-            onClick={() => setShowFindings(v => !v)}
-            className={`btn-outline ${showFindings ? 'bg-amber-50 border-amber-300 text-amber-700' : ''}`}
-            title="Findings — every analysis output in one place: query, export, report, re-ingest"
-          >
-            <ClipboardList size={14} />
-            Findings
-          </button>
+          {aiEnabled && (
+            <button
+              onClick={() => setAutoPilot(v => !v)}
+              className={`btn-outline ${autoPilot ? 'bg-purple-50 border-purple-300 text-purple-700' : 'text-gray-400'}`}
+              title={autoPilot
+                ? 'Auto-AI is ON — the AI investigation launches automatically when ingest completes. Click to turn off.'
+                : 'Auto-AI is OFF — click to auto-launch the AI investigation when ingest completes.'}
+            >
+              <Zap size={14} />
+              Auto-AI: {autoPilot ? 'ON' : 'OFF'}
+            </button>
+          )}
 
           {/* Detect — find what's suspicious */}
           <ToolbarMenu
@@ -2272,9 +2341,9 @@ export default function CaseTimeline() {
             icon={<Bell size={14} />}
             anyActive={showAlertRules || showAnomaly || showBaseline || showMitre}
             items={[
-              { key: 'rules', label: 'Detection Rules', icon: <Bell size={13} />, active: showAlertRules,
+              ...(rulesEnabled ? [{ key: 'rules', label: 'Detection Rules', icon: <Bell size={13} />, active: showAlertRules,
                 title: 'Run the Sigma/EQL rule library against this case',
-                onClick: () => setShowAlertRules(v => !v) },
+                onClick: () => setShowAlertRules(v => !v) }] : []),
               { key: 'anomaly', label: 'Anomalies', icon: <Activity size={13} />, active: showAnomaly,
                 title: 'Statistical z-score outliers (host × event_id × day)',
                 onClick: () => setShowAnomaly(true) },
@@ -2333,9 +2402,9 @@ export default function CaseTimeline() {
           />
 
           <button
-            onClick={() => setShowModules(true)}
-            className="btn-outline"
-            title="Run analysis modules (Hayabusa, YARA, CAPA, Volatility…). Results land in Findings."
+            onClick={() => { setModulesView('launch'); setShowModules(true) }}
+            className={`btn-outline ${showModules ? 'bg-brand-accentlight border-brand-accent/40 text-brand-accent' : ''}`}
+            title="Modules — launch analysis tools (Hayabusa, YARA, CAPA, Volatility…) and watch their runs, logs and detections in one panel."
           >
             <Cpu size={14} />
             Modules
@@ -2387,6 +2456,8 @@ export default function CaseTimeline() {
           caseId={caseId}
           onClose={() => setShowIngest(false)}
           onComplete={() => loadCase()}
+          autoPilot={autoPilot}
+          setAutoPilot={aiEnabled ? setAutoPilot : undefined}
         />
       )}
 
@@ -2406,43 +2477,49 @@ export default function CaseTimeline() {
       )}
 
       {showNotes && (
-        <div className="panel-backdrop" onClick={() => setShowNotes(false)}>
-          <div
-            className="absolute right-0 top-0 h-full w-[560px] bg-white border-l border-gray-200 flex flex-col"
-            style={{ boxShadow: '-4px 0 24px rgba(0,0,0,0.10)' }}
-            onClick={e => e.stopPropagation()}
-          >
+        <ResizableDrawer slug="notes" defaultWidth={560} onClose={() => setShowNotes(false)}>
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 flex-shrink-0">
               <div className="flex items-center gap-2">
                 <FileText size={16} className="text-brand-accent" />
                 <span className="font-semibold text-brand-text">Investigation Report</span>
               </div>
-              <button onClick={() => setShowNotes(false)} className="btn-ghost p-1.5 rounded-lg">
+              <button onClick={() => setShowNotes(false)} className="btn-ghost p-1.5 rounded-lg" title="Close panel (Esc)">
                 <X size={16} />
               </button>
+            </div>
+            <div className="px-4 pt-3 flex-shrink-0">
+              <PanelHelp
+                title="Notes"
+                use="Free-form, autosaved case notes and the working investigation write-up."
+                when="Throughout the case — capture hypotheses, timelines and conclusions as you go; feeds the final report."
+                tip="Markdown is supported. Notes are pulled into the generated case report."
+              />
             </div>
             <div className="flex-1 min-h-0 overflow-hidden">
               <CaseNotes caseId={caseId} />
             </div>
-          </div>
-        </div>
+        </ResizableDrawer>
       )}
 
       {showIocs && (
-        <div className="panel-backdrop" onClick={() => setShowIocs(false)}>
-          <div
-            className="absolute right-0 top-0 h-full w-[480px] bg-white border-l border-gray-200 flex flex-col"
-            style={{ boxShadow: '-4px 0 24px rgba(0,0,0,0.10)' }}
-            onClick={e => e.stopPropagation()}
-          >
+        <ResizableDrawer slug="iocs" defaultWidth={480} onClose={() => setShowIocs(false)}>
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 flex-shrink-0">
               <div className="flex items-center gap-2">
                 <Crosshair size={16} className="text-red-500" />
                 <span className="font-semibold text-brand-text">Observed IOCs</span>
               </div>
-              <button onClick={() => setShowIocs(false)} className="btn-ghost p-1.5 rounded-lg">
+              <button onClick={() => setShowIocs(false)} className="btn-ghost p-1.5 rounded-lg" title="Close panel (Esc)">
                 <X size={16} />
               </button>
+            </div>
+            <div className="px-4 pt-3 flex-shrink-0">
+              <PanelHelp
+                title="Observed IOCs"
+                use="Indicators (IPs, domains, hashes, users…) extracted from this case, cross-checked against the threat-intel watchlist."
+                when="To review what's notable and pivot the timeline to any indicator's occurrences."
+                data={['Ingested events containing network / hash / user fields']}
+                tip="Click an IOC to search the timeline for every event mentioning it."
+              />
             </div>
             <div className="flex-1 overflow-hidden">
               <IocPanel
@@ -2453,25 +2530,28 @@ export default function CaseTimeline() {
                 }}
               />
             </div>
-          </div>
-        </div>
+        </ResizableDrawer>
       )}
 
       {showAlertRules && (
-        <div className="panel-backdrop" onClick={() => setShowAlertRules(false)}>
-          <div
-            className="absolute right-0 top-0 h-full w-[760px] bg-white border-l border-gray-200 flex flex-col overflow-y-auto"
-            style={{ boxShadow: '-4px 0 24px rgba(0,0,0,0.10)' }}
-            onClick={e => e.stopPropagation()}
-          >
+        <ResizableDrawer slug="alertRules" defaultWidth={760} onClose={() => setShowAlertRules(false)} className="overflow-y-auto">
             <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200 flex-shrink-0">
               <div className="flex items-center gap-2">
                 <Bell size={15} className="text-yellow-500" />
                 <span className="font-semibold text-brand-text text-sm">Detection Rules</span>
               </div>
-              <button onClick={() => setShowAlertRules(false)} className="btn-ghost p-1.5 rounded-lg">
+              <button onClick={() => setShowAlertRules(false)} className="btn-ghost p-1.5 rounded-lg" title="Close panel (Esc)">
                 <X size={16} />
               </button>
+            </div>
+            <div className="px-4 pt-3 flex-shrink-0">
+              <PanelHelp
+                title="Detection Rules"
+                use="Runs the Sigma / EQL detection-rule library against this case and lists what matched."
+                when="Early in triage — to surface known-bad patterns before manual timeline review."
+                data={['Ingested events (EVTX, Sysmon, etc.) for rules to match against']}
+                tip="Click a match to pivot the timeline to the events that fired it."
+              />
             </div>
             <AlertRules
               caseId={caseId}
@@ -2480,23 +2560,14 @@ export default function CaseTimeline() {
                 navigate(`/cases/${caseId}`, { state: { pivotQuery: q } })
               }}
             />
-          </div>
-        </div>
+        </ResizableDrawer>
       )}
 
       {showModules && (
-        <ModuleLaunchModal
+        <ModulesPanel
           caseId={caseId}
+          initialView={modulesView}
           onClose={() => setShowModules(false)}
-          onRunCreated={handleRunCreated}
-          onViewRuns={() => { setShowModules(false); setShowModuleRuns(true) }}
-        />
-      )}
-
-      {showModuleRuns && (
-        <ModuleRunsPanel
-          caseId={caseId}
-          onClose={() => setShowModuleRuns(false)}
         />
       )}
 
@@ -2535,14 +2606,6 @@ export default function CaseTimeline() {
           caseId={caseId}
           onClose={() => setShowMitre(false)}
           onPivot={q => { setIocPivotQuery(q); setShowMitre(false) }}
-        />
-      )}
-
-      {showFindings && (
-        <FindingsPanel
-          caseId={caseId}
-          onClose={() => setShowFindings(false)}
-          onPivot={q => { setIocPivotQuery(q); setShowFindings(false) }}
         />
       )}
 
@@ -2827,23 +2890,24 @@ function TemplatesPanel({ caseId, onClose }) {
   }
 
   return (
-    <div className="panel-backdrop" onClick={onClose}>
-      <div
-        className="absolute right-0 top-0 h-full w-[640px] max-w-full bg-white border-l border-gray-200 flex flex-col"
-        style={{ boxShadow: '-4px 0 24px rgba(0,0,0,0.10)' }}
-        onClick={e => e.stopPropagation()}
-      >
+    <ResizableDrawer slug="templates" defaultWidth={640} onClose={onClose}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 flex-shrink-0">
           <div className="flex items-center gap-2">
             <LayoutTemplate size={16} className="text-brand-accent" />
             <span className="font-semibold text-brand-text">Investigation playbooks</span>
           </div>
-          <button onClick={onClose} className="btn-ghost p-1.5 rounded-lg">
+          <button onClick={onClose} className="btn-ghost p-1.5 rounded-lg" title="Close panel (Esc)">
             <X size={16} />
           </button>
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          <PanelHelp
+            title="Investigation playbooks"
+            use="Scenario checklists (ransomware, insider, phishing…) of curated queries, run live against this case, plus optional watchlist/tags/notes seeding."
+            when="At case kickoff — to apply a known methodology and see which scenario checks already have hits."
+            tip="Expand a playbook to see live hit counts; click Pivot to open the timeline filtered to a check."
+          />
           <div className="flex items-start justify-between gap-3">
             <p className="text-[11px] text-gray-500 leading-relaxed flex-1">
               Each playbook is a curated checklist of scenario-specific queries
@@ -3019,8 +3083,7 @@ function TemplatesPanel({ caseId, onClose }) {
             })
           )}
         </div>
-      </div>
-    </div>
+    </ResizableDrawer>
   )
 }
 
@@ -3223,23 +3286,24 @@ ul,ol{padding-left:1.5em;}li{margin:2px 0;}
   }
 
   return (
-    <div className="panel-backdrop" onClick={onClose}>
-      <div
-        className="absolute right-0 top-0 h-full w-[640px] max-w-full bg-white border-l border-gray-200 flex flex-col"
-        style={{ boxShadow: '-4px 0 24px rgba(0,0,0,0.10)' }}
-        onClick={e => e.stopPropagation()}
-      >
+    <ResizableDrawer slug="report" defaultWidth={640} onClose={onClose}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 flex-shrink-0">
           <div className="flex items-center gap-2">
             <FileDown size={16} className="text-brand-accent" />
             <span className="font-semibold text-brand-text">Report</span>
           </div>
-          <button onClick={onClose} className="btn-ghost p-1.5 rounded-lg">
+          <button onClick={onClose} className="btn-ghost p-1.5 rounded-lg" title="Close panel (Esc)">
             <X size={16} />
           </button>
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          <PanelHelp
+            title="Report"
+            use="Produces the case deliverable: an AI narrative report (export PDF/Word/HTML/Markdown) and a no-AI server-rendered case bundle."
+            when="When wrapping up — after flagging events and reviewing module detections."
+            tip="Tick module runs under 'Module results to include' to pin the meaningful findings into the AI report."
+          />
           <p className="text-[11px] text-gray-500">
             Two deliverables: the AI investigation report (final, narrative —
             export to PDF/Word/HTML/Markdown) and a no-AI case bundle below.
@@ -3564,7 +3628,6 @@ ul,ol{padding-left:1.5em;}li{margin:2px 0;}
             </div>
           </div>
         </div>
-      </div>
-    </div>
+    </ResizableDrawer>
   )
 }
