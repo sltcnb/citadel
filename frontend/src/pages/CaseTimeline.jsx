@@ -9,7 +9,7 @@ import {
   Monitor, HardDrive, Globe, Brain,
   Binary, Bug, Network, FileImage, TextSearch, Tag,
   GitBranch, Target, Activity, LayoutTemplate, FileDown,
-  Printer, FileBarChart, Layers, Bot, Pencil, Copy, Zap,
+  Printer, FileBarChart, Layers, Bot, Pencil, Copy, Zap, ClipboardCheck,
 } from 'lucide-react'
 
 const MOD_CATEGORY_ICONS = {
@@ -310,6 +310,7 @@ function ModuleLaunchModal({ caseId, onClose, onRunCreated, onViewRuns, embedded
   const [runAllProgress, setRunAllProgress] = useState(null)  // null | {done, total}
   const [error, setError]                   = useState(null)
   const [moduleSearch, setModuleSearch]     = useState('')
+  const [catFilter, setCatFilter]           = useState(null)   // null = all categories
   const moduleSearchRef                     = useRef(null)
 
   // YARA-specific state
@@ -453,10 +454,24 @@ function ModuleLaunchModal({ caseId, onClose, onRunCreated, onViewRuns, embedded
       )
     : compatibleSources
 
-  // Group modules by category for the left panel
+  // Category chips — every category present, in canonical order.
+  const allCategories = useMemo(() => {
+    const set = new Set(modules.map(m => m.category || 'Other'))
+    return [...set].sort((a, b) => {
+      const ai = MOD_CATEGORY_ORDER.indexOf(a), bi = MOD_CATEGORY_ORDER.indexOf(b)
+      if (ai !== -1 && bi !== -1) return ai - bi
+      if (ai !== -1) return -1
+      if (bi !== -1) return 1
+      return a.localeCompare(b)
+    })
+  }, [modules])
+
+  // Group modules by category for the left panel. A text search or an active
+  // category chip both narrow the list; the "Recommended" group only appears on
+  // the unfiltered view.
   const groupedModules = useMemo(() => {
     const q = moduleSearch.toLowerCase().trim()
-    const filtered = q
+    let filtered = q
       ? modules.filter(m =>
           (m.name || '').toLowerCase().includes(q) ||
           (m.description || '').toLowerCase().includes(q) ||
@@ -464,6 +479,7 @@ function ModuleLaunchModal({ caseId, onClose, onRunCreated, onViewRuns, embedded
           (m.tags || []).some(t => t.toLowerCase().includes(q))
         )
       : modules
+    if (catFilter) filtered = filtered.filter(m => (m.category || 'Other') === catFilter)
     const groups = {}
     filtered.forEach(m => {
       const cat = m.category || 'Other'
@@ -480,7 +496,7 @@ function ModuleLaunchModal({ caseId, onClose, onRunCreated, onViewRuns, embedded
     })
     // Synthetic "Recommended" group on top — modules whose declared inputs
     // match files actually present in this case, ranked by match count.
-    if (!q) {
+    if (!q && !catFilter) {
       const recs = filtered
         .filter(m => recommendedCounts[m.id] > 0)
         .sort((a, b) => recommendedCounts[b.id] - recommendedCounts[a.id])
@@ -488,7 +504,7 @@ function ModuleLaunchModal({ caseId, onClose, onRunCreated, onViewRuns, embedded
       if (recs.length > 0) sorted.unshift(['Recommended', recs])
     }
     return sorted
-  }, [modules, moduleSearch, recommendedCounts])
+  }, [modules, moduleSearch, catFilter, recommendedCounts])
 
   function toggleJob(jobId) {
     setSelectedJobs(prev => {
@@ -650,8 +666,8 @@ function ModuleLaunchModal({ caseId, onClose, onRunCreated, onViewRuns, embedded
         ) : (
           <div className="flex-1 flex overflow-hidden min-h-0">
 
-            {/* ── Left: module list ─────────────────────────────────────────── */}
-            <div className="w-[300px] flex-shrink-0 border-r border-gray-200 flex flex-col bg-gray-50">
+            {/* ── Left: module chooser ──────────────────────────────────────── */}
+            <div className="w-[320px] flex-shrink-0 border-r border-gray-200 flex flex-col bg-gray-50">
 
               {/* Search */}
               <div className="px-3 pt-3 pb-2 flex-shrink-0">
@@ -665,7 +681,7 @@ function ModuleLaunchModal({ caseId, onClose, onRunCreated, onViewRuns, embedded
                     className="input w-full text-xs py-1.5 pl-7 pr-6"
                   />
                   {moduleSearch && (
-                    <button onClick={() => setModuleSearch('')}
+                    <button onClick={() => setModuleSearch('')} title="Clear search"
                       className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-600">
                       <X size={10} />
                     </button>
@@ -673,14 +689,39 @@ function ModuleLaunchModal({ caseId, onClose, onRunCreated, onViewRuns, embedded
                 </div>
               </div>
 
-              {/* Module list */}
+              {/* Category filter chips */}
+              {allCategories.length > 1 && (
+                <div className="px-3 pb-2 flex-shrink-0 flex flex-wrap gap-1">
+                  <button
+                    onClick={() => setCatFilter(null)}
+                    title="Show all categories"
+                    className={`px-2 py-0.5 rounded-full text-[10px] font-medium border transition-colors ${
+                      !catFilter ? 'bg-brand-accent text-white border-brand-accent' : 'bg-white text-gray-500 border-gray-200 hover:border-brand-accent'
+                    }`}
+                  >All</button>
+                  {allCategories.map(cat => (
+                    <button
+                      key={cat}
+                      onClick={() => setCatFilter(c => c === cat ? null : cat)}
+                      title={`Show only ${cat} modules`}
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-medium border transition-colors inline-flex items-center gap-1 ${
+                        catFilter === cat ? 'bg-brand-accent text-white border-brand-accent' : 'bg-white text-gray-600 border-gray-200 hover:border-brand-accent'
+                      }`}
+                    >
+                      {cat}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Module list — every row is self-describing (icon + name + one-liner) */}
               <div className="flex-1 overflow-y-auto px-2 pb-3">
                 {groupedModules.length === 0 ? (
                   <p className="text-xs text-gray-500 italic text-center py-8">No modules match</p>
                 ) : groupedModules.map(([category, mods]) => (
                   <div key={category} className="mb-2">
-                    {/* Category header — sticky, uses same bg as sidebar */}
                     <div className="flex items-center gap-2 px-1 pt-3 pb-1.5 sticky top-0 bg-gray-50 z-10">
+                      {MOD_CATEGORY_ICONS[category] || <Cpu size={12} className="text-gray-400 flex-shrink-0" />}
                       <span className="text-[10px] font-bold uppercase tracking-widest text-gray-500 flex-1">
                         {category}
                       </span>
@@ -691,11 +732,13 @@ function ModuleLaunchModal({ caseId, onClose, onRunCreated, onViewRuns, embedded
                       {mods.map(mod => {
                         const isSelected = selectedModule?.id === mod.id
                         const isAvailable = mod.available !== false
+                        const recN = recommendedCounts[mod.id] || 0
                         return (
                           <button
                             key={mod.id}
                             onClick={() => selectModule(mod)}
-                            className={`w-full text-left px-3 py-2.5 rounded-lg border transition-all ${
+                            title={isAvailable ? (mod.description || mod.name) : `${mod.name} — not available on this deployment`}
+                            className={`w-full text-left px-2.5 py-2 rounded-lg border transition-all ${
                               isSelected
                                 ? 'border-brand-accent bg-brand-accentlight'
                                 : isAvailable
@@ -704,30 +747,38 @@ function ModuleLaunchModal({ caseId, onClose, onRunCreated, onViewRuns, embedded
                             }`}
                             disabled={!isAvailable}
                           >
-                            <div className="flex items-center gap-1.5">
-                              <p className={`font-medium text-xs leading-tight flex-1 ${isSelected ? 'text-brand-accent' : 'text-brand-text'}`}>
-                                {mod.name}
-                              </p>
-                              {recommendedCounts[mod.id] > 0 && (
-                                <span className="px-1.5 py-px rounded text-[9px] font-medium bg-emerald-50 text-emerald-600 border border-emerald-200 flex-shrink-0">
-                                  {recommendedCounts[mod.id]} file{recommendedCounts[mod.id] > 1 ? 's' : ''}
-                                </span>
-                              )}
-                            </div>
-                            {isSelected && mod.description && (
-                              <p className="text-[10px] mt-0.5 text-brand-accent/70 leading-snug line-clamp-2">
-                                {mod.description}
-                              </p>
-                            )}
-                            {(mod.tags || []).length > 0 && isSelected && (
-                              <div className="flex flex-wrap gap-1 mt-1">
-                                {mod.tags.slice(0, 4).map(tag => (
-                                  <span key={tag} className="px-1.5 py-px rounded text-[9px] font-medium bg-brand-accent/10 text-brand-accent">
-                                    {tag}
-                                  </span>
-                                ))}
+                            <div className="flex items-start gap-2">
+                              <span className="mt-0.5 flex-shrink-0">
+                                {MOD_CATEGORY_ICONS[mod.category] || <Cpu size={13} className="text-gray-400" />}
+                              </span>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-1.5">
+                                  <p className={`font-medium text-xs leading-tight flex-1 truncate ${isSelected ? 'text-brand-accent' : 'text-brand-text'}`}>
+                                    {mod.name}
+                                  </p>
+                                  {recN > 0 && (
+                                    <span className="px-1.5 py-px rounded text-[9px] font-medium bg-emerald-50 text-emerald-600 border border-emerald-200 flex-shrink-0"
+                                      title={`${recN} file${recN > 1 ? 's' : ''} in this case match this module's inputs`}>
+                                      {recN} file{recN > 1 ? 's' : ''}
+                                    </span>
+                                  )}
+                                </div>
+                                {mod.description && (
+                                  <p className={`text-[10px] mt-0.5 leading-snug ${isSelected ? 'text-brand-accent/70' : 'text-gray-500'} ${isSelected ? '' : 'line-clamp-1'}`}>
+                                    {mod.description}
+                                  </p>
+                                )}
+                                {isSelected && (mod.tags || []).length > 0 && (
+                                  <div className="flex flex-wrap gap-1 mt-1">
+                                    {mod.tags.slice(0, 4).map(tag => (
+                                      <span key={tag} className="px-1.5 py-px rounded text-[9px] font-medium bg-brand-accent/10 text-brand-accent">
+                                        {tag}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
                               </div>
-                            )}
+                            </div>
                           </button>
                         )
                       })}
@@ -747,51 +798,72 @@ function ModuleLaunchModal({ caseId, onClose, onRunCreated, onViewRuns, embedded
                   </div>
                   <p className="font-medium text-sm text-brand-text">Pick a module</p>
                   <p className="text-xs text-gray-500 max-w-xs leading-relaxed">
-                    Choose a module from the left, then select which ingested files to run it against.
+                    Choose a module on the left, then select which ingested files to run it against.
+                    Modules with a green badge already have matching files in this case.
                   </p>
                 </div>
               ) : (
                 <>
                   {/* Selected module info bar */}
-                  <div className="px-4 pt-3.5 pb-2.5 border-b border-gray-200 flex-shrink-0 bg-gray-50">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="font-semibold text-sm text-brand-text">{selectedModule.name}</p>
+                  <div className="px-4 pt-3.5 pb-3 border-b border-gray-200 flex-shrink-0 bg-gray-50">
+                    <div className="flex items-start gap-2.5">
+                      <span className="mt-0.5 flex-shrink-0">
+                        {MOD_CATEGORY_ICONS[selectedModule.category] || <Cpu size={15} className="text-brand-accent" />}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="font-semibold text-sm text-brand-text">{selectedModule.name}</p>
+                          {selectedModule.category && (
+                            <span className="text-[9px] uppercase tracking-wider text-gray-400 font-semibold">{selectedModule.category}</span>
+                          )}
+                        </div>
                         {selectedModule.description && (
                           <p className="text-[11px] text-gray-500 mt-0.5 leading-snug">{selectedModule.description}</p>
                         )}
+                        {/* What this module eats — makes the file step self-explanatory */}
+                        {(() => {
+                          const ins = [...(selectedModule.input_extensions || []), ...(selectedModule.input_filenames || [])]
+                          const label = ins.length === 0 || ins.some(e => e === '*' || e === '.*') ? 'any file' : ins.join(', ')
+                          return (
+                            <p className="text-[10px] text-gray-500 mt-1">
+                              <span className="font-semibold text-gray-500">Accepts:</span>{' '}
+                              <span className="font-mono text-gray-600">{label}</span>
+                            </p>
+                          )
+                        })()}
+                        {(selectedModule.tags || []).length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-1.5">
+                            {selectedModule.tags.slice(0, 5).map(tag => (
+                              <span key={tag} className="px-1.5 py-px rounded text-[9px] font-medium bg-gray-100 text-gray-600 border border-gray-200">
+                                {tag}
+                              </span>
+                            ))}
+                          </div>
+                        )}
                       </div>
-                      {(selectedModule.tags || []).length > 0 && (
-                        <div className="flex flex-wrap gap-1 flex-shrink-0">
-                          {selectedModule.tags.slice(0, 3).map(tag => (
-                            <span key={tag} className="px-1.5 py-px rounded text-[9px] font-medium bg-gray-100 text-gray-600 border border-gray-200">
-                              {tag}
-                            </span>
-                          ))}
-                        </div>
-                      )}
                     </div>
                   </div>
 
-                  {/* File selection */}
+                  {/* Step 1 — choose files */}
                   <div className="flex items-center justify-between px-4 pt-3 pb-1.5 flex-shrink-0">
-                    <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-500">
-                      Input Files
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 flex items-center gap-1.5">
+                      <span className="w-4 h-4 rounded-full bg-brand-accent/15 text-brand-accent inline-flex items-center justify-center text-[9px] font-bold">1</span>
+                      Choose files
                       {compatibleSources.length > 0 && (
-                        <span className="ml-1.5 font-normal normal-case">
-                          {selectedJobs.size}/{compatibleSources.length}
+                        <span className="font-normal normal-case text-gray-400">
+                          — {selectedJobs.size} of {compatibleSources.length} selected
                         </span>
                       )}
                     </p>
                     {compatibleSources.length > 0 && (
                       <div className="flex items-center gap-2">
                         {selectedJobs.size < compatibleSources.length && (
-                          <button onClick={selectAll} className="text-[11px] text-brand-accent hover:underline">
+                          <button onClick={selectAll} className="text-[11px] text-brand-accent hover:underline" title="Select all compatible files">
                             All
                           </button>
                         )}
                         {selectedJobs.size > 0 && (
-                          <button onClick={() => setSelectedJobs(new Set())} className="text-[11px] text-gray-500 hover:text-gray-700 hover:underline">
+                          <button onClick={() => setSelectedJobs(new Set())} className="text-[11px] text-gray-500 hover:text-gray-700 hover:underline" title="Deselect all">
                             Clear
                           </button>
                         )}
@@ -994,7 +1066,7 @@ function ModuleLaunchModal({ caseId, onClose, onRunCreated, onViewRuns, embedded
           >
             {runningAll
               ? <><Loader2 size={11} className="animate-spin" /> {runAllProgress ? `${runAllProgress.done}/${runAllProgress.total}` : 'Launching…'}</>
-              : <><Sparkles size={11} /> All modules</>
+              : <><Sparkles size={11} /> Run all applicable</>
             }
           </button>
 
@@ -1012,20 +1084,30 @@ function ModuleLaunchModal({ caseId, onClose, onRunCreated, onViewRuns, embedded
             </div>
           )}
 
-          <div className="ml-auto flex items-center gap-2">
-            {selectedModule && selectedJobs.size === 0 && !runningAll && (
-              <p className="text-xs text-gray-500">Select at least one file</p>
+          <div className="ml-auto flex items-center gap-2 min-w-0">
+            {/* Plain-language run summary — what's about to happen */}
+            {!error && (
+              <p className="text-[11px] text-gray-500 truncate hidden sm:block" title={
+                !selectedModule ? 'Pick a module first'
+                : selectedJobs.size === 0 ? 'Select at least one file'
+                : `Run ${selectedModule.name} on ${selectedJobs.size} file${selectedJobs.size > 1 ? 's' : ''}`
+              }>
+                {!selectedModule ? 'Pick a module'
+                  : selectedJobs.size === 0 ? 'Select at least one file'
+                  : <>Ready: <span className="font-semibold text-gray-700">{selectedModule.name}</span> × {selectedJobs.size} file{selectedJobs.size > 1 ? 's' : ''}</>}
+              </p>
             )}
             <button
               onClick={handleRun}
               disabled={!canRun}
-              className={`btn flex items-center gap-1.5 text-xs px-4 py-1.5 font-semibold ${
+              className={`btn flex items-center gap-1.5 text-xs px-4 py-1.5 font-semibold flex-shrink-0 ${
                 canRun ? 'btn-primary' : 'opacity-40 cursor-not-allowed bg-gray-100 text-gray-500 border-gray-200'
               }`}
+              title={canRun ? `Launch ${selectedModule?.name} on ${selectedJobs.size} file${selectedJobs.size > 1 ? 's' : ''}` : 'Pick a module and at least one file'}
             >
               {running
                 ? <><Loader2 size={12} className="animate-spin" /> Launching…</>
-                : <><Play size={12} /> Run {selectedModule?.name || 'Module'}</>
+                : <><Play size={12} /> Run{selectedJobs.size > 0 ? ` on ${selectedJobs.size}` : ''}</>
               }
             </button>
           </div>
@@ -1154,7 +1236,6 @@ function ModuleRunCard({
   run, caseId, navigate, onClose,
   // Hit-level filters (all optional — undefined = no filtering)
   activeLevels, activeComputers, activeChannels, activeTags, ruleSearch,
-  onResetFilter,
 }) {
   const zeroDetected = run.status === 'COMPLETED' && run.total_hits === 0
   const [showOutput, setShowOutput] = useState(zeroDetected)
@@ -1249,8 +1330,6 @@ function ModuleRunCard({
   }
   const filteredLevels = LEVEL_ORDER_KEYS.filter(lvl => hitsByLevel[lvl]?.length > 0)
 
-  // Used to show "no detections at selected filters" empty state
-  const anyHitsInPreview = preview.length > 0
   const hasFilteredHits  = filteredLevels.length > 0
 
   // Auto-open completed cards that have detections matching the active filter
@@ -1274,17 +1353,6 @@ function ModuleRunCard({
   function getModuleArtifactType(moduleId) {
     if (moduleId in MODULE_ARTIFACT_TYPES) return MODULE_ARTIFACT_TYPES[moduleId]
     return moduleId.replace(/-/g, '_').replace(/ /g, '_')
-  }
-  function buildQuery(hit) {
-    if (hit.event_id) {
-      const parts = [`evtx.event_id:${hit.event_id}`]
-      if (hit.computer) parts.push(`host.hostname:"${hit.computer}"`)
-      return parts.join(' AND ')
-    }
-    const artType = MODULE_ARTIFACT_TYPES[run.module_id]
-    if (artType) return `artifact_type:${artType}`
-    const title = (hit.rule_title || '').replace(/"/g, '')
-    return title ? `message:"${title}"` : '*'
   }
 
   const _mc = MODULE_ACCENT[run.module_id]
@@ -1920,10 +1988,6 @@ function ModuleRunsPanel({ caseId, onClose, embedded = false }) {
                 activeChannels={activeChannels}
                 activeTags={activeTags}
                 ruleSearch={ruleSearch}
-                onResetFilter={() => {
-                  setActiveLevels(new Set()); setRuleSearch(''); setActiveComputers(new Set())
-                  setActiveChannels(new Set()); setActiveTags(new Set())
-                }}
               />
             ))
           )}
@@ -2033,7 +2097,6 @@ export default function CaseTimeline() {
   const [companyValue, setCompanyValue]     = useState('')
   const [availableCompanies, setAvailableCompanies] = useState([])
   const [showIngest, setShowIngest]         = useState(false)
-  const [runningAlerts, setRunningAlerts]   = useState(false)
   // Panel open/close state — persisted per-case (fo_panel_<name>_<caseId>) so the
   // analyst's Detect / Investigate / Case / AI workspace survives reload, nav, and
   // browser restart. Each case keeps its own layout.
@@ -2161,25 +2224,6 @@ export default function CaseTimeline() {
   useEffect(() => {
     api.companies.list().then(d => setAvailableCompanies(d.companies || [])).catch(() => {})
   }, [])
-  async function runAlerts() {
-    setRunningAlerts(true)
-    try {
-      await api.alertRules.runLibrary(caseId)
-    } catch (err) {
-      console.error('Alert run failed:', err)
-    } finally {
-      setRunningAlerts(false)
-    }
-  }
-
-  async function saveCompany() {
-    setEditingCompany(false)
-    try {
-      const updated = await api.cases.update(caseId, { company: companyValue })
-      setCaseData(prev => ({ ...prev, company: updated?.company ?? companyValue }))
-    } catch { /* silent */ }
-  }
-
   async function deleteCase() {
     setDeleting(true)
     try {
@@ -3134,8 +3178,13 @@ function ReportPanel({ caseId, onClose }) {
   //    every completed run. Lives here (not in CaseNotes) because choosing
   //    what evidence the AI sees is a Report-time decision.
   const [moduleRuns, setModuleRuns] = useState([])
-  const [runsLoading, setRunsLoading] = useState(true)
   const [selectedRunIds, setSelectedRunIds] = useState(new Set())
+  const [showRunPicker, setShowRunPicker] = useState(false)
+
+  // ── Report composition — live counts of every source the report pulls from,
+  //    so the analyst SEES what the deliverable will contain before generating.
+  const [contents, setContents] = useState(null)
+  const [contentsLoading, setContentsLoading] = useState(true)
 
   // Report language is a generation-time choice (not an investigation-time one):
   // the agent always reasons in English, and we localise the prose only when the
@@ -3163,7 +3212,31 @@ function ReportPanel({ caseId, onClose }) {
     api.modules.listRuns(caseId)
       .then(r => setModuleRuns((r.runs || []).filter(x => x.status === 'COMPLETED')))
       .catch(() => {})
-      .finally(() => setRunsLoading(false))
+  }, [caseId])
+
+  // Fetch the live composition (best-effort per source; a failed source shows "—").
+  useEffect(() => {
+    let stillMounted = true
+    const asNumber = (value) => (typeof value === 'number' && !isNaN(value) ? value : null)
+    Promise.all([
+      api.search.search(caseId, { q: 'is_flagged:true', size: 0 }).then(res => asNumber(res.total)).catch(() => null),
+      api.search.pinned(caseId).then(res => (Array.isArray(res) ? res : res.pinned || res.events || [])).then(list => list.length).catch(() => null),
+      api.search.iocs(caseId).then(res => {
+        if (Array.isArray(res)) return res.length
+        if (Array.isArray(res.iocs)) return res.iocs.length
+        if (typeof res.total === 'number') return res.total
+        return Object.values(res || {}).reduce((sum, value) => sum + (Array.isArray(value) ? value.length : 0), 0)
+      }).catch(() => null),
+      api.findings.summary(caseId).then(res => asNumber(res.total) ?? asNumber(res.count) ??
+        (res.by_kind ? Object.values(res.by_kind).reduce((sum, count) => sum + (count || 0), 0) : null)).catch(() => null),
+      api.notes.get(caseId).then(res => (res.body || '').trim().length > 0).catch(() => null),
+      api.cases.aiResults(caseId).then(res => (res.investigations || res.runs || []).length).catch(() => null),
+    ]).then(([flagged, pinned, iocs, findings, notesFilled, investigations]) => {
+      if (!stillMounted) return
+      setContents({ flagged, pinned, iocs, findings, notesFilled, investigations })
+      setContentsLoading(false)
+    })
+    return () => { stillMounted = false }
   }, [caseId])
 
   function toggleRun(id) {
@@ -3310,19 +3383,143 @@ ul,ol{padding-left:1.5em;}li{margin:2px 0;}
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
           <PanelHelp
             title="Report"
-            use="Produces the case deliverable: an AI narrative report (export PDF/Word/HTML/Markdown) and a no-AI server-rendered case bundle."
-            when="When wrapping up — after flagging events and reviewing module detections."
-            tip="Tick module runs under 'Module results to include' to pin the meaningful findings into the AI report."
+            use="Turns everything you've gathered in the case — flagged events, pinned items, module detections, IOCs, AI investigations and notes — into a deliverable."
+            when="When wrapping up. Two outputs: an AI narrative report (needs a licence) and a no-AI case bundle. Both read the same live case state."
+            tip="The contents card shows exactly what will be included. Enrich the report by flagging/pinning more in the timeline."
           />
-          <p className="text-[11px] text-gray-500">
-            Two deliverables: the AI investigation report (final, narrative —
-            export to PDF/Word/HTML/Markdown) and a no-AI case bundle below.
-            Both pull from current case state.
-          </p>
 
           {error && (
             <div className="card p-3 text-xs text-red-700 bg-red-50 border-red-200">{error}</div>
           )}
+
+          {/* ── What this report contains — live composition ──────────────── */}
+          {(() => {
+            const moduleHits = moduleRuns.reduce((s, r) => s + (r.total_hits || 0), 0)
+            const includedRuns = selectedRunIds.size > 0 ? selectedRunIds.size : moduleRuns.length
+            const Count = ({ v, zero = 'none' }) => (
+              v == null
+                ? <span className="text-[10px] text-gray-400 font-mono">—</span>
+                : v > 0
+                  ? <span className="text-[11px] font-semibold text-brand-text tabular-nums">{v.toLocaleString()}</span>
+                  : <span className="text-[10px] text-gray-400">{zero}</span>
+            )
+            const rows = [
+              { key: 'flagged', Icon: Flag, label: 'Flagged events', desc: 'Events you marked relevant in the timeline', node: <Count v={contents?.flagged} /> },
+              { key: 'pinned', Icon: Target, label: 'Pinned events', desc: 'Events pinned as key evidence', node: <Count v={contents?.pinned} /> },
+              { key: 'iocs', Icon: Crosshair, label: 'IOCs', desc: 'Observed indicators + watchlist matches', node: <Count v={contents?.iocs} /> },
+              { key: 'investigations', Icon: Sparkles, label: 'AI investigations', desc: 'Autonomous Pilot runs on this case', node: <Count v={contents?.investigations} /> },
+              { key: 'notes', Icon: FileText, label: 'Case notes', desc: 'Your written investigation notes', node: (
+                contents?.notesFilled == null ? <span className="text-[10px] text-gray-400 font-mono">—</span>
+                : contents.notesFilled ? <span className="text-[10px] text-green-600 font-medium">included</span>
+                : <span className="text-[10px] text-gray-400">empty</span>
+              ) },
+            ]
+            return (
+              <div className="card p-4">
+                <div className="flex items-center gap-2 mb-1">
+                  <ClipboardCheck size={14} className="text-brand-accent" />
+                  <span className="text-sm font-semibold text-gray-900">What this report contains</span>
+                </div>
+                <p className="text-[11px] text-gray-500 mb-3">
+                  Assembled live from the case's current state — no manual gathering. Everything below is
+                  included automatically; flag or pin more in the timeline to enrich it.
+                </p>
+                {contentsLoading ? (
+                  <div className="flex items-center gap-2 text-xs text-gray-500 py-3">
+                    <Loader2 size={12} className="animate-spin" /> Reading case state…
+                  </div>
+                ) : (
+                  <div className="border border-gray-100 rounded-lg divide-y divide-gray-100">
+                    {rows.map(({ key, Icon, label, desc, node }) => (
+                      <div key={key} className="flex items-center gap-3 px-3 py-2">
+                        <Icon size={14} className="text-gray-400 flex-shrink-0" />
+                        <div className="min-w-0 flex-1">
+                          <div className="text-xs font-medium text-gray-800">{label}</div>
+                          <div className="text-[10px] text-gray-500 truncate">{desc}</div>
+                        </div>
+                        {node}
+                      </div>
+                    ))}
+
+                    {/* Module detections — expandable to pick which runs feed the report */}
+                    <div className="px-3 py-2">
+                      <div className="flex items-center gap-3">
+                        <Cpu size={14} className="text-gray-400 flex-shrink-0" />
+                        <div className="min-w-0 flex-1">
+                          <div className="text-xs font-medium text-gray-800">Module detections</div>
+                          <div className="text-[10px] text-gray-500 truncate">
+                            {moduleRuns.length === 0
+                              ? 'No completed module runs yet — launch modules to add detections'
+                              : selectedRunIds.size > 0
+                                ? `${includedRuns} of ${moduleRuns.length} run${moduleRuns.length > 1 ? 's' : ''} pinned`
+                                : `all ${moduleRuns.length} completed run${moduleRuns.length > 1 ? 's' : ''} with hits`}
+                          </div>
+                        </div>
+                        {moduleHits > 0
+                          ? <span className="text-[11px] font-semibold text-brand-text tabular-nums">{moduleHits.toLocaleString()}</span>
+                          : <span className="text-[10px] text-gray-400">none</span>}
+                        {moduleRuns.length > 0 && (
+                          <button
+                            onClick={() => setShowRunPicker(v => !v)}
+                            className="text-[10px] text-brand-accent hover:underline flex items-center gap-0.5 flex-shrink-0"
+                            title="Choose which module runs the report includes"
+                          >
+                            Choose <ChevronDown size={10} className={`transition-transform ${showRunPicker ? 'rotate-180' : ''}`} />
+                          </button>
+                        )}
+                      </div>
+
+                      {showRunPicker && moduleRuns.length > 0 && (
+                        <div className="mt-2">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-[10px] text-gray-500">
+                              {selectedRunIds.size === 0
+                                ? 'None ticked → every completed run with hits is included.'
+                                : `${selectedRunIds.size} pinned (overrides auto-include).`}
+                            </span>
+                            {selectedRunIds.size > 0 && (
+                              <button onClick={() => setSelectedRunIds(new Set())} className="text-[10px] text-gray-500 hover:text-gray-700">Clear</button>
+                            )}
+                          </div>
+                          <div className="max-h-40 overflow-y-auto border border-gray-100 rounded">
+                            {moduleRuns.map(run => {
+                              const selected = selectedRunIds.has(run.run_id)
+                              const ts = run.completed_at || run.started_at
+                              return (
+                                <label key={run.run_id}
+                                  className={`flex items-center gap-2 px-2 py-1.5 cursor-pointer border-b border-gray-100 last:border-b-0 ${selected ? 'bg-brand-accent/5' : 'hover:bg-gray-50'}`}>
+                                  <input type="checkbox" checked={selected} onChange={() => toggleRun(run.run_id)}
+                                    className="rounded border-gray-300 accent-brand-accent flex-shrink-0" />
+                                  <div className="min-w-0 flex-1">
+                                    <div className="text-[11px] font-medium text-brand-text truncate">{MODULE_NAMES[run.module_id] || run.module_id}</div>
+                                    {ts && <div className="text-[10px] text-gray-500">{new Date(ts).toLocaleString()}</div>}
+                                  </div>
+                                  {run.total_hits > 0
+                                    ? <span className="text-[10px] font-semibold text-orange-600 flex-shrink-0">{run.total_hits.toLocaleString()} hits</span>
+                                    : <span className="text-[10px] text-green-600 flex-shrink-0">clean</span>}
+                                </label>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )
+          })()}
+
+          {/* Section 2 — turn the contents above into a deliverable */}
+          <div className="flex items-center gap-2 pt-1">
+            <FileDown size={12} className="text-gray-400" />
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-500">Generate a deliverable</span>
+            <span className="flex-1 border-t border-gray-100" />
+          </div>
+          <p className="text-[11px] text-gray-500 -mt-1">
+            Two options, both built from the contents above: an <strong>AI narrative report</strong>{aiEnabled ? '' : ' (licence required)'} and a
+            no-AI <strong>case bundle</strong>. Pick a language, then generate or download.
+          </p>
 
           {/* ── AI Investigation Report ───────────────────────────────── */}
           <div className="card p-4">
@@ -3501,87 +3698,6 @@ ul,ol{padding-left:1.5em;}li{margin:2px 0;}
                     ))}
                   </div>
                 )}
-              </div>
-            )}
-          </div>
-
-          {/* ── Module runs to include (drives AI prompt) ────────────── */}
-          <div className="card p-4">
-            <div className="flex items-center gap-2 mb-2">
-              <div className="p-1.5 rounded-lg bg-emerald-50">
-                <Cpu size={14} className="text-emerald-600" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-semibold text-gray-900 flex items-center gap-1.5">
-                  Module results to include
-                  {selectedRunIds.size > 0 && (
-                    <span className="text-[10px] bg-brand-accent text-white font-bold rounded-full px-1.5 py-px">
-                      {selectedRunIds.size}
-                    </span>
-                  )}
-                </div>
-                <div className="text-[10px] text-gray-500">
-                  {selectedRunIds.size === 0
-                    ? 'None ticked → report auto-includes every completed run that found hits.'
-                    : `${selectedRunIds.size} run${selectedRunIds.size > 1 ? 's' : ''} pinned (overrides the auto-include).`}
-                </div>
-              </div>
-              {selectedRunIds.size > 0 && (
-                <button
-                  onClick={() => setSelectedRunIds(new Set())}
-                  className="btn-ghost text-[10px] text-gray-500 hover:text-gray-700"
-                >
-                  Clear
-                </button>
-              )}
-            </div>
-
-            {runsLoading ? (
-              <div className="flex items-center justify-center py-3 text-xs text-gray-500 gap-2">
-                <Loader2 size={11} className="animate-spin" /> Loading…
-              </div>
-            ) : moduleRuns.length === 0 ? (
-              <div className="text-[11px] text-gray-500 italic py-2">
-                No completed module runs yet. Trigger one from the Modules button.
-              </div>
-            ) : (
-              <div className="max-h-48 overflow-y-auto border border-gray-100 rounded">
-                {moduleRuns.map(run => {
-                  const selected = selectedRunIds.has(run.run_id)
-                  const ts = run.completed_at || run.started_at
-                  return (
-                    <label
-                      key={run.run_id}
-                      className={`flex items-center gap-2 px-2 py-1.5 cursor-pointer border-b border-gray-100 last:border-b-0 ${
-                        selected ? 'bg-brand-accent/5' : 'hover:bg-gray-50'
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selected}
-                        onChange={() => toggleRun(run.run_id)}
-                        className="rounded border-gray-300 accent-brand-accent flex-shrink-0"
-                      />
-                      <div className="min-w-0 flex-1">
-                        <div className="text-[11px] font-medium text-brand-text truncate">
-                          {MODULE_NAMES[run.module_id] || run.module_id}
-                        </div>
-                        {ts && (
-                          <div className="text-[10px] text-gray-500">
-                            {new Date(ts).toLocaleString()}
-                          </div>
-                        )}
-                      </div>
-                      {run.total_hits > 0 ? (
-                        <span className="text-[10px] font-semibold text-orange-600 flex-shrink-0">
-                          {run.total_hits.toLocaleString()} hits
-                        </span>
-                      ) : (
-                        <span className="text-[10px] text-green-600 flex-shrink-0">clean</span>
-                      )}
-                    </label>
-                  )
-                })}
               </div>
             )}
           </div>

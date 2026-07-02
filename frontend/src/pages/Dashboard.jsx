@@ -1,10 +1,28 @@
 import { useEffect, useState, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  FolderOpen, Activity, Database, Plus, Clock,
-  Shield, AlertTriangle, CheckCircle, Server, HardDrive, Layers,
-  Zap, RefreshCw, Sparkles, Building2, Archive, DollarSign,
-  Trash2, Filter, Upload, CloudDownload, CloudUpload, RotateCcw,
+  FolderOpen,
+  Activity,
+  Database,
+  Clock,
+  Shield,
+  AlertTriangle,
+  CheckCircle,
+  Server,
+  HardDrive,
+  Layers,
+  Zap,
+  RefreshCw,
+  Sparkles,
+  Building2,
+  Archive,
+  DollarSign,
+  Trash2,
+  Filter,
+  Upload,
+  CloudDownload,
+  CloudUpload,
+  RotateCcw,
 } from 'lucide-react'
 import { api } from '../api/client'
 import { computeServiceLevels, statusColor, overallLevel } from '../lib/platformHealth'

@@ -10,9 +10,22 @@
  */
 import { useState } from 'react'
 import {
-  BookOpen, Puzzle, Cpu, Bell, Server, ChevronRight,
-  Code2, Copy, Check, AlertCircle, CheckCircle, Zap,
-  FileCode2, Database, GitBranch, Terminal, PackageOpen, Boxes,
+  BookOpen,
+  Puzzle,
+  Cpu,
+  Bell,
+  Server,
+  ChevronRight,
+  Code2,
+  Copy,
+  Check,
+  AlertCircle,
+  CheckCircle,
+  FileCode2,
+  GitBranch,
+  Terminal,
+  PackageOpen,
+  Boxes,
 } from 'lucide-react'
 
 // ── Code block ────────────────────────────────────────────────────────────────

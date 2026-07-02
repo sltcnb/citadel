@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Shield, Plus, Trash2, RefreshCw, Download, Upload, Search, Globe, Hash, AtSign, Link2, FileText, Loader2, Check, X, AlertTriangle, CheckCircle, ExternalLink, Play, ChevronRight } from 'lucide-react'
+import { Shield, Plus, Trash2, RefreshCw, Download, Upload, Search, Globe, Hash, AtSign, Link2, FileText, Loader2, Check, X, AlertTriangle, CheckCircle } from 'lucide-react'
 import { PageShell, PageHeader } from '../components/shared/PageShell'
 import { api } from '../api/client'
 import { formatDate } from '../utils/format'

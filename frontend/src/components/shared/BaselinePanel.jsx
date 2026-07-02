@@ -65,7 +65,12 @@ export default function BaselinePanel({ caseId, onClose, onPivot }) {
 
   function pivot(value) {
     const f = field.replace('.keyword', '')
-    onPivot?.(`${f}:"${value}"`)
+    const esc = s => String(s).replace(/"/g, '\\"')
+    // Scope to the host being stacked — the whole point is "this rare value ON
+    // this suspect host", so the timeline should land there, not case-wide.
+    const parts = [`${f}:"${esc(value)}"`]
+    if (host) parts.push(`host.hostname:"${esc(host)}"`)
+    onPivot?.(parts.join(' AND '))
   }
 
   return (
@@ -182,7 +187,9 @@ export default function BaselinePanel({ caseId, onClose, onPivot }) {
             </thead>
             <tbody>
               {rare.map((row, i) => (
-                <tr key={`${row.value}-${i}`} className="border-t border-gray-100 hover:bg-gray-50">
+                <tr key={`${row.value}-${i}`} className="border-t border-gray-100 hover:bg-brand-accentlight/40 cursor-pointer"
+                  onClick={() => pivot(row.value)}
+                  title="Pivot to the timeline for this value on this host">
                   <Td className="font-mono max-w-[420px] truncate" title={String(row.value)}>
                     {String(row.value)}
                   </Td>
@@ -199,7 +206,7 @@ export default function BaselinePanel({ caseId, onClose, onPivot }) {
                   </Td>
                   <Td right>
                     <button
-                      onClick={() => pivot(row.value)}
+                      onClick={e => { e.stopPropagation(); pivot(row.value) }}
                       className="text-[10px] text-brand-accent hover:text-brand-accenthover inline-flex items-center gap-1"
                       title="Pivot to timeline"
                     >

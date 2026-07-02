@@ -1,9 +1,27 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  Plus, Trash2, ChevronDown, ChevronUp, Pencil, Check, X,
-  AlertTriangle, Loader2, Search, Play, CheckCircle, Clock, RefreshCw,
-  ExternalLink, Filter, ShieldAlert, Building2, Bot, Sparkles, FileCode, Bell,
+  Plus,
+  Trash2,
+  ChevronDown,
+  ChevronUp,
+  Pencil,
+  Check,
+  X,
+  AlertTriangle,
+  Loader2,
+  Search,
+  Play,
+  CheckCircle,
+  Clock,
+  RefreshCw,
+  ExternalLink,
+  Filter,
+  Building2,
+  Bot,
+  Sparkles,
+  FileCode,
+  Bell,
 } from 'lucide-react'
 import { api } from '../api/client'
 import { PageShell, PageHeader } from '../components/shared/PageShell'

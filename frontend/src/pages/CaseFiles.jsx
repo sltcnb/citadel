@@ -1,8 +1,21 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import {
-  FileText, HardDrive, Database, Activity, File, Search,
-  ChevronRight, ChevronDown, Folder, FolderOpen, Loader2,
-  X, ArrowLeft, AlertTriangle, Lock, CheckCircle, RefreshCw,
+  FileText,
+  HardDrive,
+  Database,
+  Activity,
+  File,
+  Search,
+  ChevronRight,
+  Folder,
+  FolderOpen,
+  Loader2,
+  X,
+  ArrowLeft,
+  AlertTriangle,
+  Lock,
+  CheckCircle,
+  RefreshCw,
 } from 'lucide-react'
 import { api } from '../api/client'
 import { formatBytes } from '../utils/format'

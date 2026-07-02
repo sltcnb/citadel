@@ -1,11 +1,33 @@
 import { useState, useEffect } from 'react'
 import { useOutletContext } from 'react-router-dom'
 import {
-  Settings2, Sparkles, Check, X, Loader2, Trash2, Eye, EyeOff,
-  AlertCircle, Wifi, FlaskConical, Cpu, Info,
-  Shield, Lock, Archive, Database, Upload, Server,
-  Activity, Plus, Pencil, HardDrive, ChevronDown, ChevronRight,
-  KeyRound, RefreshCw, Award, Webhook, Send, SlidersHorizontal,
+  Settings2,
+  Sparkles,
+  Check,
+  X,
+  Loader2,
+  Trash2,
+  Eye,
+  EyeOff,
+  AlertCircle,
+  Wifi,
+  FlaskConical,
+  Cpu,
+  Info,
+  Shield,
+  Lock,
+  Archive,
+  Upload,
+  Server,
+  Plus,
+  Pencil,
+  HardDrive,
+  KeyRound,
+  RefreshCw,
+  Award,
+  Webhook,
+  Send,
+  SlidersHorizontal,
 } from 'lucide-react'
 import { api } from '../api/client'
 import LicenseGate from '../components/LicenseGate'

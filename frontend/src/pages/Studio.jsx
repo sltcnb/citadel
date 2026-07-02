@@ -12,11 +12,32 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useLocation } from 'react-router-dom'
 import {
-  Code2, Plus, Save, Trash2, CheckCircle, AlertCircle,
-  RefreshCw, FileCode2, X, ChevronRight, Cpu, Puzzle,
-  Play, BookOpen, Copy, Check, Lock, Shield, Bell, Pencil,
-  Terminal, Zap, Database, FileText, Braces, Search,
-  ChevronDown, LayoutTemplate,
+  Code2,
+  Plus,
+  Save,
+  Trash2,
+  CheckCircle,
+  AlertCircle,
+  RefreshCw,
+  FileCode2,
+  X,
+  ChevronRight,
+  Cpu,
+  Puzzle,
+  Play,
+  BookOpen,
+  Copy,
+  Check,
+  Lock,
+  Shield,
+  Bell,
+  Terminal,
+  Zap,
+  Database,
+  FileText,
+  Braces,
+  Search,
+  LayoutTemplate,
 } from 'lucide-react'
 import Editor from '@monaco-editor/react'
 import { api, getToken } from '../api/client'

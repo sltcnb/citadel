@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Activity, Database, HardDrive, Server, Cpu, RefreshCw, Pause, Play, AlertTriangle, CheckCircle, Layers, Clock, Zap, TrendingUp } from 'lucide-react'
+import { Activity, Database, HardDrive, Server, Cpu, RefreshCw, Pause, Play, AlertTriangle, Layers, Clock, Zap, TrendingUp } from 'lucide-react'
 import { PageShell, PageHeader } from '../components/shared/PageShell'
 import { api } from '../api/client'
 import { statusColor, overallLevel } from '../lib/platformHealth'

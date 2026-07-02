@@ -1,9 +1,17 @@
 import { useEffect, useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  Puzzle, Upload, RefreshCw, FileCode2, X,
-  CheckCircle, AlertCircle, Copy, Check,
-  Code2, BookOpen, Plus, ArrowRight,
+  Puzzle,
+  Upload,
+  RefreshCw,
+  FileCode2,
+  X,
+  CheckCircle,
+  AlertCircle,
+  Code2,
+  BookOpen,
+  Plus,
+  ArrowRight,
 } from 'lucide-react'
 import { PageShell, PageHeader } from '../components/shared/PageShell'
 import { api } from '../api/client'

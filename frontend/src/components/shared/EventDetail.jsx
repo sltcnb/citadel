@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { X, Flag, Tag, Plus, Minus, Save, Search, Shield, AlertTriangle, Brain, Loader2, Clock, Download, FileText, Check, ChevronUp, ChevronDown, Code2, Copy, Bookmark } from 'lucide-react'
 import { useResizableWidth, DrawerResizeHandle } from './resizableDrawer'
