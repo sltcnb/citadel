@@ -354,7 +354,7 @@ const COLUMN_ES_FIELD = {
   channel:     'evtx.channel',
   rule:        'evtx.rule_title',
   run_count:   'prefetch.run_count',
-  mitre:       'mitre.technique_id',
+  mitre:       'mitre.id',
   message:     'message',
   tags:        'tags',
   raw_data:    'raw',

@@ -117,12 +117,12 @@ export default function MitrePanel({ caseId, onClose, onPivot }) {
                   <button
                     key={t.technique_id}
                     onClick={() => {
-                      // Technique evidence lands in different fields per plugin —
-                      // the structured mitre field, or a tag (attack.tXXXX / TXXXX).
-                      // OR them so the pivot catches every tagging convention.
+                      // ES stores the technique on `mitre.id` (keyword subfield);
+                      // some plugins also drop it in tags (attack.tXXXX / TXXXX).
+                      // OR across all so the pivot never misses.
                       const id = t.technique_id
                       const low = String(id).toLowerCase()
-                      onPivot?.(`(mitre.technique_id:${id} OR tags:${id} OR tags:attack.${low} OR tags:${low})`)
+                      onPivot?.(`(mitre.id.keyword:${id} OR mitre.id:${id} OR tags:${id} OR tags:attack.${low})`)
                     }}
                     className="w-full flex items-center gap-2 text-left text-[11px] hover:bg-brand-accentlight/40 rounded px-1 py-1 transition-colors group"
                     title={`Jump to timeline filtered by ${t.technique_id}`}

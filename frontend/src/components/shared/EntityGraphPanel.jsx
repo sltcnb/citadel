@@ -26,11 +26,14 @@ const TYPE_FILL = {
 const COLUMN_OF = { host: 0, user: 1, ip: 2 }
 const MAX_NODES = 40
 
-function pivotQuery(node) {
+export function pivotQuery(node) {
+  const value = String(node.label).replace(/"/g, '\\"')
   switch (node.type) {
-    case 'host': return `host.hostname:"${node.label}"`
-    case 'user': return `user.name:"${node.label}"`
-    case 'ip':   return `network.dst_ip:"${node.label}"`
+    case 'host': return `(host.hostname:"${value}" OR host.ip:"${value}")`
+    case 'user': return `user.name:"${value}"`
+    // An IP can appear under any of the normalised network fields — OR them all
+    // (matches the backend's IOC match-field list) so the pivot never misses.
+    case 'ip':   return `(network.src_ip:"${value}" OR network.dst_ip:"${value}" OR network.dest_ip:"${value}" OR source.ip:"${value}" OR destination.ip:"${value}" OR host.ip:"${value}")`
     default:     return ''
   }
 }

@@ -73,12 +73,22 @@ function fmtTime(ts) {
 }
 
 // Build the pivot query for a step (prefer fo_id, fall back to host + time).
-function stepQuery(step) {
+export function stepQuery(step) {
+  // Exact event is best when we have its id.
   if (step?.fo_id) return `fo_id:"${step.fo_id}"`
   const parts = []
-  if (step?.host) parts.push(`host.hostname:"${step.host}"`)
-  if (step?.ts) parts.push(`@timestamp:"${step.ts}"`)
-  return parts.join(' AND ')
+  if (step?.host) parts.push(`host.hostname:"${String(step.host).replace(/"/g, '\\"')}"`)
+  // The timeline indexes the event time as `timestamp` (not `@timestamp`), and an
+  // exact string rarely matches — pivot to a ±2min window around the step.
+  if (step?.ts) {
+    const at = new Date(step.ts)
+    if (!isNaN(at.getTime())) {
+      const from = new Date(at.getTime() - 120000).toISOString()
+      const to   = new Date(at.getTime() + 120000).toISOString()
+      parts.push(`timestamp:[${from} TO ${to}]`)
+    }
+  }
+  return parts.join(' AND ') || '*'
 }
 
 export default function KillChainPanel({
