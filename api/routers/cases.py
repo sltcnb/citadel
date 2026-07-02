@@ -32,6 +32,7 @@ class CaseUpdate(BaseModel):
 class AutoRunUpdate(BaseModel):
     auto_detections: bool | None = None
     auto_ioc_match: bool | None = None
+    auto_modules: bool | None = None
     auto_ai: bool | None = None
 
 

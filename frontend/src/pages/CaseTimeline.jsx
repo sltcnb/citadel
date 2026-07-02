@@ -45,7 +45,6 @@ import {
   FileBarChart,
   Pencil,
   Copy,
-  Zap,
   ClipboardCheck,
 } from 'lucide-react'
 
@@ -128,6 +127,21 @@ const MODULE_NAMES = {
   exiftool:    'ExifTool',
   bulk_extractor: 'Bulk Extractor',
   capa:        'CAPA',
+}
+
+// Finding `kind` → human label. Findings are the unified output of EVERY case
+// feature (not just modules), so the report draws on all of them.
+const FINDING_KIND_LABELS = {
+  module:       'Modules',
+  ioc:          'IOCs',
+  anomaly:      'Anomalies',
+  mitre:        'MITRE',
+  baseline:     'Baseline',
+  killchain:    'Kill chain',
+  entity:       'Entity graph',
+  process_tree: 'Process tree',
+  copilot:      'Co-Pilot',
+  manual:       'Manual',
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1508,7 +1522,7 @@ function ModuleRunCard({
                   )}
                 </p>
                 <button
-                  onClick={() => { onClose?.(); navigate(`/cases/${caseId}`, { state: { pivotQuery: `artifact_type:finding AND source_feature:"${run.module_id}"` } }) }}
+                  onClick={() => { onClose?.(); navigate(`/cases/${caseId}`, { state: { pivotQuery: `artifact_type:finding AND (source_feature:"${run.module_id}" OR tags:"${run.module_id}" OR provenance.module_id:"${run.module_id}")` } }) }}
                   className="btn-ghost text-[11px] px-2 py-1 rounded-lg inline-flex items-center gap-1 text-amber-700"
                   title="Show this run's detections in the timeline"
                 >
@@ -2157,7 +2171,9 @@ export default function CaseTimeline() {
   const [showAI, setShowAI]                 = usePersistedState(`fo_panel_ai_${caseId}`, false)
   // Auto-pilot: kick off an autonomous AI investigation the moment evidence
   // ingestion finishes (active jobs fall to 0). Persisted opt-out per case.
-  const [autoPilot, setAutoPilot]           = usePersistedState(`fo_autopilot_${caseId}`, true)
+  // Default OFF — the analyst decides when to launch the AI (and with what
+  // context). Opt in via the Auto-AI toggle if you want hands-off triage.
+  const [autoPilot, setAutoPilot]           = usePersistedState(`fo_autopilot_${caseId}`, false)
   const autoPilotRef                        = useRef(autoPilot)
   useEffect(() => { autoPilotRef.current = autoPilot }, [autoPilot])
   const prevActiveRef                       = useRef(null)
@@ -2418,7 +2434,8 @@ export default function CaseTimeline() {
             )}
           </button>
 
-          {/* AI (Pilot) + Auto-pilot — only when the licence advertises ai_assist */}
+          {/* AI (Pilot) — opens the investigation panel. The Auto-AI toggle
+              lives in the Ingest panel (armed alongside evidence), not here. */}
           {aiEnabled && (
             <button
               onClick={() => setShowAI(v => !v)}
@@ -2427,19 +2444,6 @@ export default function CaseTimeline() {
             >
               <Sparkles size={14} />
               AI
-            </button>
-          )}
-
-          {aiEnabled && (
-            <button
-              onClick={() => setAutoPilot(v => !v)}
-              className={`btn-outline ${autoPilot ? 'bg-purple-50 border-purple-300 text-purple-700' : 'text-gray-400'}`}
-              title={autoPilot
-                ? 'Auto-AI is ON — the AI investigation launches automatically when ingest completes. Click to turn off.'
-                : 'Auto-AI is OFF — click to auto-launch the AI investigation when ingest completes.'}
-            >
-              <Zap size={14} />
-              Auto-AI: {autoPilot ? 'ON' : 'OFF'}
             </button>
           )}
 
@@ -3210,7 +3214,13 @@ function ReportPanel({ caseId, onClose }) {
     refreshHistory()
 
     api.modules.listRuns(caseId)
-      .then(r => setModuleRuns((r.runs || []).filter(x => x.status === 'COMPLETED')))
+      .then(r => {
+        const completed = (r.runs || []).filter(x => x.status === 'COMPLETED')
+        setModuleRuns(completed)
+        // Pre-select every run that actually produced detections, so the report
+        // includes all module output by default (analyst can untick to trim).
+        setSelectedRunIds(new Set(completed.filter(x => (x.total_hits || 0) > 0).map(x => x.run_id)))
+      })
       .catch(() => {})
   }, [caseId])
 
@@ -3227,13 +3237,20 @@ function ReportPanel({ caseId, onClose }) {
         if (typeof res.total === 'number') return res.total
         return Object.values(res || {}).reduce((sum, value) => sum + (Array.isArray(value) ? value.length : 0), 0)
       }).catch(() => null),
-      api.findings.summary(caseId).then(res => asNumber(res.total) ?? asNumber(res.count) ??
-        (res.by_kind ? Object.values(res.by_kind).reduce((sum, count) => sum + (count || 0), 0) : null)).catch(() => null),
+      api.findings.summary(caseId).then(res => ({
+        total: asNumber(res.total) ?? asNumber(res.count) ??
+          (res.by_kind ? Object.values(res.by_kind).reduce((sum, count) => sum + (count || 0), 0) : null),
+        byKind: res.by_kind || {},
+      })).catch(() => ({ total: null, byKind: {} })),
       api.notes.get(caseId).then(res => (res.body || '').trim().length > 0).catch(() => null),
       api.cases.aiResults(caseId).then(res => (res.investigations || res.runs || []).length).catch(() => null),
-    ]).then(([flagged, pinned, iocs, findings, notesFilled, investigations]) => {
+    ]).then(([flagged, pinned, iocs, findingsSummary, notesFilled, investigations]) => {
       if (!stillMounted) return
-      setContents({ flagged, pinned, iocs, findings, notesFilled, investigations })
+      setContents({
+        flagged, pinned, iocs, notesFilled, investigations,
+        findings: findingsSummary.total,
+        findingsByKind: findingsSummary.byKind,
+      })
       setContentsLoading(false)
     })
     return () => { stillMounted = false }
@@ -3421,8 +3438,10 @@ ul,ol{padding-left:1.5em;}li{margin:2px 0;}
                   <span className="text-sm font-semibold text-gray-900">What this report contains</span>
                 </div>
                 <p className="text-[11px] text-gray-500 mb-3">
-                  Assembled live from the case's current state — no manual gathering. Everything below is
-                  included automatically; flag or pin more in the timeline to enrich it.
+                  Assembled live from the case's current state — flagged &amp; pinned events, IOCs, notes,
+                  AI investigations, module detections AND every analysis surface's findings (anomalies,
+                  MITRE, baseline, kill-chain, entity graph, Co-Pilot). Everything below is included
+                  automatically; flag or pin more in the timeline to enrich it.
                 </p>
                 {contentsLoading ? (
                   <div className="flex items-center gap-2 text-xs text-gray-500 py-3">
@@ -3503,6 +3522,28 @@ ul,ol{padding-left:1.5em;}li{margin:2px 0;}
                           </div>
                         </div>
                       )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Findings by feature — every surface (anomaly, MITRE, IOC,
+                    kill-chain, entity, process-tree, module, Co-Pilot…) persists
+                    to the findings store and ALL of it feeds the report. */}
+                {!contentsLoading && contents?.findingsByKind && Object.keys(contents.findingsByKind).length > 0 && (
+                  <div className="mt-2">
+                    <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-1">
+                      Findings by feature — all included
+                    </p>
+                    <div className="flex flex-wrap gap-1">
+                      {Object.entries(contents.findingsByKind)
+                        .filter(([, n]) => n > 0)
+                        .sort((a, b) => b[1] - a[1])
+                        .map(([kind, n]) => (
+                          <span key={kind} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-gray-200 bg-gray-50 text-[10px] text-gray-600">
+                            {FINDING_KIND_LABELS[kind] || kind}
+                            <span className="font-semibold text-brand-text tabular-nums">{n.toLocaleString()}</span>
+                          </span>
+                        ))}
                     </div>
                   </div>
                 )}

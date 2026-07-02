@@ -1061,7 +1061,15 @@ export default function IngestPanel({ caseId, onClose, onComplete, autoPilot, se
           {setAutoPilot && (
             <div className="px-4 pb-3">
               <button
-                onClick={() => setAutoPilot(v => !v)}
+                onClick={() => {
+                  const next = !autoPilot
+                  setAutoPilot(next)
+                  // Arm/disarm the SERVER-SIDE LLM auto-run too (the finalize
+                  // chain reads the per-case `auto_ai` flag), so this one switch
+                  // truly governs whether the LLM runs on ingest. Modules always
+                  // auto-run regardless — this only gates the LLM.
+                  api.cases.setAutoRun(caseId, { auto_ai: next }).catch(() => {})
+                }}
                 className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg border text-left transition-colors ${
                   autoPilot
                     ? 'bg-purple-50 border-purple-300 text-purple-700'

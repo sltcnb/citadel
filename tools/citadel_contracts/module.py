@@ -231,10 +231,13 @@ class BaseModule(ABC):
         not installed or no source files were supplied. Override to add checks.
         """
         if not ctx.source_files:
-            return Result(module=self.name, status="skipped").add_finding(
-                "informational",
-                f"{self.name}: no source files",
-                "No source files were supplied to analyze.",
+            # Report as a run error (surfaced on the run card), NOT a timeline
+            # finding — a module that can't run is a run-status condition, the
+            # same way Volatility/Cuckoo report "no source" / "not configured".
+            return Result(
+                module=self.name,
+                status="error",
+                error="No source files were supplied to analyze.",
             )
         return None
 

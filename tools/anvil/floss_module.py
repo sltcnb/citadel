@@ -27,10 +27,12 @@ class FlossModule(BaseModule):
         if pre is not None:
             return pre
         if not shutil.which("floss"):
-            return Result(module=self.name, status="skipped").add_finding(
-                "informational",
-                "FLOSS not installed",
-                "Install FLOSS: https://github.com/mandiant/flare-floss/releases — add to PATH.",
+            # Missing binary is a run-status/config condition — surface it on the
+            # run card as an error, not as an informational timeline finding.
+            return Result(
+                module=self.name,
+                status="error",
+                error="FLOSS not installed — install from https://github.com/mandiant/flare-floss/releases and add it to PATH.",
             )
         return None
 

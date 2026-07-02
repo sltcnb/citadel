@@ -59,18 +59,24 @@ def _run_finalize_chain(case_id: str) -> dict:
     _comms.info("[processor → citadel] case %s — post-ingestion finalize requested", case_id)
     result: dict = {"case_id": case_id, "ioc_match": None, "ai_risk": None}
 
-    # Per-case auto-run flags — operator can disable heavy stages per case.
-    from services.cases import auto_run_enabled
-
     # NB: CTI IOC matching now runs as the cti_match MODULE in the worker chain
     # (persistent — indexed as cti_match timeline events), BEFORE this finalize is
     # triggered. One matching path; the AI step below sees those indexed matches.
     result["ioc_match"] = {"note": "runs as the cti_match module (persisted to timeline)"}
 
-    # ── AI risk analysis (plan-gated by the ai_assist feature) ───────────────
-    if not auto_run_enabled(case_id, "auto_ai"):
-        result["ai_risk"] = {"skipped": "auto_ai disabled for this case"}
-        logger.info("[finalize] case %s — AI risk skipped (disabled)", case_id)
+    # ── Auto-launch recommended modules (DECOUPLED from the LLM) ──────────────
+    # Modules run automatically whenever evidence lands — the analyst does not
+    # have to. This is independent of the AI step below (the LLM stays manual /
+    # opt-in): gated by its own per-case flag `auto_modules` (default on).
+    result["modules"] = _autolaunch_modules(case_id)
+
+    # ── AI risk analysis — OPT-IN (the LLM never auto-runs unless the analyst
+    #    armed it for this case). Modules above auto-run regardless; the LLM does
+    #    not. Enabled by setting the per-case `auto_ai` flag to "1" (the Auto-AI
+    #    toggle in the Ingest panel). Unset/"0" → skipped.
+    if get_redis().hget(f"case:{case_id}", "auto_ai") != "1":
+        result["ai_risk"] = {"skipped": "auto_ai not armed — LLM is opt-in per case"}
+        logger.info("[finalize] case %s — AI risk skipped (LLM opt-in, not armed)", case_id)
         return result
     try:
         from license import get_license
@@ -130,3 +136,88 @@ def _run_finalize_chain(case_id: str) -> dict:
 
     logger.info("[finalize] case %s — chain complete", case_id)
     return result
+
+
+def _autolaunch_modules(case_id: str) -> dict:
+    """Launch every recommended module against its compatible files.
+
+    Runs on ingest completion, independent of the LLM. A module is launched only
+    with the case files whose extension / basename it declares as input, so each
+    run gets real sources (never an empty list). Modules already run for this
+    case are skipped to avoid duplicate runs on repeated finalize triggers.
+    """
+    from services.cases import auto_run_enabled
+
+    if not auto_run_enabled(case_id, "auto_modules"):
+        return {"skipped": "auto_modules disabled for this case"}
+    try:
+        from pathlib import Path
+
+        from routers.modules import (
+            CreateModuleRunRequest,
+            SourceFileRef,
+            _get_custom_modules,
+            _get_modules,
+            create_module_run,
+            list_case_sources,
+            list_module_runs,
+            recommend_modules,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return {"error": f"module API unavailable: {exc}"}
+
+    try:
+        sources = list_case_sources(case_id).get("sources", [])
+        recommended = recommend_modules(case_id).get("recommended", [])
+        already = {
+            run.get("module_id") for run in list_module_runs(case_id).get("runs", [])
+        }
+        meta = {m["id"]: m for m in (_get_modules() + _get_custom_modules())}
+
+        launched: list[dict] = []
+        for entry in recommended:
+            module_id = entry["id"]
+            if module_id in already:
+                continue  # don't re-run a module that already has a run
+            module = meta.get(module_id) or {}
+            exts = {e.lower() for e in module.get("input_extensions") or []}
+            names = {n.lower() for n in module.get("input_filenames") or []}
+            compatible = [
+                s
+                for s in sources
+                if not s.get("skipped")
+                and s.get("original_filename")
+                and (
+                    Path(s["original_filename"]).suffix.lower() in exts
+                    or Path(s["original_filename"]).name.lower() in names
+                )
+            ]
+            if not compatible:
+                continue  # nothing this module can consume
+            req = CreateModuleRunRequest(
+                module_id=module_id,
+                source_files=[
+                    SourceFileRef(
+                        job_id=s.get("job_id", ""),
+                        filename=s.get("original_filename", ""),
+                        minio_key=s.get("minio_object_key", ""),
+                    )
+                    for s in compatible
+                ],
+            )
+            try:
+                run = create_module_run(case_id, req)
+                launched.append(
+                    {"module_id": module_id, "run_id": run.get("run_id"), "files": len(compatible)}
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "[finalize] case %s — auto-launch %s failed: %s", case_id, module_id, exc
+                )
+        _comms.info(
+            "[citadel] case %s — auto-launched %d module(s) on ingest", case_id, len(launched)
+        )
+        return {"launched": launched}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[finalize] case %s — module auto-launch failed: %s", case_id, exc)
+        return {"error": str(exc)}

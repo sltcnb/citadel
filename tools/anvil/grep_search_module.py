@@ -46,8 +46,11 @@ class GrepSearchModule(BaseModule):
         if pre is not None:
             return pre
         if not shutil.which("grep"):
-            return Result(module=self.name, status="skipped").add_finding(
-                "informational", "grep not installed", "Install coreutils"
+            # Run-status/config condition, not a timeline finding.
+            return Result(
+                module=self.name,
+                status="error",
+                error="grep not installed — install coreutils on the worker.",
             )
         return None
 
