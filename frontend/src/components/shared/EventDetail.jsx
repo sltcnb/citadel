@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { X, Flag, Tag, Plus, Minus, Save, Search, Shield, AlertTriangle, Brain, Loader2, Clock, Download, FileText, Check, ChevronUp, ChevronDown, Code2, Copy, Bookmark } from 'lucide-react'
 import { useResizableWidth, DrawerResizeHandle } from './resizableDrawer'
+import PanelHelp from './PanelHelp'
 import { api, getToken } from '../../api/client'
 import { extractIocs, iocSearchQuery } from '../../utils/ioc'
 import { getMitre, TACTIC_COLORS } from '../../utils/mitre'
@@ -310,6 +311,12 @@ export default function EventDetail({ event: initialEvent, caseId, onClose, onFi
       </div>
 
       <div ref={panelBodyRef} className="flex-1 overflow-y-auto p-3 space-y-4 text-xs">
+        <PanelHelp
+          title="Event detail"
+          use="The full normalized event: every field, raw payload, extracted IOCs and MITRE mapping."
+          when="After clicking a timeline row — to inspect, flag/pin, tag, note, or pivot the timeline around this event."
+          tip="Ctrl/⌘-F searches within the event. Drag the panel's left edge to resize it."
+        />
         {/* Actions */}
         <div className="flex gap-2 flex-wrap">
           <button

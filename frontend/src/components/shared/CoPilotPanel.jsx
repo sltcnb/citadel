@@ -4,6 +4,7 @@ import {
   Eye, Search, ExternalLink, Clock, Brain, ListChecks,
 } from 'lucide-react'
 import { api } from '../../api/client'
+import { iocValueQuery } from '../../utils/ioc'
 import PanelShell from './PanelShell'
 
 /**
@@ -283,7 +284,7 @@ export default function CoPilotPanel({ caseId, onClose, onPivot }) {
                         </div>
                         {kind === 'ioc' && rec.cases?.length > 0 && onPivot && (
                           <button
-                            onClick={() => onPivot(`message:"${rec.value}"`)}
+                            onClick={() => onPivot(iocValueQuery(rec.value))}
                             className="text-[10px] text-brand-accent hover:text-brand-accenthover inline-flex items-center gap-1 flex-shrink-0"
                             title="Pivot to timeline"
                           >
@@ -375,7 +376,7 @@ export default function CoPilotPanel({ caseId, onClose, onPivot }) {
                         </div>
                         {onPivot && (
                           <button
-                            onClick={() => onPivot(`message:"${h.value}"`)}
+                            onClick={() => onPivot(iocValueQuery(h.value))}
                             className="text-[10px] text-amber-800 hover:text-amber-900 inline-flex items-center gap-1 flex-shrink-0"
                             title="Pivot to timeline"
                           >

@@ -35,5 +35,12 @@ export function extractIocs(text) {
 }
 
 export function iocSearchQuery(ioc) {
-  return `"${ioc.value}"`
+  return iocValueQuery(ioc.value)
+}
+
+// Lucene pivot for a raw indicator value. A bare quoted term matches the value
+// in ANY indexed field (src/dst IP, domain, hash, message…), so the timeline
+// lands on every event mentioning it — no per-field guessing needed.
+export function iocValueQuery(value) {
+  return `"${String(value).replace(/"/g, '\\"')}"`
 }

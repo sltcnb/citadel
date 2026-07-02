@@ -1,15 +1,52 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useParams, useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 import {
-  Upload, Search, Bell, X, ChevronRight, AlertTriangle,
-  CheckCircle, Clock, Database, Loader2, Shield,
-  Cpu, RefreshCw, Plus, Download, Play, Terminal,
-  AlertCircle, ChevronDown, FileCode, ExternalLink,
-  Flag, Filter, Sparkles, FileText, Trash2, Crosshair,
-  Monitor, HardDrive, Globe, Brain,
-  Binary, Bug, Network, FileImage, TextSearch, Tag,
-  GitBranch, Target, Activity, LayoutTemplate, FileDown,
-  Printer, FileBarChart, Layers, Bot, Pencil, Copy, Zap, ClipboardCheck,
+  Upload,
+  Search,
+  Bell,
+  X,
+  ChevronRight,
+  AlertTriangle,
+  CheckCircle,
+  Clock,
+  Database,
+  Loader2,
+  Shield,
+  Cpu,
+  RefreshCw,
+  Plus,
+  Download,
+  Play,
+  Terminal,
+  AlertCircle,
+  ChevronDown,
+  FileCode,
+  ExternalLink,
+  Flag,
+  Filter,
+  Sparkles,
+  FileText,
+  Trash2,
+  Crosshair,
+  Monitor,
+  HardDrive,
+  Globe,
+  Brain,
+  Binary,
+  Bug,
+  Network,
+  FileImage,
+  TextSearch,
+  Tag,
+  Target,
+  LayoutTemplate,
+  FileDown,
+  Printer,
+  FileBarChart,
+  Pencil,
+  Copy,
+  Zap,
+  ClipboardCheck,
 } from 'lucide-react'
 
 const MOD_CATEGORY_ICONS = {
@@ -46,6 +83,7 @@ import KillChainPanel from '../components/shared/KillChainPanel'
 import EvidencePanel from '../components/shared/EvidencePanel'
 import CoPilotPanel from '../components/shared/CoPilotPanel'
 import ToolbarMenu from '../components/shared/ToolbarMenu'
+import { buildToolbarGroups } from './caseCapabilities'
 import PanelHelp from '../components/shared/PanelHelp'
 import { ResizableDrawer } from '../components/shared/resizableDrawer'
 import { useLicense } from '../contexts/LicenseContext'
@@ -2084,8 +2122,7 @@ export default function CaseTimeline() {
   // Toolbar is agile: capabilities the current licence doesn't advertise are
   // hidden rather than shown as dead buttons.
   const license = useLicense()
-  const aiEnabled    = !!license?.features?.ai_assist
-  const rulesEnabled = license?.features?.alert_rules !== false
+  const aiEnabled = !!license?.features?.ai_assist
   const navigate = useNavigate()
   const location = useLocation()
   const [searchParams] = useSearchParams()
@@ -2247,68 +2284,31 @@ export default function CaseTimeline() {
   const artifactTypes = caseData?.artifact_types || []
 
   // ── Data-driven toolbar ─────────────────────────────────────────────────────
-  // The Detect / Investigate / Case menus are generated from a capability list
-  // rather than hard-coded, so the toolbar advertises only what THIS case + the
-  // active licence can actually do. `show` gates each item; a group with no
-  // visible items renders nothing. `hasEvents` = there is something to analyse.
+  // The Detect / Investigate / Case menus are generated from the capability
+  // registry (caseCapabilities.jsx), so the toolbar advertises only what THIS
+  // case + the active licence can do. Here we just wire each capability id to
+  // its open/close handler + active state; the registry owns labels + gating.
   const hasEvents = (caseData?.event_count || 0) > 0
-  const TOOLBAR_GROUPS = [
-    {
-      key: 'detect', label: 'Detect', icon: <Bell size={14} />,
-      items: [
-        { key: 'rules', label: 'Detection Rules', icon: <Bell size={13} />, active: showAlertRules,
-          title: 'Run the Sigma/EQL rule library against this case',
-          show: rulesEnabled && hasEvents, onClick: () => setShowAlertRules(v => !v) },
-        { key: 'anomaly', label: 'Anomalies', icon: <Activity size={13} />, active: showAnomaly,
-          title: 'Statistical z-score outliers (host × event_id × day)',
-          show: hasEvents, onClick: () => setShowAnomaly(true) },
-        { key: 'baseline', label: 'Baseline / rare artifacts', icon: <Layers size={13} />, active: showBaseline,
-          title: 'Stack a field; surface values rare across the case but present on a host',
-          show: hasEvents, onClick: () => setShowBaseline(true) },
-        { key: 'mitre', label: 'MITRE coverage', icon: <Target size={13} />, active: showMitre,
-          title: 'ATT&CK technique coverage for this case',
-          show: hasEvents, onClick: () => setShowMitre(true) },
-      ],
-    },
-    {
-      key: 'investigate', label: 'Investigate', icon: <Crosshair size={14} />,
-      items: [
-        { key: 'iocs', label: 'IOCs', icon: <Crosshair size={13} />, active: showIocs,
-          title: 'Observed indicators + threat-intel matching',
-          show: hasEvents, onClick: () => setShowIocs(v => !v) },
-        { key: 'ptree', label: 'Process Tree', icon: <GitBranch size={13} />, active: showProcessTree,
-          title: 'Parent→child process chains (EVTX / Sysmon / auditd)',
-          show: hasEvents, onClick: () => setShowProcessTree(true) },
-        { key: 'graph', label: 'Entity graph', icon: <Network size={13} />, active: showGraph,
-          title: 'Host ↔ user ↔ IP relationships (lateral movement)',
-          show: hasEvents, onClick: () => setShowGraph(true) },
-        { key: 'killchain', label: 'Kill chain', icon: <Crosshair size={13} />, active: showKillChain,
-          title: 'Assemble the attack story around an anchor event',
-          show: hasEvents, onClick: () => setShowKillChain(true) },
-        { key: 'copilot', label: 'Co-Pilot — watch & memory', icon: <Bot size={13} />, active: showCoPilot,
-          title: "What's new since you last looked + cross-case IOC memory",
-          show: true, onClick: () => setShowCoPilot(true) },
-      ],
-    },
-    {
-      key: 'case', label: 'Case', icon: <FileText size={14} />,
-      items: [
-        { key: 'notes', label: 'Notes', icon: <FileText size={13} />, active: showNotes,
-          title: 'Free-form case notes',
-          show: true, onClick: () => setShowNotes(v => !v) },
-        { key: 'templates', label: 'Templates', icon: <LayoutTemplate size={13} />,
-          title: 'Apply a pre-canned investigation template (ransomware / insider / phishing)',
-          show: true, onClick: () => setShowTemplates(true) },
-        { key: 'report', label: 'Report', icon: <FileDown size={13} />,
-          title: 'Generate a Markdown / HTML case report',
-          show: true, onClick: () => setShowReport(true) },
-        { key: 'evidence', label: 'Evidence chain', icon: <Shield size={13} />, active: showEvidence,
-          title: 'Signed chain-of-custody — verify integrity, export court-ready manifest',
-          show: true, onClick: () => setShowEvidence(true) },
-      ],
-    },
-  ].map(g => ({ ...g, items: g.items.filter(i => i.show) }))
-   .filter(g => g.items.length > 0)
+  const capabilityWiring = {
+    rules:     { active: showAlertRules,  onClick: () => setShowAlertRules(v => !v) },
+    anomaly:   { active: showAnomaly,     onClick: () => setShowAnomaly(true) },
+    baseline:  { active: showBaseline,    onClick: () => setShowBaseline(true) },
+    mitre:     { active: showMitre,       onClick: () => setShowMitre(true) },
+    iocs:      { active: showIocs,        onClick: () => setShowIocs(v => !v) },
+    ptree:     { active: showProcessTree, onClick: () => setShowProcessTree(true) },
+    graph:     { active: showGraph,       onClick: () => setShowGraph(true) },
+    killchain: { active: showKillChain,   onClick: () => setShowKillChain(true) },
+    copilot:   { active: showCoPilot,     onClick: () => setShowCoPilot(true) },
+    notes:     { active: showNotes,       onClick: () => setShowNotes(v => !v) },
+    templates: { active: showTemplates,   onClick: () => setShowTemplates(true) },
+    report:    { active: showReport,      onClick: () => setShowReport(true) },
+    evidence:  { active: showEvidence,    onClick: () => setShowEvidence(true) },
+  }
+  const toolbarGroups = buildToolbarGroups({
+    features: license?.features || {},
+    hasEvents,
+    wiring: capabilityWiring,
+  })
 
   return (
     <div className="flex flex-col h-full">
@@ -2445,7 +2445,7 @@ export default function CaseTimeline() {
 
           {/* Detect / Investigate / Case — generated from the capability list
               above so the toolbar only advertises what this case can do. */}
-          {TOOLBAR_GROUPS.map(g => (
+          {toolbarGroups.map(g => (
             <ToolbarMenu
               key={g.key}
               label={g.label}
@@ -3220,7 +3220,7 @@ function ReportPanel({ caseId, onClose }) {
     const asNumber = (value) => (typeof value === 'number' && !isNaN(value) ? value : null)
     Promise.all([
       api.search.search(caseId, { q: 'is_flagged:true', size: 0 }).then(res => asNumber(res.total)).catch(() => null),
-      api.search.pinned(caseId).then(res => (Array.isArray(res) ? res : res.pinned || res.events || [])).then(list => list.length).catch(() => null),
+      api.search.pinned(caseId).then(res => asNumber(res.total) ?? (Array.isArray(res) ? res : res.events || res.pinned || []).length).catch(() => null),
       api.search.iocs(caseId).then(res => {
         if (Array.isArray(res)) return res.length
         if (Array.isArray(res.iocs)) return res.iocs.length
