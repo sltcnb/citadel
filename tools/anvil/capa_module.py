@@ -58,10 +58,12 @@ class CapaModule(BaseModule):
         if pre is not None:
             return pre
         if not shutil.which("capa"):
-            return Result(module=self.name, status="skipped").add_finding(
-                "informational",
-                "CAPA not installed",
-                "Install CAPA: https://github.com/mandiant/capa/releases — add to PATH.",
+            # Missing binary is a run-status/config condition — surface it on the
+            # run card as an error, not as an informational timeline finding.
+            return Result(
+                module=self.name,
+                status="error",
+                error="CAPA not installed — install from https://github.com/mandiant/capa/releases and add it to PATH.",
             )
         return None
 

@@ -48,14 +48,15 @@ def get_case(case_id: str) -> dict | None:
     return data
 
 
-_AUTO_RUN_STAGES = ("auto_detections", "auto_ioc_match", "auto_ai")
+_AUTO_RUN_STAGES = ("auto_detections", "auto_ioc_match", "auto_modules", "auto_ai")
 
 
 def get_auto_run(case_id: str) -> dict:
-    """Per-case auto-run stage flags. Missing field = enabled (default on)."""
+    """Per-case auto-run stage flags. Detections / IOC match / modules default ON;
+    the LLM (`auto_ai`) is OPT-IN (default OFF) — the analyst arms it explicitly."""
     r = get_redis()
     h = r.hgetall(f"case:{case_id}") or {}
-    return {s: h.get(s, "1") != "0" for s in _AUTO_RUN_STAGES}
+    return {s: h.get(s, "0" if s == "auto_ai" else "1") != "0" for s in _AUTO_RUN_STAGES}
 
 
 def set_auto_run(case_id: str, flags: dict) -> dict:
