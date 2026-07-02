@@ -1877,9 +1877,11 @@ class WindowsCollector(Collector):
                 if sz == 0 or sz > MAX_FILE:
                     continue
                 rel = p.relative_to(d.parent) if d.parent in p.parents else Path(d.name) / p.name
-                if self._add(p, f"pe/{rel}"):
+                arc = f"pe/{rel}"
+                if self._add(p, arc):
                     count += 1
                     total += sz
+                    self._zone_id(p, arc)  # Mark-of-the-Web source URL
 
     def _documents(self) -> None:
         """Collect Office documents and PDFs from user directories."""
@@ -1921,6 +1923,31 @@ class WindowsCollector(Collector):
                     if self._add(p, f"documents/{ud.name}/{rel}/{p.name}"):
                         count += 1
 
+    def _zone_id(self, src: Path, arcname: str) -> None:
+        """Collect a file's ``Zone.Identifier`` (Mark-of-the-Web) NTFS ADS if present.
+
+        This is the native proof of where a file was downloaded from — the
+        stream holds HostUrl / ReferrerUrl. Best-effort: absent on non-NTFS or
+        files that didn't come from an untrusted zone. Staged as
+        ``<arcname>.Zone.Identifier`` so the markofweb parser picks it up.
+        """
+        try:
+            with open(f"{src}:Zone.Identifier", "rb") as fh:
+                data = fh.read(65536)
+        except OSError:
+            return
+        except Exception:
+            return
+        if not data.strip():
+            return
+        try:
+            safe = arcname.replace("/", "_").replace("\\", "_").replace(" ", "_")
+            tmp = self.staging / f"{safe}.Zone.Identifier"
+            tmp.write_bytes(data)
+            self._add(tmp, f"{arcname}.Zone.Identifier")
+        except Exception:
+            pass
+
     def _downloads(self) -> None:
         """Collect every user's Downloads folder (all file types).
 
@@ -1959,9 +1986,11 @@ class WindowsCollector(Collector):
                     if sz == 0 or sz > MAX_FILE:
                         continue
                     rel = p.relative_to(d)
-                    if self._add(p, f"downloads/{ud.name}/{rel}"):
+                    arc = f"downloads/{ud.name}/{rel}"
+                    if self._add(p, arc):
                         count += 1
                         total += sz
+                        self._zone_id(p, arc)  # Mark-of-the-Web source URL
                 except Exception:
                     pass
 
