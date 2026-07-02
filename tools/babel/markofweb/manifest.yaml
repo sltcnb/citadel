@@ -1,0 +1,24 @@
+id: markofweb
+name: Mark-of-the-Web (Zone.Identifier)
+description: >
+  Parses NTFS Zone.Identifier alternate data streams — the "Mark of the Web"
+  Windows writes on downloaded files. Recovers the ORIGINAL download source
+  (HostUrl) and ReferrerUrl natively, without any EDR: proof that a file such as
+  an installer came from a specific URL/domain. Each stream becomes a
+  mark_of_web event carrying url.full + url.domain so it surfaces in the IOC
+  panel, entity graph, and Lucene field queries.
+supported_extensions:
+  - .identifier
+supported_mime_types:
+  - text/plain
+artifact_type: mark_of_web
+handled_filenames: []
+author: Citadel
+version: "1.0.0"
+tags:
+  - windows
+  - browser
+  - download
+  - mark-of-the-web
+  - motw
+  - provenance
