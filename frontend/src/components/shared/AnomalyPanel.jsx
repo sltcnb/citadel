@@ -209,9 +209,21 @@ export default function AnomalyPanel({ caseId, onClose, onPivot }) {
                       Math.abs(z) >= 5 ? 'text-red-700 bg-red-50' :
                       Math.abs(z) >= 4 ? 'text-orange-700 bg-orange-50' :
                                          'text-amber-700 bg-amber-50'
+                    // Land the timeline on exactly this spike: the host, the
+                    // event id, AND the anomalous day (Lucene timestamp range).
+                    const day = (ano.day || '').slice(0, 10)
+                    const anomalyQuery = () => {
+                      const parts = []
+                      if (ano.host) parts.push(`host.hostname:"${String(ano.host).replace(/"/g, '\\"')}"`)
+                      if (ano.event_id != null && ano.event_id !== '') parts.push(`evtx.event_id:${ano.event_id}`)
+                      if (day) parts.push(`timestamp:[${day}T00:00:00 TO ${day}T23:59:59]`)
+                      return parts.join(' AND ') || '*'
+                    }
                     return (
-                      <tr key={a._id} className="border-t border-gray-100 hover:bg-gray-50">
-                        <Td className="font-mono">{(ano.day || '').slice(0, 10)}</Td>
+                      <tr key={a._id} className="border-t border-gray-100 hover:bg-brand-accentlight/40 cursor-pointer"
+                        onClick={() => onPivot?.(anomalyQuery())}
+                        title="Pivot to the timeline for this host + event on this day">
+                        <Td className="font-mono">{day}</Td>
                         <Td>{ano.host || '—'}</Td>
                         <Td className="font-mono">{ano.event_id ?? '—'}</Td>
                         <Td right className="tabular-nums">{ano.count?.toLocaleString()}</Td>
@@ -224,10 +236,7 @@ export default function AnomalyPanel({ caseId, onClose, onPivot }) {
                         </Td>
                         <Td right>
                           <button
-                            onClick={() => {
-                              const q = `host.hostname:"${ano.host}" AND evtx.event_id:${ano.event_id}`
-                              onPivot?.(q)
-                            }}
+                            onClick={e => { e.stopPropagation(); onPivot?.(anomalyQuery()) }}
                             className="text-[10px] text-brand-accent hover:text-brand-accenthover inline-flex items-center gap-1"
                             title="Pivot to timeline"
                           >

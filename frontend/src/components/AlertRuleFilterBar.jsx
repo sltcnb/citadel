@@ -1,6 +1,6 @@
 import { useRef } from 'react'
 import { Search, Tag, X } from 'lucide-react'
-import { CATEGORY_ORDER, CATEGORY_STYLES } from './RuleDrawer'
+import { CATEGORY_STYLES } from './RuleDrawer'
 import { presentCategories, artifactTypes } from '../lib/alertRuleFilters'
 
 const PROVENANCE_PILLS = [

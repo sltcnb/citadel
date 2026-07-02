@@ -1,9 +1,25 @@
 import { useState, useEffect, useRef, useLayoutEffect } from 'react'
 import {
-  X, Sparkles, Loader2, AlertTriangle, ChevronRight,
-  Shield, Search, Lightbulb, Target, TrendingUp, Copy, CheckCircle, Trash2,
-  Bot, ExternalLink, Zap, Flag, ListChecks, FileBarChart,
-  ThumbsUp, ThumbsDown,
+  X,
+  Sparkles,
+  Loader2,
+  AlertTriangle,
+  ChevronRight,
+  Shield,
+  Search,
+  Lightbulb,
+  TrendingUp,
+  Copy,
+  CheckCircle,
+  Trash2,
+  Bot,
+  ExternalLink,
+  Zap,
+  Flag,
+  ListChecks,
+  FileBarChart,
+  ThumbsUp,
+  ThumbsDown,
 } from 'lucide-react'
 import { api } from '../api/client'
 import { RISK_CONFIG } from '../utils/severity'

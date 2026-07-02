@@ -1,11 +1,24 @@
 import { useState, useEffect, useRef } from 'react'
 import {
-  FileCode, Plus, Trash2, Pencil, X, Upload, Download,
-  Check, Loader2, AlertTriangle, Search, Code2, ChevronDown, ChevronUp, Sparkles, Building2,
+  FileCode,
+  Plus,
+  Trash2,
+  Pencil,
+  Upload,
+  Download,
+  Check,
+  Loader2,
+  AlertTriangle,
+  Search,
+  Code2,
+  ChevronDown,
+  ChevronUp,
+  Sparkles,
+  Building2,
 } from 'lucide-react'
 import { PageShell, PageHeader } from '../components/shared/PageShell'
 import { api } from '../api/client'
-import { useCompanies } from './UserManagement'
+
 import YaraRuleModal from '../components/YaraRuleModal'
 
 // ── Rule card ──────────────────────────────────────────────────────────────────

@@ -1,9 +1,28 @@
 import { useEffect, useLayoutEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
-  Search, Filter, X, Flag, Loader2, Download, RefreshCw,
-  BarChart2, Plus, Minus, Keyboard, SlidersHorizontal, Brain,
-  Sparkles, Trash2, BookmarkCheck, Bookmark, ChevronDown, CalendarDays, Layers, Sigma, BookOpen, HelpCircle,
+  Search,
+  Filter,
+  X,
+  Flag,
+  Loader2,
+  Download,
+  RefreshCw,
+  BarChart2,
+  Plus,
+  Minus,
+  Keyboard,
+  SlidersHorizontal,
+  Brain,
+  Sparkles,
+  Trash2,
+  BookmarkCheck,
+  Bookmark,
+  ChevronDown,
+  CalendarDays,
+  Layers,
+  Sigma,
+  HelpCircle,
 } from 'lucide-react'
 import { api } from '../api/client'
 import EventDetail from '../components/shared/EventDetail'
@@ -356,7 +375,6 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
   // URL params take precedence over per-case localStorage. Shareable links:
   //   /cases/<id>?q=…&from=…&to=…&types=evtx,prefetch&flagged=1&level=high
   const [urlParams, setUrlParams] = useSearchParams()
-  const _urlQuery   = urlParams.get('q')        || ''
   const _urlFrom    = urlParams.get('from')     || ''
   const _urlTo      = urlParams.get('to')       || ''
   const _urlTypes   = urlParams.get('types')    || ''
@@ -433,18 +451,24 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
   })
   const sidebarWidthRef = useRef(sidebarWidth)
   sidebarWidthRef.current = sidebarWidth
-  function onSidebarResizeStart(e) {
-    e.preventDefault()
-    const startX = e.clientX
-    const sw = sidebarWidthRef.current
-    function mv(ev) { setSidebarWidth(Math.max(140, Math.min(480, sw + ev.clientX - startX))) }
-    function up() {
-      document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up)
-      document.body.style.cursor = ''; document.body.style.userSelect = ''
+  function onSidebarResizeStart(event) {
+    event.preventDefault()
+    const startX = event.clientX
+    const startWidth = sidebarWidthRef.current
+    function onMouseMove(moveEvent) {
+      setSidebarWidth(Math.max(140, Math.min(480, startWidth + moveEvent.clientX - startX)))
+    }
+    function onMouseUp() {
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
       try { localStorage.setItem('timeline_sidebar_w', String(sidebarWidthRef.current)) } catch { /* ignore */ }
     }
-    document.body.style.cursor = 'col-resize'; document.body.style.userSelect = 'none'
-    document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up)
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    document.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseup', onMouseUp)
   }
 
   const loaderRef       = useRef(null)
@@ -2369,14 +2393,6 @@ const CHEATSHEET = [
     ],
   },
 ]
-
-const CHIP_COLORS = {
-  sky:     'bg-sky-50 text-sky-700 border-sky-200',
-  violet:  'bg-violet-50 text-violet-700 border-violet-200',
-  amber:   'bg-amber-50 text-amber-700 border-amber-200',
-  rose:    'bg-rose-50 text-rose-700 border-rose-200',
-  emerald: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-}
 
 /* ── Field Explorer panel — tabs for Fields + Lucene syntax ── */
 function FieldExplorer({ fieldMap, onInsert, onUseSnippet, onAggregate, onClose }) {

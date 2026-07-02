@@ -1,11 +1,22 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import DOMPurify from 'dompurify'
 import {
-  Save, FileText, Printer, Sparkles, Shield, Target, Cpu,
-  Loader2, AlertTriangle, ChevronRight, Trash2, FileBarChart,
-  CheckCircle, Bold, Italic, Underline, Strikethrough,
-  List, ListOrdered, Quote, Minus, Heading1, Heading2,
-  Highlighter, Link, RemoveFormatting,
+  Save,
+  Printer,
+  Sparkles,
+  Bold,
+  Italic,
+  Underline,
+  Strikethrough,
+  List,
+  ListOrdered,
+  Quote,
+  Minus,
+  Heading1,
+  Heading2,
+  Highlighter,
+  Link,
+  RemoveFormatting,
 } from 'lucide-react'
 import { api } from '../api/client'
 import { relativeTime } from '../utils/format'
