@@ -449,6 +449,7 @@ ARTIFACT_LABELS = {
     "mft": "Master File Table ($MFT)",
     "pe": "PE / Executable Binaries",
     "documents": "Office Documents & PDFs",
+    "downloads": "Downloads Folders (all files)",
     "triage": "System Triage (live)",
     # ── Dead-box / ForensicHarvester categories ───────────────────────────────
     "execution": "Execution Evidence (SRUM, Amcache, Prefetch)",
@@ -1469,6 +1470,7 @@ class WindowsCollector(Collector):
         self._run_cat("antivirus", self._antivirus)
         self._run_cat("pe", self._pe_binaries)
         self._run_cat("documents", self._documents)
+        self._run_cat("downloads", self._downloads)
         self._run_cat("triage", self._system_triage)
         self._run_cat("file_search", self._file_search)
         # "memory" removed: winpmem requires elevation; System Volume Information
@@ -1619,33 +1621,25 @@ class WindowsCollector(Collector):
     def _browser(self) -> None:
         print("  [*] Browser Artifacts")
         users_dir = Path(os.environ.get("SystemDrive", "C:")) / "Users"
-        PROFILES = [
-            # Chrome
-            ("chrome", r"AppData\Local\Google\Chrome\User Data\Default\History"),
-            ("chrome", r"AppData\Local\Google\Chrome\User Data\Default\Web Data"),
-            ("chrome", r"AppData\Local\Google\Chrome\User Data\Default\Cookies"),
-            ("chrome", r"AppData\Local\Google\Chrome\User Data\Default\Login Data"),
-            ("chrome", r"AppData\Local\Google\Chrome\User Data\Default\Bookmarks"),
-            # Edge
-            ("edge", r"AppData\Local\Microsoft\Edge\User Data\Default\History"),
-            ("edge", r"AppData\Local\Microsoft\Edge\User Data\Default\Cookies"),
-            ("edge", r"AppData\Local\Microsoft\Edge\User Data\Default\Web Data"),
-            ("edge", r"AppData\Local\Microsoft\Edge\User Data\Default\Login Data"),
-            # Brave
-            ("brave", r"AppData\Local\BraveSoftware\Brave-Browser\User Data\Default\History"),
-            ("brave", r"AppData\Local\BraveSoftware\Brave-Browser\User Data\Default\Cookies"),
-            ("brave", r"AppData\Local\BraveSoftware\Brave-Browser\User Data\Default\Web Data"),
-            ("brave", r"AppData\Local\BraveSoftware\Brave-Browser\User Data\Default\Login Data"),
-            # Opera
-            ("opera", r"AppData\Roaming\Opera Software\Opera Stable\History"),
-            ("opera", r"AppData\Roaming\Opera Software\Opera Stable\Cookies"),
-            ("opera", r"AppData\Roaming\Opera Software\Opera Stable\Web Data"),
-            ("opera", r"AppData\Roaming\Opera Software\Opera Stable\Login Data"),
-            # Vivaldi
-            ("vivaldi", r"AppData\Local\Vivaldi\User Data\Default\History"),
-            ("vivaldi", r"AppData\Local\Vivaldi\User Data\Default\Cookies"),
-            ("vivaldi", r"AppData\Local\Vivaldi\User Data\Default\Login Data"),
+        # Chromium-family browsers keep one directory PER PROFILE under their
+        # "User Data" root (Default, Profile 1, Profile 2, Guest Profile). Only
+        # collecting "Default" silently missed every secondary profile — the
+        # common case for real users. Enumerate all profile dirs instead.
+        CHROMIUM = [
+            ("chrome",  r"AppData\Local\Google\Chrome\User Data"),
+            ("edge",    r"AppData\Local\Microsoft\Edge\User Data"),
+            ("brave",   r"AppData\Local\BraveSoftware\Brave-Browser\User Data"),
+            ("vivaldi", r"AppData\Local\Vivaldi\User Data"),
         ]
+        # Cookies moved to Network\Cookies in newer Chromium — grab both.
+        CHROMIUM_FILES = [
+            "History", "Web Data", "Cookies", "Login Data", "Bookmarks",
+            r"Network\Cookies", "Shortcuts", "Top Sites",
+        ]
+
+        def _is_profile(name: str) -> bool:
+            return name == "Default" or name.startswith("Profile ") or name == "Guest Profile"
+
         try:
             user_dirs = sorted(users_dir.iterdir()) if users_dir.exists() else []
         except Exception as exc:
@@ -1654,12 +1648,33 @@ class WindowsCollector(Collector):
         for user_dir in user_dirs:
             if not user_dir.is_dir():
                 continue
-            for browser, rel in PROFILES:
+            # ── Chromium browsers: every profile ──────────────────────────────
+            for browser, base_rel in CHROMIUM:
+                base = user_dir / base_rel
+                if not base.exists():
+                    continue
                 try:
-                    src = user_dir / rel
-                    tmp = self.staging / f"{user_dir.name}_{browser}_{Path(rel).name}"
+                    profiles = [p for p in base.iterdir() if p.is_dir() and _is_profile(p.name)]
+                except Exception:
+                    profiles = []
+                for prof in profiles:
+                    for rel in CHROMIUM_FILES:
+                        try:
+                            src = prof / rel
+                            safe = f"{user_dir.name}_{browser}_{prof.name}_{Path(rel).name}".replace(" ", "_")
+                            tmp = self.staging / safe
+                            if self._copy_locked(src, tmp):
+                                self._add(tmp, f"browser/{browser}/{user_dir.name}/{prof.name}/{Path(rel).name}")
+                        except Exception:
+                            pass
+            # ── Opera: single profile directly under "Opera Stable" ───────────
+            opera_base = user_dir / r"AppData\Roaming\Opera Software\Opera Stable"
+            for rel in ("History", "Cookies", "Web Data", "Login Data", "Bookmarks"):
+                try:
+                    src = opera_base / rel
+                    tmp = self.staging / f"{user_dir.name}_opera_{Path(rel).name}".replace(" ", "_")
                     if self._copy_locked(src, tmp):
-                        self._add(tmp, f"browser/{browser}/{user_dir.name}/{Path(rel).name}")
+                        self._add(tmp, f"browser/opera/{user_dir.name}/{Path(rel).name}")
                 except Exception:
                     pass
             ff_base = user_dir / "AppData" / "Roaming" / "Mozilla" / "Firefox" / "Profiles"
@@ -1905,6 +1920,50 @@ class WindowsCollector(Collector):
                         continue
                     if self._add(p, f"documents/{ud.name}/{rel}/{p.name}"):
                         count += 1
+
+    def _downloads(self) -> None:
+        """Collect every user's Downloads folder (all file types).
+
+        `pe` and `documents` only pull executables / Office files FROM Downloads;
+        this grabs the folder wholesale (installers, archives, scripts, images,
+        anything a user pulled down) — size-capped so a giant ISO can't blow the
+        acquisition. Skips zero-byte and over-cap files.
+        """
+        print("  [*] Downloads Folders")
+        users_dir = Path(os.environ.get("SystemDrive", "C:")) / "Users"
+        MAX_FILE = 500 * 1024 * 1024  # 500 MB per file
+        MAX_TOTAL = 5 * 1024**3       # 5 GB total
+        MAX_FILES = 2000
+
+        count = 0
+        total = 0
+        for ud in sorted(users_dir.iterdir()) if users_dir.exists() else []:
+            if not ud.is_dir():
+                continue
+            d = ud / "Downloads"
+            if not d.exists():
+                continue
+            try:
+                entries = sorted(d.rglob("*"))
+            except Exception as exc:
+                self._warn(f"Downloads scan error ({ud.name}): {exc}")
+                continue
+            for p in entries:
+                if count >= MAX_FILES or total >= MAX_TOTAL:
+                    self._warn(f"Downloads cap reached for {ud.name} — some files skipped")
+                    break
+                try:
+                    if not p.is_file():
+                        continue
+                    sz = p.stat().st_size
+                    if sz == 0 or sz > MAX_FILE:
+                        continue
+                    rel = p.relative_to(d)
+                    if self._add(p, f"downloads/{ud.name}/{rel}"):
+                        count += 1
+                        total += sz
+                except Exception:
+                    pass
 
     def _system_triage(self) -> None:
         print("  [*] System Triage (live commands)")

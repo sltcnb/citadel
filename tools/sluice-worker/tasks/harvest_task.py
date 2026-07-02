@@ -122,14 +122,10 @@ HARVEST_CATEGORIES: dict[str, dict] = {
         ],
     },
     "browser_chrome": {
-        "description": "Google Chrome browser artifacts (History, Cookies, …)",
-        "user_paths": [
-            "AppData/Local/Google/Chrome/User Data/Default/History",
-            "AppData/Local/Google/Chrome/User Data/Default/Cookies",
-            "AppData/Local/Google/Chrome/User Data/Default/Web Data",
-            "AppData/Local/Google/Chrome/User Data/Default/Login Data",
-            "AppData/Local/Google/Chrome/User Data/Default/Bookmarks",
-        ],
+        "description": "Google Chrome browser artifacts, ALL profiles (History, Cookies, …)",
+        # `chromium` → enumerate every profile dir (Default, Profile 1, …) under
+        # the User Data root, not just Default (which missed secondary profiles).
+        "chromium": {"browser": "chrome", "base": "AppData/Local/Google/Chrome/User Data"},
     },
     "browser_firefox": {
         "description": "Mozilla Firefox browser artifacts (places.sqlite, …)",
@@ -137,13 +133,12 @@ HARVEST_CATEGORIES: dict[str, dict] = {
         "firefox": True,
     },
     "browser_edge": {
-        "description": "Microsoft Edge browser artifacts",
-        "user_paths": [
-            "AppData/Local/Microsoft/Edge/User Data/Default/History",
-            "AppData/Local/Microsoft/Edge/User Data/Default/Cookies",
-            "AppData/Local/Microsoft/Edge/User Data/Default/Web Data",
-            "AppData/Local/Microsoft/Edge/User Data/Default/Login Data",
-        ],
+        "description": "Microsoft Edge browser artifacts, ALL profiles",
+        "chromium": {"browser": "edge", "base": "AppData/Local/Microsoft/Edge/User Data"},
+    },
+    "downloads": {
+        "description": "Every user's Downloads folder (top-level files)",
+        "user_dir_all": ["Downloads"],
     },
     "browser_ie": {
         "description": "Internet Explorer WebCache",
@@ -375,6 +370,12 @@ HARVEST_CATEGORIES: dict[str, dict] = {
     },
 }
 
+# Per-profile Chromium artifact files (relative to a profile dir). Cookies moved
+# to Network/Cookies in newer builds — grab both.
+_CHROMIUM_FILES = [
+    "History", "Web Data", "Cookies", "Login Data", "Bookmarks", "Network/Cookies",
+]
+
 LEVEL_CATEGORIES: dict[str, list[str]] = {
     "small": [
         "registry",
@@ -408,6 +409,7 @@ LEVEL_CATEGORIES: dict[str, list[str]] = {
         "browser_firefox",
         "browser_edge",
         "browser_ie",
+        "downloads",
         "email_outlook",
         "email_thunderbird",
         "teams",
@@ -450,6 +452,7 @@ LEVEL_CATEGORIES: dict[str, list[str]] = {
         "browser_firefox",
         "browser_edge",
         "browser_ie",
+        "downloads",
         "email_outlook",
         "email_thunderbird",
         "email_other",
@@ -847,6 +850,27 @@ def _collect_category(
                 orig_filename = Path(upath).name  # e.g. "NTUSER.DAT"
                 scoped_name = f"{user}_{orig_filename}"  # e.g. "john_NTUSER.DAT"
                 _do_file(rel, orig_filename, local_name=scoped_name, minio_name=scoped_name)
+
+            # Chromium: discover ALL profiles (Default, Profile 1, …) dynamically
+            chromium = cat_def.get("chromium")
+            if chromium:
+                base = f"{users_dir}/{user}/{chromium['base']}"
+                for prof in fs.list_dir(base):
+                    if prof != "Default" and not prof.startswith("Profile ") and prof != "Guest Profile":
+                        continue
+                    for fname in _CHROMIUM_FILES:
+                        rel = f"{base}/{prof}/{fname}"
+                        base_name = fname.split("/")[-1]
+                        scoped = f"{user}_{chromium['browser']}_{prof}_{base_name}".replace(" ", "_")
+                        _do_file(rel, base_name, local_name=scoped, minio_name=scoped)
+
+            # Whole user sub-directories (top-level files) — e.g. Downloads
+            for reldir in cat_def.get("user_dir_all", []):
+                scan = f"{users_dir}/{user}/{reldir}"
+                for entry in fs.list_dir(scan):
+                    rel = f"{scan}/{entry}"
+                    scoped = f"{user}_{reldir}_{entry}".replace(" ", "_").replace("/", "_")
+                    _do_file(rel, entry, local_name=scoped, minio_name=scoped)
 
             # Firefox: discover profiles dynamically
             if firefox:

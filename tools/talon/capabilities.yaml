@@ -78,6 +78,7 @@ capabilities:
           - { value: triage, group: "Live Triage", label: "Live System Triage", desc: "systeminfo, netstat, tasklist, services, installed software — live OS only" }
           - { value: pe, group: "Heavy / Opt-in", label: "PE / Executable Binaries", desc: "EXE/DLL/PS1 from Temp, Downloads, AppData — feeds PE Analysis, YARA, strings" }
           - { value: documents, group: "Heavy / Opt-in", label: "Office Documents & PDFs", desc: "DOCX, XLSX, PPTX, PDF from Documents/Downloads/Desktop — feeds OLE analysis" }
+          - { value: downloads, group: "Heavy / Opt-in", label: "Downloads Folder (all files)", desc: "Every user's Downloads folder in full — installers, archives, scripts, images (size-capped: 5 GB / 2000 files)" }
           - { value: memory, group: "Heavy / Opt-in", label: "Live Memory Dump", desc: "Physical memory via WinPmem — 4–64 GB, requires winpmem_mini_x64_rc2.exe beside the script" }
           - { value: memory_artifacts, group: "Heavy / Opt-in", label: "Memory Artifacts (dead-box)", desc: "pagefile.sys, hiberfil.sys, swapfile.sys — from mounted/external volume" }
           - { value: file_search, group: "Heavy / Opt-in", label: "File Search (regex / name)", desc: "Fetch arbitrary files by filename, glob, or re: regex — set patterns below" }
