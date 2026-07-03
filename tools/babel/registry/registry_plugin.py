@@ -13,11 +13,32 @@ Each key with values yields one or more events:
 from __future__ import annotations
 
 import base64
+import codecs
+import struct
 from collections.abc import Generator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from babel.base_plugin import BasePlugin, PluginContext, PluginFatalError
+
+_FT_EPOCH = datetime(1601, 1, 1, tzinfo=UTC)
+
+
+def _ft_iso(ft: int) -> str:
+    """Windows FILETIME (100ns since 1601) → ISO-Z, fail-soft."""
+    if not ft or ft <= 0:
+        return ""
+    try:
+        return (_FT_EPOCH + timedelta(microseconds=ft / 10)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except (OverflowError, ValueError):
+        return ""
+
+
+def _rot13(s: str) -> str:
+    try:
+        return codecs.encode(s, "rot_13")
+    except Exception:
+        return s
 
 try:
     from Registry import Registry
@@ -229,6 +250,128 @@ class RegistryPlugin(BasePlugin):
             self._records_skipped += 1
             self.log.debug("Skipped subkeys of %s: %s", full_path, exc)
 
+    @staticmethod
+    def _raw_bytes(val_info: dict) -> bytes:
+        b64 = val_info.get("data_b64")
+        if b64:
+            try:
+                return base64.b64decode(b64)
+            except Exception:
+                return b""
+        return b""
+
+    def _decode_special(
+        self, full_path: str, values: dict, timestamp: str
+    ) -> Generator[dict[str, Any], None, None]:
+        low = full_path.lower().replace("/", "\\")
+
+        # ── UserAssist (NTUSER) — ROT13 name + run count + last-exec FILETIME ──
+        if "\\userassist\\" in low and low.endswith("\\count"):
+            for val_name, info in values.items():
+                if val_name in ("(Default)",):
+                    continue
+                name = _rot13(val_name)
+                raw = self._raw_bytes(info)
+                run_count = last = None
+                try:
+                    if len(raw) >= 68:  # Win7+ 72-byte record
+                        run_count = struct.unpack_from("<I", raw, 4)[0]
+                        last = _ft_iso(struct.unpack_from("<Q", raw, 60)[0])
+                    elif len(raw) >= 8:  # legacy 16-byte
+                        run_count = struct.unpack_from("<I", raw, 4)[0]
+                except struct.error:
+                    pass
+                yield {
+                    "timestamp": last or timestamp or datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "timestamp_desc": "Program Execution (UserAssist)",
+                    "message": f"UserAssist: {name}" + (f"  (run {run_count}x)" if run_count else ""),
+                    "artifact_type": "userassist",
+                    "os": "windows",
+                    "process": {"name": name.replace("/", "\\").split("\\")[-1]},
+                    "userassist": {"name": name, "run_count": run_count, "last_executed": last},
+                    "registry": {"key_path": full_path},
+                    "raw": {"content": name},
+                }
+            return
+
+        # ── BAM / DAM (SYSTEM) — last-execution time per binary ────────────────
+        if ("\\bam\\" in low or "\\dam\\" in low) and "\\usersettings\\s-" in low:
+            for val_name, info in values.items():
+                if val_name in ("(Default)", "SequenceNumber", "Version"):
+                    continue
+                raw = self._raw_bytes(info)
+                last = ""
+                try:
+                    if len(raw) >= 8:
+                        last = _ft_iso(struct.unpack_from("<Q", raw, 0)[0])
+                except struct.error:
+                    pass
+                if not last:
+                    continue
+                exe = val_name.replace("/", "\\")
+                yield {
+                    "timestamp": last,
+                    "timestamp_desc": "Program Execution (BAM)",
+                    "message": f"BAM last-ran: {exe.split(chr(92))[-1]}",
+                    "artifact_type": "bam",
+                    "os": "windows",
+                    "process": {"name": exe.split("\\")[-1], "path": exe},
+                    "bam": {"path": exe, "last_executed": last},
+                    "registry": {"key_path": full_path},
+                    "raw": {"content": exe},
+                }
+            return
+
+        # ── ShimCache / AppCompatCache (SYSTEM) — best-effort Win8.1/10 parse ──
+        if low.endswith("\\session manager\\appcompatcache"):
+            info = values.get("AppCompatCache")
+            if info:
+                yield from self._decode_shimcache(self._raw_bytes(info), full_path, timestamp)
+            return
+
+    def _decode_shimcache(self, raw: bytes, full_path: str, timestamp: str):
+        """Best-effort AppCompatCache parse (Win8.1 '10ts'/Win10 '10' entries).
+
+        Multi-version binary format — wrapped so a layout we don't recognise
+        simply yields nothing rather than erroring.
+        """
+        if len(raw) < 48:
+            return
+        try:
+            sig = struct.unpack_from("<I", raw, 0)[0]
+            # Win10 header is 48 bytes; Win8.1 is 128. Entry magic '10ts' (Win8.1)
+            # or '10\0\0' (Win10). Scan for the '10ts'/'10' entry signature.
+            offset = 48 if sig in (0x30, 0x34) else 128
+            count = 0
+            while offset + 12 < len(raw) and count < 2000:
+                magic = raw[offset:offset + 4]
+                if magic not in (b"10ts", b"10\x00\x00"):
+                    break
+                path_len = struct.unpack_from("<H", raw, offset + 8)[0]
+                p_start = offset + 10
+                path = raw[p_start:p_start + path_len].decode("utf-16-le", errors="replace")
+                after = p_start + path_len
+                ft = struct.unpack_from("<Q", raw, after)[0]
+                last = _ft_iso(ft)
+                data_len = struct.unpack_from("<I", raw, after + 8)[0]
+                offset = after + 12 + data_len
+                count += 1
+                if not path:
+                    continue
+                yield {
+                    "timestamp": last or timestamp or datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "timestamp_desc": "Program Presence (ShimCache)",
+                    "message": f"ShimCache: {path.split(chr(92))[-1]}",
+                    "artifact_type": "shimcache",
+                    "os": "windows",
+                    "process": {"name": path.replace("/", "\\").split("\\")[-1], "path": path},
+                    "shimcache": {"path": path, "last_modified": last, "rank": count},
+                    "registry": {"key_path": full_path},
+                    "raw": {"content": path},
+                }
+        except (struct.error, UnicodeDecodeError, IndexError):
+            return
+
     def _emit(
         self,
         full_path: str,
@@ -236,6 +379,16 @@ class RegistryPlugin(BasePlugin):
         values: dict,
         timestamp: str,
     ) -> Generator[dict[str, Any], None, None]:
+        # ── Decoded execution artifacts (UserAssist / BAM / ShimCache) ───────
+        # These live INSIDE the collected NTUSER/SYSTEM hives but are useless raw
+        # (ROT13 / packed FILETIME / binary blob). Decode them into first-class
+        # execution events. Handled here so they don't fall through to the
+        # generic raw-value emitter.
+        special = list(self._decode_special(full_path, values, timestamp))
+        if special:
+            yield from special
+            return
+
         if _ENRICHMENT:
             label, atype, mitre_id = classify_registry_key(full_path)
         else:

@@ -56,6 +56,19 @@ const ARTIFACT_COLORS = {
   hayabusa:      'badge-hayabusa',
   antivirus:     'badge-antivirus',
   login_event:   'badge-login',
+  // Newer artifact types — reuse the closest existing palette so chips render
+  // with distinct, sensible colours instead of falling back to grey.
+  finding:          'badge-hayabusa',
+  mark_of_web:      'badge-login',
+  trend_telemetry:  'badge-antivirus',
+  jumplist:         'badge-lnk',
+  recyclebin:       'badge-mft',
+  userassist:       'badge-registry',
+  bam:              'badge-registry',
+  shimcache:        'badge-registry',
+  timeline_activity:'badge-prefetch',
+  notifications:    'badge-login',
+  ai_risk:          'badge-hayabusa',
   generic:       'badge-generic',
 }
 

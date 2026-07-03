@@ -2616,6 +2616,22 @@ def _tool_search(case_id: str, step: dict) -> dict:
                 "case. Launch it: {\"action\":\"launch_module\",\"module_id\":\"cti_match\"}, "
                 "then read_module_result / re-search."
             )
+        # Whitelist enforcement — if the query targets known-good / own
+        # infrastructure, say so plainly so the agent stops proving it innocent.
+        if total > 0:
+            try:
+                wl = set().union(*_whitelist_sets(case_id))
+                ql = raw_q.lower()
+                matched = [v for v in wl if v and str(v).lower() in ql]
+                if matched:
+                    out["whitelist_note"] = (
+                        "This query targets KNOWN-GOOD / whitelisted infrastructure "
+                        f"({', '.join(sorted(matched)[:3])}) — approved, not a threat. "
+                        "Don't spend steps proving it innocent; pivot to unreviewed "
+                        "activity or conclude."
+                    )
+            except Exception:
+                pass
         return out
     except (urllib.error.HTTPError, Exception) as exc:
         err = str(exc)[:200]
@@ -4435,6 +4451,21 @@ def _autolaunch_modules(case_id: str) -> str:
         "their output (e.g. artifact_type:cti_match, artifact_type:hayabusa) in a "
         "few steps once they finish. Factor them into your conclusion.\n"
     )
+
+
+def _whitelist_sets(case_id: str) -> tuple[set, set, set]:
+    """Raw known-good allowlist values (ips, domains, other) for enforcement."""
+    ips, domains, other = set(), set(), set()
+    try:
+        r = _redis()
+        for scope in ("_global", case_id):
+            ips |= {str(v) for v in r.smembers(f"fo:allowlist:{scope}:ip")}
+            domains |= {str(v) for v in r.smembers(f"fo:allowlist:{scope}:domain")}
+            for t in ("url", "hash", "email", "filename", "process"):
+                other |= {str(v) for v in r.smembers(f"fo:allowlist:{scope}:{t}")}
+    except Exception:
+        pass
+    return ips, domains, other
 
 
 def _whitelist_context(case_id: str) -> str:

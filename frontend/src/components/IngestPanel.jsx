@@ -849,6 +849,7 @@ function HarvestTab({ caseId, onJobsAdded }) {
         onToggle={toggleCat}
         onSelectAll={selectAll}
         onClear={clearCats}
+        onScenario={keys => !running && setCats(new Set(keys))}
         disabled={running}
       />
 

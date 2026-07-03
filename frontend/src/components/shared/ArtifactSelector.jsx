@@ -34,6 +34,27 @@ const LEVEL_HINTS = {
 }
 const LEVEL_LABEL = { small: 'Small', complete: 'Intermediate', exhaustive: 'Exhaustive' }
 
+// Investigation scenarios → the artifact categories that matter for each. One
+// click selects exactly the relevant set (intersected with what this catalog
+// actually offers — works for both the live and dead-box category lists).
+const SCENARIOS = [
+  { key: 'ransomware', label: 'Ransomware', icon: '🔒',
+    cats: ['eventlogs', 'evtx', 'prefetch', 'execution', 'mft', 'recyclebin', 'jumplists',
+           'registry', 'persistence', 'antivirus', 'usb_devices', 'shimcache', 'documents'] },
+  { key: 'phishing', label: 'Phishing / RMM abuse', icon: '🎣',
+    cats: ['browser', 'browser_chrome', 'browser_edge', 'browser_firefox', 'downloads',
+           'jumplists', 'prefetch', 'execution', 'email_outlook', 'timeline_activity', 'recyclebin'] },
+  { key: 'insider', label: 'Insider / data theft', icon: '🕵️',
+    cats: ['usb_devices', 'jumplists', 'recyclebin', 'browser', 'browser_chrome', 'downloads',
+           'lnk', 'timeline_activity', 'cloud_onedrive', 'email_outlook', 'thumbcache', 'documents'] },
+  { key: 'intrusion', label: 'Intrusion / lateral movement', icon: '🌐',
+    cats: ['eventlogs', 'evtx', 'registry', 'persistence', 'execution', 'prefetch',
+           'remote_access', 'rdp', 'ssh_ftp', 'network', 'sysmon'] },
+  { key: 'malware', label: 'Malware execution', icon: '🐛',
+    cats: ['prefetch', 'execution', 'registry', 'pe', 'persistence', 'antivirus',
+           'sysmon', 'jumplists', 'shimcache', 'browser'] },
+]
+
 function CategoryCard({ c, checked, disabled, onToggle }) {
   return (
     <label
@@ -71,13 +92,30 @@ export default function ArtifactSelector({
   onToggleGroup,
   onSelectAll,
   onClear,
+  onScenario,
   disabled = false,
   clearLabel = 'Use depth defaults',
 }) {
   const [query, setQuery] = useState('')
+  const [activeScenario, setActiveScenario] = useState(null)
   const sel = selected instanceof Set ? selected : new Set(selected || [])
   const grouped = Array.isArray(groups)
   const flatAll = grouped ? groups.flatMap(g => g.items) : categories
+
+  // Scenarios applicable to THIS catalog (≥3 of their categories are offered).
+  const presentKeys = useMemo(() => new Set(flatAll.map(c => c.key)), [flatAll])
+  const scenarios = useMemo(
+    () => SCENARIOS
+      .map(s => ({ ...s, keys: s.cats.filter(k => presentKeys.has(k)) }))
+      .filter(s => s.keys.length >= 3),
+    [presentKeys],
+  )
+  function pickScenario(s) {
+    if (disabled) return
+    setActiveScenario(s.key)
+    if (onScenario) onScenario(s.keys)
+    else s.keys.forEach(k => { if (!sel.has(k)) onToggle?.(k) })
+  }
 
   const match = c => {
     const q = query.trim().toLowerCase()
@@ -124,6 +162,32 @@ export default function ArtifactSelector({
                 </button>
               )
             })}
+          </div>
+        </div>
+      )}
+
+      {/* Scenario presets — one click selects the categories that matter */}
+      {scenarios.length > 0 && (onScenario || onToggle) && (
+        <div>
+          <h4 className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-1.5">
+            Scenario <span className="font-normal normal-case tracking-normal">— pick what you're investigating</span>
+          </h4>
+          <div className="flex flex-wrap gap-1.5">
+            {scenarios.map(s => (
+              <button
+                key={s.key} type="button" disabled={disabled}
+                onClick={() => pickScenario(s)}
+                title={`Select ${s.keys.length} categories relevant to ${s.label}`}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs border transition-colors ${
+                  activeScenario === s.key
+                    ? 'bg-brand-accent text-white border-brand-accent'
+                    : 'bg-white text-gray-600 border-gray-200 hover:border-brand-accent hover:text-brand-accent'
+                } ${disabled ? 'opacity-60 cursor-not-allowed' : ''}`}
+              >
+                <span>{s.icon}</span>{s.label}
+                <span className={activeScenario === s.key ? 'opacity-80' : 'text-gray-400'}>{s.keys.length}</span>
+              </button>
+            ))}
           </div>
         </div>
       )}

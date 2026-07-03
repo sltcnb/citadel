@@ -1,0 +1,23 @@
+id: jumplist
+name: Jump Lists (AutomaticDestinations)
+description: >
+  Parses Windows Jump Lists — per-application MRU of files/URLs a user opened.
+  Decodes the DestList stream (target path + last-used timestamp) from the OLE
+  compound AutomaticDestinations file into file-access / execution events; the
+  AppId names the application. Requires the olefile package.
+supported_extensions:
+  - .automaticdestinations-ms
+  - .customdestinations-ms
+supported_mime_types:
+  - application/octet-stream
+  - application/x-ole-storage
+artifact_type: jumplist
+handled_filenames: []
+author: Citadel
+version: "1.0.0"
+tags:
+  - windows
+  - jumplist
+  - file-access
+  - execution
+  - user-activity
