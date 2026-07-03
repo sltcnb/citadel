@@ -61,6 +61,11 @@ capabilities:
           - { value: rdp, group: "Remote Access", label: "RDP / Terminal Services", desc: "Terminal Server Client cache — bitmap tiles from past RDP sessions" }
           - { value: ssh_ftp, group: "Remote Access", label: "SSH / FTP Clients", desc: "known_hosts, PuTTY sessions, WinSCP.ini — remote connection history" }
           - { value: lnk, group: "Applications & User Data", label: "LNK / Recent Items", desc: "Shell link files from all user Recent folders" }
+          - { value: jumplists, group: "Applications & User Data", label: "Jump Lists", desc: "AutomaticDestinations + CustomDestinations — per-user file-access & app-launch timeline" }
+          - { value: thumbcache, group: "Applications & User Data", label: "Thumbcache / IconCache", desc: "thumbcache_*.db / iconcache_*.db — proves files existed and were viewed" }
+          - { value: timeline_activity, group: "Applications & User Data", label: "Timeline & Notifications", desc: "ActivitiesCache.db (Windows Timeline) + wpndatabase.db (toast notification history)" }
+          - { value: recyclebin, group: "Applications & User Data", label: "Recycle Bin", desc: "$Recycle.Bin — deleted-file metadata ($I) + recovered content ($R), all users" }
+          - { value: windows_search, group: "Heavy / Opt-in", label: "Windows Search Index", desc: "Windows.edb — indexed file metadata + content (capped at 3 GB)" }
           - { value: tasks, group: "Applications & User Data", label: "Scheduled Tasks (legacy key)", desc: "Alias for persistence — kept for backwards compatibility" }
           - { value: office, group: "Applications & User Data", label: "Office MRU", desc: "Office Recent Documents list and trusted document registry" }
           - { value: dev_tools, group: "Applications & User Data", label: "Dev Tools", desc: ".gitconfig, .git-credentials, PowerShell history, .aws/credentials, .azure tokens" }

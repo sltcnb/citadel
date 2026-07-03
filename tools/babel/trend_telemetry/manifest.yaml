@@ -1,0 +1,31 @@
+id: trend_telemetry
+name: Trend Micro Endpoint Sensor / Vision One Telemetry
+description: >
+  Parses exported Trend Micro Apex One "Endpoint Sensor" / Vision One (XDR)
+  telemetry (productCode "xes", eventSourceType TELEMETRY). Accepts a JSON
+  array, NDJSON, or a single object. Each record becomes a normalized event
+  with full process + parent context (path, cmdline, pid, signer, MD5/SHA1/
+  SHA256), endpoint identity (host / IP / MAC / OS / user), network + download
+  context (request URL, object host, downloaded file) and Trend/MITRE tags —
+  so EDR telemetry drives the process tree, IOC panel, entity graph, MITRE
+  coverage and reports like any native artifact.
+supported_extensions:
+  - .json
+  - .ndjson
+  - .jsonl
+  - .log
+supported_mime_types:
+  - application/json
+  - text/plain
+artifact_type: trend_telemetry
+handled_filenames: []
+author: Citadel
+version: "1.0.0"
+tags:
+  - edr
+  - telemetry
+  - trend-micro
+  - vision-one
+  - apex-one
+  - xdr
+  - windows

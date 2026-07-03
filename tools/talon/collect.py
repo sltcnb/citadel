@@ -450,6 +450,11 @@ ARTIFACT_LABELS = {
     "pe": "PE / Executable Binaries",
     "documents": "Office Documents & PDFs",
     "downloads": "Downloads Folders (all files)",
+    "jumplists": "Jump Lists / Recent Items",
+    "thumbcache": "Thumbcache / IconCache",
+    "timeline_activity": "Timeline & Notifications",
+    "windows_search": "Windows Search Index (Windows.edb)",
+    "recyclebin": "Recycle Bin ($I / $R)",
     "triage": "System Triage (live)",
     # ── Dead-box / ForensicHarvester categories ───────────────────────────────
     "execution": "Execution Evidence (SRUM, Amcache, Prefetch)",
@@ -1311,7 +1316,7 @@ class Collector:
             except Exception:
                 entries = []
             for p in entries:
-                if count >= 200:
+                if count >= 1000:  # was 200 — keep more archived Sysmon files
                     break
                 try:
                     if p.is_file() and self._add(p, f"sysmon/archive/{p.name}"):
@@ -1471,6 +1476,11 @@ class WindowsCollector(Collector):
         self._run_cat("pe", self._pe_binaries)
         self._run_cat("documents", self._documents)
         self._run_cat("downloads", self._downloads)
+        self._run_cat("jumplists", self._jumplists)
+        self._run_cat("thumbcache", self._thumbcache)
+        self._run_cat("timeline_activity", self._win_timeline)
+        self._run_cat("windows_search", self._windows_search)
+        self._run_cat("recyclebin", self._recyclebin)
         self._run_cat("triage", self._system_triage)
         self._run_cat("file_search", self._file_search)
         # "memory" removed: winpmem requires elevation; System Volume Information
@@ -1510,7 +1520,7 @@ class WindowsCollector(Collector):
             self._warn(f"EVTX glob error: {exc}")
             return
         for p in all_evtx:
-            if count >= 200:
+            if count >= 1000:  # was 200 — enterprise hosts have more channels; keep all
                 break
             if p.name in seen:
                 continue
@@ -1547,6 +1557,30 @@ class WindowsCollector(Collector):
                     self._warn(f"reg.exe SAVE {name} failed (run as Administrator?)")
             except Exception as exc:
                 self._warn(f"reg.exe SAVE {name}: {exc}")
+        # Transaction logs + backup hives. reg.exe SAVE captures the COMMITTED
+        # state; the .LOG1/.LOG2 hold uncommitted transactions (dirty hive /
+        # anti-forensics), and RegBack is a pre-boot snapshot to diff against.
+        config_dir = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "config"
+        for fname in (
+            "SYSTEM.LOG1", "SYSTEM.LOG2", "SOFTWARE.LOG1", "SOFTWARE.LOG2",
+            "SAM.LOG1", "SAM.LOG2", "SECURITY.LOG1", "SECURITY.LOG2",
+        ):
+            try:
+                tmp = staging_reg / fname
+                if self._copy_locked(config_dir / fname, tmp):
+                    self._add(tmp, f"registry/logs/{fname}")
+            except Exception:
+                pass
+        try:
+            regback = config_dir / "RegBack"
+            if regback.exists():
+                for p in regback.glob("*"):
+                    if p.is_file() and p.stat().st_size > 0:
+                        tmp = staging_reg / f"RegBack_{p.name}"
+                        if self._copy_locked(p, tmp):
+                            self._add(tmp, f"registry/RegBack/{p.name}")
+        except Exception as exc:
+            self._warn(f"RegBack: {exc}")
         users_dir = Path(os.environ.get("SystemDrive", "C:")) / "Users"
         try:
             user_dirs = sorted(users_dir.iterdir()) if users_dir.exists() else []
@@ -1558,12 +1592,16 @@ class WindowsCollector(Collector):
                 continue
             for rel, suffix in [
                 ("NTUSER.DAT", "NTUSER.DAT"),
+                ("NTUSER.DAT.LOG1", "NTUSER.DAT.LOG1"),
+                ("NTUSER.DAT.LOG2", "NTUSER.DAT.LOG2"),
                 (r"AppData\Local\Microsoft\Windows\UsrClass.dat", "USRCLASS.DAT"),
+                (r"AppData\Local\Microsoft\Windows\UsrClass.dat.LOG1", "USRCLASS.DAT.LOG1"),
+                (r"AppData\Local\Microsoft\Windows\UsrClass.dat.LOG2", "USRCLASS.DAT.LOG2"),
             ]:
                 try:
                     src = user_dir / rel
                     tmp = staging_reg / f"{user_dir.name}_{suffix}"
-                    if self._stage_file(src, tmp):
+                    if self._copy_locked(src, tmp):
                         self._add(tmp, f"registry/users/{user_dir.name}/{suffix}")
                 except Exception as exc:
                     self._warn(f"Registry {user_dir.name}/{suffix}: {exc}")
@@ -1665,6 +1703,30 @@ class WindowsCollector(Collector):
                             tmp = self.staging / safe
                             if self._copy_locked(src, tmp):
                                 self._add(tmp, f"browser/{browser}/{user_dir.name}/{prof.name}/{Path(rel).name}")
+                        except Exception:
+                            pass
+                    # Nested modern stores (LevelDB/IndexedDB/extensions) — walk
+                    # the dir tree, capped, so web-activity evidence is captured.
+                    for store in (r"Local Storage\leveldb", "Session Storage", "IndexedDB", "Extensions"):
+                        sdir = prof / store
+                        if not sdir.exists():
+                            continue
+                        sn = 0
+                        try:
+                            for f in sorted(sdir.rglob("*")):
+                                if sn >= 500:
+                                    break
+                                try:
+                                    if not f.is_file() or f.stat().st_size > 100 * 1024 * 1024:
+                                        continue
+                                    frel = f.relative_to(prof)
+                                    safe = f"{user_dir.name}_{browser}_{prof.name}_{str(frel)}".replace("\\", "_").replace("/", "_").replace(" ", "_")
+                                    tmp = self.staging / safe
+                                    if self._copy_locked(f, tmp):
+                                        self._add(tmp, f"browser/{browser}/{user_dir.name}/{prof.name}/{frel}")
+                                        sn += 1
+                                except Exception:
+                                    pass
                         except Exception:
                             pass
             # ── Opera: single profile directly under "Opera Stable" ───────────
@@ -1993,6 +2055,132 @@ class WindowsCollector(Collector):
                         self._zone_id(p, arc)  # Mark-of-the-Web source URL
                 except Exception:
                     pass
+
+    def _jumplists(self) -> None:
+        """Jump Lists + Recent — per-user file-access / app-launch timeline."""
+        print("  [*] Jump Lists / Recent")
+        users_dir = Path(os.environ.get("SystemDrive", "C:")) / "Users"
+        subs = [
+            r"AppData\Roaming\Microsoft\Windows\Recent\AutomaticDestinations",
+            r"AppData\Roaming\Microsoft\Windows\Recent\CustomDestinations",
+            r"AppData\Roaming\Microsoft\Windows\Recent",
+        ]
+        for ud in (sorted(users_dir.iterdir()) if users_dir.exists() else []):
+            if not ud.is_dir():
+                continue
+            for rel in subs:
+                d = ud / rel
+                if not d.exists():
+                    continue
+                try:
+                    entries = sorted(d.glob("*"))
+                except Exception:
+                    continue
+                for p in entries:
+                    if not p.is_file():
+                        continue
+                    safe = f"{ud.name}_{Path(rel).name}_{p.name}".replace(" ", "_")
+                    tmp = self.staging / safe
+                    if self._copy_locked(p, tmp):
+                        self._add(tmp, f"jumplists/{ud.name}/{Path(rel).name}/{p.name}")
+
+    def _thumbcache(self) -> None:
+        """Thumbnail / icon cache DBs — proves files existed and were viewed."""
+        print("  [*] Thumbcache / IconCache")
+        users_dir = Path(os.environ.get("SystemDrive", "C:")) / "Users"
+        for ud in (sorted(users_dir.iterdir()) if users_dir.exists() else []):
+            if not ud.is_dir():
+                continue
+            d = ud / r"AppData\Local\Microsoft\Windows\Explorer"
+            if not d.exists():
+                continue
+            try:
+                dbs = sorted(d.glob("*.db"))
+            except Exception:
+                continue
+            for p in dbs:
+                if not p.is_file():
+                    continue
+                tmp = self.staging / f"{ud.name}_{p.name}"
+                if self._copy_locked(p, tmp):
+                    self._add(tmp, f"thumbcache/{ud.name}/{p.name}")
+
+    def _win_timeline(self) -> None:
+        """Windows Timeline (ActivitiesCache.db) + toast notification history."""
+        print("  [*] Timeline / Notifications")
+        users_dir = Path(os.environ.get("SystemDrive", "C:")) / "Users"
+        for ud in (sorted(users_dir.iterdir()) if users_dir.exists() else []):
+            if not ud.is_dir():
+                continue
+            wpn = ud / r"AppData\Local\Microsoft\Windows\Notifications\wpndatabase.db"
+            tmp = self.staging / f"{ud.name}_wpndatabase.db"
+            if self._copy_locked(wpn, tmp):
+                self._add(tmp, f"timeline/{ud.name}/wpndatabase.db")
+            # ActivitiesCache lives under ConnectedDevicesPlatform\L.<user>\.
+            cdp = ud / r"AppData\Local\ConnectedDevicesPlatform"
+            if not cdp.exists():
+                continue
+            try:
+                subdirs = [s for s in cdp.iterdir() if s.is_dir()]
+            except Exception:
+                subdirs = []
+            for sub in subdirs:
+                for name in ("ActivitiesCache.db", "ActivitiesCache.db-wal", "ActivitiesCache.db-shm"):
+                    src = sub / name
+                    tmp = self.staging / f"{ud.name}_{sub.name}_{name}"
+                    if self._copy_locked(src, tmp):
+                        self._add(tmp, f"timeline/{ud.name}/{sub.name}/{name}")
+
+    def _windows_search(self) -> None:
+        """Windows Search index (Windows.edb) — indexed file metadata + content."""
+        print("  [*] Windows Search index")
+        edb = (
+            Path(os.environ.get("ProgramData", r"C:\ProgramData"))
+            / r"Microsoft\Search\Data\Applications\Windows\Windows.edb"
+        )
+        try:
+            if not edb.exists():
+                return
+            if edb.stat().st_size > 3 * 1024**3:  # multi-GB — don't blow the acquisition
+                self._warn(f"Windows.edb {edb.stat().st_size // 1024**3} GB — skipped (>3 GB cap)")
+                return
+        except OSError:
+            return
+        tmp = self.staging / "Windows.edb"
+        if self._copy_locked(edb, tmp):
+            self._add(tmp, "search/Windows.edb")
+
+    def _recyclebin(self) -> None:
+        """Recycle Bin — deleted-file metadata ($I*) and content ($R*), all SIDs."""
+        print("  [*] Recycle Bin")
+        root = Path(os.environ.get("SystemDrive", "C:") + "\\") / "$Recycle.Bin"
+        if not root.exists():
+            return
+        MAX_FILES, MAX_TOTAL, MAX_FILE = 4000, 5 * 1024**3, 500 * 1024 * 1024
+        count = total = 0
+        try:
+            entries = sorted(root.rglob("*"))
+        except Exception as exc:
+            self._warn(f"Recycle Bin scan: {exc}")
+            return
+        for p in entries:
+            if count >= MAX_FILES or total >= MAX_TOTAL:
+                break
+            try:
+                if not p.is_file():
+                    continue
+                sz = p.stat().st_size
+                if sz > MAX_FILE:
+                    continue
+                rel = p.relative_to(root)
+                safe = str(rel).replace("\\", "_").replace("/", "_").replace(" ", "_")
+                tmp = self.staging / f"rb_{count}_{safe}"
+                if self._copy_locked(p, tmp):
+                    self._add(tmp, f"recyclebin/{rel}")
+                    count += 1
+                    total += sz
+            except Exception:
+                pass
 
     def _system_triage(self) -> None:
         print("  [*] System Triage (live commands)")
@@ -3980,7 +4168,7 @@ class ExternalDiskCollector(Collector):
             self._warn(f"EVTX glob error: {exc}")
             return
         for p in all_evtx:
-            if count >= 200:
+            if count >= 1000:  # was 200 — enterprise hosts have more channels; keep all
                 break
             try:
                 if p.name in seen:
@@ -4417,7 +4605,7 @@ class ExternalDiskCollector(Collector):
                 self._warn(f"WER {sub}: {exc}")
                 continue
             for p in items:
-                if count >= 200:
+                if count >= 1000:  # was 200 — enterprise hosts have more channels; keep all
                     break
                 try:
                     if p.is_file():
@@ -4678,7 +4866,7 @@ class ExternalDiskCollector(Collector):
         d = root / "inetpub" / "logs" / "LogFiles"
         count = 0
         for p in d.rglob("*.log") if d.exists() else []:
-            if count >= 200:
+            if count >= 1000:  # was 200 — enterprise hosts have more channels; keep all
                 break
             if self._add(p, f"iis_web/{p.parent.name}/{p.name}"):
                 count += 1
