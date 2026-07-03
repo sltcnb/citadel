@@ -45,6 +45,7 @@ export default function EntityGraphPanel({ caseId, onClose, onPivot }) {
   const [error, setError]     = useState(null)
   const [focus, setFocus]     = useState('')
   const [limit, setLimit]     = useState(50)
+  const [hovered, setHovered] = useState(null)  // node id under the cursor
 
   async function refresh() {
     setLoading(true); setError(null)
@@ -204,19 +205,22 @@ export default function EntityGraphPanel({ caseId, onClose, onPivot }) {
           <text x={layout.W / 2} y={28} textAnchor="middle" className="fill-gray-400" style={{ fontSize: 10, fontWeight: 600, letterSpacing: 1 }}>USERS</text>
           <text x={layout.W - 110} y={28} textAnchor="middle" className="fill-gray-400" style={{ fontSize: 10, fontWeight: 600, letterSpacing: 1 }}>IPS</text>
 
+          {/* Hover highlight: the hovered node + its direct neighbours stay
+              vivid; everything else dims — makes one entity's blast radius pop. */}
           {/* Edges */}
           {edges.map((e, i) => {
             const a = layout.pos[e.source]
             const b = layout.pos[e.target]
             if (!a || !b) return null
             const w = Math.min(4, 0.5 + Math.log2((e.count || 1) + 1))
+            const touches = !hovered || e.source === hovered || e.target === hovered
             return (
               <line
                 key={`e${i}`}
                 x1={a.x} y1={a.y} x2={b.x} y2={b.y}
-                stroke="#cbd5e1"
+                stroke={touches && hovered ? '#6366F1' : '#cbd5e1'}
                 strokeWidth={w}
-                strokeOpacity={0.7}
+                strokeOpacity={touches ? 0.8 : 0.12}
               />
             )
           })}
@@ -226,23 +230,29 @@ export default function EntityGraphPanel({ caseId, onClose, onPivot }) {
             const onLeft  = COLUMN_OF[node.type] === 2 // ip column → label to the left
             const labelX  = onLeft ? x - r - 6 : x + r + 6
             const anchor  = onLeft ? 'end' : 'start'
+            const near = !hovered || node.id === hovered ||
+              edges.some(e => (e.source === hovered && e.target === node.id) ||
+                              (e.target === hovered && e.source === node.id))
             return (
               <g
                 key={node.id}
                 onClick={() => handleNode(node)}
-                style={{ cursor: 'pointer' }}
+                onMouseEnter={() => setHovered(node.id)}
+                onMouseLeave={() => setHovered(null)}
+                style={{ cursor: 'pointer', opacity: near ? 1 : 0.25, transition: 'opacity 120ms' }}
               >
                 <title>{`${node.type}: ${node.label} (${node.count ?? 0})`}</title>
                 <circle
                   cx={x} cy={y} r={r}
                   fill={TYPE_FILL[node.type] || '#f1f5f9'}
-                  stroke={TYPE_COLOR[node.type] || '#64748b'}
-                  strokeWidth={2}
+                  stroke={node.id === hovered ? '#6366F1' : (TYPE_COLOR[node.type] || '#64748b')}
+                  strokeWidth={node.id === hovered ? 3 : 2}
                 />
                 <text
                   x={labelX} y={y + 3}
                   textAnchor={anchor}
-                  className="fill-gray-700"
+                  fill="currentColor"
+                  className="text-brand-text"
                   style={{ fontSize: 11 }}
                 >
                   {node.label}
@@ -251,6 +261,17 @@ export default function EntityGraphPanel({ caseId, onClose, onPivot }) {
             )
           })}
         </svg>
+        {/* Legend */}
+        <div className="flex items-center gap-3 px-2 pt-1.5 text-[10px] text-gray-500">
+          {[['host', 'Host'], ['user', 'User'], ['ip', 'IP']].map(([t, lbl]) => (
+            <span key={t} className="inline-flex items-center gap-1">
+              <span className="inline-block w-2.5 h-2.5 rounded-full"
+                style={{ background: TYPE_FILL[t], border: `1.5px solid ${TYPE_COLOR[t]}` }} />
+              {lbl}
+            </span>
+          ))}
+          <span className="ml-auto italic">Hover a node to trace its links · click to pivot the timeline</span>
+        </div>
       </div>
     </PanelShell>
   )
