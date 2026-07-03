@@ -28,6 +28,7 @@ import { api } from '../api/client'
 import EventDetail from '../components/shared/EventDetail'
 import StatsPopover from '../components/shared/StatsPopover'
 import PanelHelp from '../components/shared/PanelHelp'
+import { levelBadgeClass } from '../utils/severity'
 
 // Date-range filter state (fromTs/toTs) can arrive from URL params, localStorage
 // or the AI assist — none of which are guaranteed to be valid ISO. Calling
@@ -79,17 +80,6 @@ const OS_COLORS = {
   mobile:  'bg-emerald-100 text-emerald-700 border border-emerald-200',
   cloud:   'bg-indigo-100 text-indigo-700 border border-indigo-200',
   cross:   'bg-gray-100 text-gray-600 border border-gray-200',
-}
-
-const LEVEL_COLORS = {
-  crit:          'bg-red-100 text-red-700 border border-red-200',
-  critical:      'bg-red-100 text-red-700 border border-red-200',
-  high:          'bg-orange-100 text-orange-700 border border-orange-200',
-  med:           'bg-yellow-100 text-yellow-700 border border-yellow-200',
-  medium:        'bg-yellow-100 text-yellow-700 border border-yellow-200',
-  low:           'bg-blue-100 text-blue-700 border border-blue-200',
-  info:          'bg-gray-100 text-gray-500',
-  informational: 'bg-gray-100 text-gray-500',
 }
 
 // ── Column definitions ───────────────────────────────────────────────────────
@@ -3209,7 +3199,7 @@ function EventRow({ event, index, onSelect, selected, keyboardSelected, onFilter
       {vis('level') && (
         <td className="px-3 py-2">
           {level ? (
-            <span className={`badge text-[10px] px-1.5 py-0.5 font-semibold uppercase tracking-wide ${LEVEL_COLORS[level] || 'bg-gray-100 text-gray-500'}`}>
+            <span className={`badge text-[10px] px-1.5 py-0.5 font-semibold uppercase tracking-wide ${levelBadgeClass(level)}`}>
               {level}
             </span>
           ) : null}
