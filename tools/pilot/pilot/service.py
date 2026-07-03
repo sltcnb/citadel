@@ -4876,7 +4876,7 @@ def _agent_run(
         # progress. 12 consecutive no-signal steps = the evidence isn't in
         # the collected data; conclude evidence_absent instead of burning
         # the rest of the budget.
-        STALE_BUDGET_CAP = 12
+        STALE_BUDGET_CAP = 8  # was 12 — catch no-progress tangents sooner
         if stale_run >= STALE_BUDGET_CAP:
             declared_h = []
             for prior in transcript:
@@ -4938,7 +4938,7 @@ def _agent_run(
             yield {"type": "step", "step": forced}
             break
 
-        HARD_STALE_CAP = 6
+        HARD_STALE_CAP = 4  # was 6 — abort a deep rabbit-hole sooner
         if deep_stale >= HARD_STALE_CAP:
             declared_h = []
             for prior in transcript:
@@ -5052,10 +5052,44 @@ def _agent_run(
             )
         else:
             hist = _agent_step_history(transcript)
+        # ── Focus anchor ────────────────────────────────────────────────────
+        # Re-inject the analyst's scenario (and the agent's own open hypotheses)
+        # on EVERY step. The original scenario is set once at the top of
+        # base_intro; as the transcript grows it scrolls out of the model's
+        # attention and the agent drifts into tangents (the "wrong direction"
+        # failure). Re-anchoring forces a per-step relevance check.
+        focus_anchor = (
+            "\n⚠ FOCUS — re-read the analyst's question every step:\n"
+            f"  \"{circumstance.strip()}\"\n"
+            "  Every action must advance (a) DID it happen? and (b) WHAT is linked to it. "
+            "If your current path no longer advances those, PIVOT or CONCLUDE — do not chase "
+            "tangents, whitelisted / own infrastructure, or interesting-but-unrelated data.\n"
+        )
+        if step_no > 2:
+            _declared = None
+            for _prior in reversed(transcript):
+                if _prior.get("action") == "set_hypotheses" and _prior.get("hypotheses"):
+                    _declared = _prior["hypotheses"]
+                    break
+            if _declared:
+                focus_anchor += "  Your open hypotheses — each step must test one (or revise them):\n"
+                for _h in _declared[:6]:
+                    focus_anchor += f"    {_h.get('id', '?')}: {str(_h.get('claim', ''))[:90]}\n"
+        # Periodic DRIFT AUDIT — a self-critique checkpoint on long runs. Forces
+        # the agent to prove its recent work is on-scope; catches slow tangents
+        # the per-step anchor alone can miss. Cheap (in-prompt, no extra call).
+        if step_no in (12, 20, 28, 36):
+            focus_anchor += (
+                "\n⚠ DRIFT AUDIT — before your next action, judge your LAST 3 steps: did they "
+                "advance (a) did-it-happen or (b) what's-linked for the scenario above? If NOT, "
+                "you are off-track — abandon this thread and either pivot back to the scenario or "
+                "CONCLUDE now with the evidence you already hold. Do not keep drilling a dead end.\n"
+            )
         user_msg = (
             base_intro
             + _render_ledger(ledger)
             + f"\nTranscript so far:\n{hist}\n"
+            + focus_anchor
             + stale_nudge
             + f"\nThis is step {step_no} of {max_steps}. Output the next JSON object."
         )

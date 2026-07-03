@@ -54,7 +54,7 @@ except ImportError:
 # ─────────────────────────────────────────────────────────────────────────────
 HARVEST_CATEGORIES: dict[str, dict] = {
     "registry": {
-        "description": "Windows registry hives (SYSTEM, SOFTWARE, SAM, SECURITY, NTUSER.DAT, …)",
+        "description": "Windows registry hives + transaction logs + RegBack (SYSTEM, SOFTWARE, SAM, SECURITY, NTUSER.DAT, …)",
         "paths": [
             "Windows/System32/config/SYSTEM",
             "Windows/System32/config/SOFTWARE",
@@ -64,10 +64,30 @@ HARVEST_CATEGORIES: dict[str, dict] = {
             "Windows/System32/config/COMPONENTS",
             "Windows/System32/config/BCD",
             "Windows/System32/Amcache.hve",
+            # Transaction logs — recover uncommitted keys (dirty hive / anti-forensics)
+            "Windows/System32/config/SYSTEM.LOG1",
+            "Windows/System32/config/SYSTEM.LOG2",
+            "Windows/System32/config/SOFTWARE.LOG1",
+            "Windows/System32/config/SOFTWARE.LOG2",
+            "Windows/System32/config/SAM.LOG1",
+            "Windows/System32/config/SAM.LOG2",
+            "Windows/System32/config/SECURITY.LOG1",
+            "Windows/System32/config/SECURITY.LOG2",
+            "Windows/System32/Amcache.hve.LOG1",
+            "Windows/System32/Amcache.hve.LOG2",
+            # Pre-boot backup snapshots — compare against live state
+            "Windows/System32/config/RegBack/SYSTEM",
+            "Windows/System32/config/RegBack/SOFTWARE",
+            "Windows/System32/config/RegBack/SAM",
+            "Windows/System32/config/RegBack/SECURITY",
         ],
         "user_paths": [
             "NTUSER.DAT",
+            "NTUSER.DAT.LOG1",
+            "NTUSER.DAT.LOG2",
             "AppData/Local/Microsoft/Windows/UsrClass.dat",
+            "AppData/Local/Microsoft/Windows/UsrClass.dat.LOG1",
+            "AppData/Local/Microsoft/Windows/UsrClass.dat.LOG2",
         ],
     },
     "eventlogs": {
@@ -92,8 +112,42 @@ HARVEST_CATEGORIES: dict[str, dict] = {
         "dir_exts": [("Windows/Prefetch", ".pf")],
     },
     "mft": {
-        "description": "NTFS Master File Table ($MFT, $LogFile, $UsnJrnl)",
-        "paths": ["$MFT", "$LogFile"],
+        "description": "NTFS metadata ($MFT, $LogFile, $UsnJrnl, $Boot, $Secure:$SDS)",
+        "paths": [
+            "$MFT",
+            "$LogFile",
+            "$Extend/$UsnJrnl:$J",   # USN change journal — file create/delete/rename timeline
+            "$Boot",
+            "$Secure:$SDS",          # security descriptor stream
+        ],
+    },
+    "jumplists": {
+        "description": "Jump Lists + Recent — per-user file-access & app-launch timeline",
+        "user_dir_all": [
+            "AppData/Roaming/Microsoft/Windows/Recent/AutomaticDestinations",
+            "AppData/Roaming/Microsoft/Windows/Recent/CustomDestinations",
+            "AppData/Roaming/Microsoft/Windows/Recent",
+        ],
+    },
+    "thumbcache": {
+        "description": "Thumbnail / icon cache DBs — proves files existed & were viewed",
+        "user_dir_all": ["AppData/Local/Microsoft/Windows/Explorer"],
+    },
+    "timeline_activity": {
+        "description": "Toast notification history (wpndatabase.db)",
+        "user_paths": [
+            "AppData/Local/Microsoft/Windows/Notifications/wpndatabase.db",
+        ],
+    },
+    "windows_search": {
+        "description": "Windows Search index (Windows.edb) — indexed file metadata",
+        "paths": [
+            "ProgramData/Microsoft/Search/Data/Applications/Windows/Windows.edb",
+        ],
+    },
+    "recyclebin": {
+        "description": "Recycle Bin — deleted-file metadata ($I) and content ($R), all SIDs",
+        "recursive_paths": ["$Recycle.Bin"],
     },
     "persistence": {
         "description": "Scheduled tasks and WMI repository",
@@ -157,6 +211,10 @@ HARVEST_CATEGORIES: dict[str, dict] = {
             "AppData/Local/Microsoft/Credentials",
             "AppData/Roaming/Microsoft/Credentials",
             "AppData/Local/Microsoft/Protect",
+        ],
+        "user_dir_all": [
+            "AppData/Local/Microsoft/Vault",   # Edge/IE Web Credentials vault
+            "AppData/Roaming/Microsoft/Vault",
         ],
     },
     "email_outlook": {
@@ -375,6 +433,10 @@ HARVEST_CATEGORIES: dict[str, dict] = {
 _CHROMIUM_FILES = [
     "History", "Web Data", "Cookies", "Login Data", "Bookmarks", "Network/Cookies",
 ]
+# Per-profile nested stores (walked recursively) — modern web-activity evidence.
+_CHROMIUM_DIRS = [
+    "Local Storage/leveldb", "Session Storage", "IndexedDB", "Extensions",
+]
 
 LEVEL_CATEGORIES: dict[str, list[str]] = {
     "small": [
@@ -390,6 +452,8 @@ LEVEL_CATEGORIES: dict[str, list[str]] = {
         "wer_crashes",
         "logs",
         "execution",
+        "jumplists",
+        "recyclebin",
     ],
     "complete": [
         "registry",
@@ -404,6 +468,11 @@ LEVEL_CATEGORIES: dict[str, list[str]] = {
         "wer_crashes",
         "logs",
         "execution",
+        "jumplists",
+        "thumbcache",
+        "timeline_activity",
+        "windows_search",
+        "recyclebin",
         "filesystem",
         "browser_chrome",
         "browser_firefox",
@@ -447,6 +516,11 @@ LEVEL_CATEGORIES: dict[str, list[str]] = {
         "wer_crashes",
         "logs",
         "execution",
+        "jumplists",
+        "thumbcache",
+        "timeline_activity",
+        "windows_search",
+        "recyclebin",
         "filesystem",
         "browser_chrome",
         "browser_firefox",
@@ -830,13 +904,46 @@ def _collect_category(
             safe_name = entry.replace(":", "_").replace("%", "_")
             _do_file(rel, safe_name)
 
+    # 3b. Recursive directory walks (nested trees the flat scans can't reach:
+    #     Recycle Bin per-SID $I/$R, browser LevelDB/IndexedDB stores, …).
+    #     BFS via list_dir with depth + file-count budgets so it can't run away.
+    _WALK_MAX_DEPTH = 6
+    _WALK_MAX_FILES = 4000
+
+    def _walk(base_rel: str, prefix: str) -> None:
+        stack = [(base_rel, 0)]
+        walked = 0
+        while stack:
+            d, depth = stack.pop()
+            if depth > _WALK_MAX_DEPTH:
+                continue
+            for entry in fs.list_dir(d):
+                child = f"{d}/{entry}"
+                sub = fs.list_dir(child)
+                if sub:  # directory → descend
+                    stack.append((child, depth + 1))
+                    continue
+                scoped = f"{prefix}_{child}".replace("/", "_").replace("\\", "_").replace(" ", "_").replace(":", "_")
+                if _do_file(child, entry, local_name=scoped, minio_name=scoped):
+                    walked += 1
+                    if walked >= _WALK_MAX_FILES:
+                        return
+
+    # System-wide recursive roots (e.g. $Recycle.Bin).
+    for root_rel in cat_def.get("recursive_paths", []):
+        _walk(root_rel, category)
+
     # 4. User-profile paths
     # Critical: pass the ORIGINAL filename (without user prefix) as original_filename
     # so that plugin_loader can match by exact name (e.g. "NTUSER.DAT", "History").
     # Use a user-prefixed local_name / minio_name to avoid filesystem & MinIO collisions.
     user_paths = cat_def.get("user_paths", [])
     firefox = cat_def.get("firefox", False)
-    if user_paths or firefox:
+    # NB: must also fire for categories that ONLY declare chromium / user_dir_all /
+    # user_dir_recursive (e.g. browser_chrome, downloads, jumplists) — otherwise
+    # the per-user loop below is skipped and they collect nothing.
+    if (user_paths or firefox or cat_def.get("chromium")
+            or cat_def.get("user_dir_all") or cat_def.get("user_dir_recursive")):
         users_dir = "Users"
         users = [
             u
@@ -863,14 +970,30 @@ def _collect_category(
                         base_name = fname.split("/")[-1]
                         scoped = f"{user}_{chromium['browser']}_{prof}_{base_name}".replace(" ", "_")
                         _do_file(rel, base_name, local_name=scoped, minio_name=scoped)
+                    # LevelDB/IndexedDB stores + extensions — nested dirs, walked.
+                    for store in _CHROMIUM_DIRS:
+                        _walk(f"{base}/{prof}/{store}",
+                              f"{user}_{chromium['browser']}_{prof}_{store.split('/')[-1]}")
 
-            # Whole user sub-directories (top-level files) — e.g. Downloads
+            # Whole user sub-directories (top-level files) — e.g. Downloads.
+            # Also grab each file's Zone.Identifier (Mark-of-the-Web) ADS so the
+            # download-source URL survives in dead-box mode too.
             for reldir in cat_def.get("user_dir_all", []):
                 scan = f"{users_dir}/{user}/{reldir}"
                 for entry in fs.list_dir(scan):
                     rel = f"{scan}/{entry}"
                     scoped = f"{user}_{reldir}_{entry}".replace(" ", "_").replace("/", "_")
-                    _do_file(rel, entry, local_name=scoped, minio_name=scoped)
+                    if _do_file(rel, entry, local_name=scoped, minio_name=scoped):
+                        ads_rel = f"{rel}:Zone.Identifier"
+                        ads_name = f"{entry}.Zone.Identifier"
+                        _do_file(ads_rel, ads_name,
+                                 local_name=f"{scoped}.Zone.Identifier",
+                                 minio_name=f"{scoped}.Zone.Identifier")
+
+            # Per-user recursive directory walks (e.g. browser storage roots).
+            for reldir in cat_def.get("user_dir_recursive", []):
+                _walk(f"{users_dir}/{user}/{reldir}",
+                      f"{user}_{reldir.replace('/', '_')}")
 
             # Firefox: discover profiles dynamically
             if firefox:
