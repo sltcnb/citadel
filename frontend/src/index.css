@@ -410,8 +410,13 @@
 .dark .border-gray-300 { border-color: #475569; }
 
 .dark .panel-slide { background-color: #131A2A; border-color: #1F2A3B; }
+/* panel-drawer is the shared right-drawer chrome (PanelShell / ResizableDrawer).
+   Its bg comes from @apply, not a .bg-white class, so it needs its own override. */
+.dark .panel-drawer { background-color: #131A2A; border-color: #1F2A3B; }
+.dark .panel-backdrop { background-color: rgba(0, 0, 0, 0.55); }
 .dark .modal-box   { background-color: #131A2A; }
 .dark .modal-header { border-color: #1F2A3B; }
+.dark .modal-overlay { background-color: rgba(0, 0, 0, 0.6); }
 
 .dark .data-table tr            { border-color: #1B2433; }
 .dark .table-row-hover:hover    { background-color: #1F2A3B; }
