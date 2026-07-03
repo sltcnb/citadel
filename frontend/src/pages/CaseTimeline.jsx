@@ -88,7 +88,7 @@ import { ResizableDrawer } from '../components/shared/resizableDrawer'
 import { useLicense } from '../contexts/LicenseContext'
 import { useCollab } from '../hooks/useCollab'
 import { usePersistedState } from '../hooks/usePersistedState'
-import { severityStyle } from '../utils/severity'
+import { severityStyle, levelBadgeClass, SEVERITY_ORDER } from '../utils/severity'
 import { statusStyle } from '../utils/status'
 
 // ── Artifact badge colours ────────────────────────────────────────────────────
@@ -104,15 +104,8 @@ const ARTIFACT_BADGE = {
   login_event: 'badge-login',
 }
 
-// ── Severity colours ──────────────────────────────────────────────────────────
-const LEVEL_BADGE = {
-  critical:      'badge-critical',
-  high:          'badge-high',
-  medium:        'badge-medium',
-  low:           'badge-low',
-  informational: 'badge-informational',
-  info:          'badge-informational',
-}
+// Severity colours + ordering are canonical in utils/severity (levelBadgeClass,
+// SEVERITY_ORDER) — no local duplicate.
 
 const MODULE_NAMES = {
   wintriage:   'Windows Triage',
@@ -1177,7 +1170,7 @@ function ModuleLaunchModal({ caseId, onClose, onRunCreated, onViewRuns, embedded
 // ─────────────────────────────────────────────────────────────────────────────
 // ModuleRunCard
 // ─────────────────────────────────────────────────────────────────────────────
-const LEVEL_ORDER_KEYS = ['critical', 'high', 'medium', 'low', 'informational']
+const LEVEL_ORDER_KEYS = SEVERITY_ORDER  // canonical order (utils/severity)
 
 // Full color palette — covers every module_id that can appear.
 // `strip` = the 3px top strip color; `bg` = dark-mode card tint at 15% opacity.
@@ -1437,7 +1430,7 @@ function ModuleRunCard({
               const count = byLevel[lvl] || 0
               if (!count) return null
               return (
-                <span key={lvl} className={`badge ${LEVEL_BADGE[lvl] || 'badge-generic'}`}>
+                <span key={lvl} className={`badge ${levelBadgeClass(lvl)}`}>
                   {count.toLocaleString()} {lvl === 'informational' ? 'info' : lvl.slice(0, 4)}
                 </span>
               )
@@ -1761,7 +1754,7 @@ function ModuleRunsPanel({ caseId, onClose, embedded = false }) {
                   }
                   className={`badge cursor-pointer select-none transition-colors ${
                     active
-                      ? (LEVEL_BADGE[lvl] || 'badge-generic')
+                      ? levelBadgeClass(lvl)
                       : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-100'
                   }`}
                 >

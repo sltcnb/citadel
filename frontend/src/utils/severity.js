@@ -14,6 +14,24 @@ export function severityStyle(level) {
   return SEVERITY_STYLES[String(level || '').toLowerCase()] || SEVERITY_STYLES.info
 }
 
+// Canonical severity ordering — highest first. One source for every "for each
+// level" loop so ordering never drifts between panels.
+export const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low', 'informational']
+
+// Canonical level → `.badge-*` CSS class (the pill style used in run cards,
+// module hits, timeline). Aliases (crit/med/info) fold onto the same classes so
+// no panel needs its own map.
+const LEVEL_BADGE_CLASS = {
+  critical: 'badge-critical', crit: 'badge-critical',
+  high: 'badge-high',
+  medium: 'badge-medium', med: 'badge-medium',
+  low: 'badge-low',
+  informational: 'badge-informational', info: 'badge-informational',
+}
+export function levelBadgeClass(level) {
+  return LEVEL_BADGE_CLASS[String(level || '').toLowerCase()] || 'badge-generic'
+}
+
 // Richer per-risk config used by gauges (level → colors + bar + label).
 export const RISK_CONFIG = {
   none:     { color: 'text-green-600',  bg: 'bg-green-100',  border: 'border-green-300',  bar: 'bg-green-500',   label: 'No Risk' },
