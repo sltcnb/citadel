@@ -1,0 +1,18 @@
+id: recyclebin
+name: Recycle Bin ($I metadata)
+description: >
+  Parses Windows Vista+ Recycle Bin $I metadata files — original path, original
+  size, and deletion timestamp for each deleted item. Handles both the pre-Win10
+  fixed-path layout (v1) and the Win10+ length-prefixed layout (v2).
+supported_extensions: []
+supported_mime_types:
+  - application/octet-stream
+artifact_type: recyclebin
+handled_filenames: []
+author: Citadel
+version: "1.0.0"
+tags:
+  - windows
+  - deleted-files
+  - recycle-bin
+  - anti-forensics

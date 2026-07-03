@@ -1,0 +1,22 @@
+id: win_timeline
+name: Windows Timeline (ActivitiesCache.db)
+description: >
+  Parses the Windows 10/11 Activity History (Timeline) SQLite database. Each
+  Activity row records an app the user ran and a document touched, with start/
+  end timestamps — execution + file-access evidence independent of Prefetch and
+  UserAssist.
+supported_extensions:
+  - .db
+supported_mime_types:
+  - application/x-sqlite3
+  - application/octet-stream
+artifact_type: timeline_activity
+handled_filenames:
+  - ActivitiesCache.db
+author: Citadel
+version: "1.0.0"
+tags:
+  - windows
+  - timeline
+  - execution
+  - user-activity

@@ -1,0 +1,22 @@
+id: notifications
+name: Windows Notifications (wpndatabase.db)
+description: >
+  Parses the Windows push/toast notification store. Every notification that
+  arrived (Teams/Outlook/Slack messages, download-complete, AV alerts, calendar)
+  becomes an event with the originating app and arrival time — a rich user
+  activity and communications timeline.
+supported_extensions:
+  - .db
+supported_mime_types:
+  - application/x-sqlite3
+  - application/octet-stream
+artifact_type: notifications
+handled_filenames:
+  - wpndatabase.db
+author: Citadel
+version: "1.0.0"
+tags:
+  - windows
+  - notifications
+  - user-activity
+  - timeline

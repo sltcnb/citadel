@@ -2921,28 +2921,29 @@ class LinuxCollector(Collector):
                         if p.is_file():
                             self._add(p, f"user/{un}/firefox/{profile.name}/{db}")
 
-            # Chromium / Chrome / Brave / Edge (Linux XDG paths)
-            for browser, rel in [
-                ("chromium", ".config/chromium/Default"),
-                ("chrome", ".config/google-chrome/Default"),
-                ("brave", ".config/BraveSoftware/Brave-Browser/Default"),
-                ("edge", ".config/microsoft-edge/Default"),
+            # Chromium / Chrome / Brave / Edge (Linux XDG paths) — ALL profiles
+            for browser, base_rel in [
+                ("chromium", ".config/chromium"),
+                ("chrome", ".config/google-chrome"),
+                ("brave", ".config/BraveSoftware/Brave-Browser"),
+                ("edge", ".config/microsoft-edge"),
             ]:
-                cb = user_dir / rel
-                if not cb.exists():
+                cbase = user_dir / base_rel
+                if not cbase.exists():
                     continue
-                for art in [
-                    "History",
-                    "Cookies",
-                    "Login Data",
-                    "Web Data",
-                    "Bookmarks",
-                    "Preferences",
-                    "Network Action Predictor",
-                ]:
-                    p = cb / art
-                    if p.is_file():
-                        self._add(p, f"user/{un}/{browser}/{art}")
+                try:
+                    profs = [p for p in cbase.iterdir()
+                             if p.is_dir() and (p.name == "Default" or p.name.startswith("Profile ") or p.name == "Guest Profile")]
+                except Exception:
+                    profs = []
+                for cb in profs:
+                    for art in [
+                        "History", "Cookies", "Login Data", "Web Data",
+                        "Bookmarks", "Preferences", "Network Action Predictor",
+                    ]:
+                        p = cb / art
+                        if p.is_file():
+                            self._add(p, f"user/{un}/{browser}/{cb.name}/{art}")
 
             # SSH known_hosts and authorized_keys (not private keys)
             ssh_dir = user_dir / ".ssh"
@@ -3766,6 +3767,9 @@ class ExternalDiskCollector(Collector):
         "sysmon",
         "wer_crashes",
         "win_logs",
+        "jumplists",
+        "recyclebin",
+        "timeline_activity",
     }
 
     def __init__(self, disk: str, bitlocker_key: str = "", **kwargs):
@@ -4122,6 +4126,11 @@ class ExternalDiskCollector(Collector):
         self._run_cat("ssh_ftp", self._ssh_ftp_from, users_dir)
         # ── Apps & user data ─────────────────────────────────────────────────
         self._run_cat("lnk", self._lnk_from, users_dir)
+        self._run_cat("jumplists", self._jumplists_from, users_dir)
+        self._run_cat("thumbcache", self._thumbcache_from, users_dir)
+        self._run_cat("timeline_activity", self._win_timeline_from, users_dir)
+        self._run_cat("windows_search", self._windows_search_from, root)
+        self._run_cat("recyclebin", self._recyclebin_from, root)
         self._run_cat("tasks", self._tasks_from, win_dir)
         self._run_cat("office", self._office_from, users_dir)
         self._run_cat("dev_tools", self._dev_tools_from, users_dir)
@@ -4143,6 +4152,109 @@ class ExternalDiskCollector(Collector):
         self._run_cat("memory_artifacts", self._memory_artifacts_from, root)
         # ── On-demand file fetch (--fetch) ───────────────────────────────────
         self._run_cat("file_search", self._file_search, [root])
+
+    # ── Parity methods (mounted-disk equivalents of the live collector) ──────
+    def _iter_users(self, users_dir: Path):
+        try:
+            for ud in sorted(users_dir.iterdir()):
+                if ud.is_dir() and ud.name not in ("Public", "Default", "Default User", "All Users"):
+                    yield ud
+        except Exception:
+            return
+
+    def _jumplists_from(self, users_dir: Path) -> None:
+        print("  [*] Jump Lists / Recent")
+        for ud in self._iter_users(users_dir):
+            for rel in (
+                r"AppData\Roaming\Microsoft\Windows\Recent\AutomaticDestinations",
+                r"AppData\Roaming\Microsoft\Windows\Recent\CustomDestinations",
+                r"AppData\Roaming\Microsoft\Windows\Recent",
+            ):
+                d = ud / rel
+                if not d.exists():
+                    continue
+                try:
+                    for p in sorted(d.glob("*")):
+                        if not p.is_file():
+                            continue
+                        tmp = self.staging / f"{ud.name}_{Path(rel).name}_{p.name}".replace(" ", "_")
+                        if self._stage_file(p, tmp):
+                            self._add(tmp, f"jumplists/{ud.name}/{Path(rel).name}/{p.name}")
+                except Exception:
+                    pass
+
+    def _thumbcache_from(self, users_dir: Path) -> None:
+        print("  [*] Thumbcache / IconCache")
+        for ud in self._iter_users(users_dir):
+            d = ud / r"AppData\Local\Microsoft\Windows\Explorer"
+            if not d.exists():
+                continue
+            try:
+                for p in sorted(d.glob("*.db")):
+                    tmp = self.staging / f"{ud.name}_{p.name}"
+                    if self._stage_file(p, tmp):
+                        self._add(tmp, f"thumbcache/{ud.name}/{p.name}")
+            except Exception:
+                pass
+
+    def _win_timeline_from(self, users_dir: Path) -> None:
+        print("  [*] Timeline / Notifications")
+        for ud in self._iter_users(users_dir):
+            wpn = ud / r"AppData\Local\Microsoft\Windows\Notifications\wpndatabase.db"
+            tmp = self.staging / f"{ud.name}_wpndatabase.db"
+            if self._stage_file(wpn, tmp):
+                self._add(tmp, f"timeline/{ud.name}/wpndatabase.db")
+            cdp = ud / r"AppData\Local\ConnectedDevicesPlatform"
+            if not cdp.exists():
+                continue
+            try:
+                for sub in cdp.iterdir():
+                    if not sub.is_dir():
+                        continue
+                    for name in ("ActivitiesCache.db", "ActivitiesCache.db-wal", "ActivitiesCache.db-shm"):
+                        tmp = self.staging / f"{ud.name}_{sub.name}_{name}"
+                        if self._stage_file(sub / name, tmp):
+                            self._add(tmp, f"timeline/{ud.name}/{sub.name}/{name}")
+            except Exception:
+                pass
+
+    def _windows_search_from(self, root: Path) -> None:
+        print("  [*] Windows Search index")
+        edb = root / r"ProgramData\Microsoft\Search\Data\Applications\Windows\Windows.edb"
+        try:
+            if not edb.exists() or edb.stat().st_size > 3 * 1024**3:
+                return
+        except OSError:
+            return
+        tmp = self.staging / "Windows.edb"
+        if self._stage_file(edb, tmp):
+            self._add(tmp, "search/Windows.edb")
+
+    def _recyclebin_from(self, root: Path) -> None:
+        print("  [*] Recycle Bin")
+        rb = root / "$Recycle.Bin"
+        if not rb.exists():
+            return
+        count = total = 0
+        try:
+            entries = sorted(rb.rglob("*"))
+        except Exception:
+            return
+        for p in entries:
+            if count >= 4000 or total >= 5 * 1024**3:
+                break
+            try:
+                if not p.is_file() or p.stat().st_size > 500 * 1024 * 1024:
+                    continue
+                rel = p.relative_to(rb)
+                safe = str(rel).replace("\\", "_").replace("/", "_").replace(" ", "_")
+                tmp = self.staging / f"rb_{count}_{safe}"
+                if self._stage_file(p, tmp):
+                    self._add(tmp, f"recyclebin/{rel}")
+                    count += 1
+                    total += p.stat().st_size
+            except Exception:
+                pass
 
     def _evtx_from(self, win_dir: Path) -> None:
         print("  [*] Event Logs (EVTX)")
@@ -4282,37 +4394,53 @@ class ExternalDiskCollector(Collector):
 
     def _browser_from(self, users_dir: Path) -> None:
         print("  [*] Browser Artifacts")
-        PROFILES = [
-            ("chrome", "AppData/Local/Google/Chrome/User Data/Default"),
-            ("edge", "AppData/Local/Microsoft/Edge/User Data/Default"),
-            ("brave", "AppData/Local/BraveSoftware/Brave-Browser/User Data/Default"),
-            ("opera", "AppData/Roaming/Opera Software/Opera Stable"),
-            ("vivaldi", "AppData/Local/Vivaldi/User Data/Default"),
+        # Chromium: enumerate ALL profiles under "User Data" (Default, Profile N,
+        # Guest Profile) — not just Default (which missed secondary profiles).
+        CHROMIUM = [
+            ("chrome", "AppData/Local/Google/Chrome/User Data"),
+            ("edge", "AppData/Local/Microsoft/Edge/User Data"),
+            ("brave", "AppData/Local/BraveSoftware/Brave-Browser/User Data"),
+            ("vivaldi", "AppData/Local/Vivaldi/User Data"),
         ]
-        DB_FILES = ["History", "Web Data", "Cookies", "Login Data", "Bookmarks"]
-        error_count = 0
+        DB_FILES = ["History", "Web Data", "Cookies", "Login Data", "Bookmarks", "Network/Cookies"]
+
+        def _is_profile(name):
+            return name == "Default" or name.startswith("Profile ") or name == "Guest Profile"
 
         for user_dir in sorted(users_dir.iterdir()) if users_dir.exists() else []:
             if not user_dir.is_dir():
                 continue
-            for browser, rel in PROFILES:
-                profile_dir = user_dir / Path(rel.replace("/", os.sep))
-                for db in DB_FILES:
-                    src = profile_dir / db
-                    try:
-                        if not src.exists() or not src.is_file():
-                            continue
-                        if src.stat().st_size == 0:
-                            continue
-                        tmp = self.staging / f"browser_{user_dir.name}_{browser}_{db}"
+            for browser, base_rel in CHROMIUM:
+                base = user_dir / Path(base_rel.replace("/", os.sep))
+                if not base.exists():
+                    continue
+                try:
+                    profiles = [p for p in base.iterdir() if p.is_dir() and _is_profile(p.name)]
+                except Exception:
+                    profiles = []
+                for prof in profiles:
+                    for db in DB_FILES:
+                        src = prof / Path(db.replace("/", os.sep))
+                        try:
+                            if not src.is_file() or src.stat().st_size == 0:
+                                continue
+                            base_name = db.split("/")[-1]
+                            tmp = self.staging / f"browser_{user_dir.name}_{browser}_{prof.name}_{base_name}".replace(" ", "_")
+                            if self._copy_locked(src, tmp):
+                                self._add(tmp, f"browser/{browser}/{user_dir.name}/{prof.name}/{base_name}")
+                        except Exception:
+                            pass
+            # Opera — single profile directly under "Opera Stable"
+            opera_base = user_dir / Path("AppData/Roaming/Opera Software/Opera Stable".replace("/", os.sep))
+            for db in ("History", "Cookies", "Web Data", "Login Data", "Bookmarks"):
+                try:
+                    src = opera_base / db
+                    if src.is_file() and src.stat().st_size:
+                        tmp = self.staging / f"browser_{user_dir.name}_opera_{db}".replace(" ", "_")
                         if self._copy_locked(src, tmp):
-                            self._add(tmp, f"browser/{browser}/{user_dir.name}/{db}")
-                        else:
-                            error_count += 1
-                            if self.verbose and error_count <= 3:
-                                self._log(f"Browser {browser}/{db}: copy failed (file locked?)")
-                    except Exception:
-                        error_count += 1
+                            self._add(tmp, f"browser/opera/{user_dir.name}/{db}")
+                except Exception:
+                    pass
             # Firefox
             ff_profiles = user_dir / "AppData" / "Roaming" / "Mozilla" / "Firefox" / "Profiles"
             if ff_profiles.exists():

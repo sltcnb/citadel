@@ -752,6 +752,7 @@ export default function Collector() {
                 return next
               })}
               onSelectAll={toggleAll}
+              onScenario={(keys) => setSelected(new Set(keys))}
             />
             {selected.has('memory') && (
               <div className="mt-3 flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
