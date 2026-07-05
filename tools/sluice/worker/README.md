@@ -2,19 +2,19 @@
 
 > The Celery worker that does Sluice's job: detect, dedup, route, parse, validate, emit.
 
-**Status: built** — the async execution half of [Sluice](https://github.com/sltcnb/sluice).
+**Status: built** — the async execution half of [Sluice](../README.md) (this repo's `worker/` dir).
 
 Sluice-worker is the background worker that turns received evidence into indexed events. It downloads each artifact from MinIO, detects its type, loads the matching **Babel** plugin, runs `parse()`, validates each `ForensicEvent` against the contract, indexes the result into Elasticsearch, and (optionally) publishes it onto the Redis Streams bus. It also drives Anvil module runs and image harvesting.
 
 ## Pipeline position
 
 ```
-Talon (uploads) ──▶ Sluice (intake) ──▶ sluice-worker (Celery) ──ForensicEvent──▶ Elasticsearch + bus ──▶ Rosetta …
+Talon (uploads) ──▶ Sluice (intake) ──▶ Sluice worker (Celery) ──ForensicEvent──▶ Elasticsearch + bus ──▶ Rosetta …
 ```
 
 ## Contract
 
-sluice-worker has **no `brick.yaml` of its own** — the declared surface lives in the [Sluice repo](https://github.com/sltcnb/sluice)'s `brick.yaml`: consumes `bundle_manifest/v1` (any content type; sniffs magic → extension → filename), produces `forensic_event/v1`, health at `/healthz`. At runtime the worker enforces that surface: every event bound for the bus is checked with `citadel_contracts.validate_forensic_event`, and emission follows the contracts `bus_topics` spec — batches on the `events.parsed` Redis Stream (`bus:events.parsed:{company}`), at-least-once, consumers dedup by sha256.
+The worker has **no `brick.yaml` of its own** — the declared surface lives at the repo root ([`../brick.yaml`](../brick.yaml)): consumes `bundle_manifest/v1` (any content type; sniffs magic → extension → filename), produces `forensic_event/v1`, health at `/healthz`. At runtime the worker enforces that surface: every event bound for the bus is checked with `citadel_contracts.validate_forensic_event`, and emission follows the contracts `bus_topics` spec — batches on the `events.parsed` Redis Stream (`bus:events.parsed:{company}`), at-least-once, consumers dedup by sha256.
 
 ## Inputs → Outputs
 
@@ -33,7 +33,7 @@ pip install git+https://github.com/sltcnb/citadel-contracts
 Or build the container image. The Dockerfile bakes in the forensic toolchain (Hayabusa, RegRipper, plaso, ExifTool, de4dot, pytsk3) plus `citadel_contracts` and the built-in Babel parsers / Anvil modules, so it must be built from the platform monorepo root:
 
 ```bash
-docker build -f tools/sluice-worker/Dockerfile -t sluice-worker .
+docker build -f tools/sluice/worker/Dockerfile -t sluice-worker .
 ```
 
 ## Configuration

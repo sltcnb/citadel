@@ -87,4 +87,4 @@ Case IOCs go to Augur; enrichments attach to entities and the timeline.
 
 ## Part of the Citadel suite
 
-Augur is the intel-enrichment stage of [Citadel](https://github.com/sltcnb/citadel). **Upstream:** case IOCs extracted from events canonicalized by [rosetta](https://github.com/sltcnb/rosetta). **Downstream:** scored intel attaches to case entities and the timeline, feeding [pilot](https://github.com/sltcnb/citadel-pilot) and [scribe](https://github.com/sltcnb/citadel-report). Platform service dependency (from `brick.yaml`): **Redis** — enrichment cache TTL + rate limiting (standalone runs use the in-memory cache).
+Augur is the intel-enrichment stage of [Citadel](https://github.com/sltcnb/citadel). **Upstream:** case IOCs extracted from events canonicalized by [rosetta](https://github.com/sltcnb/rosetta). **Downstream:** scored intel attaches to case entities and the timeline, feeding [pilot](https://github.com/sltcnb/pilot) and [scribe](https://github.com/sltcnb/scribe). Platform service dependency (from `brick.yaml`): **Redis** — enrichment cache TTL + rate limiting (standalone runs use the in-memory cache).

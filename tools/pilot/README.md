@@ -39,7 +39,7 @@ Contracts are versioned in [citadel-contracts](https://github.com/sltcnb/citadel
 Normally installed into the Citadel API image. Standalone clone:
 
 ```bash
-git clone https://github.com/sltcnb/citadel-pilot && cd citadel-pilot
+git clone https://github.com/sltcnb/pilot && cd pilot
 pip install git+https://github.com/sltcnb/citadel-contracts   # citadel_contracts
 pip install -e .
 ```
@@ -94,6 +94,6 @@ Pilot sits near the end of the pipeline, reasoning over normalized/detected data
 Upstream/runtime dependencies (per `brick.yaml`): Elasticsearch,
 [Sluice](https://github.com/sltcnb/sluice), [Sigil](https://github.com/sltcnb/sigil),
 [Anvil](https://github.com/sltcnb/anvil), [Augur](https://github.com/sltcnb/augur).
-Downstream: [Scribe](https://github.com/sltcnb/citadel-report) renders its investigation
+Downstream: [Scribe](https://github.com/sltcnb/scribe) renders its investigation
 report. Platform: [citadel](https://github.com/sltcnb/citadel) · Contracts:
 [citadel-contracts](https://github.com/sltcnb/citadel-contracts).
