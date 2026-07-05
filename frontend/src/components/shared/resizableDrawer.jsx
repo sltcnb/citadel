@@ -97,8 +97,16 @@ export function ResizableDrawer({ slug, defaultWidth = 640, onClose, className =
   return (
     <div className="panel-backdrop" onClick={onClose}>
       <div
-        className={`absolute right-0 top-0 h-full bg-white border-l border-gray-200 flex flex-col ${className}`}
-        style={{ width, maxWidth: '96vw', boxShadow: '-4px 0 24px rgba(0,0,0,0.10)' }}
+        className={`absolute right-0 top-0 h-full flex flex-col ${className}`}
+        style={{
+          width,
+          maxWidth: '96vw',
+          // Token-driven surface — light + dark come from --ct-* (one source),
+          // same as .panel-drawer / PanelShell.
+          background: 'var(--ct-surface)',
+          borderLeft: '1px solid var(--ct-border)',
+          boxShadow: '-4px 0 24px rgba(0,0,0,0.10)',
+        }}
         onClick={e => e.stopPropagation()}
       >
         <DrawerResizeHandle {...handleProps} />

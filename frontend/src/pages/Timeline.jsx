@@ -25,6 +25,7 @@ import {
   HelpCircle,
 } from 'lucide-react'
 import { api } from '../api/client'
+import ConfirmDialog from '../components/ConfirmDialog'
 import EventDetail from '../components/shared/EventDetail'
 import StatsPopover from '../components/shared/StatsPopover'
 import PanelHelp from '../components/shared/PanelHelp'
@@ -440,6 +441,7 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
   const [savedSearches, setSavedSearches]   = useState([])
   const [showSaveForm, setShowSaveForm]     = useState(false)
   const [saveSearchName, setSaveSearchName] = useState('')
+  const [confirmDeleteSearch, setConfirmDeleteSearch] = useState(null) // saved search | null
   const [showAiAssist, setShowAiAssist]     = useState(false)
 
   const [sortField, setSortField]           = useState('timestamp')
@@ -1443,7 +1445,8 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
                   {s.name}
                 </button>
                 <button
-                  onClick={async () => { await api.savedSearches.delete(caseId, s.id); setSavedSearches(p => p.filter(x => x.id !== s.id)) }}
+                  onClick={() => setConfirmDeleteSearch(s)}
+                  title="Delete saved search"
                   className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-gray-100 text-gray-500 hover:text-red-500 transition-all">
                   <Trash2 size={9} />
                 </button>
@@ -2250,6 +2253,23 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
             </div>
           </div>
         </div>
+      )}
+
+      {confirmDeleteSearch && (
+        <ConfirmDialog
+          title="Delete saved search"
+          icon={<Trash2 size={14} className="text-red-500" />}
+          message={`Delete saved search "${confirmDeleteSearch.name}"? This can't be undone.`}
+          confirmLabel="Delete"
+          confirmClass="btn-danger"
+          onConfirm={async () => {
+            const s = confirmDeleteSearch
+            setConfirmDeleteSearch(null)
+            await api.savedSearches.delete(caseId, s.id)
+            setSavedSearches(p => p.filter(x => x.id !== s.id))
+          }}
+          onCancel={() => setConfirmDeleteSearch(null)}
+        />
       )}
     </div>
   )

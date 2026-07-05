@@ -24,6 +24,7 @@ import {
   Bell,
 } from 'lucide-react'
 import { api } from '../api/client'
+import { formatDate } from '../utils/format'
 import { PageShell, PageHeader } from '../components/shared/PageShell'
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts'
 import { useCompanies } from './UserManagement'
@@ -383,7 +384,7 @@ function LibraryRuleCard({ rule, cases, onDelete, onUpdated, onEdit }) {
             )}
             {rule.created_at && (
               <p className="text-xs text-gray-500">
-                Added {new Date(rule.created_at).toLocaleDateString()}
+                Added {formatDate(rule.created_at, 'date')}
               </p>
             )}
           </div>
