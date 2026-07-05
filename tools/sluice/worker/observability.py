@@ -27,12 +27,17 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 # ── structured logs ──────────────────────────────────────────────────────────
 # Log shipping is shared via citadel_contracts so api + every tool use the same
 # path. Bootstrap sys.path so it resolves however this module is loaded
-# (dev tree: tools/ is parents[1]; container: PYTHONPATH=/app).
+# (dev tree: walk up to the monorepo's tools/ dir; container/standalone:
+# pip-installed or PYTHONPATH=/app).
 import sys as _sys
 from pathlib import Path as _Path
 
-_cp = _Path(__file__).resolve().parents[1]
-if str(_cp) not in _sys.path:
+_cp = next(
+    (p for p in _Path(__file__).resolve().parents
+     if (p / "citadel_contracts" / "__init__.py").exists()),
+    None,
+)
+if _cp is not None and str(_cp) not in _sys.path:
     _sys.path.insert(0, str(_cp))
 
 from citadel_contracts.logship import (  # noqa: E402,F401

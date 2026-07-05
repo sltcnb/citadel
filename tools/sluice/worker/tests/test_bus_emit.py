@@ -68,13 +68,29 @@ def test_compute_sha256(tmp_path):
 # ── forensic_event/v1 serialization ─────────────────────────────────────────────
 
 # Load the shared contract once so the test enforces the real required list.
-_SCHEMA_PATH = Path(__file__).resolve().parents[3] / "contracts" / "forensic_event.schema.json"
-_SCHEMA = json.loads(_SCHEMA_PATH.read_text())
+# Found at <monorepo>/contracts/ in the platform repo, or vendored in a
+# citadel-contracts checkout; skipped in a standalone clone without either.
+def _find_schema() -> Path | None:
+    for anc in Path(__file__).resolve().parents:
+        for rel in (
+            "contracts/forensic_event.schema.json",
+            "tools/citadel_contracts/contracts/forensic_event.schema.json",
+        ):
+            cand = anc / rel
+            if cand.exists():
+                return cand
+    return None
+
+
+_SCHEMA_PATH = _find_schema()
+_SCHEMA = json.loads(_SCHEMA_PATH.read_text()) if _SCHEMA_PATH else None
 
 
 def _assert_valid_forensic_event_v1(fo: dict) -> None:
     """Validate against the real contract — with jsonschema if available, else
     a focused manual check that mirrors forensic_event.schema.json."""
+    if _SCHEMA is None:
+        pytest.skip("forensic_event.schema.json not found in this checkout")
     try:
         import jsonschema  # type: ignore
 
@@ -110,7 +126,8 @@ def test_to_forensic_event_v1_projects_contract_fields():
     fo = bus_emit.to_forensic_event_v1(internal)
     _assert_valid_forensic_event_v1(fo)
     # Contract fields survive.
-    assert fo["timestamp"] == internal["timestamp"]
+    # +00:00 offset is normalized to the contract's Z form.
+    assert fo["timestamp"] == "2026-06-08T12:00:00Z"
     assert fo["message"] == internal["message"]
     assert fo["artifact_type"] == "windows_event"
     assert fo["raw"] == {"EventID": 4624, "user": "bob"}
@@ -144,8 +161,10 @@ def test_validate_rejects_bad_payloads():
 
 def test_serialize_batch_shape_and_validity():
     events = [
-        {"timestamp": "2026-06-08T12:00:00+00:00", "message": "a", "artifact_type": "syslog"},
-        {"timestamp": "2026-06-08T12:00:01+00:00", "message": "b", "artifact_type": "syslog"},
+        {"timestamp": "2026-06-08T12:00:00+00:00", "message": "a", "artifact_type": "syslog",
+         "raw": "Jun  8 12:00:00 host proc[1]: a"},
+        {"timestamp": "2026-06-08T12:00:01+00:00", "message": "b", "artifact_type": "syslog",
+         "raw": "Jun  8 12:00:01 host proc[1]: b"},
     ]
     fields = bus_emit.serialize_batch(events, case_id="c1", job_id="j1", company="acme")
     assert fields["schema"] == "forensic_event/v1"

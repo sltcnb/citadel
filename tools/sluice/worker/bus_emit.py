@@ -154,6 +154,16 @@ def to_forensic_event_v1(event: dict[str, Any]) -> dict[str, Any]:
     ts = out.get("timestamp")
     if not isinstance(ts, str) or not ts.strip():
         out["timestamp"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    elif not ts.endswith("Z"):
+        # Contract requires ISO-8601 with Z (UTC) — normalize offset forms.
+        try:
+            dt = datetime.fromisoformat(ts)
+            if dt.tzinfo is not None:
+                dt = dt.astimezone(UTC)
+                fmt = "%Y-%m-%dT%H:%M:%S.%fZ" if dt.microsecond else "%Y-%m-%dT%H:%M:%SZ"
+                out["timestamp"] = dt.strftime(fmt)
+        except ValueError:
+            pass  # leave as-is; validation rejects it downstream
     msg = out.get("message")
     if not isinstance(msg, str) or not msg.strip():
         out["message"] = out.get("artifact_type", "generic")
