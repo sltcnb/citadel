@@ -1856,8 +1856,9 @@ def _parse_ip_addr() -> list[dict]:
                 # "inet 192.168.1.100/24 brd ..."
                 ip = line.split()[1].split("/")[0]
                 results.append({"ip": ip, "iface": iface})
-    except Exception:
-        pass
+    except (OSError, subprocess.SubprocessError) as exc:
+        # Best-effort probe — `ip` may be absent (non-Linux); other detectors cover it
+        logger.debug("ip addr probe failed: %s", exc)
     return results
 
 
@@ -1873,8 +1874,9 @@ def _detect_gateway_ip() -> str | None:
         idx = parts.index("via") if "via" in parts else -1
         if idx >= 0 and idx + 1 < len(parts):
             return parts[idx + 1]
-    except Exception:
-        pass
+    except (OSError, subprocess.SubprocessError) as exc:
+        # Best-effort probe — no default route / no `ip` binary is a normal case
+        logger.debug("default gateway probe failed: %s", exc)
     return None
 
 
@@ -1885,7 +1887,9 @@ def _detect_outbound_ip() -> str | None:
         ip = s.getsockname()[0]
         s.close()
         return ip
-    except Exception:
+    except OSError as exc:
+        # Best-effort probe — offline hosts have no outbound route
+        logger.debug("outbound IP probe failed: %s", exc)
         return None
 
 
@@ -1912,8 +1916,9 @@ def _resolve_host_docker_internal() -> str | None:
                 parts = line.split()
                 if parts and not parts[0].startswith("127."):
                     return parts[0]
-    except Exception:
-        pass
+    except OSError as exc:
+        # Best-effort probe — /etc/hosts may be unreadable in hardened containers
+        logger.debug("/etc/hosts scan failed: %s", exc)
     return None
 
 
@@ -1967,8 +1972,8 @@ def _k8s_namespace() -> str:
     """Read the pod's namespace from the mounted service account files."""
     try:
         return _K8S_NS_PATH.read_text().strip() or _LB_NAMESPACE
-    except Exception:
-        return _LB_NAMESPACE
+    except OSError:
+        return _LB_NAMESPACE  # not in a pod / file not mounted — fall back to env default
 
 
 def _k8s_request(
@@ -1983,7 +1988,7 @@ def _k8s_request(
     """
     try:
         token = _K8S_TOKEN_PATH.read_text().strip()
-    except Exception as exc:
+    except OSError as exc:
         logger.error("Cannot read K8s service account token: %s", exc)
         return 0, {"error": "cannot read service account token"}
 
@@ -2007,12 +2012,18 @@ def _k8s_request(
             raw = resp.read()
             return resp.status, json.loads(raw) if raw else {}
     except urllib.error.HTTPError as exc:
+        # HTTP-level error — the API server answered; preserve its status code
         raw = exc.read()
         try:
             return exc.code, json.loads(raw)
-        except Exception:
+        except ValueError:  # non-JSON error body (covers JSONDecodeError + bad encoding)
             return exc.code, {"message": raw.decode(errors="replace")[:500]}
-    except Exception as exc:
+    except urllib.error.URLError as exc:
+        # Transport-level error — API server unreachable (DNS, TLS, refused, timeout)
+        logger.error("K8s API unreachable [%s %s]: %s", method, path, exc.reason)
+        return 0, {"error": str(exc)}
+    except (OSError, json.JSONDecodeError) as exc:
+        # I/O failure mid-read or a 200 response with a malformed body
         logger.error("K8s API request failed [%s %s]: %s", method, path, exc)
         return 0, {"error": str(exc)}
 

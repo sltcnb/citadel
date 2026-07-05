@@ -114,7 +114,10 @@ def _read_module_constants(module_id: str) -> dict:
             elif _re.match(r"^INDEX_SKIP\s*=\s*True", line):
                 index_skip = True
         return {"artifact_type": artifact_type, "index_skip": index_skip}
-    except Exception:
+    except (OSError, UnicodeDecodeError) as exc:
+        # Best-effort metadata — the module still runs, just without a custom
+        # artifact_type / index_skip override.
+        logger.warning("could not read module constants from %s: %s", module_file, exc)
         return {}
 
 
@@ -274,7 +277,7 @@ def _minio_op(fn, max_tries: int = 4, base_delay: float = 3.0):
     for attempt in range(max_tries):
         try:
             return fn()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - retry dispatcher: transient errors retried, everything else re-raised below
             msg = str(exc).lower()
             if any(k in msg for k in _CONN_ERRORS):
                 last_exc = exc
@@ -420,8 +423,13 @@ def run_module(
                         )
                         or "",
                     }
-                except Exception:
-                    pass
+                except Exception as _co_exc:  # noqa: BLE001 - company scoping is optional metadata
+                    logger.warning(
+                        "[%s] could not resolve case_company for case %s: %s",
+                        run_id,
+                        case_id,
+                        _co_exc,
+                    )
             results = runner(run_id, work_dir, sources_dir, params, tool_meta)
         else:
             # Custom module — run in isolated sandboxed subprocess
@@ -441,9 +449,14 @@ def run_module(
                 _minio_op(lambda k=art_key, p=fpath: minio.fput_object(MINIO_BUCKET, k, str(p)))
                 artifact_key_map[spec["filename"]] = art_key
                 logger.info("[%s] Uploaded artifact: %s", run_id, spec["filename"])
-            except Exception as _art_exc:
+            except Exception as _art_exc:  # noqa: BLE001 - MinIO client raises many types; run continues without the artifact
                 logger.warning(
                     "[%s] Artifact upload failed for %s: %s", run_id, spec["filename"], _art_exc
+                )
+                # Surface in the run status the UI reads — a produced artifact
+                # that never reached storage must not disappear silently.
+                tool_meta["log"] += (
+                    f"\n[artifact upload FAILED: {spec['filename']}: {_art_exc}]\n"
                 )
 
         # Patch results with download_key so the frontend can offer download
@@ -456,8 +469,12 @@ def run_module(
                         det["download_key"] = artifact_key_map[deob]
                         det["download_name"] = deob
                         hit["details_raw"] = json.dumps(det)
-                except Exception:
-                    pass
+                except (json.JSONDecodeError, TypeError) as _dl_exc:
+                    # Cosmetic enrichment only — the hit stays valid without a
+                    # download link, but leave a trace of why it is missing.
+                    logger.warning(
+                        "[%s] could not attach download_key to hit: %s", run_id, _dl_exc
+                    )
 
         # Cancelled while the module binary was running — drop its output
         # rather than indexing results the analyst no longer wants.
@@ -489,9 +506,14 @@ def run_module(
                     tool_meta["stdout"] += (
                         f"\n=== Indexed {indexed} events into Timeline (ES) ===\n"
                     )
-            except Exception as _es_exc:
+            except Exception as _es_exc:  # noqa: BLE001 - indexing failure must not lose the hits already collected
                 logger.warning("[%s] ES indexing failed (non-fatal): %s", run_id, _es_exc)
                 tool_meta["log"] += f"\n[ES index warning: {_es_exc}]\n"
+                # Push to the live run log too so the analyst sees the gap
+                # without opening the tool output.
+                _push_log(
+                    r, run_id, f"WARNING: hits not indexed into Timeline (ES): {_es_exc}"
+                )
 
             # Also land every hit in the unified findings store so module output
             # is queryable / exportable / reportable / re-ingestable like any
@@ -502,8 +524,12 @@ def run_module(
                 )
                 if nf:
                     tool_meta["log"] += f"\nWrote {nf} finding(s) to the case findings store\n"
-            except Exception as _fnd_exc:
+            except Exception as _fnd_exc:  # noqa: BLE001 - findings store is a secondary sink; hits still land in results.json
                 logger.warning("[%s] findings write failed (non-fatal): %s", run_id, _fnd_exc)
+                tool_meta["log"] += f"\n[findings store warning: {_fnd_exc}]\n"
+                _push_log(
+                    r, run_id, f"WARNING: hits not written to findings store: {_fnd_exc}"
+                )
 
         # ── 3. Upload full results to MinIO ───────────────────────────────────
         results_json = work_dir / "results.json"
@@ -573,7 +599,7 @@ def run_module(
                         "hits_by_level": hits_by_level,
                     },
                 )
-            except Exception as _wh_exc:
+            except Exception as _wh_exc:  # noqa: BLE001 - notification is best-effort; never fail a completed run over it
                 logger.warning("[%s] webhook notify failed: %s", run_id, _wh_exc)
 
         return {"status": "COMPLETED", "total_hits": len(results)}
@@ -727,8 +753,8 @@ def _run_hayabusa(
         tool_meta["stdout"] += (
             f"\n\n=== CSV output: {file_size:,} bytes ===\nFirst 600 bytes:\n{_raw_text}\n"
         )
-    except Exception as _e:
-        tool_meta["stdout"] += f"\n[file peek error: {_e}]\n"
+    except OSError as _e:
+        tool_meta["stdout"] += f"\n[file peek error: {_e}]\n"  # diagnostic only — parse still runs
 
     return _parse_hayabusa_csv(output_csv, tool_meta)
 
@@ -802,16 +828,19 @@ def _parse_hayabusa_csv(path: Path, tool_meta: dict | None = None) -> list[dict]
                             "tags": tags,
                         }
                     )
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 - one malformed row must not lose the rest; skips are counted and reported
                     skipped += 1
                     if skipped <= 3:
                         logger.warning("Hayabusa CSV row %d error: %s", lineno, exc)
                     if skipped == 1:
                         first_skip_msg = f"line {lineno}: {exc}"
 
-    except Exception as exc:
+    except (OSError, csv.Error) as exc:
+        # The output file exists and is non-empty (caller checked) — failing to
+        # read it means losing every detection, so fail the run visibly instead
+        # of silently returning zero hits.
         _log(f"\n[CSV read error: {exc}]\n")
-        return []
+        raise RuntimeError(f"Hayabusa CSV output could not be parsed: {exc}") from exc
 
     summary = (
         f"\nParsed {len(results):,} CSV hits ({skipped:,} skipped)"
@@ -929,8 +958,21 @@ def _browser_report_index_to_es(
     try:
         del_req = urllib.request.Request(f"{es_url}/{index_name}", method="DELETE")
         urllib.request.urlopen(del_req, timeout=30).read()
-    except Exception:
-        pass  # index may not exist on first run
+    except urllib.error.HTTPError as _del_exc:
+        if _del_exc.code != 404:  # 404 = index does not exist yet (first run) — expected
+            logger.warning(
+                "[%s] could not wipe previous browser_report index %s: %s",
+                run_id,
+                index_name,
+                _del_exc,
+            )
+    except OSError as _del_exc:
+        logger.warning(
+            "[%s] could not wipe previous browser_report index %s: %s",
+            run_id,
+            index_name,
+            _del_exc,
+        )
 
     # Only sections without a usable timestamp/id are skipped. Summary still
     # gets indexed (so it shows on the timeline as a marker for the run).

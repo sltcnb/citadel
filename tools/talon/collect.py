@@ -193,19 +193,19 @@ class _Tee:
         try:
             self._console.write(txt)
             self._console.flush()
-        except Exception:
+        except Exception:  # noqa: BLE001 — a broken console must never take down collection
             pass
         try:
             self._logfh.write(txt)
             self._logfh.flush()
-        except Exception:
+        except Exception:  # noqa: BLE001 — a broken log handle must never take down collection
             pass
 
     def flush(self):
         for s in (self._console, self._logfh):
             try:
                 s.flush()
-            except Exception:
+            except Exception:  # noqa: BLE001 — flush of a dead stream is best-effort by design
                 pass
 
     def __getattr__(self, n):
@@ -247,8 +247,10 @@ def _close_execution_log() -> None:
         try:
             _LOG_FH.flush()
             _LOG_FH.close()
-        except Exception:
-            pass
+        except (OSError, ValueError) as exc:
+            # ValueError: already-closed handle. Visible but non-fatal — the log
+            # content was flushed line-by-line during the run.
+            print(f"  [!] Could not close execution log cleanly: {exc}", file=sys.stderr)
         _LOG_FH = None
 
 
@@ -267,7 +269,7 @@ def _install_signal_handlers() -> None:
                 f"\n  [!] Received signal {signum} — flushing execution log and aborting.",
                 file=sys.stderr,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 — inside a signal handler: never block the unwind to finally
             pass
         raise _Killed(143 if signum == getattr(signal, "SIGTERM", None) else 130)
 
@@ -298,8 +300,8 @@ def _disk_free(path: Path) -> tuple[int, int] | None:
             if p.exists():
                 u = shutil.disk_usage(str(p))
                 return u.free, u.total
-        except Exception:
-            pass
+        except OSError:
+            pass  # probe the next parent — caller reports "free space unknown"
         if p.parent == p:
             break
         p = p.parent
@@ -382,7 +384,8 @@ def _enable_backup_privilege() -> bool:
         ok = kernel32.GetLastError() == 0
         kernel32.CloseHandle(h)
         return ok
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 — ctypes probing; callers warn that ACL-protected files may be skipped
+        print(f"  [!] SeBackupPrivilege setup failed: {exc}", file=sys.stderr)
         return False
 
 
@@ -796,21 +799,22 @@ class Collector:
         dest.parent.mkdir(parents=True, exist_ok=True)
 
         # Method 1: Binary read/write (most reliable, cross-platform)
+        last_err: Exception | None = None
         try:
             with open(src, "rb") as fsrc:
                 with open(dest, "wb") as fdst:
                     shutil.copyfileobj(fsrc, fdst, length=1024 * 1024)
             if dest.exists() and dest.stat().st_size > 0:
                 return True
-        except Exception:
-            pass
+        except OSError as exc:
+            last_err = exc  # keep the cause — surfaced below if every method fails
 
         # Clean up
         try:
             if dest.exists() and dest.stat().st_size == 0:
                 dest.unlink()
-        except Exception:
-            pass
+        except OSError:
+            pass  # best-effort cleanup of an empty partial copy
 
         # Windows: try robocopy for WOF (live Windows only, not mounted)
         if IS_WINDOWS and not self._is_mounted_drive(src):
@@ -819,8 +823,8 @@ class Collector:
             try:
                 if dest.exists() and dest.stat().st_size == 0:
                     dest.unlink()
-            except Exception:
-                pass
+            except OSError:
+                pass  # best-effort cleanup of an empty partial copy
 
         # Windows: cmd copy fallback
         if IS_WINDOWS:
@@ -832,19 +836,25 @@ class Collector:
                 )
                 if r.returncode == 0 and dest.exists() and dest.stat().st_size > 0:
                     return True
-            except Exception:
-                pass
+            except (OSError, subprocess.SubprocessError) as exc:
+                last_err = exc  # keep the cause — surfaced below if every method fails
 
             try:
                 dest.unlink(missing_ok=True)
-            except Exception:
-                pass
+            except OSError:
+                pass  # best-effort cleanup before the backup-robocopy fallback
 
             # Final fallback: robocopy /B (backup semantics, bypasses ACL restrictions).
             # Requires SeBackupPrivilege — enabled at startup when running as Administrator.
             if self._copy_with_backup_robocopy(src, dest):
                 return True
 
+        # The source exists but every copy method failed — that is a hole in the
+        # evidence, so record it where the run summary will show it.
+        self._warn(
+            f"could not copy locked file {src}"
+            + (f": {last_err}" if last_err else " (all copy methods failed)")
+        )
         return False
 
     def _is_mounted_drive(self, path: Path) -> bool:
@@ -1569,8 +1579,8 @@ class WindowsCollector(Collector):
                 tmp = staging_reg / fname
                 if self._copy_locked(config_dir / fname, tmp):
                     self._add(tmp, f"registry/logs/{fname}")
-            except Exception:
-                pass
+            except Exception as exc:
+                self._warn(f"Registry log {fname}: {exc}")
         try:
             regback = config_dir / "RegBack"
             if regback.exists():
