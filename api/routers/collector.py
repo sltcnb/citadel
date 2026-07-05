@@ -91,7 +91,10 @@ def _find_collect_script() -> Path:
 def _inject_config(source: str, config: dict) -> str:
     repr_str = repr(config)
     replacement = f"EMBEDDED_CONFIG: dict = {repr_str}"
-    new_source, n = _INJECT_PATTERN.subn(replacement, source)
+    # Callable replacement: repr() output can contain backslashes (Windows
+    # paths, escaped quotes in tokens) that re would reinterpret as template
+    # escapes and silently corrupt the embedded config.
+    new_source, n = _INJECT_PATTERN.subn(lambda _m: replacement, source)
     if n == 0:
         logger.warning("EMBEDDED_CONFIG placeholder not found in collect.py")
     return new_source
