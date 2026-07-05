@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { Fragment, useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useParams, useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 import {
   Upload,
@@ -68,27 +68,18 @@ const MOD_CATEGORY_ORDER = [
 ]
 import { api, getToken } from '../api/client'
 import Timeline from './Timeline'
-import AlertRules from './AlertRules'
-import CaseNotes from './CaseNotes'
 import IngestPanel from '../components/IngestPanel'
-import IocPanel from '../components/IocPanel'
 import CaseAiPanel from '../components/CaseAiPanel'
-import AnomalyPanel from '../components/shared/AnomalyPanel'
-import ProcessTreePanel from '../components/shared/ProcessTreePanel'
-import MitrePanel from '../components/shared/MitrePanel'
-import BaselinePanel from '../components/shared/BaselinePanel'
-import EntityGraphPanel from '../components/shared/EntityGraphPanel'
-import KillChainPanel from '../components/shared/KillChainPanel'
-import EvidencePanel from '../components/shared/EvidencePanel'
-import CoPilotPanel from '../components/shared/CoPilotPanel'
 import ToolbarMenu from '../components/shared/ToolbarMenu'
-import { buildToolbarGroups } from './caseCapabilities'
+import { buildToolbarGroups, CASE_CAPABILITIES, readLegacyPanelState } from './caseCapabilities'
+import { CASE_PANELS } from './casePanels'
 import PanelHelp from '../components/shared/PanelHelp'
 import { ResizableDrawer } from '../components/shared/resizableDrawer'
 import { useLicense } from '../contexts/LicenseContext'
 import { useCollab } from '../hooks/useCollab'
 import { usePersistedState } from '../hooks/usePersistedState'
 import { severityStyle, levelBadgeClass, SEVERITY_ORDER } from '../utils/severity'
+import { MODULE_NAMES, currentUser } from '../utils/caseConstants'
 import { statusStyle } from '../utils/status'
 
 // ── Artifact badge colours ────────────────────────────────────────────────────
@@ -107,35 +98,8 @@ const ARTIFACT_BADGE = {
 // Severity colours + ordering are canonical in utils/severity (levelBadgeClass,
 // SEVERITY_ORDER) — no local duplicate.
 
-const MODULE_NAMES = {
-  wintriage:   'Windows Triage',
-  hayabusa:    'Hayabusa',
-  hindsight:   'Hindsight',
-  strings:     'Strings',
-  regripper:   'RegRipper',
-  chainsaw:    'Chainsaw',
-  evtxecmd:    'EvtxECmd',
-  volatility3: 'Volatility 3',
-  yara:        'YARA Scanner',
-  exiftool:    'ExifTool',
-  bulk_extractor: 'Bulk Extractor',
-  capa:        'CAPA',
-}
-
-// Finding `kind` → human label. Findings are the unified output of EVERY case
-// feature (not just modules), so the report draws on all of them.
-const FINDING_KIND_LABELS = {
-  module:       'Modules',
-  ioc:          'IOCs',
-  anomaly:      'Anomalies',
-  mitre:        'MITRE',
-  baseline:     'Baseline',
-  killchain:    'Kill chain',
-  entity:       'Entity graph',
-  process_tree: 'Process tree',
-  copilot:      'Co-Pilot',
-  manual:       'Manual',
-}
+// MODULE_NAMES / FINDING_KIND_LABELS moved to utils/caseConstants so the
+// extracted case panels (ReportPanel, …) share the same single copy.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AlertResultsPanel
@@ -2118,12 +2082,8 @@ function ModulesPanel({ caseId, onClose, initialView = 'launch', onRunCreated })
 // ─────────────────────────────────────────────────────────────────────────────
 // CaseTimeline — main page
 // ─────────────────────────────────────────────────────────────────────────────
-function _currentUser() {
-  try { return JSON.parse(localStorage.getItem('fo_user')) } catch { return null }
-}
-
 export default function CaseTimeline() {
-  const _me = _currentUser()
+  const _me = currentUser()
   const { presence } = useCollab(useParams().caseId, _me)
   const { caseId } = useParams()
   // Toolbar is agile: capabilities the current licence doesn't advertise are
@@ -2141,26 +2101,19 @@ export default function CaseTimeline() {
   const [companyValue, setCompanyValue]     = useState('')
   const [availableCompanies, setAvailableCompanies] = useState([])
   const [showIngest, setShowIngest]         = useState(false)
-  // Panel open/close state — persisted per-case (fo_panel_<name>_<caseId>) so the
-  // analyst's Detect / Investigate / Case / AI workspace survives reload, nav, and
-  // browser restart. Each case keeps its own layout.
+  // Panel open/close state — persisted per-case so the analyst's Detect /
+  // Investigate / Case / AI workspace survives reload, nav, and browser
+  // restart. Capability panels live in ONE map (fo_panels_<caseId>) keyed by
+  // capability id; legacy per-panel keys are migrated on first read.
   // Unified Modules panel: launch + live run status/logs/results in one drawer.
   // `modulesView` seeds which view it opens on ('launch' | 'runs').
   const [showModules, setShowModules]       = usePersistedState(`fo_panel_modules_${caseId}`, false)
   const [modulesView, setModulesView]       = useState('launch')
-  const [showAlertRules, setShowAlertRules] = usePersistedState(`fo_panel_alertRules_${caseId}`, false)
-  const [showNotes, setShowNotes]           = usePersistedState(`fo_panel_notes_${caseId}`, false)
-  const [showIocs, setShowIocs]             = usePersistedState(`fo_panel_iocs_${caseId}`, false)
-  const [showTemplates, setShowTemplates]   = usePersistedState(`fo_panel_templates_${caseId}`, false)
-  const [showReport, setShowReport]         = usePersistedState(`fo_panel_report_${caseId}`, false)
-  const [showAnomaly, setShowAnomaly]       = usePersistedState(`fo_panel_anomaly_${caseId}`, false)
-  const [showProcessTree, setShowProcessTree] = usePersistedState(`fo_panel_ptree_${caseId}`, false)
-  const [showMitre, setShowMitre]           = usePersistedState(`fo_panel_mitre_${caseId}`, false)
-  const [showBaseline, setShowBaseline]     = usePersistedState(`fo_panel_baseline_${caseId}`, false)
-  const [showGraph, setShowGraph]           = usePersistedState(`fo_panel_graph_${caseId}`, false)
-  const [showKillChain, setShowKillChain]   = usePersistedState(`fo_panel_killchain_${caseId}`, false)
-  const [showEvidence, setShowEvidence]     = usePersistedState(`fo_panel_evidence_${caseId}`, false)
-  const [showCoPilot, setShowCoPilot]       = usePersistedState(`fo_panel_copilot_${caseId}`, false)
+  const legacyPanels = useMemo(() => readLegacyPanelState(caseId), [caseId])
+  const [panels, setPanels]                 = usePersistedState(`fo_panels_${caseId}`, legacyPanels)
+  const openPanel   = useCallback(id => setPanels(p => ({ ...p, [id]: true })),  [setPanels])
+  const closePanel  = useCallback(id => setPanels(p => ({ ...p, [id]: false })), [setPanels])
+  const togglePanel = useCallback(id => setPanels(p => ({ ...p, [id]: !p[id] })), [setPanels])
   const [showAI, setShowAI]                 = usePersistedState(`fo_panel_ai_${caseId}`, false)
   // Auto-pilot: kick off an autonomous AI investigation the moment evidence
   // ingestion finishes (active jobs fall to 0). Persisted opt-out per case.
@@ -2298,21 +2251,12 @@ export default function CaseTimeline() {
   // case + the active licence can do. Here we just wire each capability id to
   // its open/close handler + active state; the registry owns labels + gating.
   const hasEvents = (caseData?.event_count || 0) > 0
-  const capabilityWiring = {
-    rules:     { active: showAlertRules,  onClick: () => setShowAlertRules(v => !v) },
-    anomaly:   { active: showAnomaly,     onClick: () => setShowAnomaly(true) },
-    baseline:  { active: showBaseline,    onClick: () => setShowBaseline(true) },
-    mitre:     { active: showMitre,       onClick: () => setShowMitre(true) },
-    iocs:      { active: showIocs,        onClick: () => setShowIocs(v => !v) },
-    ptree:     { active: showProcessTree, onClick: () => setShowProcessTree(true) },
-    graph:     { active: showGraph,       onClick: () => setShowGraph(true) },
-    killchain: { active: showKillChain,   onClick: () => setShowKillChain(true) },
-    copilot:   { active: showCoPilot,     onClick: () => setShowCoPilot(true) },
-    notes:     { active: showNotes,       onClick: () => setShowNotes(v => !v) },
-    templates: { active: showTemplates,   onClick: () => setShowTemplates(true) },
-    report:    { active: showReport,      onClick: () => setShowReport(true) },
-    evidence:  { active: showEvidence,    onClick: () => setShowEvidence(true) },
-  }
+  const capabilityWiring = Object.fromEntries(
+    CASE_CAPABILITIES.map(cap => [cap.id, {
+      active: !!panels[cap.id],
+      onClick: () => togglePanel(cap.id),
+    }])
+  )
   const toolbarGroups = buildToolbarGroups({
     features: license?.features || {},
     hasEvents,
@@ -2522,180 +2466,30 @@ export default function CaseTimeline() {
           }}
           onOpenReport={() => {
             setShowAI(false)
-            setShowReport(true)
+            openPanel('report')
           }}
         />
       )}
 
-      {showNotes && (
-        <ResizableDrawer slug="notes" defaultWidth={560} onClose={() => setShowNotes(false)}>
-            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 flex-shrink-0">
-              <div className="flex items-center gap-2">
-                <FileText size={16} className="text-brand-accent" />
-                <span className="font-semibold text-brand-text">Investigation Report</span>
-              </div>
-              <button onClick={() => setShowNotes(false)} className="btn-ghost p-1.5 rounded-lg" title="Close panel (Esc)">
-                <X size={16} />
-              </button>
-            </div>
-            <div className="px-4 pt-3 flex-shrink-0">
-              <PanelHelp
-                title="Notes"
-                use="Free-form, autosaved case notes and the working investigation write-up."
-                when="Throughout the case — capture hypotheses, timelines and conclusions as you go; feeds the final report."
-                tip="Markdown is supported. Notes are pulled into the generated case report."
-              />
-            </div>
-            <div className="flex-1 min-h-0 overflow-hidden">
-              <CaseNotes caseId={caseId} />
-            </div>
-        </ResizableDrawer>
-      )}
-
-      {showIocs && (
-        <ResizableDrawer slug="iocs" defaultWidth={480} onClose={() => setShowIocs(false)}>
-            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 flex-shrink-0">
-              <div className="flex items-center gap-2">
-                <Crosshair size={16} className="text-red-500" />
-                <span className="font-semibold text-brand-text">Observed IOCs</span>
-              </div>
-              <button onClick={() => setShowIocs(false)} className="btn-ghost p-1.5 rounded-lg" title="Close panel (Esc)">
-                <X size={16} />
-              </button>
-            </div>
-            <div className="px-4 pt-3 flex-shrink-0">
-              <PanelHelp
-                title="Observed IOCs"
-                use="Indicators (IPs, domains, hashes, users…) extracted from this case, cross-checked against the threat-intel watchlist."
-                when="To review what's notable and pivot the timeline to any indicator's occurrences."
-                data={['Ingested events containing network / hash / user fields']}
-                tip="Click an IOC to search the timeline for every event mentioning it."
-              />
-            </div>
-            <div className="flex-1 overflow-hidden">
-              <IocPanel
-                caseId={caseId}
-                onSearch={q => {
-                  setIocPivotQuery(q)
-                  setShowIocs(false)
-                }}
-              />
-            </div>
-        </ResizableDrawer>
-      )}
-
-      {showAlertRules && (
-        <ResizableDrawer slug="alertRules" defaultWidth={760} onClose={() => setShowAlertRules(false)} className="overflow-y-auto">
-            <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200 flex-shrink-0">
-              <div className="flex items-center gap-2">
-                <Bell size={15} className="text-yellow-500" />
-                <span className="font-semibold text-brand-text text-sm">Detection Rules</span>
-              </div>
-              <button onClick={() => setShowAlertRules(false)} className="btn-ghost p-1.5 rounded-lg" title="Close panel (Esc)">
-                <X size={16} />
-              </button>
-            </div>
-            <div className="px-4 pt-3 flex-shrink-0">
-              <PanelHelp
-                title="Detection Rules"
-                use="Runs the Sigma / EQL detection-rule library against this case and lists what matched."
-                when="Early in triage — to surface known-bad patterns before manual timeline review."
-                data={['Ingested events (EVTX, Sysmon, etc.) for rules to match against']}
-                tip="Click a match to pivot the timeline to the events that fired it."
-              />
-            </div>
-            <AlertRules
-              caseId={caseId}
-              onSearchQuery={q => {
-                setShowAlertRules(false)
-                navigate(`/cases/${caseId}`, { state: { pivotQuery: q } })
-              }}
-            />
-        </ResizableDrawer>
-      )}
+      {/* Capability panels — rendered generically from the registry pair
+          (caseCapabilities + casePanels). Each open capability id gets its
+          renderer with the same {caseId, close, pivot, navigate} contract. */}
+      {CASE_CAPABILITIES.filter(cap => panels[cap.id] && CASE_PANELS[cap.id]).map(cap => (
+        <Fragment key={cap.id}>
+          {CASE_PANELS[cap.id]({
+            caseId,
+            navigate,
+            close: () => closePanel(cap.id),
+            pivot: q => { setIocPivotQuery(q); closePanel(cap.id) },
+          })}
+        </Fragment>
+      ))}
 
       {showModules && (
         <ModulesPanel
           caseId={caseId}
           initialView={modulesView}
           onClose={() => setShowModules(false)}
-        />
-      )}
-
-      {showTemplates && (
-        <TemplatesPanel
-          caseId={caseId}
-          onClose={() => setShowTemplates(false)}
-        />
-      )}
-
-      {showReport && (
-        <ReportPanel
-          caseId={caseId}
-          onClose={() => setShowReport(false)}
-        />
-      )}
-
-      {showAnomaly && (
-        <AnomalyPanel
-          caseId={caseId}
-          onClose={() => setShowAnomaly(false)}
-          onPivot={q => { setIocPivotQuery(q); setShowAnomaly(false) }}
-        />
-      )}
-
-      {showProcessTree && (
-        <ProcessTreePanel
-          caseId={caseId}
-          onClose={() => setShowProcessTree(false)}
-          onPivot={q => { setIocPivotQuery(q); setShowProcessTree(false) }}
-        />
-      )}
-
-      {showMitre && (
-        <MitrePanel
-          caseId={caseId}
-          onClose={() => setShowMitre(false)}
-          onPivot={q => { setIocPivotQuery(q); setShowMitre(false) }}
-        />
-      )}
-
-      {showBaseline && (
-        <BaselinePanel
-          caseId={caseId}
-          onClose={() => setShowBaseline(false)}
-          onPivot={q => { setIocPivotQuery(q); setShowBaseline(false) }}
-        />
-      )}
-
-      {showGraph && (
-        <EntityGraphPanel
-          caseId={caseId}
-          onClose={() => setShowGraph(false)}
-          onPivot={q => { setIocPivotQuery(q); setShowGraph(false) }}
-        />
-      )}
-
-      {showKillChain && (
-        <KillChainPanel
-          caseId={caseId}
-          onClose={() => setShowKillChain(false)}
-          onPivot={q => { setIocPivotQuery(q); setShowKillChain(false) }}
-        />
-      )}
-
-      {showCoPilot && (
-        <CoPilotPanel
-          caseId={caseId}
-          onClose={() => setShowCoPilot(false)}
-          onPivot={q => { setIocPivotQuery(q); setShowCoPilot(false) }}
-        />
-      )}
-
-      {showEvidence && (
-        <EvidencePanel
-          caseId={caseId}
-          onClose={() => setShowEvidence(false)}
         />
       )}
 

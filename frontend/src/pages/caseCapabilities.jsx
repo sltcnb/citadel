@@ -26,6 +26,7 @@ export const CAPABILITY_GROUPS = [
 export const CASE_CAPABILITIES = [
   // ── Detect — surface what's suspicious ──────────────────────────────────────
   { id: 'rules',     group: 'detect', kind: 'lens', requires: 'alert_rules', needsEvents: true,
+    persistSlug: 'alertRules',
     label: 'Detection Rules', icon: <Bell size={13} />,
     title: 'Run the Sigma/EQL rule library against this case' },
   { id: 'anomaly',   group: 'detect', kind: 'lens', needsEvents: true,
@@ -69,6 +70,23 @@ export const CASE_CAPABILITIES = [
     label: 'Evidence chain', icon: <Shield size={13} />,
     title: 'Signed chain-of-custody — verify integrity, export court-ready manifest' },
 ]
+
+/**
+ * One-time read of the legacy per-panel localStorage keys
+ * (`fo_panel_<slug>_<caseId>`) so analysts' persisted workspaces survive the
+ * move to the single `fo_panels_<caseId>` map. `persistSlug` covers the ids
+ * whose historical key differed (rules → alertRules).
+ */
+export function readLegacyPanelState(caseId) {
+  const out = {}
+  for (const cap of CASE_CAPABILITIES) {
+    try {
+      const raw = localStorage.getItem(`fo_panel_${cap.persistSlug || cap.id}_${caseId}`)
+      if (raw !== null) out[cap.id] = JSON.parse(raw) === true
+    } catch { /* unreadable key — treat as closed */ }
+  }
+  return out
+}
 
 // Is this capability advertised for the given licence features + case state?
 export function capabilityVisible(cap, { features = {}, hasEvents = false } = {}) {
