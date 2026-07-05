@@ -125,7 +125,7 @@ services:
   worker-ingest:
     build:
       context: .
-      dockerfile: tools/sluice-worker/Dockerfile
+      dockerfile: tools/sluice/worker/Dockerfile
     environment:
       - REDIS_URL=redis://redis:6379/0
       - ELASTICSEARCH_URL=http://elasticsearch:9200
@@ -141,7 +141,7 @@ services:
       - ./tools/babel:/app/babel
       - ./tools/sluice:/app/sluice
       - ./tools/anvil:/app/anvil
-      - ./tools/sluice-worker:/app
+      - ./tools/sluice/worker:/app
     depends_on:
       - redis
       - elasticsearch
@@ -162,7 +162,7 @@ services:
   worker-modules:
     build:
       context: .
-      dockerfile: tools/sluice-worker/Dockerfile
+      dockerfile: tools/sluice/worker/Dockerfile
     environment:
       - REDIS_URL=redis://redis:6379/0
       - ELASTICSEARCH_URL=http://elasticsearch:9200
@@ -178,7 +178,7 @@ services:
       - ./tools/babel:/app/babel
       - ./tools/sluice:/app/sluice
       - ./tools/anvil:/app/anvil
-      - ./tools/sluice-worker:/app
+      - ./tools/sluice/worker:/app
     depends_on:
       - redis
       - elasticsearch

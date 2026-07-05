@@ -65,7 +65,7 @@ jobs:
       matrix:
         dockerfile:
           - api/Dockerfile
-          - tools/sluice-worker/Dockerfile
+          - tools/sluice/worker/Dockerfile
           - frontend/Dockerfile
     steps:
       - uses: actions/checkout@v4

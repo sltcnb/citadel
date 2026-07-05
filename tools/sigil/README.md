@@ -77,4 +77,4 @@ The platform converts Sigma to ES queries, runs the rule library against a case 
 
 ## Part of the Citadel suite
 
-Sigil is the detect stage of [Citadel](https://github.com/sltcnb/citadel). Upstream: [Rosetta](https://github.com/sltcnb/rosetta) (normalized ECS event stream). Downstream: the case timeline and [Pilot](https://github.com/sltcnb/pilot). Runtime dependency (`brick.yaml`): Elasticsearch. Contracts: [citadel-contracts](https://github.com/sltcnb/citadel-contracts).
+Sigil is the detect stage of [Citadel](https://github.com/sltcnb/citadel). Upstream: [Rosetta](https://github.com/sltcnb/rosetta) (normalized ECS event stream). Downstream: the case timeline and [Pilot](https://github.com/sltcnb/citadel-pilot). Runtime dependency (`brick.yaml`): Elasticsearch. Contracts: [citadel-contracts](https://github.com/sltcnb/citadel-contracts).

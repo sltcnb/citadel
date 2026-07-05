@@ -2,7 +2,7 @@
 name: Scribe
 kind: report
 version: "0.7.0"
-repository: citadel-report
+repository: scribe
 status: partial
 consumes:
   content_types:

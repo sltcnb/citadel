@@ -42,4 +42,4 @@ testpaths = ["api", "tools", "tests"]
 addopts = "-q"
 
 [tool.coverage.run]
-source = ["api", "tools/sluice-worker", "tools/talon", "tools/babel", "tools/anvil"]
+source = ["api", "tools/sluice/worker", "tools/talon", "tools/babel", "tools/anvil"]

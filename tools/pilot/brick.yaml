@@ -2,7 +2,7 @@
 name: Pilot
 kind: agent
 version: "1.0.0"
-repository: citadel-pilot
+repository: pilot
 status: built
 consumes:
   content_types:

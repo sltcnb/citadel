@@ -55,17 +55,12 @@ tools:
     ref: v0.9.0
     vendored: true
   - name: Pilot
-    repo: citadel-pilot
+    repo: pilot
     path: tools/pilot
     ref: v1.0.0
     vendored: true
   - name: Scribe
-    repo: citadel-report
+    repo: scribe
     path: tools/scribe
     ref: v0.7.0
-    vendored: true
-  - name: Sluice-worker
-    repo: sluice-worker
-    path: tools/sluice-worker
-    ref: v1.0.0
     vendored: true

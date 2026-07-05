@@ -100,4 +100,4 @@ pytest tests/
 
 ---
 
-Part of the **[Citadel](https://github.com/sltcnb/citadel)** DFIR suite. Deployed as the **processor** service: the execution half of [Sluice](https://github.com/sltcnb/sluice) (which holds the declared surface), downstream of [Talon](https://github.com/sltcnb/talon) acquisitions and uploads, feeding Elasticsearch and — via the `events.parsed` bus — [Rosetta](https://github.com/sltcnb/rosetta) and the Citadel timeline.
+Part of the **[Citadel](https://github.com/sltcnb/citadel)** DFIR suite. Deployed as the **processor** service: the execution half of [Sluice](https://github.com/sltcnb/sluice) — this `worker/` dir lives in the sluice repo alongside the declared surface, downstream of [Talon](https://github.com/sltcnb/talon) acquisitions and uploads, feeding Elasticsearch and — via the `events.parsed` bus — [Rosetta](https://github.com/sltcnb/rosetta) and the Citadel timeline.
