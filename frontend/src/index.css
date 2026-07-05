@@ -19,6 +19,17 @@
     --ct-text: #1F2230;
     --ct-text-muted: #6B7280;
     --ct-accent: #6366F1;
+    /* entity-graph node/edge palette (SVG fills & strokes) */
+    --ct-graph-host: #2563eb;       /* blue-600 */
+    --ct-graph-host-fill: #dbeafe;  /* blue-100 */
+    --ct-graph-user: #7c3aed;       /* violet-600 */
+    --ct-graph-user-fill: #ede9fe;  /* violet-100 */
+    --ct-graph-ip: #d97706;         /* amber-600 */
+    --ct-graph-ip-fill: #fef3c7;    /* amber-100 */
+    --ct-graph-edge: #cbd5e1;       /* slate-300 */
+    /* chart accents (sparklines etc.) */
+    --ct-chart-sky: #0ea5e9;        /* sky-500 */
+    --ct-chart-amber: #f59e0b;      /* amber-500 */
     /* shape + rhythm */
     --ct-radius: 0.75rem;
     --ct-radius-sm: 0.375rem;
@@ -344,6 +355,17 @@
   --ct-border-strong: #334155;
   --ct-text: #F1F5F9;
   --ct-text-muted: #A8B3CF;
+  /* entity-graph palette — brighter strokes, deep fills for dark surfaces */
+  --ct-graph-host: #60a5fa;       /* blue-400 */
+  --ct-graph-host-fill: #1e3a5f;
+  --ct-graph-user: #a78bfa;       /* violet-400 */
+  --ct-graph-user-fill: #3b2e63;
+  --ct-graph-ip: #fbbf24;         /* amber-400 */
+  --ct-graph-ip-fill: #533f14;
+  --ct-graph-edge: #334155;       /* slate-700 */
+  /* chart accents — one step brighter for dark surfaces */
+  --ct-chart-sky: #38bdf8;        /* sky-400 */
+  --ct-chart-amber: #fbbf24;      /* amber-400 */
 }
 
 .dark body { background-color: #0B1220; color: #F1F5F9; }

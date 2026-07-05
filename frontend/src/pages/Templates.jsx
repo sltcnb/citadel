@@ -4,6 +4,7 @@ import {
 } from 'lucide-react'
 import { PageShell, PageHeader } from '../components/shared/PageShell'
 import { api } from '../api/client'
+import ConfirmDialog from '../components/ConfirmDialog'
 
 // Investigation-template authoring page. Built-ins can be edited in place
 // (the edit is stored as an override; Reset restores the shipped default) or
@@ -134,6 +135,7 @@ export default function Templates() {
   const [loading, setLoading]     = useState(true)
   const [error, setError]         = useState('')
   const [editor, setEditor]       = useState(null)  // { initial, isClone } | null
+  const [confirmAction, setConfirmAction] = useState(null) // { kind: 'remove' | 'reset', template } | null
 
   const load = useCallback(() => {
     setLoading(true)
@@ -154,13 +156,11 @@ export default function Templates() {
   }
 
   async function remove(t) {
-    if (!confirm(`Delete template "${t.name}"? This can't be undone.`)) return
     try { await api.caseTemplates.remove(t.id); load() }
     catch (e) { setError(e.message || 'Delete failed') }
   }
 
   async function reset(t) {
-    if (!confirm(`Reset "${t.name}" to its built-in default? Your edits will be discarded.`)) return
     try { await api.caseTemplates.remove(t.id); load() }
     catch (e) { setError(e.message || 'Reset failed') }
   }
@@ -210,7 +210,7 @@ export default function Templates() {
                   <>
                     <button onClick={() => openEditor(t, false)} className="icon-btn" title="Edit built-in"><Pencil size={13} /></button>
                     {t.overridden && (
-                      <button onClick={() => reset(t)} className="icon-btn text-amber-500 hover:text-amber-700" title="Reset to built-in default"><RotateCcw size={13} /></button>
+                      <button onClick={() => setConfirmAction({ kind: 'reset', template: t })} className="icon-btn text-amber-500 hover:text-amber-700" title="Reset to built-in default"><RotateCcw size={13} /></button>
                     )}
                     <button onClick={() => openEditor(t, true)} className="btn-ghost text-xs" title="Clone to a custom template">
                       <Copy size={13} /> Clone
@@ -219,7 +219,7 @@ export default function Templates() {
                 ) : (
                   <>
                     <button onClick={() => openEditor(t, false)} className="icon-btn" title="Edit"><Pencil size={13} /></button>
-                    <button onClick={() => remove(t)} className="icon-btn text-red-400 hover:text-red-600" title="Delete"><Trash2 size={13} /></button>
+                    <button onClick={() => setConfirmAction({ kind: 'remove', template: t })} className="icon-btn text-red-400 hover:text-red-600" title="Delete"><Trash2 size={13} /></button>
                   </>
                 )}
               </div>
@@ -234,6 +234,27 @@ export default function Templates() {
           isClone={editor.isClone}
           onClose={() => setEditor(null)}
           onSaved={() => { setEditor(null); load() }}
+        />
+      )}
+
+      {confirmAction && (
+        <ConfirmDialog
+          title={confirmAction.kind === 'reset' ? 'Reset template' : 'Delete template'}
+          icon={confirmAction.kind === 'reset'
+            ? <RotateCcw size={14} className="text-amber-500" />
+            : <Trash2 size={14} className="text-red-500" />}
+          message={confirmAction.kind === 'reset'
+            ? `Reset "${confirmAction.template.name}" to its built-in default? Your edits will be discarded.`
+            : `Delete template "${confirmAction.template.name}"? This can't be undone.`}
+          confirmLabel={confirmAction.kind === 'reset' ? 'Reset' : 'Delete'}
+          confirmClass={confirmAction.kind === 'reset' ? 'btn-outline' : 'btn-danger'}
+          onConfirm={() => {
+            const { kind, template } = confirmAction
+            setConfirmAction(null)
+            if (kind === 'reset') reset(template)
+            else remove(template)
+          }}
+          onCancel={() => setConfirmAction(null)}
         />
       )}
     </PageShell>

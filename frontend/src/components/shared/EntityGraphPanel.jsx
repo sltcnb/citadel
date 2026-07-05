@@ -13,15 +13,18 @@ import PanelShell from './PanelShell'
  * no physics sim, no extra npm deps. Clicking a node pivots to the timeline.
  */
 
+// Theme-aware palette: values live in the --ct-graph-* tokens (index.css) so
+// light + dark each define the colours in ONE place — same approach as the
+// dark-aware node labels (currentColor).
 const TYPE_COLOR = {
-  host: '#2563eb', // blue-600
-  user: '#7c3aed', // violet-600
-  ip:   '#d97706', // amber-600
+  host: 'var(--ct-graph-host)',
+  user: 'var(--ct-graph-user)',
+  ip:   'var(--ct-graph-ip)',
 }
 const TYPE_FILL = {
-  host: '#dbeafe', // blue-100
-  user: '#ede9fe', // violet-100
-  ip:   '#fef3c7', // amber-100
+  host: 'var(--ct-graph-host-fill)',
+  user: 'var(--ct-graph-user-fill)',
+  ip:   'var(--ct-graph-ip-fill)',
 }
 const COLUMN_OF = { host: 0, user: 1, ip: 2 }
 const MAX_NODES = 40
@@ -181,9 +184,9 @@ export default function EntityGraphPanel({ caseId, onClose, onPivot }) {
       {/* Legend + stats */}
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-3 text-[11px]">
-          <Legend color={TYPE_COLOR.host} label="host" />
-          <Legend color={TYPE_COLOR.user} label="user" />
-          <Legend color={TYPE_COLOR.ip}   label="ip" />
+          <Legend color={TYPE_COLOR.host} fill={TYPE_FILL.host} label="host" />
+          <Legend color={TYPE_COLOR.user} fill={TYPE_FILL.user} label="user" />
+          <Legend color={TYPE_COLOR.ip}   fill={TYPE_FILL.ip}   label="ip" />
         </div>
         <div className="text-[11px] text-gray-500 tabular-nums">
           {counts.host} hosts, {counts.user} users, {counts.ip} ips, {edges.length} links
@@ -218,7 +221,7 @@ export default function EntityGraphPanel({ caseId, onClose, onPivot }) {
               <line
                 key={`e${i}`}
                 x1={a.x} y1={a.y} x2={b.x} y2={b.y}
-                stroke={touches && hovered ? '#6366F1' : '#cbd5e1'}
+                stroke={touches && hovered ? 'var(--ct-accent)' : 'var(--ct-graph-edge)'}
                 strokeWidth={w}
                 strokeOpacity={touches ? 0.8 : 0.12}
               />
@@ -244,8 +247,8 @@ export default function EntityGraphPanel({ caseId, onClose, onPivot }) {
                 <title>{`${node.type}: ${node.label} (${node.count ?? 0})`}</title>
                 <circle
                   cx={x} cy={y} r={r}
-                  fill={TYPE_FILL[node.type] || '#f1f5f9'}
-                  stroke={node.id === hovered ? '#6366F1' : (TYPE_COLOR[node.type] || '#64748b')}
+                  fill={TYPE_FILL[node.type] || 'var(--ct-raised)'}
+                  stroke={node.id === hovered ? 'var(--ct-accent)' : (TYPE_COLOR[node.type] || 'var(--ct-text-muted)')}
                   strokeWidth={node.id === hovered ? 3 : 2}
                 />
                 <text
@@ -277,10 +280,10 @@ export default function EntityGraphPanel({ caseId, onClose, onPivot }) {
   )
 }
 
-function Legend({ color, label }) {
+function Legend({ color, fill, label }) {
   return (
     <span className="inline-flex items-center gap-1.5 text-gray-600">
-      <span className="inline-block w-3 h-3 rounded-full border-2" style={{ borderColor: color, background: `${color}22` }} />
+      <span className="inline-block w-3 h-3 rounded-full border-2" style={{ borderColor: color, background: fill }} />
       {label}
     </span>
   )

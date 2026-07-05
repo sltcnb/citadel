@@ -3,6 +3,7 @@ import { AlertTriangle, Plus, Trash2, Play, CheckCircle, Loader2,
          ChevronDown, ChevronUp, Sparkles, Brain, RefreshCw, Clock,
          ExternalLink, Shield, ShieldOff } from 'lucide-react'
 import { api } from '../api/client'
+import ConfirmDialog from '../components/ConfirmDialog'
 
 // ── Sigma enable/disable — per-case override on top of the global default ──────
 // Surfaced here (the Detection Rules panel) because this is where an analyst
@@ -385,6 +386,8 @@ export default function AlertRules({ caseId, onSearchQuery }) {
   const [showAiForm, setShowAiForm]     = useState(false)
   const [triaging, setTriaging]         = useState(false)
   const [triage, setTriage]             = useState([])
+  // Pending rule deletion (ConfirmDialog)
+  const [confirmDelete, setConfirmDelete] = useState(null) // rule | null
 
   // ── Load on mount ─────────────────────────────────────────────────────────
 
@@ -426,6 +429,7 @@ export default function AlertRules({ caseId, onSearchQuery }) {
   async function deleteRule(id) {
     await api.alertRules.delete(caseId, id)
     setRules(p => p.filter(r => r.id !== id))
+    setConfirmDelete(null)
   }
 
   async function runCaseRule(rule) {
@@ -794,7 +798,7 @@ export default function AlertRules({ caseId, onSearchQuery }) {
                   >
                     {runningCaseRuleId === rule.id ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}
                   </button>
-                  <button onClick={() => deleteRule(rule.id)} className="btn-ghost p-1.5 text-gray-500 hover:text-red-500">
+                  <button onClick={() => setConfirmDelete(rule)} title="Delete rule" className="btn-ghost p-1.5 text-gray-500 hover:text-red-500">
                     <Trash2 size={13} />
                   </button>
                 </div>
@@ -812,6 +816,18 @@ export default function AlertRules({ caseId, onSearchQuery }) {
             </div>
           ))}
         </div>
+      )}
+
+      {confirmDelete && (
+        <ConfirmDialog
+          title="Delete rule"
+          icon={<Trash2 size={14} className="text-red-500" />}
+          message={`Delete rule "${confirmDelete.name}"? This can't be undone.`}
+          confirmLabel="Delete"
+          confirmClass="btn-danger"
+          onConfirm={() => deleteRule(confirmDelete.id)}
+          onCancel={() => setConfirmDelete(null)}
+        />
       )}
     </div>
   )

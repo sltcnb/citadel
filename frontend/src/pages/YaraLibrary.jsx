@@ -18,6 +18,7 @@ import {
 } from 'lucide-react'
 import { PageShell, PageHeader } from '../components/shared/PageShell'
 import { api } from '../api/client'
+import { formatDate } from '../utils/format'
 
 import YaraRuleModal from '../components/YaraRuleModal'
 
@@ -64,7 +65,7 @@ function RuleCard({ rule, onEdit, onDelete }) {
           <button
             onClick={e => { e.stopPropagation(); onEdit(rule) }}
             className="icon-btn ml-1"
-            title="Edit"
+            title="Edit rule"
           >
             <Pencil size={12} />
           </button>
@@ -72,7 +73,7 @@ function RuleCard({ rule, onEdit, onDelete }) {
             onClick={e => { e.stopPropagation(); confirmDelete() }}
             disabled={deleting}
             className="icon-btn text-red-400 hover:text-red-600"
-            title="Delete"
+            title="Delete rule"
           >
             {deleting ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
           </button>
@@ -88,7 +89,7 @@ function RuleCard({ rule, onEdit, onDelete }) {
           <div className="px-4 py-2 bg-gray-50 border-t border-gray-100 flex items-center justify-between">
             <span className="text-[11px] text-gray-500">
               {rule.content.split('\n').length} lines
-              {rule.updated_at && ` · Updated ${new Date(rule.updated_at).toLocaleDateString()}`}
+              {rule.updated_at && ` · Updated ${formatDate(rule.updated_at, 'date')}`}
             </span>
             <button
               onClick={e => { e.stopPropagation(); onEdit(rule) }}

@@ -89,7 +89,7 @@ function SectionCard({ icon: Icon, title, statusLevel, children }) {
 
 /* ── Sparkline ───────────────────────────────────────────────────────────── */
 
-function Sparkline({ data, color = '#6366f1', height = 32, width = 120 }) {
+function Sparkline({ data, color = 'var(--ct-accent)', height = 32, width = 120 }) {
   if (!data || data.length < 2) return null
   const min = Math.min(...data)
   const max = Math.max(...data)
@@ -324,9 +324,9 @@ export default function Performance() {
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               {[
-                { label: 'CPU',    pct: sys?.cpu_percent,    sub: null,                                                                                       spark: spark.cpu,  color: '#6366f1', barColor: 'bg-brand-accent' },
-                { label: 'Memory', pct: sys?.memory_percent, sub: `${fmtMB(sys?.memory_used_mb)} / ${fmtMB(sys?.memory_total_mb)}`,                           spark: spark.mem,  color: '#0ea5e9', barColor: 'bg-sky-500' },
-                { label: 'Disk',   pct: sys?.disk_percent,   sub: `${sys?.disk_used_gb != null ? sys.disk_used_gb.toFixed(1) + ' GB' : '--'} / ${sys?.disk_total_gb != null ? sys.disk_total_gb.toFixed(1) + ' GB' : '--'}`, spark: spark.disk, color: '#f59e0b', barColor: 'bg-amber-500' },
+                { label: 'CPU',    pct: sys?.cpu_percent,    sub: null,                                                                                       spark: spark.cpu,  color: 'var(--ct-accent)',      barColor: 'bg-brand-accent' },
+                { label: 'Memory', pct: sys?.memory_percent, sub: `${fmtMB(sys?.memory_used_mb)} / ${fmtMB(sys?.memory_total_mb)}`,                           spark: spark.mem,  color: 'var(--ct-chart-sky)',   barColor: 'bg-sky-500' },
+                { label: 'Disk',   pct: sys?.disk_percent,   sub: `${sys?.disk_used_gb != null ? sys.disk_used_gb.toFixed(1) + ' GB' : '--'} / ${sys?.disk_total_gb != null ? sys.disk_total_gb.toFixed(1) + ' GB' : '--'}`, spark: spark.disk, color: 'var(--ct-chart-amber)', barColor: 'bg-amber-500' },
               ].map(({ label, pct, sub, spark: sparkData, color, barColor }) => {
                 const pctVal = pct ?? 0
                 const overrideBar = pctVal > 90 ? 'bg-red-500' : pctVal > 70 ? 'bg-amber-500' : barColor

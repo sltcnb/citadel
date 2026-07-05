@@ -30,6 +30,7 @@ import {
   SlidersHorizontal,
 } from 'lucide-react'
 import { api } from '../api/client'
+import ConfirmDialog from '../components/ConfirmDialog'
 import LicenseGate from '../components/LicenseGate'
 import { useLicense } from '../contexts/LicenseContext'
 import { PageShell, PageHeader } from '../components/shared/PageShell'
@@ -856,6 +857,8 @@ export default function Settings() {
   const license = useLicense()
   const visibleTabs = isAdmin ? TABS : []
   const [tab, setTab] = useState('ai')
+  // Pending destructive action (ConfirmDialog): { kind: 'source' | 'webhook', id, name }
+  const [confirmAction, setConfirmAction] = useState(null)
 
   /* ── AI state ─────────────────────────────────────────────────────────── */
   const [config, setConfig]       = useState(null)
@@ -1145,7 +1148,6 @@ export default function Settings() {
   }
 
   async function deleteSource(id) {
-    if (!confirm('Remove this import source?')) return
     try {
       await api.s3Multi.delete(id)
       setImportSources(prev => prev.filter(s => s.id !== id))
@@ -1234,7 +1236,6 @@ export default function Settings() {
   }
 
   async function deleteWebhook(id) {
-    if (!confirm('Delete this webhook?')) return
     try {
       await api.webhooks.remove(id)
       setWebhooksList(list => list.filter(h => h.id !== id))
@@ -1519,7 +1520,7 @@ export default function Settings() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => deleteSource(src.id)}
+                          onClick={() => setConfirmAction({ kind: 'source', id: src.id, name: src.name })}
                           className="btn-ghost text-xs py-1 px-2 text-red-500 hover:text-red-700"
                           title="Delete"
                         >
@@ -2055,7 +2056,7 @@ export default function Settings() {
                         Test
                       </button>
                       <button
-                        onClick={() => deleteWebhook(hook.id)}
+                        onClick={() => setConfirmAction({ kind: 'webhook', id: hook.id, name: hook.name })}
                         className="btn-ghost text-xs px-1.5 py-0.5 text-red-500 hover:text-red-700"
                         title="Delete webhook"
                       >
@@ -2465,6 +2466,25 @@ resources:
       {tab === 'integrations' && renderIntegrations()}
       {tab === 'system'       && renderSystem()}
       {tab === 'license'      && <LicensePanel />}
+
+      {confirmAction && (
+        <ConfirmDialog
+          title={confirmAction.kind === 'webhook' ? 'Delete webhook' : 'Remove import source'}
+          icon={<Trash2 size={14} className="text-red-500" />}
+          message={confirmAction.kind === 'webhook'
+            ? `Delete webhook "${confirmAction.name}"? No further notifications will be sent to it.`
+            : `Remove import source "${confirmAction.name}"? Saved credentials for it will be deleted.`}
+          confirmLabel={confirmAction.kind === 'webhook' ? 'Delete' : 'Remove'}
+          confirmClass="btn-danger"
+          onConfirm={() => {
+            const { kind, id } = confirmAction
+            setConfirmAction(null)
+            if (kind === 'webhook') deleteWebhook(id)
+            else deleteSource(id)
+          }}
+          onCancel={() => setConfirmAction(null)}
+        />
+      )}
     </PageShell>
   )
 }

@@ -1170,6 +1170,7 @@ export default function IngestPanel({ caseId, onClose, onComplete, autoPilot, se
                     <button
                       onClick={() => setSearchQuery('')}
                       className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-600"
+                      title="Clear search"
                     >
                       <X size={11} />
                     </button>
