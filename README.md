@@ -68,7 +68,7 @@ The umbrella chart `charts/citadel` deploys the **app only** (api + processor + 
 ```bash
 # build (native arch) + make images visible to the cluster
 docker build -t citadel-api:1.0.0       -f api/Dockerfile .
-docker build -t citadel-processor:1.0.0 -f tools/sluice-worker/Dockerfile .
+docker build -t citadel-processor:1.0.0 -f tools/sluice/worker/Dockerfile .
 docker build -t citadel-frontend:1.0.0  -f frontend/Dockerfile frontend
 
 # size requests/limits from the real host (optional)

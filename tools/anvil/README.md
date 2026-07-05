@@ -60,7 +60,7 @@ anvil list                       # list available modules (also the brick health
 anvil run volatility3 -a mem.raw # run a module against an artifact
 ```
 
-In the platform, modules execute inside the sluice-worker `modules` queue via a sandboxed harness (`tasks/_module_sandbox.py`: resource limits, env isolation, JSON-over-stdin).
+In the platform, modules execute inside the Sluice worker’s `modules` queue via a sandboxed harness (`tasks/_module_sandbox.py`: resource limits, env isolation, JSON-over-stdin).
 
 ## Tests
 
