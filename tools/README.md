@@ -25,7 +25,7 @@ Talon ──bundle──▶ Sluice ──route──▶ Babel ──ForensicEven
 |------|------|----------------|--------|
 | **Talon** | Acquisition agent | host / disk / mount → artifact **bundle** | [talon](talon/README.md) |
 | **Sluice** | Intake & routing | bundle / file / dir → routed **ForensicEvent** stream | [sluice](sluice/README.md) |
-| **Sluice Worker** | Intake runtime | Celery worker: detect · dedup · route · parse · index · emit | [sluice-worker](sluice-worker/README.md) |
+| **Sluice Worker** | Intake runtime | Celery worker: detect · dedup · route · parse · index · emit | [sluice/worker](sluice/worker/README.md) |
 | **Babel** | Parser library | raw artifact → **ForensicEvent** (40+ parser packs) | [babel](babel/README.md) |
 | **Rosetta** | Canonicalizer | ForensicEvent → **ECS v8 + OSSEM** (+ GeoIP/ASN/rDNS) | [rosetta](rosetta/README.md) |
 | **Sigil** | Detection engine | ECS + rules → **detections** (Sigma→ES, ATT&CK coverage) | [sigil](sigil/README.md) |
