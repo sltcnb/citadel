@@ -83,11 +83,11 @@ APPLY_ORDER = [
 SERVICES = ["api", "processor", "frontend"]
 
 # svc -> (Dockerfile path, build context) — relative to ROOT. The "processor"
-# service is built from tools/sluice-worker after the tool-rename; api/processor
+# service is built from tools/sluice/worker after the sluice-worker move; api/processor
 # build from the repo root (their Dockerfiles COPY tools/*), frontend from its dir.
 IMAGE_BUILD = {
     "api":       ("api/Dockerfile", "."),
-    "processor": ("tools/sluice-worker/Dockerfile", "."),
+    "processor": ("tools/sluice/worker/Dockerfile", "."),
     "frontend":  ("frontend/Dockerfile", "frontend"),
 }
 
