@@ -25,7 +25,11 @@ from pathlib import Path
 import yaml
 
 HERE = Path(__file__).resolve().parent
-REPO = HERE.parents[1]
+# Monorepo root = nearest ancestor with tools/babel (works from tools/sluice/worker).
+REPO = next(
+    (p for p in HERE.parents if (p / "tools" / "babel").exists()),
+    HERE.parents[1],
+)
 PLUGINS_DIR = REPO / "tools" / "babel"
 INGESTER_DIR = REPO / "tools" / "sluice"
 

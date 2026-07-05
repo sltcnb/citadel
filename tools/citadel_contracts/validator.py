@@ -38,6 +38,8 @@ def validate_forensic_event(
     at = event.get("artifact_type")
     if at in STRUCTURED_ARTIFACTS and not isinstance(event.get("raw"), (dict, str)):
         return False, f"structured artifact_type '{at}' requires a 'raw' record"
+    if "raw" in event and not isinstance(event["raw"], (dict, str)):
+        return False, "'raw' must be an object or string"
 
     if schema_path:
         try:
