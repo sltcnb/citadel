@@ -35,7 +35,7 @@ repo (Python package `citadel_contracts`).
 Normally pip-installed into the Citadel API image. Standalone clone:
 
 ```bash
-git clone https://github.com/sltcnb/citadel-report && cd citadel-report
+git clone https://github.com/sltcnb/scribe && cd scribe
 pip install -e .          # zero runtime dependencies (stdlib only)
 ```
 
@@ -75,6 +75,6 @@ pytest tests/             # tests/test_render.py
 Scribe is the last stage of the pipeline: it renders what the rest of the suite
 produced. Runtime dependency (per `brick.yaml`): Elasticsearch (the caller
 gathers case data from it). Upstream: the case timeline/detections/findings,
-including [Pilot](https://github.com/sltcnb/citadel-pilot)'s AI investigation report.
+including [Pilot](https://github.com/sltcnb/pilot)'s AI investigation report.
 Platform: [citadel](https://github.com/sltcnb/citadel) · Contracts:
 [citadel-contracts](https://github.com/sltcnb/citadel-contracts).
