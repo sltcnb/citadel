@@ -12,12 +12,23 @@ Babel ──ForensicEvent──▶ Rosetta ──ECS v8 + OSSEM──▶ store /
 
 Sits between parse and index so the timeline, search, Sigil, and Scribe all read **one** schema.
 
-- **Inputs** — a `ForensicEvent` JSONL stream (`contracts/forensic_event/v1.json`).
-- **Outputs** — ECS v8 documents + OSSEM/ATT&CK fields (`contracts/ecs_extension.md`), optionally GeoIP/ASN/rDNS-enriched.
+- **Inputs** — a `ForensicEvent` JSONL stream (`forensic_event/v1.json`).
+- **Outputs** — ECS v8 documents + OSSEM/ATT&CK fields (`ecs_extension`), optionally GeoIP/ASN/rDNS-enriched.
+
+## Contracts
+
+| Direction | Contract | Schema |
+|---|---|---|
+| Consumes | ForensicEvent v1 (`application/x-ndjson`) | `https://citadel.dfir/contracts/forensic_event/v1.json` |
+| Produces | ECS extension (ECS v8 + OSSEM), all artifact types | `https://citadel.dfir/contracts/ecs_extension` |
+
+Contracts are versioned in the [citadel-contracts](https://github.com/sltcnb/citadel-contracts)
+repo (see `forensic_event.schema.json`, `ecs_extension.md` there).
 
 ## Install
 ```
-pip install -e .            # provides the `rosetta` console script
+git clone https://github.com/sltcnb/rosetta && cd rosetta
+pip install -e .            # provides the `rosetta` console script (PyYAML only)
 ```
 
 ## Standalone
@@ -63,14 +74,34 @@ export ROSETTA_ENABLE_RDNS=true            # optional, slow — off by default
 Graceful no-op when `geoip2` or the `.mmdb` files are absent — normalization never
 fails on missing enrichment. Private/loopback/reserved IPs are skipped.
 
-## Tests
+## Configuration
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `GEOIP_CITY_DB` | `/usr/share/GeoIP/GeoLite2-City.mmdb` | MaxMind City DB for `*.geo.*` fields |
+| `GEOIP_ASN_DB` | `/usr/share/GeoIP/GeoLite2-ASN.mmdb` | MaxMind ASN DB for `*.as.*` fields |
+| `ROSETTA_ENABLE_RDNS` | off | Truthy (`1/true/yes/on`) enables reverse-DNS `*.domain` (slow, network) |
+
+Everything else is CLI flags (`--ecs`, `--map`, `-o`).
+
+## Health
 ```
-pytest tests/
+rosetta --version
 ```
 
-## In Citadel
-Runs between parse and index so the timeline and search see one schema.
+## Tests
+```
+pip install -e '.[test]'
+pytest tests/     # test_normalize.py, test_enrich.py, test_daemon.py
+```
 
 **Done when:** single canonicalizer; CLI + daemon parse EVTX + syslog → ECS.
 
-See `../../contracts/ecs_extension.md`.
+## Part of the Citadel suite
+Runs between parse and index so the timeline and search see one schema.
+Upstream: [Babel](https://github.com/sltcnb/babel) (emits ForensicEvent).
+Downstream: Elasticsearch (daemon mode, per `brick.yaml`), then
+[Sigil](https://github.com/sltcnb/sigil), [Anvil](https://github.com/sltcnb/anvil),
+[Augur](https://github.com/sltcnb/augur) read the ECS output.
+Platform: [citadel](https://github.com/sltcnb/citadel) · Contracts (incl. `ecs_extension.md`):
+[citadel-contracts](https://github.com/sltcnb/citadel-contracts).

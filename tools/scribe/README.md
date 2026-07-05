@@ -20,9 +20,43 @@ case (timeline · detections · findings · notes) ──▶ Scribe ──▶ HT
 - **Outputs** — a shareable report (`artifact_type: report`) — graphical HTML (print-to-PDF), Markdown, DOCX; STIX/MISP/JSON planned.
 - **Dependencies** — Elasticsearch.
 
-## Run / use
+## Contracts
 
-`api/routers/reports.py` gathers case data and calls the engine; `scribe --version` is the health check. The standalone multi-format CLI is in progress (see capabilities below).
+| Direction | Contract | Schema |
+|---|---|---|
+| Consumes | a Citadel case (`application/json`) built from ForensicEvent v1 data | `https://citadel.dfir/contracts/forensic_event/v1.json` |
+| Produces | `artifact_type: report` (documents — no event schema; `produces.schema: []`) | — |
+
+Contracts are versioned in the [citadel-contracts](https://github.com/sltcnb/citadel-contracts)
+repo (Python package `citadel_contracts`).
+
+## Install
+
+Normally pip-installed into the Citadel API image. Standalone clone:
+
+```bash
+git clone https://github.com/sltcnb/citadel-report && cd citadel-report
+pip install -e .          # zero runtime dependencies (stdlib only)
+```
+
+## Configuration
+
+No environment variables — verified: no `os.environ`/`getenv` in the package.
+The engine is pure functions: everything is passed by the caller — case data as
+arguments, branding/section toggles via `merge_template` over `TEMPLATE_DEFAULTS`,
+and the optional proofread LLM as an injected `llm_call(system, user)` callable
+(Scribe itself does no I/O and holds no credentials).
+
+## Run / health
+
+`api/routers/reports.py` gathers case data and calls the engine; `scribe --version` is the health check (from `brick.yaml`). The standalone multi-format CLI is in progress (see capabilities below).
+
+## Tests
+
+```bash
+pip install -e '.[test]'
+pytest tests/             # tests/test_render.py
+```
 
 ## Capabilities
 - [●] Markdown report
@@ -36,3 +70,11 @@ case (timeline · detections · findings · notes) ──▶ Scribe ──▶ HT
 - [ ] Embedded timeline visualization
 
 **Done when:** standalone CLI renders all formats; scheduled-on-close works.
+
+## Part of the Citadel suite
+Scribe is the last stage of the pipeline: it renders what the rest of the suite
+produced. Runtime dependency (per `brick.yaml`): Elasticsearch (the caller
+gathers case data from it). Upstream: the case timeline/detections/findings,
+including [Pilot](https://github.com/sltcnb/citadel-pilot)'s AI investigation report.
+Platform: [citadel](https://github.com/sltcnb/citadel) · Contracts:
+[citadel-contracts](https://github.com/sltcnb/citadel-contracts).

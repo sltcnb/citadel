@@ -26,17 +26,54 @@ Built-in analyzers ship as `*_module.py` here: access-log analysis, capa, de4dot
 
 The live module set is **dynamic**: built-ins are discovered at build, custom modules self-register via Redis (`fo:capabilities:anvil`), and the `run_module` capability's options are filled from the live registry — so a new module appears in the UI with no manifest edit.
 
+## Contracts
+
+From `brick.yaml` (v1.0.0, status **built**):
+
+- **Consumes** — raw artifacts: `application/octet-stream`, any filename (memory images, EVTX dirs, PEs, documents).
+- **Produces** — findings as events, schema `https://citadel.dfir/contracts/forensic_event/v1.json` (ForensicEvent v1), artifact type `module_finding`. The per-run module output shape is [`result.schema.json`](result.schema.json) in this repo.
+
+Contract schemas and the `BaseModule` / `Result` Python types are versioned in the `citadel_contracts` package ([github.com/sltcnb/citadel-contracts](https://github.com/sltcnb/citadel-contracts)).
+
+## Install
+
+```bash
+pip install git+https://github.com/sltcnb/citadel-contracts   # BaseModule / Result types
+pip install -e .
+```
+
+In the monorepo, `base.py` resolves a sibling `citadel_contracts` checkout automatically; in a standalone clone install it from the repo above. Individual modules shell out to their engines (`capa`, `floss`, `exiftool`, `de4dot`, `malwoverview`, …) — the matching binary must be on `PATH` for that module to run.
+
+## Configuration
+
+| Variable | Default | Used by |
+|---|---|---|
+| `MINIO_BUCKET` | `forensics-cases` | most modules — object-store bucket for artifact fetch / result upload |
+| `VT_API_KEY` | *(unset, optional)* | `malwoverview` module only |
+
+Everything else is passed as per-run module parameters, not environment.
+
 ## Run / use
 
 ```bash
-anvil list                       # list available modules (also the health check)
+anvil list                       # list available modules (also the brick health check)
 anvil run volatility3 -a mem.raw # run a module against an artifact
 ```
 
 In the platform, modules execute inside the sluice-worker `modules` queue via a sandboxed harness (`tasks/_module_sandbox.py`: resource limits, env isolation, JSON-over-stdin).
 
+## Tests
+
+```bash
+pytest test_artifacts.py test_base_module.py test_pipeline.py   # from the tool root
+```
+
 ## In Citadel
 
 The API exposes modules at `GET /modules` and dispatches runs to the worker; results attach to the case timeline and feed the report. Module DAGs let an analyzer pipeline (e.g. unpack → strings → IOC match) run as one unit.
 
-See the `BaseModule` / `Result` contract in [`../citadel_contracts`](../citadel_contracts) and `result.schema.json`.
+See the `BaseModule` / `Result` contract in the `citadel_contracts` package ([github.com/sltcnb/citadel-contracts](https://github.com/sltcnb/citadel-contracts)) and [`result.schema.json`](result.schema.json).
+
+## Part of the Citadel suite
+
+Anvil is the deep-analysis stage of [Citadel](https://github.com/sltcnb/citadel). **Upstream:** artifacts arrive via [sluice](https://github.com/sltcnb/sluice) / [sluice-worker](https://github.com/sltcnb/sluice-worker) after canonicalization by [rosetta](https://github.com/sltcnb/rosetta). **Downstream:** findings land on the case timeline and feed [pilot](https://github.com/sltcnb/pilot) and [scribe](https://github.com/sltcnb/scribe). Runtime service dependency (from `brick.yaml`): **Redis** — queue, cancel flags, per-run log streaming.
