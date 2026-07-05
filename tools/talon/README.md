@@ -85,4 +85,4 @@ Talon's bundle is the unit Sluice consumes. In-app **Harvest** runs Talon server
 
 ## Part of the Citadel suite
 
-Talon is the acquisition stage — the first node — of [Citadel](https://github.com/sltcnb/citadel). Upstream: none. Downstream (`brick.yaml` dependency): [Sluice](https://github.com/sltcnb/sluice), which receives bundles via gRPC or upload token; its runtime worker lives in [sluice-worker](https://github.com/sltcnb/sluice-worker). Contracts (`bundle_manifest`, `collector.proto`): [citadel-contracts](https://github.com/sltcnb/citadel-contracts).
+Talon is the acquisition stage — the first node — of [Citadel](https://github.com/sltcnb/citadel). Upstream: none. Downstream (`brick.yaml` dependency): [Sluice](https://github.com/sltcnb/sluice), which receives bundles via gRPC or upload token. Contracts (`bundle_manifest`, `collector.proto`): [citadel-contracts](https://github.com/sltcnb/citadel-contracts).

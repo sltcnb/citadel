@@ -74,7 +74,7 @@ ENV PYTHONPATH=/app
 
 # ── Python deps (includes pyhindsight for the Hindsight module) ───────────────
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
-COPY tools/sluice-worker/requirements.txt .
+COPY tools/sluice/worker/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # ccl_chromium_reader is required by pyhindsight but is not on PyPI.
@@ -97,7 +97,7 @@ COPY tools/citadel_contracts/ /app/citadel_contracts/
 RUN pip install --no-cache-dir /app/citadel_contracts
 
 # ── Processor source code ─────────────────────────────────────────────────────
-COPY tools/sluice-worker/ .
+COPY tools/sluice/worker/ .
 RUN touch tasks/__init__.py utils/__init__.py
 
 # Built-in plugins baked into the image at a separate path.

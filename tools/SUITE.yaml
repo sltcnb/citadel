@@ -15,7 +15,7 @@ tools:
     role: Intake & routing
     kind: intake
     path: tools/sluice
-    also: [tools/sluice-worker]
+    also: [tools/sluice/worker]
     repository: sluice
     status: built
     brick: tools/sluice/brick.yaml
@@ -58,14 +58,14 @@ tools:
     role: Investigation agent (LLM)
     kind: agent
     path: tools/pilot
-    repository: citadel-pilot
+    repository: pilot
     status: built
     brick: tools/pilot/brick.yaml
   - name: Scribe
     role: Report engine
     kind: report
     path: tools/scribe
-    repository: citadel-report
+    repository: scribe
     status: partial
     brick: tools/scribe/brick.yaml
   - name: Citadel

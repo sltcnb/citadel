@@ -26,7 +26,7 @@ jobs:
             dockerfile: api/Dockerfile
           - name: processor
             context: .
-            dockerfile: tools/sluice-worker/Dockerfile
+            dockerfile: tools/sluice/worker/Dockerfile
           - name: frontend
             context: frontend
             dockerfile: frontend/Dockerfile

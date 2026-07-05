@@ -76,4 +76,4 @@ See the `BaseModule` / `Result` contract in the `citadel_contracts` package ([gi
 
 ## Part of the Citadel suite
 
-Anvil is the deep-analysis stage of [Citadel](https://github.com/sltcnb/citadel). **Upstream:** artifacts arrive via [sluice](https://github.com/sltcnb/sluice) / [sluice-worker](https://github.com/sltcnb/sluice-worker) after canonicalization by [rosetta](https://github.com/sltcnb/rosetta). **Downstream:** findings land on the case timeline and feed [pilot](https://github.com/sltcnb/pilot) and [scribe](https://github.com/sltcnb/scribe). Runtime service dependency (from `brick.yaml`): **Redis** — queue, cancel flags, per-run log streaming.
+Anvil is the deep-analysis stage of [Citadel](https://github.com/sltcnb/citadel). **Upstream:** artifacts arrive via [sluice](https://github.com/sltcnb/sluice) (worker/) after canonicalization by [rosetta](https://github.com/sltcnb/rosetta). **Downstream:** findings land on the case timeline and feed [pilot](https://github.com/sltcnb/citadel-pilot) and [scribe](https://github.com/sltcnb/citadel-report). Runtime service dependency (from `brick.yaml`): **Redis** — queue, cancel flags, per-run log streaming.
