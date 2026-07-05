@@ -26,6 +26,28 @@ Detect stage: consumes the normalized event stream, produces detections.
 - **SigmaHQ imports** under `sigma_hq/` (execution, persistence, discovery, collection, exfiltration, impact, other).
 - `coverage_matrix.json` / `.md` — generated ATT&CK coverage.
 
+## Contracts
+
+Sourced from `brick.yaml`; all schemas are versioned in the [citadel-contracts](https://github.com/sltcnb/citadel-contracts) repo (`pip install git+https://github.com/sltcnb/citadel-contracts`).
+
+- **Consumes** — `contracts/forensic_event/v1.json` (`application/x-ndjson` ECS event stream).
+- **Produces** — `contracts/forensic_event/v1.json` (detections re-emitted as forensic events, `artifact_type: detection`).
+
+## Install
+
+No package to install — the tools are standalone Python 3 scripts plus the rule YAMLs:
+
+```bash
+git clone https://github.com/sltcnb/sigil && cd sigil
+pip install pyyaml         # required by sigil_validate / sigil_convert / sigil_coverage
+```
+
+Optional: `pip install pysigma pysigma-backend-elasticsearch` — `sigil_convert.py` uses the pysigma ES/Lucene backend when available and falls back to its built-in converter otherwise. `sigil_match.py` is stdlib-only.
+
+## Configuration
+
+No environment variables. Each script is configured entirely by its CLI arguments (see `--help`).
+
 ## Run standalone
 
 The tools are plain Python scripts (run directly; the `sigil` health command wraps `sigil_validate.py`):
@@ -40,8 +62,19 @@ python sigil_coverage.py            # regenerate coverage_matrix.{json,md}
 
 `sigil_match.py` is the offline Lucene-subset matcher used by the rule tests against the `sample_events/` corpus.
 
+Health check (declared in `brick.yaml`): `sigil validate ./rules/`.
+
+## Tests
+
+```bash
+python3 test_sigil_tools.py         # convert + coverage unit tests (standalone)
+pytest test_rule_match.py           # rule matching against sample_events/ (also runs standalone)
+```
+
 ## In Citadel
 
 The platform converts Sigma to ES queries, runs the rule library against a case timeline, and surfaces matches as detections (with runtime per-case opt-out and an ATT&CK coverage view). Native and imported rules are managed under the Detection Rules and YARA Rules surfaces.
 
-See `../../contracts/forensic_event.schema.json`.
+## Part of the Citadel suite
+
+Sigil is the detect stage of [Citadel](https://github.com/sltcnb/citadel). Upstream: [Rosetta](https://github.com/sltcnb/rosetta) (normalized ECS event stream). Downstream: the case timeline and [Pilot](https://github.com/sltcnb/pilot). Runtime dependency (`brick.yaml`): Elasticsearch. Contracts: [citadel-contracts](https://github.com/sltcnb/citadel-contracts).

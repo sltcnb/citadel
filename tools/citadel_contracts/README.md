@@ -4,7 +4,18 @@
 
 **Status: built · shared** — the pip-installable package every Citadel tool depends on.
 
-`citadel_contracts` is how the suite stays standalone-first: tools never import each other's internals; they import *this* package and exchange data through its types and validators. It is the Python embodiment of the JSON schemas in [`../../contracts/`](../../contracts/). It is dependency-free (Python 3.11+; `jsonschema` optional for full schema validation) and has **no `brick.yaml`** — it is a library, not a pipeline stage.
+`citadel_contracts` is how the suite stays standalone-first: tools never import each other's internals; they import *this* package and exchange data through its types and validators. It is the Python embodiment of the suite's language-neutral schemas (see [below](#the-language-neutral-schemas)), which are vendored into this repo from the platform monorepo, [github.com/sltcnb/citadel](https://github.com/sltcnb/citadel). It is dependency-free (Python 3.11+; `jsonschema` optional for full schema validation) and has **no `brick.yaml`** — it is a library, not a pipeline stage.
+
+## Install
+
+```bash
+pip install git+https://github.com/sltcnb/citadel-contracts
+# or, for development:
+git clone https://github.com/sltcnb/citadel-contracts
+pip install -e citadel-contracts
+```
+
+The core validator has zero dependencies; add the `validate` extra (`pip install "citadel-contracts[validate]"`) for full JSON-Schema validation via `jsonschema>=4`.
 
 ## What it exports
 
@@ -27,8 +38,11 @@
 ## How a tool uses it
 
 ```toml
-# pyproject.toml
+# pyproject.toml — inside the Citadel platform monorepo (path dependency)
 citadel-contracts = { path = "../../tools/citadel_contracts" }
+
+# pyproject.toml — standalone tool repo (git dependency)
+citadel-contracts = { git = "https://github.com/sltcnb/citadel-contracts" }
 ```
 
 ```python
@@ -37,6 +51,27 @@ from citadel_contracts import BasePlugin, validate_forensic_event, event
 
 Subclass `BasePlugin` and implement `can_handle()` + `parse()`; yield `ForensicEvent`-shaped dicts (or build them with `event(...)`). The Babel loader discovers the subclass and validates each event against the contract before indexing.
 
-## Relationship to `contracts/`
+## The language-neutral schemas
 
-The repo-root [`contracts/`](../../contracts/) directory holds the language-neutral schemas (`forensic_event.schema.json`, `bundle_manifest.schema.json`, `brick.schema.json`, `ecs_extension.md`, `bus_topics.md`, `collector.proto`). `citadel_contracts` is the Python implementation tools link against; `validate_forensic_event` checks events against `forensic_event/v1.json`.
+Anything that crosses a tool boundary in the suite is defined by these files. They are versioned in the platform monorepo and are being vendored into this repo (under `contracts/`) so it stands alone as the single contract source:
+
+| File | Purpose |
+|------|---------|
+| `forensic_event.schema.json` | The canonical event a Babel parser yields, before Rosetta enriches it to full ECS. |
+| `ecs_extension.md` | The ECS v8 + OSSEM fields Rosetta adds on top of a ForensicEvent. |
+| `bundle_manifest.schema.json` | The portable evidence bundle Talon hands to Sluice (`manifest.json` inside `bundle/`). |
+| `brick.schema.json` | The per-tool manifest declaring inputs, outputs, schema versions, deps, health. |
+| `collector.proto` | The gRPC service between the Talon remote agent and Sluice/Citadel. |
+| `bus_topics.md` | The Redis-Streams/NATS/Kafka topic contract for the async pipeline. |
+
+`citadel_contracts` is the Python implementation tools link against: `validate_forensic_event` enforces the load-bearing ForensicEvent rules in plain Python, and checks the full `forensic_event` JSON Schema when `jsonschema` is installed and a `schema_path` is passed.
+
+## Tests
+
+```bash
+pytest test_validator.py   # or: pytest .
+```
+
+---
+
+Part of the **[Citadel](https://github.com/sltcnb/citadel)** DFIR suite — every Citadel tool depends on this package.

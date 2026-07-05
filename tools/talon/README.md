@@ -23,9 +23,28 @@ First node. Runs on the endpoint (live) or against a mount/device (dead-box), an
   ```
   `manifest.json` carries `session_id`, `hostname`, `os`, timestamps, and an `artifacts[]` list with per-file `sha256` / `size` / `category`.
 
-## Run standalone
+## Contracts
 
-`pip install -e .` provides the `talon` console script (`collect:main`).
+Sourced from `brick.yaml`; all contracts are versioned in the [citadel-contracts](https://github.com/sltcnb/citadel-contracts) repo (`pip install git+https://github.com/sltcnb/citadel-contracts`).
+
+- **Consumes** — nothing from the bus (`content_types: []`); Talon reads live hosts, mounts, and raw devices.
+- **Produces** — `contracts/bundle_manifest/v1.json` (the artifact bundle manifest), any artifact type (~80 categories).
+- **Speaks** — `contracts/collector.proto` (`citadel.collector.v1.Collector` gRPC service) for the remote agent path.
+
+## Install
+
+```bash
+git clone https://github.com/sltcnb/talon && cd talon
+pip install -e .            # provides the `talon` console script (collect:main); Python >= 3.11
+```
+
+Runtime is stdlib-only (`dependencies = []` in `pyproject.toml`); `requirements-build.txt` only carries PyInstaller for the `build.sh` / `build.bat` single-binary builds. boto3 is optional for the credentialed S3 path in `fo_uploader.py`.
+
+## Configuration
+
+No operator environment variables — Talon is configured via CLI flags, optionally merged over a `config.json` shipped next to the script (embedded-config mode for packaged agents; CLI always wins). The Windows OS variables it reads (`SystemDrive`, `SystemRoot`, `ProgramData`) only locate artifacts on the target host.
+
+## Run standalone
 
 ```bash
 talon                                              # all OS defaults, live host
@@ -38,9 +57,18 @@ talon --fetch "mimikatz*" --fetch "re:\.(ps1|hta)$" --fetch-root C:\Users  # IOC
 talon --dry-run --verbose                          # preview, collect nothing
 ```
 
-Key flags: `--collect` (comma-separated categories), `--path` / `--disk` / `--bitlocker-key` (dead-box), `--output`/`-o`, `--api-url` / `--case-id` / `--api-token` (Citadel upload), `--fetch` / `--fetch-root` (filename or `re:` regex search), `--bundle-manifest`, `--dry-run`, `--verbose`/`-v`, `--version`.
+Key flags: `--collect` (comma-separated categories), `--path` / `--disk` / `--bitlocker-key` (dead-box), `--output`/`-o`, `--api-url` / `--case-id` / `--api-token` (Citadel upload), `--fetch` / `--fetch-root` / `--fetch-max-files` / `--fetch-max-mb` (filename or `re:` regex search), `--bundle-manifest`, `--skip-problematic`, `--dry-run`, `--verbose`/`-v`.
 
 When `--collect` is omitted the OS default set is used (e.g. Windows: evtx, registry, prefetch, lnk, browser, tasks, mft, triage, sysmon, antivirus).
+
+Health check (declared in `brick.yaml`): `talon --version`.
+
+## Tests
+
+```bash
+pytest tests/                       # test_chunker, test_secure_upload, test_stability
+python3 tests/test_chunker.py       # each file also runs standalone
+```
 
 ## Remote agent (gRPC / mTLS)
 
@@ -55,4 +83,6 @@ Bundles can also land in **S3/MinIO** via presigned URLs (stdlib-only) or creden
 
 Talon's bundle is the unit Sluice consumes. In-app **Harvest** runs Talon server-side against a mounted image/path; the standalone agent uploads to a case over the API or gRPC. Editing `capabilities.yaml` (e.g. adding a collection category) changes the Citadel collector UI with no orchestrator code change.
 
-See `../../contracts/bundle_manifest.schema.json` and `../../contracts/collector.proto`.
+## Part of the Citadel suite
+
+Talon is the acquisition stage — the first node — of [Citadel](https://github.com/sltcnb/citadel). Upstream: none. Downstream (`brick.yaml` dependency): [Sluice](https://github.com/sltcnb/sluice), which receives bundles via gRPC or upload token; its runtime worker lives in [sluice-worker](https://github.com/sltcnb/sluice-worker). Contracts (`bundle_manifest`, `collector.proto`): [citadel-contracts](https://github.com/sltcnb/citadel-contracts).
