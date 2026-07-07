@@ -1,6 +1,19 @@
 <p align="center"><img src="docs/banner.svg" alt="Citadel" width="100%"></p>
 
-<p align="center"><img src="docs/citadel-arch.svg" alt="Citadel architecture" width="100%"></p>
+## Demo
+
+<p align="center"><img src="docs/demo.png" alt="Citadel sign-in" width="100%"></p>
+
+```mermaid
+flowchart LR
+  Talon["Talon<br/><i>acquire</i>"] --> Sluice["Sluice<br/><i>route</i>"] --> Babel["Babel<br/><i>parse</i>"] --> Rosetta["Rosetta<br/><i>→ ECS</i>"]
+  Rosetta --> store[("store<br/>timeline · search")]
+  Rosetta --> Sigil["Sigil<br/><i>detections</i>"]
+  Rosetta --> Anvil["Anvil<br/><i>analyzers</i>"]
+  Rosetta --> Augur["Augur<br/><i>intel</i>"]
+  Pilot(["Pilot — drives every tool"]) -.-> Talon
+  store --> Scribe(["Scribe — writes the case report"])
+```
 
 <div align="center">
 
