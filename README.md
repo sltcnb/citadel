@@ -2,7 +2,17 @@
 
 ## Demo
 
-<p align="center"><img src="docs/demo.png" alt="Citadel dashboard" width="100%"></p>
+**Case dashboard** — every investigation, platform health, and resource usage at a glance.
+
+<p align="center"><img src="docs/demo-dashboard.png" alt="Citadel case dashboard" width="100%"></p>
+
+**Case timeline** — normalized events across the intrusion, filterable and Lucene-searchable, with flagged findings and MITRE context.
+
+<p align="center"><img src="docs/demo-timeline.png" alt="Citadel case timeline" width="100%"></p>
+
+**Event drill-down** — flag, pin, tag, annotate, or explain any event; inspect the full record and raw JSON.
+
+<p align="center"><img src="docs/demo-event.png" alt="Citadel event detail" width="100%"></p>
 
 ```mermaid
 flowchart LR
