@@ -2,7 +2,7 @@
 
 ## Demo
 
-<p align="center"><img src="docs/demo.png" alt="Citadel sign-in" width="100%"></p>
+<p align="center"><img src="docs/demo.png" alt="Citadel dashboard" width="100%"></p>
 
 ```mermaid
 flowchart LR
