@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/banner.svg" alt="Citadel" width="100%"></p>
+
 <div align="center">
 
 <img src="frontend/public/logo.svg" alt="Citadel" height="64">
