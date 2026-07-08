@@ -1,4 +1,4 @@
-<p align="center"><img src="docs/banner.svg" alt="Citadel" width="100%"></p>
+<p align="center"><img src="docs/banner.png" alt="Citadel" width="100%"></p>
 
 # Citadel
 
@@ -100,17 +100,28 @@ Open any event to flag, pin, tag, annotate, or explain it, and inspect the full 
 Citadel is an end-to-end DFIR pipeline assembled from standalone tools. Tools stay independent because they speak only **contracts** — never each other's internals.
 
 ```mermaid
-flowchart LR
-  Talon["Talon<br/><i>acquire</i>"] --> Sluice["Sluice<br/><i>route</i>"] --> Babel["Babel<br/><i>parse</i>"] --> Rosetta["Rosetta<br/><i>→ ECS</i>"]
-  Rosetta --> store[("store<br/>timeline · search")]
-  Rosetta --> Sigil["Sigil<br/><i>detections</i>"]
-  Rosetta --> Anvil["Anvil<br/><i>analyzers</i>"]
-  Rosetta --> Augur["Augur<br/><i>intel</i>"]
-  Pilot(["Pilot — drives every tool"]) -.-> Talon
-  store --> Scribe(["Scribe — writes the case report"])
+flowchart TB
+  Browser -->|HTTPS| Traefik["Traefik ingress<br/>TLS · host routing"]
+  Traefik --> Frontend["Frontend<br/>React 18 · Vite · nginx"]
+  Traefik -->|/api| API["API<br/>FastAPI · Uvicorn"]
+  Frontend -->|REST · SSE| API
+
+  API -->|enqueue| Redis[("Redis 7<br/>broker · state · Streams")]
+  API -->|query / index| ES[("Elasticsearch 8<br/>events · search")]
+  API -->|presigned| MinIO[("MinIO<br/>artifact blobs · S3")]
+
+  Redis -->|ingest queue| WIngest["Worker · ingest<br/>Celery"]
+  Redis -->|modules queue| WModules["Worker · modules<br/>Celery"]
+
+  WIngest -->|parse → ECS| ES
+  WIngest -->|read artifacts| MinIO
+  WModules -->|findings| ES
+  WModules -->|read artifacts| MinIO
+
+  TalonAgent["Talon remote agent"] -.->|gRPC / mTLS · S3| MinIO
 ```
 
-Three shared layers make this work: **`ForensicEvent`** (what a Babel parser yields — `timestamp` + `message` + `artifact_type`; Rosetta maps it to **ECS v8 + OSSEM**), the **artifact bundle** (`manifest.json | events.jsonl | blobs/<sha256> | bundle.sha256`), and **`brick.yaml`** (every tool's manifest). The async pipeline runs over a message bus (Redis Streams default; NATS/Kafka pluggable), at-least-once, dedup by event sha256: `artifacts.received → events.parsed → events.normalized → {indexed, detections.matched, modules.completed, intel.enriched}`. Full contract: [`contracts/`](contracts/).
+Every stage runs over the async pipeline as a Celery/Redis-Streams consumer group (at-least-once, dedup by event sha256). Three shared layers make the tools compose: **`ForensicEvent`** (what a Babel parser yields — `timestamp` + `message` + `artifact_type`; Rosetta maps it to **ECS v8 + OSSEM**), the **artifact bundle** (`manifest.json | events.jsonl | blobs/<sha256> | bundle.sha256`), and **`brick.yaml`** (every tool's manifest). The async pipeline runs over a message bus (Redis Streams default; NATS/Kafka pluggable), at-least-once, dedup by event sha256: `artifacts.received → events.parsed → events.normalized → {indexed, detections.matched, modules.completed, intel.enriched}`. Full contract: [`contracts/`](contracts/).
 
 | Component | Tech |
 |-----------|------|
