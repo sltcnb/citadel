@@ -1,5 +1,3 @@
-<p align="center"><img src="docs/banner.png" alt="Citadel" width="100%"></p>
-
 # Citadel
 
 **A DFIR platform built from independent, standalone tools — each useful on its own, all composed by Citadel.**
