@@ -1,30 +1,14 @@
 <p align="center"><img src="docs/banner.svg" alt="Citadel" width="100%"></p>
 
-## Demo
-
-**Case dashboard** — every investigation, platform health, and resource usage at a glance.
-
-<p align="center"><img src="docs/demo-dashboard.png" alt="Citadel case dashboard" width="100%"></p>
-
-**Case timeline** — normalized events across the intrusion, filterable and Lucene-searchable, with flagged findings and MITRE context.
-
-<p align="center"><img src="docs/demo-timeline.png" alt="Citadel case timeline" width="100%"></p>
-
-**Event drill-down** — flag, pin, tag, annotate, or explain any event; inspect the full record and raw JSON.
-
-<p align="center"><img src="docs/demo-event.png" alt="Citadel event detail" width="100%"></p>
-
----
-
 # Citadel
 
 **A DFIR platform built from independent, standalone tools — each useful on its own, all composed by Citadel.**
 
-[![License: PolyForm Noncommercial](https://img.shields.io/badge/license-PolyForm%20NC%201.0.0-orange.svg)](LICENSE)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/)
-[![Elasticsearch 8](https://img.shields.io/badge/Elasticsearch-8-005571.svg)](https://www.elastic.co/)
-
 Citadel takes a forensic artifact from acquisition to a finished, searchable, detection-rich case — acquire → ingest → parse → normalize → detect → analyze → enrich → investigate → report. Every stage is a **standalone tool** with its own CLI; the platform wires them together over **shared contracts**.
+
+The case dashboard — every investigation, platform health, and resource usage at a glance:
+
+<p align="center"><img src="docs/demo-dashboard.png" alt="Citadel case dashboard" width="100%"></p>
 
 **Open-core / source-available** under the PolyForm Noncommercial License — run, modify, and self-host for any noncommercial purpose. Premium *runtime* tiers are unlocked by a license key; no key → Community tier. See [Licensing](#licensing).
 
@@ -90,6 +74,10 @@ Each tool is its own product (`tools/<name>`), with its own CLI and `brick.yaml`
 
 ## Using the case console
 
+The case timeline — normalized events across the intrusion, filterable and Lucene-searchable, with flagged findings and MITRE context:
+
+<p align="center"><img src="docs/demo-timeline.png" alt="Citadel case timeline" width="100%"></p>
+
 Inside a case the top toolbar is the command surface, and everything you produce flows to **one** place — **Findings**.
 
 | Control | What it does |
@@ -102,6 +90,10 @@ Inside a case the top toolbar is the command surface, and everything you produce
 | **Modules** | Run analysis modules (Hayabusa, YARA, CAPA, Volatility…); results land in Findings. |
 
 **Findings** is the single output store: every surface (modules, IOC match, anomaly scan, MITRE coverage, Pilot) writes here in one shape. Filter by kind/severity, export CSV, re-ingest a selection, or pivot to source events. Findings are ordinary timeline events (`artifact_type:finding`), so they are searchable, reported, and carried in the `.citadel` archive — no separate path. A **Module run status** view tracks progress/failure/retry separately from output.
+
+Open any event to flag, pin, tag, annotate, or explain it, and inspect the full record and raw JSON:
+
+<p align="center"><img src="docs/demo-event.png" alt="Citadel event drill-down" width="100%"></p>
 
 ## Architecture
 
