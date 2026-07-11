@@ -30,9 +30,31 @@ from babel.base_plugin import BasePlugin, PluginContext, PluginFatalError
 
 logger = logging.getLogger(__name__)
 
-# Safety limits against zip-bomb attacks
-MAX_EXTRACTED_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB total
-MAX_FILES = 10_000
+# ── Safety limits against zip-bomb / decompression-bomb attacks ────────────────
+# All configurable via env so operators can tune for large-evidence workloads.
+#
+#   MAX_EXTRACTED_BYTES  — per-archive uncompressed cap (each archive/tempdir).
+#   MAX_GLOBAL_BYTES     — shared budget across an archive and every nested
+#                          archive re-fed through the pipeline, so N levels of
+#                          nesting can't multiplicatively amplify extraction.
+#   MAX_FILES            — max member count processed per archive.
+#   MAX_DEPTH            — max nested-archive recursion depth (0 = top level).
+MAX_EXTRACTED_BYTES = int(os.getenv("ARCHIVE_MAX_EXTRACTED_BYTES", str(2 * 1024**3)))  # 2 GiB
+MAX_GLOBAL_BYTES = int(os.getenv("ARCHIVE_MAX_GLOBAL_BYTES", str(10 * 1024**3)))  # 10 GiB
+MAX_FILES = int(os.getenv("ARCHIVE_MAX_FILES", "10000"))
+MAX_DEPTH = int(os.getenv("ARCHIVE_MAX_DEPTH", "3"))
+
+_COPY_CHUNK = 1024 * 1024  # 1 MiB
+
+# Config keys used to thread recursion depth + shared byte budget through the
+# plugin pipeline when nested archives are re-fed.
+_CFG_DEPTH = "_archive_depth"
+_CFG_BUDGET = "_archive_budget"
+
+
+class _ExtractionLimit(Exception):
+    """Raised internally when a per-archive or global byte cap is crossed."""
+
 
 # Junk files to skip (macOS metadata, Windows thumbs, etc.)
 _SKIP_NAMES = {".ds_store", "thumbs.db", "desktop.ini"}
@@ -81,6 +103,26 @@ class ArchivePlugin(BasePlugin):
 
     def parse(self) -> Generator[dict[str, Any], None, None]:
         fp = self.ctx.source_file_path
+
+        # Recursion depth + shared byte budget are threaded through PluginContext
+        # config so nested archives re-fed via _process_dir share one budget.
+        cfg = getattr(self.ctx, "config", None) or {}
+        self._depth = int(cfg.get(_CFG_DEPTH, 0))
+        # Budget is a 1-element mutable list so nested plugins mutate the same one.
+        budget = cfg.get(_CFG_BUDGET)
+        if not isinstance(budget, list) or not budget:
+            budget = [MAX_GLOBAL_BYTES]
+        self._budget = budget
+        self._archive_bytes = 0
+
+        if self._depth > MAX_DEPTH:
+            self.log.warning(
+                "Max archive recursion depth (%d) exceeded — not extracting %s",
+                MAX_DEPTH,
+                fp.name,
+            )
+            return
+
         extract_dir = Path(tempfile.mkdtemp(prefix="fo_arc_"))
         try:
             extracted_ok = self._extract(fp, extract_dir)
@@ -89,6 +131,30 @@ class ArchivePlugin(BasePlugin):
             yield from self._process_dir(extract_dir)
         finally:
             shutil.rmtree(extract_dir, ignore_errors=True)
+
+    # ── Bounded copy (per-archive cap + shared global budget) ──────────────────
+
+    def _bounded_extract_copy(self, src, dst) -> None:
+        """Copy src→dst in chunks, aborting the moment the running total crosses
+        either the per-archive cap or the shared global budget. This enforces the
+        limit DURING copy so a member lying about its declared size can't inflate
+        past the cap."""
+        while True:
+            chunk = src.read(_COPY_CHUNK)
+            if not chunk:
+                break
+            n = len(chunk)
+            self._archive_bytes += n
+            self._budget[0] -= n
+            if self._archive_bytes > MAX_EXTRACTED_BYTES:
+                raise _ExtractionLimit(
+                    f"per-archive uncompressed cap ({MAX_EXTRACTED_BYTES} bytes) exceeded"
+                )
+            if self._budget[0] < 0:
+                raise _ExtractionLimit(
+                    f"global extraction budget ({MAX_GLOBAL_BYTES} bytes) exhausted"
+                )
+            dst.write(chunk)
 
     # ── Extraction ────────────────────────────────────────────────────────────
 
@@ -108,33 +174,49 @@ class ArchivePlugin(BasePlugin):
 
         return False
 
+    def _safe_target(self, dest: Path, name: str) -> Path | None:
+        """Resolve *name* under *dest*, rejecting zip-slip / path traversal.
+
+        normpath alone is not enough: normpath('../../etc/x') keeps the '..',
+        so verify the resolved target stays inside dest before writing.
+        """
+        safe_name = os.path.normpath(name).lstrip(os.sep)
+        out = dest / safe_name
+        try:
+            out.resolve().relative_to(dest.resolve())
+        except (ValueError, OSError):
+            return None
+        return out
+
     def _extract_zip(self, archive_path: Path, dest: Path) -> bool:
         try:
             with zipfile.ZipFile(archive_path, "r") as zf:
-                total_bytes = 0
                 for info in zf.infolist():
                     if info.is_dir():
                         continue
-                    total_bytes += info.file_size
-                    if total_bytes > MAX_EXTRACTED_BYTES:
-                        self.log.warning("ZIP extraction stopped: size limit reached")
-                        break
-                    # Sanitise path to prevent zip-slip. normpath alone is not
-                    # enough: normpath('../../etc/x') keeps the '..', so verify
-                    # the resolved target stays inside dest before writing.
-                    safe_name = os.path.normpath(info.filename).lstrip(os.sep)
-                    out = dest / safe_name
-                    try:
-                        out.resolve().relative_to(dest.resolve())
-                    except (ValueError, OSError):
+                    # Cheap declared-size reject before we bother reading bytes.
+                    if (info.file_size or 0) > MAX_EXTRACTED_BYTES:
+                        self.log.warning(
+                            "ZIP entry %r declares %d bytes (> cap) — skipped",
+                            info.filename,
+                            info.file_size,
+                        )
+                        continue
+                    out = self._safe_target(dest, info.filename)
+                    if out is None:
                         self.log.warning(
                             "Rejected unsafe ZIP entry (path traversal): %r",
                             info.filename,
                         )
                         continue
                     out.parent.mkdir(parents=True, exist_ok=True)
-                    with zf.open(info) as src, open(out, "wb") as dst:
-                        shutil.copyfileobj(src, dst)
+                    try:
+                        with zf.open(info) as src, open(out, "wb") as dst:
+                            self._bounded_extract_copy(src, dst)
+                    except _ExtractionLimit as exc:
+                        out.unlink(missing_ok=True)
+                        self.log.warning("ZIP extraction stopped: %s", exc)
+                        break
             return True
         except zipfile.BadZipFile as exc:
             raise PluginFatalError(f"Bad ZIP file: {exc}")
@@ -142,20 +224,34 @@ class ArchivePlugin(BasePlugin):
     def _extract_tar(self, archive_path: Path, dest: Path) -> bool:
         try:
             with tarfile.open(archive_path) as tf:
-                total_bytes = 0
-                members = []
-                for m in tf.getmembers():
-                    if m.isfile():
-                        total_bytes += m.size
-                        if total_bytes > MAX_EXTRACTED_BYTES:
-                            self.log.warning("TAR extraction stopped: size limit reached")
-                            break
-                        members.append(m)
-                # Python 3.12+ supports filter='data' for safe extraction
-                try:
-                    tf.extractall(dest, members=members, filter="data")
-                except TypeError:
-                    tf.extractall(dest, members=members)  # noqa: S202 (Python < 3.12)
+                for m in tf:
+                    if not m.isfile():
+                        continue
+                    # Cheap declared-size reject before reading member bytes.
+                    if (m.size or 0) > MAX_EXTRACTED_BYTES:
+                        self.log.warning(
+                            "TAR member %r declares %d bytes (> cap) — skipped",
+                            m.name,
+                            m.size,
+                        )
+                        continue
+                    out = self._safe_target(dest, m.name)
+                    if out is None:
+                        self.log.warning(
+                            "Rejected unsafe TAR member (path traversal): %r", m.name
+                        )
+                        continue
+                    src = tf.extractfile(m)
+                    if src is None:
+                        continue
+                    out.parent.mkdir(parents=True, exist_ok=True)
+                    try:
+                        with src, open(out, "wb") as dst:
+                            self._bounded_extract_copy(src, dst)
+                    except _ExtractionLimit as exc:
+                        out.unlink(missing_ok=True)
+                        self.log.warning("TAR extraction stopped: %s", exc)
+                        break
             return True
         except tarfile.TarError as exc:
             raise PluginFatalError(f"TAR extraction failed: {exc}")
@@ -199,11 +295,18 @@ class ArchivePlugin(BasePlugin):
                     self.log.debug("No plugin for %s — skipping", rel)
                     continue
 
+                # Thread recursion depth + shared byte budget so a nested archive
+                # re-fed through the pipeline can't amplify extraction unbounded.
+                sub_config = dict(getattr(self.ctx, "config", None) or {})
+                sub_config[_CFG_DEPTH] = self._depth + 1
+                sub_config[_CFG_BUDGET] = self._budget
+
                 sub_ctx = PluginContext(
                     case_id=self.ctx.case_id,
                     job_id=self.ctx.job_id,
                     source_file_path=extracted_file,
                     source_minio_url=self.ctx.source_minio_url,
+                    config=sub_config,
                     logger=self.ctx.logger,
                 )
                 sub = sub_class(sub_ctx)
