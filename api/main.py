@@ -358,18 +358,29 @@ class CoreHTTPMiddleware:
 
     @staticmethod
     def _guest_denied(scope, method, path):
-        auth_header = ""
+        # Resolve the token from EITHER the Authorization header OR the
+        # ?_token query param — get_current_user accepts both, so the guard
+        # must too, otherwise a guest can bypass it with ?_token=<jwt> and no
+        # Authorization header and reach analyst-level write routes.
+        token = ""
         for k, v in scope.get("headers", []):
             if k == b"authorization":
-                auth_header = v.decode("latin-1")
+                hv = v.decode("latin-1")
+                if hv.startswith("Bearer "):
+                    token = hv[7:]
                 break
-        if not auth_header.startswith("Bearer "):
+        if not token:
+            from urllib.parse import parse_qs
+
+            qs = scope.get("query_string", b"").decode("latin-1")
+            token = (parse_qs(qs).get("_token") or [""])[0]
+        if not token:
             return None
         try:
             from auth.service import decode_token
 
             if settings.AUTH_ENABLED:
-                payload = decode_token(auth_header[7:])
+                payload = decode_token(token)
                 if payload.get("role") == "guest" and not _guest_path_allowed(method, path):
                     return JSONResponse(
                         status_code=403,

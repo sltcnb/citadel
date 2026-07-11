@@ -63,6 +63,7 @@ class ESSink:
             f"{self.url}/_bulk",
             data=body,
             headers={"Content-Type": "application/x-ndjson"},
+            timeout=30,
         )
         status = getattr(resp, "status_code", 200)
         if status >= 300:

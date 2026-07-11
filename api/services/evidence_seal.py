@@ -203,6 +203,14 @@ def seal_artifact(
     r = get_redis()
     token = uuid.uuid4().hex
     have_lock = _acquire_lock(r, case_id, token)
+    if not have_lock:
+        # Appending without the lock lets two concurrent seals read the same
+        # head/seq and fork the chain — permanently breaking the custody chain
+        # this module exists to guarantee. Fail instead of corrupting it.
+        raise RuntimeError(
+            f"Could not acquire evidence-seal lock for case {case_id!r}; "
+            "refusing to append (retry)."
+        )
     try:
         prev_hash = r.get(_head_key(case_id)) or GENESIS_HASH
         try:
