@@ -17,6 +17,7 @@ import { useNavigate } from 'react-router-dom'
 import { Search, ArrowRight } from 'lucide-react'
 import { api } from '../api/client'
 import { NAV_ITEMS, CASE_ICON } from '../nav'
+import Modal from './shared/Modal'
 
 // Derived from the shared nav manifest so the palette can never fall behind the
 // top-nav (it used to miss Stack / Templates / Logs / Account).
@@ -106,15 +107,13 @@ export default function CommandPalette() {
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 bg-black/30 flex items-start justify-center pt-[15vh] px-4"
-      onClick={() => setOpen(false)}
+    <Modal
+      onClose={() => setOpen(false)}
+      overlayClassName="fixed inset-0 z-50 bg-black/30 flex items-start justify-center pt-[15vh] px-4"
+      className="w-full max-w-xl bg-white rounded-xl shadow-card-md border border-gray-200 overflow-hidden flex flex-col fade-in"
+      style={{ boxShadow: '0 25px 50px -12px rgba(15,23,42,0.25)' }}
+      ariaLabel="Command palette"
     >
-      <div
-        className="w-full max-w-xl bg-white rounded-xl shadow-card-md border border-gray-200 overflow-hidden flex flex-col fade-in"
-        style={{ boxShadow: '0 25px 50px -12px rgba(15,23,42,0.25)' }}
-        onClick={e => e.stopPropagation()}
-      >
         <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-100">
           <Search size={14} className="text-gray-400" />
           <input
@@ -162,7 +161,6 @@ export default function CommandPalette() {
           <span className="flex items-center gap-1"><kbd className="kbd">↵</kbd> open</span>
           <span className="ml-auto flex items-center gap-1"><kbd className="kbd">⌘</kbd><kbd className="kbd">K</kbd> toggle</span>
         </div>
-      </div>
-    </div>
+    </Modal>
   )
 }
