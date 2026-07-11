@@ -45,7 +45,18 @@ router = APIRouter(tags=["ingest"])
 import os as _os
 
 _CHUNK_DIR = Path(_os.environ.get("CHUNK_DIR", "/app/babel/_chunks"))
-_CHUNK_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _ensure_chunk_dir() -> Path:
+    """Create the chunk directory on first use.
+
+    Deferred from import time so the module (and the FastAPI app) can be
+    imported in environments where the target path is not writable — e.g. a
+    read-only filesystem in unit tests or CI. The directory is genuinely needed
+    only when a chunked upload is actually received.
+    """
+    _CHUNK_DIR.mkdir(parents=True, exist_ok=True)
+    return _CHUNK_DIR
 
 
 # ── Known auxiliary / empty-by-design file types ──────────────────────────────
@@ -421,7 +432,7 @@ async def ingest_chunk(
 
     safe_name = re.sub(r"[^\w.\-]", "_", filename)[:200]
     try:
-        tmp_path = str(safe_join(_CHUNK_DIR, f"{upload_id}_{safe_name}"))
+        tmp_path = str(safe_join(_ensure_chunk_dir(), f"{upload_id}_{safe_name}"))
     except UnsafePathError:
         raise HTTPException(status_code=400, detail="Invalid filename")
 

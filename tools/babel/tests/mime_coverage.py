@@ -36,6 +36,7 @@ INTENTIONALLY_NO_MIME: frozenset[str] = frozenset(
         "browser",  # generic SQLite/JSON stores, matched by exact filename
         "strings",  # last-resort catch-all (can_handle -> True)
         "log2timeline",  # generic timeline fallback, routed by extension
+        "lastlog",  # extensionless /var/log/lastlog binary, matched by exact filename
     }
 )
 
