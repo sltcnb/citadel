@@ -19,6 +19,21 @@ spec:
       labels:
         app: processor
     spec:
+      # ── Pod security context ──────────────────────────────────────────────
+      # The processor runs untrusted third-party analysis modules, so it is the
+      # highest-priority target for sandboxing. Run as a fixed non-root UID and
+      # let the kubelet chown mounted PVCs to fsGroup so writes still succeed.
+      # NOTE: the processor image currently builds without a USER directive
+      # (runs as root); runAsUser/fsGroup below force a non-root identity at
+      # runtime. Operators must verify pods start; ideally bake a matching
+      # non-root USER into the image (owned by the processor image PR).
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       initContainers:
         # Seed built-in plugins into the shared PVC on every start.
         # Uses cp -r (overwrite) so image updates always propagate.
@@ -60,6 +75,15 @@ spec:
         - name: processor
           image: __FO_PROCESSOR_IMAGE__
           imagePullPolicy: __FO_PULL_POLICY__
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            # readOnlyRootFilesystem left false: analysis modules (Hayabusa,
+            # plaso, RegRipper, etc.) write scratch files across the image
+            # filesystem. Writable data paths are the mounted PVCs + /tmp
+            # emptyDir; the module sandbox (SANDBOX_* env) bounds resource use.
+            readOnlyRootFilesystem: false
           env:
             - name: REDIS_URL
               value: "redis://redis-service:6379/0"
@@ -106,6 +130,22 @@ spec:
                 secretKeyRef:
                   name: minio-secret
                   key: secret_key
+            # ES now requires auth. Provide the elastic credentials; the client
+            # may also consume them embedded in ELASTICSEARCH_URL.
+            - name: ELASTICSEARCH_USERNAME
+              value: "elastic"
+            - name: ELASTICSEARCH_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: elasticsearch-secret
+                  key: elastic_password
+            # Redis now requires auth; include it in the client URL as
+            # redis://:$(REDIS_PASSWORD)@redis-service:6379/0
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-secret
+                  key: redis_password
           resources:
             requests:
               memory: "__FO_PROCESSOR_MEMORY_REQUEST__"

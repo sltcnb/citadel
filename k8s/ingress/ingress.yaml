@@ -8,16 +8,14 @@ spec:
   redirectScheme:
     permanent: true
     scheme: https
----
-apiVersion: traefik.io/v1alpha1
-kind: Middleware
-metadata:
-  name: strip-minio
-  namespace: __FO_NAMESPACE__
-spec:
-  stripPrefix:
-    prefixes:
-      - /minio
+# SECURITY: the public /kibana and /minio (MinIO console) Ingress routes were
+# removed. They exposed the Kibana UI and the MinIO admin console on the public
+# FQDN with no authentication in front of them. Access these services instead
+# via `kubectl port-forward` on a trusted admin workstation, e.g.:
+#   kubectl -n <ns> port-forward svc/kibana-service 5601:5601
+#   kubectl -n <ns> port-forward svc/minio-service 9001:9001
+# If they must be published, put them behind a Traefik basic-auth / forward-auth
+# Middleware and, ideally, an IP allowlist (ipWhiteList Middleware).
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -90,54 +88,6 @@ spec:
   - hosts:
     - __FO_HOSTNAME__
     secretName: forensics-tls
----
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: citadel-kibana
-  namespace: __FO_NAMESPACE__
-  annotations:
-    traefik.ingress.kubernetes.io/router.entrypoints: websecure
-spec:
-  ingressClassName: traefik
-  rules:
-  - host: __FO_HOSTNAME__
-    http:
-      paths:
-      - path: /kibana
-        pathType: Prefix
-        backend:
-          service:
-            name: kibana-service
-            port:
-              number: 5601
-  tls:
-  - hosts:
-    - __FO_HOSTNAME__
-    secretName: forensics-tls
----
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: citadel-minio
-  namespace: __FO_NAMESPACE__
-  annotations:
-    traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    traefik.ingress.kubernetes.io/router.middlewares: __FO_NAMESPACE__-strip-minio@kubernetescrd
-spec:
-  ingressClassName: traefik
-  rules:
-  - host: __FO_HOSTNAME__
-    http:
-      paths:
-      - path: /minio
-        pathType: Prefix
-        backend:
-          service:
-            name: minio-service
-            port:
-              number: 9001
-  tls:
-  - hosts:
-    - __FO_HOSTNAME__
-    secretName: forensics-tls
+# NOTE: the citadel-kibana (/kibana) and citadel-minio (/minio console) Ingress
+# routes were intentionally removed — see the SECURITY comment near the top of
+# this file. Do not re-add them to the public FQDN without an auth proxy.

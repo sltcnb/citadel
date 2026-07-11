@@ -14,9 +14,22 @@ spec:
       labels:
         app: elasticsearch
     spec:
+      # ES runs as uid 1000 (elasticsearch); fsGroup lets the kubelet own the
+      # data PVC so the process can write it.
+      securityContext:
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       initContainers:
         - name: fix-permissions
           image: busybox:1.36
+          # Needs root + CHOWN to fix ownership on the mounted data volume.
+          securityContext:
+            runAsUser: 0
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+              add: ["CHOWN", "FOWNER", "DAC_OVERRIDE"]
           command: ["sh", "-c", "chown -R 1000:1000 /usr/share/elasticsearch/data"]
           volumeMounts:
             - name: es-data
@@ -24,11 +37,27 @@ spec:
       containers:
         - name: elasticsearch
           image: docker.elastic.co/elasticsearch/elasticsearch:8.13.0
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: false
           env:
             - name: discovery.type
               value: single-node
+            # Security enabled: native realm auth for the built-in `elastic`
+            # user. The bootstrap password is injected from the Secret below.
+            # OPERATOR: clients (api, processor, kibana) must be configured with
+            # ELASTICSEARCH_USERNAME=elastic + this password.
             - name: xpack.security.enabled
-              value: "false"
+              value: "true"
+            - name: ELASTIC_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: elasticsearch-secret
+                  key: elastic_password
             - name: ES_JAVA_OPTS
               value: "-Xms__FO_ES_HEAP__ -Xmx__FO_ES_HEAP__"
             - name: cluster.name
@@ -44,8 +73,9 @@ spec:
               memory: "__FO_ES_MEMORY_LIMIT__"
               cpu: "2"
           readinessProbe:
-            httpGet:
-              path: /_cluster/health?wait_for_status=yellow&timeout=5s
+            # With security enabled, /_cluster/health returns 401 without
+            # credentials, so use a TCP check to confirm the port is serving.
+            tcpSocket:
               port: 9200
             initialDelaySeconds: 30
             periodSeconds: 10
@@ -60,3 +90,19 @@ spec:
         resources:
           requests:
             storage: __FO_ES_STORAGE__
+---
+# Bootstrap password for the built-in `elastic` superuser. The value is
+# substituted from the operator's environment (foctl/fo.sh) — never hardcode.
+# OPERATOR ACTION: set __FO_ES_PASSWORD__ to a strong random value and configure
+# api/processor/kibana clients with ELASTICSEARCH_USERNAME=elastic + this value.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: elasticsearch-secret
+  namespace: __FO_NAMESPACE__
+type: Opaque
+stringData:
+  elastic_password: __FO_ES_PASSWORD__
+  # Password for the built-in kibana_system user (used by the Kibana pod).
+  # Set after ES first boot via the _security API, then substitute here.
+  kibana_password: __FO_KIBANA_PASSWORD__
