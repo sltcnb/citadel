@@ -175,3 +175,141 @@ def test_manifest_hash_changes_when_seal_changes(fake):
     es.seal_artifact("c1", "a2", "BB")
     h2 = es.custody_manifest("c1")["manifest_hash"]
     assert h1 != h2
+
+
+# ── M2: full verification anchored to genesis ──────────────────────────────────
+
+
+def test_verify_chain_full_ok_when_anchored():
+    chain = _build_chain(3)
+    res = es._verify_chain_full(chain)
+    assert res["ok"] is True
+    assert res["reason"] is None
+    assert res["sealed_count"] == 3
+
+
+def test_verify_chain_full_detects_truncation():
+    # Drop the oldest seal: the remaining chain is internally self-consistent
+    # (windowed verify would say OK) but is no longer anchored to genesis.
+    chain = _build_chain(3)[1:]
+    windowed = es._verify_chain(chain)
+    assert windowed["ok"] is True  # windowed path still accepts the truncated window
+
+    full = es._verify_chain_full(chain)
+    assert full["ok"] is False
+    assert full["reason"] == "not_anchored"
+    assert full["broken_at"] == 2  # seq of the now-first record
+
+
+def test_verify_chain_full_still_detects_internal_break():
+    chain = _build_chain(3)
+    chain[1]["sha256"] = "deadbeef"
+    full = es._verify_chain_full(chain)
+    assert full["ok"] is False
+    assert full["reason"] == "broken"
+    assert full["broken_at"] == 2
+
+
+def test_verify_seals_full_detects_truncation(fake):
+    es.seal_artifact("c1", "a1", "AA")
+    es.seal_artifact("c1", "a2", "BB")
+    es.seal_artifact("c1", "a3", "CC")
+    # Truncate the oldest record directly in the store (list is oldest-first).
+    fake.lpop(es._list_key("c1"))
+    res = es.verify_seals("c1")
+    assert res["ok"] is False
+    assert res["reason"] == "not_anchored"
+
+
+# ── Atomic append (compare-and-set) ────────────────────────────────────────────
+
+
+def test_cas_append_rejects_stale_head(fake):
+    """Directly exercise the CAS: a stale observed-head must not append (no fork)."""
+    es.seal_artifact("c1", "a1", "AA")
+    # Simulate a writer that observed the empty/genesis state but tries to commit
+    # after another seal already advanced the head → CAS must return 0.
+    applied = fake.eval(
+        es._CAS_APPEND,
+        3,
+        es._list_key("c1"),
+        es._head_key("c1"),
+        es._anchor_key("c1"),
+        "",            # observed_head = empty (stale: chain is non-empty now)
+        0,             # observed_len = 0 (stale)
+        '{"stale":1}',
+        "deadbeef",
+        '{"head_hash":"deadbeef","length":1}',
+    )
+    assert int(applied) == 0
+    # Chain untouched and still verifies.
+    assert len(es.list_seals("c1")) == 1
+    assert es.verify_seals("c1")["ok"] is True
+
+
+def test_concurrent_appends_do_not_fork(fake, monkeypatch):
+    """Interleave two appends that both observe the same head; CAS + retry must
+    serialize them into a single linear chain (no duplicate seq, no fork)."""
+    real_read = es._read_head_len
+    state = {"first": True}
+
+    def racing_read(r, head_key, list_key):
+        observed = real_read(r, head_key, list_key)
+        if state["first"]:
+            # First caller observes the head, then a *second* seal sneaks in and
+            # advances the chain before the first caller's CAS runs.
+            state["first"] = False
+            es.seal_artifact("cX", "sneaky", "SS")
+        return observed
+
+    es.seal_artifact("cX", "a0", "AA")  # genesis link
+    monkeypatch.setattr(es, "_read_head_len", racing_read, raising=True)
+    # This append observes a stale head (the sneaky one races in), so its first
+    # CAS misses and it retries against the new head.
+    es.seal_artifact("cX", "a1", "BB")
+
+    seals = es.list_seals("cX")  # newest-first
+    seqs = sorted(s["seq"] for s in seals)
+    assert seqs == [1, 2, 3]            # no duplicate/forked seq
+    assert es.verify_seals("cX")["ok"] is True  # single intact chain
+
+
+# ── Out-of-band anchor cross-check ─────────────────────────────────────────────
+
+
+def test_anchor_written_on_append(fake):
+    es.seal_artifact("c1", "a1", "AA")
+    es.seal_artifact("c1", "a2", "BB")
+    anchor = es._read_anchor(fake, "c1")
+    assert anchor is not None
+    assert anchor["length"] == 2
+    assert anchor["head_hash"] == es.list_seals("c1")[0]["seal_hash"]
+
+
+def test_anchor_mismatch_detected(fake):
+    """Attacker rewrites the chain list consistently (recomputes hashes) but does
+    NOT update the out-of-band anchor → full verification must flag it."""
+    es.seal_artifact("c1", "a1", "AA")
+    es.seal_artifact("c1", "a2", "BB")
+
+    # Rebuild the whole chain around a tampered payload, recomputing every hash so
+    # the chain is INTERNALLY consistent and genesis-anchored.
+    forged = _build_chain(2)
+    forged[0]["artifact_id"] = "evil"
+    forged[0]["seal_hash"] = es._seal_hash(
+        es.GENESIS_HASH, {k: v for k, v in forged[0].items() if k != "seal_hash"}
+    )
+    forged[1]["prev_hash"] = forged[0]["seal_hash"]
+    forged[1]["seal_hash"] = es._seal_hash(
+        forged[1]["prev_hash"], {k: v for k, v in forged[1].items() if k != "seal_hash"}
+    )
+    fake.delete(es._list_key("c1"))
+    for rec in forged:
+        fake.rpush(es._list_key("c1"), json.dumps(rec))
+    fake.set(es._head_key("c1"), forged[-1]["seal_hash"])
+    # Anchor is NOT updated by the attacker.
+
+    res = es.verify_seals("c1")
+    assert res["ok"] is False
+    assert res["anchor_ok"] is False
+    assert res["reason"] == "anchor_mismatch"
