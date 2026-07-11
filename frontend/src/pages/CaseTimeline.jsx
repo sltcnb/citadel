@@ -1,4 +1,4 @@
-import { Fragment, useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { Fragment, Suspense, lazy, useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useParams, useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 import {
   Upload,
@@ -68,8 +68,10 @@ const MOD_CATEGORY_ORDER = [
 ]
 import { api, getToken } from '../api/client'
 import Timeline from './Timeline'
-import IngestPanel from '../components/IngestPanel'
-import CaseAiPanel from '../components/CaseAiPanel'
+// Heavy, only-when-opened panels — split into their own chunks to lighten the
+// first paint of the case view (backed by Suspense boundaries at their sites).
+const IngestPanel = lazy(() => import('../components/IngestPanel'))
+const CaseAiPanel = lazy(() => import('../components/CaseAiPanel'))
 import ToolbarMenu from '../components/shared/ToolbarMenu'
 import { buildToolbarGroups, CASE_CAPABILITIES, readLegacyPanelState } from './caseCapabilities'
 import { CASE_PANELS } from './casePanels'
@@ -2457,42 +2459,46 @@ export default function CaseTimeline() {
 
       {/* ── Modals / Panels ───────────────────────────────────────────────── */}
       {showIngest && (
-        <IngestPanel
-          caseId={caseId}
-          onClose={() => setShowIngest(false)}
-          onComplete={() => loadCase()}
-          autoPilot={autoPilot}
-          setAutoPilot={aiEnabled ? setAutoPilot : undefined}
-        />
+        <Suspense fallback={null}>
+          <IngestPanel
+            caseId={caseId}
+            onClose={() => setShowIngest(false)}
+            onComplete={() => loadCase()}
+            autoPilot={autoPilot}
+            setAutoPilot={aiEnabled ? setAutoPilot : undefined}
+          />
+        </Suspense>
       )}
 
       {showAI && (
-        <CaseAiPanel
-          caseId={caseId}
-          onClose={() => setShowAI(false)}
-          onSearchQuery={q => {
-            setIocPivotQuery(q)
-            setShowAI(false)
-          }}
-          onOpenReport={() => {
-            setShowAI(false)
-            openPanel('report')
-          }}
-        />
+        <Suspense fallback={null}>
+          <CaseAiPanel
+            caseId={caseId}
+            onClose={() => setShowAI(false)}
+            onSearchQuery={q => {
+              setIocPivotQuery(q)
+              setShowAI(false)
+            }}
+            onOpenReport={() => {
+              setShowAI(false)
+              openPanel('report')
+            }}
+          />
+        </Suspense>
       )}
 
       {/* Capability panels — rendered generically from the registry pair
           (caseCapabilities + casePanels). Each open capability id gets its
           renderer with the same {caseId, close, pivot, navigate} contract. */}
       {CASE_CAPABILITIES.filter(cap => panels[cap.id] && CASE_PANELS[cap.id]).map(cap => (
-        <Fragment key={cap.id}>
+        <Suspense key={cap.id} fallback={null}>
           {CASE_PANELS[cap.id]({
             caseId,
             navigate,
             close: () => closePanel(cap.id),
             pivot: q => { setIocPivotQuery(q); closePanel(cap.id) },
           })}
-        </Fragment>
+        </Suspense>
       ))}
 
       {showModules && (
