@@ -327,6 +327,26 @@
   .lift { transition: transform 180ms ease, box-shadow 180ms ease; }
   .lift:hover { transform: translateY(-1px); }
 
+  /* Indeterminate progress — a sliding sliver, honest about "we don't know the
+     percentage" (replaces misleading fixed-width fake determinate bars). */
+  .progress-indeterminate { position: relative; overflow: hidden; }
+  .progress-indeterminate::after {
+    content: '';
+    position: absolute;
+    top: 0; bottom: 0; left: 0;
+    width: 40%;
+    border-radius: inherit;
+    background: currentColor;
+    animation: indeterminate-slide 1.2s ease-in-out infinite;
+  }
+  @keyframes indeterminate-slide {
+    0%   { left: -40%; }
+    100% { left: 100%; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .progress-indeterminate::after { animation: none; left: 0; width: 100%; opacity: 0.5; }
+  }
+
   /* Pastel surfaces — for callouts, tinted sections */
   .surface-blue   { background: #EFF6FF; color: #1E3A8A; }
   .surface-violet { background: #F5F3FF; color: #4C1D95; }

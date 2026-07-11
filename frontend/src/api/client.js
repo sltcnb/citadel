@@ -7,11 +7,18 @@ export function setToken(t)          { localStorage.setItem(TOKEN_KEY, t) }
 export function clearToken()         { localStorage.removeItem(TOKEN_KEY) }
 export function isAuthenticated()    { return !!getToken() }
 
-// Called by App when the server responds 401 — clears state and reloads to /login
+// Called by App when the server responds 401 — clears state and reloads to /login.
+// Preserves where the user was (as ?from=) and flags a "session expired" notice so
+// unsaved context isn't silently dropped without explanation.
 function _handle401() {
   clearToken()
+  try { sessionStorage.setItem('fo_session_expired', '1') } catch { /* ignore */ }
+  // Preserve the current location as a return path, when there is a meaningful one.
+  const path = (window.location.pathname || '') + (window.location.search || '')
+  const isLogin = path === '/login' || path.startsWith('/login?')
+  const from = path && path !== '/' && !isLogin ? `?from=${encodeURIComponent(path)}` : ''
   // Hard reload so React router re-evaluates the auth gate cleanly
-  window.location.href = '/login'
+  window.location.href = `/login${from}`
 }
 
 async function request(method, path, body, options = {}) {
@@ -23,12 +30,19 @@ async function request(method, path, body, options = {}) {
 
   if (token) headers['Authorization'] = `Bearer ${token}`
 
-  const res = await fetch(url, {
-    method,
-    headers,
-    body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined,
-    ...options,
-  })
+  let res
+  try {
+    res = await fetch(url, {
+      method,
+      headers,
+      body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined,
+      ...options,
+    })
+  } catch {
+    // Network-level failure (offline, DNS, server down) — fetch rejects with a
+    // TypeError. Surface something a human can act on instead of "Failed to fetch".
+    throw new Error('Cannot reach the API — check that the server is running')
+  }
 
   if (res.status === 401) {
     _handle401()

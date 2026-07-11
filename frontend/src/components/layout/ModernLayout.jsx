@@ -1,11 +1,10 @@
 import { Outlet, NavLink, useNavigate, useLocation, useParams } from 'react-router-dom'
 import { useState, useEffect, useRef } from 'react'
 import {
-  LayoutDashboard, FolderOpen, Bell, FileCode, Shield, FlaskConical,
-  Cpu, Code2, PackageOpen, Puzzle, BookOpen, Activity, Users, Settings2,
-  LogOut, UserCircle, Sun, Moon, ChevronDown, Loader2,
-  X, Menu, Plus, Search, ListChecks, ScrollText, Boxes, LayoutTemplate,
+  FolderOpen, LogOut, Sun, Moon, ChevronDown, Loader2,
+  X, Menu, Plus, Search,
 } from 'lucide-react'
+import { HOME_ITEM, NAV_GROUPS, ACCOUNT_ITEM, NAV_SHORTCUTS } from '../../nav'
 import { api } from '../../api/client'
 import { useKeyboardShortcuts } from '../../hooks/useKeyboardShortcuts'
 import KeyboardShortcutsModal from '../KeyboardShortcutsModal'
@@ -43,50 +42,6 @@ function useTheme() {
   }, [theme])
   return [theme, () => setTheme(t => THEMES[(THEMES.indexOf(t) + 1) % THEMES.length])]
 }
-
-const HOME_ITEM = { to: '/', icon: LayoutDashboard, label: 'Dashboard', end: true }
-
-const DROPDOWN_GROUPS = [
-  {
-    label: 'Analyze',
-    items: [
-      { to: '/cross-search', icon: Search,      label: 'Cross-Case Search' },
-      { to: '/malware',      icon: FlaskConical, label: 'Malware' },
-      { to: '/modules',      icon: Cpu,          label: 'Modules' },
-      { to: '/collector',    icon: PackageOpen,  label: 'Collector' },
-    ],
-  },
-  {
-    label: 'Knowledge',
-    items: [
-      { to: '/alert-rules', icon: Bell,       label: 'Alert Rules' },
-      { to: '/yara-rules',  icon: FileCode,   label: 'YARA Rules' },
-      { to: '/templates',   icon: LayoutTemplate, label: 'Templates' },
-      { to: '/cti',         icon: Shield,     label: 'Threat Intel' },
-      { to: '/watchlist',   icon: ListChecks, label: 'IOC Watchlist' },
-    ],
-  },
-  {
-    label: 'Platform',
-    adminOnly: true,
-    items: [
-      { to: '/suite',         icon: Boxes,     label: 'Stack' },
-      { to: '/studio',    icon: Code2,    label: 'Studio' },
-      { to: '/ingesters', icon: Puzzle,   label: 'Ingesters' },
-      { to: '/docs',      icon: BookOpen, label: 'Docs' },
-    ],
-  },
-  {
-    label: 'Admin',
-    adminOnly: true,
-    items: [
-      { to: '/settings',    icon: Settings2,   label: 'Platform Settings' },
-      { to: '/performance', icon: Activity,    label: 'Performance' },
-      { to: '/logs',        icon: ScrollText,  label: 'Tool Logs' },
-      { to: '/users',       icon: Users,       label: 'Users' },
-    ],
-  },
-]
 
 function Dropdown({ group, location }) {
   const [open, setOpen] = useState(false)
@@ -214,12 +169,9 @@ export default function ModernLayout({ user, onLogout }) {
   }
 
   useKeyboardShortcuts([
-    { key: 'g d', handler: () => navigate('/') },
-    { key: 'g c', handler: () => navigate('/cases') },
-    { key: 'g s', handler: () => navigate('/studio') },
-    { key: 'g a', handler: () => navigate('/alert-rules') },
-    { key: 'g t', handler: () => navigate('/cti') },
-    { key: 'g m', handler: () => navigate('/modules') },
+    // Navigation bindings are derived from the shared manifest so the keys shown
+    // in the help modal always match what's actually wired up here.
+    ...NAV_SHORTCUTS.map(s => ({ key: s.keys.join(' '), handler: () => navigate(s.to) })),
     { key: 'g n', handler: () => setShowNewCase(true) },
     { key: 'shift+/', handler: () => setShowShortcuts(v => !v) },
     { key: 'escape', handler: () => setShowShortcuts(false) },
@@ -273,7 +225,7 @@ export default function ModernLayout({ user, onLogout }) {
             </NavLink>
           )}
 
-          {DROPDOWN_GROUPS.filter(g => !g.adminOnly || isAdmin(user)).map((group, gi) => (
+          {NAV_GROUPS.filter(g => !g.adminOnly || isAdmin(user)).map((group, gi) => (
             <Dropdown key={gi} group={group} location={location} />
           ))}
         </nav>
@@ -401,8 +353,8 @@ export default function ModernLayout({ user, onLogout }) {
           {[
             HOME_ITEM,
             ...(lastCaseId ? [{ to: `/cases/${lastCaseId}`, icon: FolderOpen, label: 'Case' }] : []),
-            ...DROPDOWN_GROUPS.filter(g => !g.adminOnly || isAdmin(user)).flatMap(g => g.items),
-            { to: '/account', icon: UserCircle, label: 'Account' },
+            ...NAV_GROUPS.filter(g => !g.adminOnly || isAdmin(user)).flatMap(g => g.items),
+            ACCOUNT_ITEM,
           ].map(item => (
             <NavLink
               key={item.to}

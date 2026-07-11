@@ -47,9 +47,20 @@ export default function Login({ onLogin }) {
   const [error, setError]       = useState('')
   const [providers, setProviders] = useState([])   // SSO providers: [{id,name}]
   const [ssoLoading, setSsoLoading] = useState(false)
+  const [notice, setNotice]     = useState('')
   const codeRef = useRef(null)
 
   useEffect(() => { if (step === 'mfa') codeRef.current?.focus() }, [step])
+
+  // Surface the "session expired" flag set by the api client on a 401, then clear it.
+  useEffect(() => {
+    try {
+      if (sessionStorage.getItem('fo_session_expired')) {
+        setNotice('Your session expired — please sign in again to continue.')
+        sessionStorage.removeItem('fo_session_expired')
+      }
+    } catch { /* ignore */ }
+  }, [])
 
   // ── SSO: discover providers + handle OIDC return (token/error in URL hash) ──
   useEffect(() => {
@@ -77,7 +88,9 @@ export default function Login({ onLogin }) {
 
   function finish(data) {
     onLogin(data.access_token, { username: data.username, role: data.role })
-    const from = location.state?.from?.pathname || '/'
+    let fromQuery = ''
+    try { fromQuery = new URLSearchParams(window.location.search).get('from') || '' } catch { /* ignore */ }
+    const from = location.state?.from?.pathname || fromQuery || '/'
     navigate(from, { replace: true })
   }
 
@@ -158,7 +171,7 @@ export default function Login({ onLogin }) {
     <div className="min-h-screen grid lg:grid-cols-2 bg-white">
       {/* ── Brand panel (hidden on small screens) ──────────────────────────── */}
       <div className="hidden lg:flex relative flex-col justify-between overflow-hidden bg-gray-950 text-white p-12">
-        <div className="absolute inset-0 opacity-[0.35] bg-[radial-gradient(60rem_40rem_at_top_left,theme(colors.brand-accent/40),transparent)]" />
+        <div className="absolute inset-0 opacity-[0.35] bg-[radial-gradient(60rem_40rem_at_top_left,rgba(99,102,241,0.4),transparent)]" />
         <div className="absolute inset-0 opacity-20 bg-[radial-gradient(40rem_30rem_at_bottom_right,theme(colors.indigo.500/40),transparent)]" />
         <div className="relative flex items-center gap-3">
           <img src="/favicon.svg" alt="" className="w-10 h-10 rounded-xl shadow-lg" />
@@ -202,6 +215,7 @@ export default function Login({ onLogin }) {
               </div>
 
               <form onSubmit={submitCredentials} className="space-y-4">
+                {notice && !error && <NoticeBox msg={notice} />}
                 {error && <ErrorBox msg={error} />}
 
                 <Field label="Username">
@@ -377,6 +391,14 @@ function Field({ label, children }) {
         {label}
       </label>
       {children}
+    </div>
+  )
+}
+
+function NoticeBox({ msg }) {
+  return (
+    <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+      {msg}
     </div>
   )
 }
