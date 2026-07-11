@@ -481,7 +481,7 @@ function NewFileModal({ type, existing, onClose, onCreate }) {
             <LayoutTemplate size={15} className="text-brand-accent" />
             <span className="text-sm font-semibold">{titles[type] || 'New File'}</span>
           </div>
-          <button className="icon-btn" onClick={onClose}><X size={14} /></button>
+          <button className="icon-btn" onClick={onClose} aria-label="Close"><X size={14} /></button>
         </div>
 
         <div className="p-5 space-y-4">
@@ -555,7 +555,7 @@ function DeleteConfirmModal({ file, onClose, onConfirm }) {
       <>
         <div className="modal-header">
           <span className="text-sm font-semibold text-red-600">Delete</span>
-          <button className="icon-btn" onClick={onClose}><X size={14} /></button>
+          <button className="icon-btn" onClick={onClose} aria-label="Close"><X size={14} /></button>
         </div>
         <div className="p-5 space-y-4">
           <p className="text-sm text-gray-600">
@@ -639,7 +639,7 @@ function ValidationModal({ type, validation, onClose }) {
                 : <AlertCircle size={15} className="text-red-500" />}
             <span className="text-sm font-semibold">Validation Result</span>
           </div>
-          <button className="icon-btn" onClick={onClose}><X size={14} /></button>
+          <button className="icon-btn" onClick={onClose} aria-label="Close"><X size={14} /></button>
         </div>
         <div className="p-5 space-y-4">
           {isSkipped ? (

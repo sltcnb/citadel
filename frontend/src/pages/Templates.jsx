@@ -61,7 +61,7 @@ function TemplateEditor({ initial, isClone, onClose, onSaved }) {
             <LayoutTemplate size={16} className="text-brand-accent" />
             {editingId ? 'Edit template' : isClone ? 'Clone template' : 'New template'}
           </h2>
-          <button onClick={onClose} className="icon-btn"><X size={16} /></button>
+          <button onClick={onClose} className="icon-btn" aria-label="Close"><X size={16} /></button>
         </div>
 
         <div className="p-5 space-y-3 overflow-y-auto">

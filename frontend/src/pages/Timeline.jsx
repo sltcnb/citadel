@@ -3010,7 +3010,7 @@ function AiSearchAssistPanel({ caseId, onApply, onClose }) {
           <Sparkles size={12} className="text-indigo-500" />
           <span className="text-[11px] font-semibold text-indigo-700">AI Search Assist</span>
         </div>
-        <button onClick={onClose} className="text-indigo-400 hover:text-indigo-600"><X size={12} /></button>
+        <button onClick={onClose} className="text-indigo-400 hover:text-indigo-600" aria-label="Close"><X size={12} /></button>
       </div>
       <form onSubmit={submit} className="flex gap-2">
         <input

@@ -530,7 +530,7 @@ export default function EventDetail({ event: initialEvent, caseId, onClose, onFi
               placeholder="Add tag…"
               className="input flex-1 py-1 text-xs"
             />
-            <button type="submit" className="btn-ghost px-2 text-xs"><Plus size={12} /></button>
+            <button type="submit" className="btn-ghost px-2 text-xs" aria-label="Add"><Plus size={12} /></button>
           </form>
         </div>
 

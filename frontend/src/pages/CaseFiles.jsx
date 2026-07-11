@@ -76,7 +76,7 @@ function ContentViewer({ caseId, file, onClose }) {
     <div className="flex flex-col h-full">
       {/* Toolbar */}
       <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-200 bg-white flex-shrink-0">
-        <button onClick={onClose} className="icon-btn"><ArrowLeft size={14} /></button>
+        <button onClick={onClose} className="icon-btn" aria-label="Back"><ArrowLeft size={14} /></button>
         <FileIcon category={file.category} size={14} />
         <span className="text-xs font-medium text-brand-text truncate flex-1">{file.filename}</span>
         {content && (
@@ -424,7 +424,7 @@ function ReingestModal({ caseId, file, onClose, onDone }) {
       <>
         <div className="flex items-center justify-between mb-3">
           <h3 className="font-semibold text-sm text-brand-text">Re-ingest with plugin</h3>
-          <button onClick={onClose} className="icon-btn"><X size={14} /></button>
+          <button onClick={onClose} className="icon-btn" aria-label="Close"><X size={14} /></button>
         </div>
 
         <p className="text-xs text-gray-500 mb-3 truncate">
