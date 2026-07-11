@@ -26,6 +26,7 @@ import {
 } from 'lucide-react'
 import { api } from '../api/client'
 import ConfirmDialog from '../components/ConfirmDialog'
+import Modal from '../components/shared/Modal'
 import EventDetail from '../components/shared/EventDetail'
 import StatsPopover from '../components/shared/StatsPopover'
 import PanelHelp from '../components/shared/PanelHelp'
@@ -2210,14 +2211,13 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
 
       {/* Keyboard shortcuts overlay */}
       {showHelp && (
-        <div
-          className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center"
-          onClick={() => setShowHelp(false)}
+        <Modal
+          onClose={() => setShowHelp(false)}
+          overlayClassName="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center"
+          className="bg-white rounded-xl shadow-2xl p-6 w-80 max-w-[90vw]"
+          ariaLabel="Keyboard shortcuts"
         >
-          <div
-            className="bg-white rounded-xl shadow-2xl p-6 w-80 max-w-[90vw]"
-            onClick={e => e.stopPropagation()}
-          >
+          <>
             <div className="flex items-center justify-between mb-5">
               <div className="flex items-center gap-2">
                 <Keyboard size={16} className="text-brand-accent" />
@@ -2251,8 +2251,8 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
                 {' '}to exclude a value.
               </p>
             </div>
-          </div>
-        </div>
+          </>
+        </Modal>
       )}
 
       {confirmDeleteSearch && (

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import {
   FileText,
   HardDrive,
@@ -19,6 +19,7 @@ import {
 } from 'lucide-react'
 import { api } from '../api/client'
 import { formatBytes } from '../utils/format'
+import Modal from '../components/shared/Modal'
 
 // ── Category icons ────────────────────────────────────────────────────────────
 function FileIcon({ category, size = 13 }) {
@@ -387,7 +388,6 @@ function ReingestModal({ caseId, file, onClose, onDone }) {
   const [selected, setSelected]   = useState('')
   const [busy, setBusy]           = useState(false)
   const [error, setError]         = useState('')
-  const overlayRef = useRef(null)
 
   useEffect(() => {
     api.plugins.list()
@@ -415,12 +415,13 @@ function ReingestModal({ caseId, file, onClose, onDone }) {
   }
 
   return (
-    <div
-      ref={overlayRef}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
-      onClick={e => { if (e.target === overlayRef.current) onClose() }}
+    <Modal
+      onClose={onClose}
+      overlayClassName="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+      className="bg-white rounded-lg shadow-xl w-80 p-4"
+      ariaLabel="Re-ingest with plugin"
     >
-      <div className="bg-white rounded-lg shadow-xl w-80 p-4">
+      <>
         <div className="flex items-center justify-between mb-3">
           <h3 className="font-semibold text-sm text-brand-text">Re-ingest with plugin</h3>
           <button onClick={onClose} className="icon-btn"><X size={14} /></button>
@@ -465,8 +466,8 @@ function ReingestModal({ caseId, file, onClose, onDone }) {
             Re-ingest
           </button>
         </div>
-      </div>
-    </div>
+      </>
+    </Modal>
   )
 }
 

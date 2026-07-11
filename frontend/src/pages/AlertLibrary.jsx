@@ -33,6 +33,7 @@ import RuleDrawer, {
   CATEGORY_ORDER, CATEGORY_STYLES,
 } from '../components/RuleDrawer'
 import AlertRuleFilterBar from '../components/AlertRuleFilterBar'
+import Modal from '../components/shared/Modal'
 import { filterAlertRules, ruleProvenance } from '../lib/alertRuleFilters'
 
 // ── AI Analysis panel (shown inside RunOnCaseModal after a firing result) ──────
@@ -113,10 +114,14 @@ function RunOnCaseModal({ rule, cases, onClose }) {
   }
 
   return (
-    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4"
-      onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl w-full max-w-md shadow-2xl flex flex-col"
-        style={{ maxHeight: '90vh' }}>
+    <Modal
+      onClose={onClose}
+      overlayClassName="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+      className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl w-full max-w-md shadow-2xl flex flex-col"
+      style={{ maxHeight: '90vh' }}
+      ariaLabel="Run rule on case"
+    >
+      <>
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
           <div className="flex items-center gap-2">
             <Play size={15} className="text-brand-accent" />
@@ -198,8 +203,8 @@ function RunOnCaseModal({ rule, cases, onClose }) {
             </div>
           )}
         </div>
-      </div>
-    </div>
+      </>
+    </Modal>
   )
 }
 
