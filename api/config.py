@@ -13,6 +13,24 @@ class Settings:
     MINIO_BUCKET: str = os.getenv("MINIO_BUCKET", "forensics-cases")
     PLUGINS_DIR: str = os.getenv("PLUGINS_DIR", "/app/babel")
 
+    # ── Logging ────────────────────────────────────────────────────────────
+    # Root log level; LOG_JSON emits one structured JSON object per line
+    # (handy for log aggregators) instead of the human-readable formatter.
+    LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO").upper()
+    LOG_JSON: bool = os.getenv("LOG_JSON", "false").lower() in ("true", "1", "yes")
+
+    # ── Storage reconciliation (orphan handling) ────────────────────────────
+    # Objects modified within this window are NEVER considered orphans or
+    # eligible for deletion — this avoids racing in-flight uploads whose DB
+    # record has not been written yet.
+    STORAGE_RECONCILE_GRACE_HOURS: int = int(
+        os.getenv("STORAGE_RECONCILE_GRACE_HOURS", "24")
+    )
+    # Hard cap on how many objects a single reconcile pass will enumerate.
+    STORAGE_RECONCILE_MAX_OBJECTS: int = int(
+        os.getenv("STORAGE_RECONCILE_MAX_OBJECTS", "100000")
+    )
+
     # ── Pagination ─────────────────────────────────────────────────────────
     DEFAULT_PAGE_SIZE: int = int(os.getenv("DEFAULT_PAGE_SIZE", "100"))
     MAX_PAGE_SIZE: int = int(os.getenv("MAX_PAGE_SIZE", "1000"))
