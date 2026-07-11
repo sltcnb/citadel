@@ -133,7 +133,7 @@ services:
   worker-ingest:
     build:
       context: .          # repo root — Dockerfile copies processor/ + plugins/
-      dockerfile: processor/Dockerfile
+      dockerfile: tools/sluice/worker/Dockerfile
     environment:
       - REDIS_URL=redis://redis:6379/0
       - ELASTICSEARCH_URL=http://elasticsearch:9200
@@ -169,7 +169,7 @@ services:
   worker-modules:
     build:
       context: .          # repo root
-      dockerfile: processor/Dockerfile
+      dockerfile: tools/sluice/worker/Dockerfile
     environment:
       - REDIS_URL=redis://redis:6379/0
       - ELASTICSEARCH_URL=http://elasticsearch:9200
