@@ -89,6 +89,88 @@ jobs:
         continue-on-error: true
         run: yamllint -c .yamllint.yml tools/ contracts/ k8s/
 
+  backend-pytest:
+    name: Backend pytest (fakeredis)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"  # matches api/Dockerfile runtime
+          cache: pip
+          cache-dependency-path: api/requirements.txt
+      - name: Install backend test deps
+        # Pure-python subset needed by the fakeredis-backed unit tests. The full
+        # api/requirements.txt pulls native libs (yara-python, pytsk3, weasyprint,
+        # python-magic) that need system packages and are covered by the Build
+        # workflow's image build instead. bcrypt<4.0.0 is required for passlib
+        # 1.7.4 compatibility (see api/requirements.txt).
+        run: |
+          pip install \
+            fastapi==0.111.0 pydantic==2.7.1 pydantic-settings==2.2.1 \
+            python-multipart==0.0.9 redis==5.0.4 fakeredis \
+            "python-jose[cryptography]==3.3.0" passlib==1.7.4 "bcrypt>=3.2.0,<4.0.0" \
+            pyotp==2.9.0 httpx==0.27.0 pyyaml==6.0.1 PyJWT==2.8.0 requests==2.31.0 \
+            anthropic==0.25.0 openai==1.30.0 \
+            pytest pytest-asyncio
+      - name: Run fakeredis-backed unit suite
+        # Scoped to tests that run without native deps or a live Redis.
+        # test_evidence_seal.py is excluded: it exercises a distributed lock that
+        # is not reliable against fakeredis in CI (tracked; re-enable once the
+        # seal lock has a test double).
+        run: |
+          pytest -q \
+            api/auth api/services api/routers \
+            api/test_sigma_settings.py api/test_agg_rules.py \
+            --ignore=api/services/test_evidence_seal.py
+
+  frontend-build-test:
+    name: Frontend build + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Build
+        working-directory: frontend
+        run: npm run build
+      - name: Test
+        working-directory: frontend
+        run: npm test
+
+  cve-scan:
+    name: CVE scan (non-blocking)
+    runs-on: ubuntu-latest
+    # NOTE: non-blocking for now (continue-on-error) so the existing known-CVE
+    # backlog does not wall PRs. Flip these to blocking (remove continue-on-error
+    # / set trivy exit-code: "1") once the backlog has been triaged.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install pip-audit
+        run: pip install pip-audit
+      - name: pip-audit (backend deps)
+        continue-on-error: true
+        run: pip-audit -r api/requirements.txt --desc
+      - name: Trivy filesystem scan
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: table
+          exit-code: "0"
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+
   test:
     name: Tests
     runs-on: ubuntu-latest
