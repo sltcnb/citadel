@@ -119,9 +119,19 @@ class ArchivePlugin(BasePlugin):
                     if total_bytes > MAX_EXTRACTED_BYTES:
                         self.log.warning("ZIP extraction stopped: size limit reached")
                         break
-                    # Sanitise path to prevent zip-slip
+                    # Sanitise path to prevent zip-slip. normpath alone is not
+                    # enough: normpath('../../etc/x') keeps the '..', so verify
+                    # the resolved target stays inside dest before writing.
                     safe_name = os.path.normpath(info.filename).lstrip(os.sep)
                     out = dest / safe_name
+                    try:
+                        out.resolve().relative_to(dest.resolve())
+                    except (ValueError, OSError):
+                        self.log.warning(
+                            "Rejected unsafe ZIP entry (path traversal): %r",
+                            info.filename,
+                        )
+                        continue
                     out.parent.mkdir(parents=True, exist_ok=True)
                     with zf.open(info) as src, open(out, "wb") as dst:
                         shutil.copyfileobj(src, dst)

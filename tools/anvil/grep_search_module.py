@@ -71,7 +71,7 @@ class GrepSearchModule(BaseModule):
                 pat = _normalize(pat)
                 try:
                     proc_count = subprocess.run(
-                        [grep_bin, "-oPc", pat, str(local_path)],
+                        [grep_bin, "-oPc", "--", pat, str(local_path)],
                         capture_output=True,
                         text=True,
                         timeout=60,
@@ -85,7 +85,7 @@ class GrepSearchModule(BaseModule):
                 if count > 0:
                     try:
                         proc_m = subprocess.run(
-                            [grep_bin, "-oP", pat, str(local_path)],
+                            [grep_bin, "-oP", "--", pat, str(local_path)],
                             capture_output=True,
                             text=True,
                             timeout=60,
