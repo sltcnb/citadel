@@ -198,9 +198,7 @@ function JobCard({ jobId, jobData, onRetry, onDelete }) {
       {/* ── UPLOADING ── */}
       {job.status === 'UPLOADING' && (
         <div className="mt-1">
-          <div className="h-1 bg-gray-200 rounded overflow-hidden">
-            <div className="h-full bg-sky-500 animate-pulse w-2/3 rounded" />
-          </div>
+          <div className="h-1 bg-gray-200 rounded overflow-hidden progress-indeterminate text-sky-500" />
           <p className="text-[10px] text-sky-500 mt-0.5 flex items-center gap-1">
             <Loader2 size={9} className="animate-spin flex-shrink-0" />
             Transferring to storage
@@ -214,9 +212,7 @@ function JobCard({ jobId, jobData, onRetry, onDelete }) {
       {job.status === 'RUNNING' && (
         <div className="mt-1.5 space-y-1.5">
           {/* Progress bar */}
-          <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
-            <div className="h-full bg-brand-accent rounded-full animate-pulse" style={{ width: '40%' }} />
-          </div>
+          <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden progress-indeterminate text-brand-accent" />
 
           {/* Key metrics row */}
           <div className="flex items-center gap-3 flex-wrap">
@@ -389,10 +385,15 @@ function UploadTab({ caseId, onJobsAdded }) {
           }
         }
       }
-      onJobsAdded(allJobs)
     } catch (err) {
-      setError(`Upload failed: ${err.message}`)
+      // A file may have failed mid-batch — surface it, but note that whatever
+      // uploaded before it is preserved (handed off in the finally below).
+      const extra = allJobs.length ? ` — ${allJobs.length} file(s) already queued were kept` : ''
+      setError(`Upload failed: ${err.message}${extra}`)
     } finally {
+      // ALWAYS hand off the jobs that did succeed so ingested evidence never
+      // silently vanishes when a later file in the batch fails.
+      if (allJobs.length) onJobsAdded(allJobs)
       setUploading(false)
       setUploadPct(0)
       finishUpload(uploadId)
