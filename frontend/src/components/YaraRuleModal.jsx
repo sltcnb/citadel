@@ -3,6 +3,7 @@ import {
   FileCode, X, Upload, Check, Loader2, AlertTriangle, Sparkles, Building2,
 } from 'lucide-react'
 import Editor from '@monaco-editor/react'
+import Modal from './shared/Modal'
 import { api } from '../api/client'
 import { useCompanies } from '../pages/UserManagement'
 
@@ -202,7 +203,7 @@ export default function YaraRuleModal({ rule = null, onClose, onSaved, openAI = 
         <FileCode size={16} className="text-brand-accent" />
         <h2 className="text-sm font-semibold">{isEdit ? 'Edit YARA Rule' : 'New YARA Rule'}</h2>
       </div>
-      <button onClick={onClose} className="icon-btn"><X size={14} /></button>
+      <button onClick={onClose} className="icon-btn" aria-label="Close"><X size={14} /></button>
     </div>
   )
 
@@ -400,8 +401,14 @@ export default function YaraRuleModal({ rule = null, onClose, onSaved, openAI = 
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl mx-4 flex flex-col max-h-[92vh]">
+    <Modal
+      onClose={onClose}
+      closeOnOverlayClick={false}
+      overlayClassName="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+      className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl mx-4 flex flex-col max-h-[92vh]"
+      ariaLabel={isEdit ? 'Edit YARA rule' : 'New YARA rule'}
+    >
+      <>
         {header}
         <div className="overflow-y-auto flex-1 p-5 space-y-4">
           <div className="grid grid-cols-2 gap-3">
@@ -446,7 +453,7 @@ export default function YaraRuleModal({ rule = null, onClose, onSaved, openAI = 
           )}
         </div>
         {footer}
-      </div>
-    </div>
+      </>
+    </Modal>
   )
 }
