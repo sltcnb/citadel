@@ -56,6 +56,10 @@ _JOB_TTL = 7 * 24 * 3600  # 7 days — matches API
 _BUCKET = os.environ.get("MINIO_BUCKET", "forensics-cases")
 _MAX_BYTES = int(os.environ.get("DD_MAX_EXTRACT_MB", "500")) * 1024 * 1024
 _CHUNK = 1024 * 1024  # 1 MB read chunks
+# Upper bound for a single read() when the caller passes n < 0 ("read all
+# remaining"). Prevents pulling a whole multi-GB image into RAM in one call;
+# callers that want everything simply loop until read() returns b"".
+_MAX_READ_ALL = int(os.environ.get("DD_MAX_READ_ALL_MB", "64")) * 1024 * 1024
 _SKIP_NAMES = frozenset([".", "..", "$OrphanFiles"])
 
 
@@ -93,7 +97,11 @@ class S3RangeReader:
     def read(self, n: int = -1) -> bytes:
         if self._pos >= self._size:
             return b""
-        length = (self._size - self._pos) if n < 0 else min(n, self._size - self._pos)
+        remaining = self._size - self._pos
+        # n < 0 means "read all remaining" — cap it to a bounded chunk so a
+        # single call can't materialise a multi-GB image in RAM. Callers loop
+        # until read() returns b"" to consume the whole object.
+        length = min(remaining, _MAX_READ_ALL) if n < 0 else min(n, remaining)
         resp = None
         try:
             resp = self._client.get_object(
