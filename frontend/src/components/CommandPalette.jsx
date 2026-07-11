@@ -14,30 +14,19 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import {
-  Search, ArrowRight, LayoutDashboard, FolderOpen, Bell, FileCode, Shield,
-  FlaskConical, Cpu, Code2, PackageOpen, Puzzle, BookOpen, Activity, Users,
-  Settings2, ListChecks,
-} from 'lucide-react'
+import { Search, ArrowRight } from 'lucide-react'
 import { api } from '../api/client'
+import { NAV_ITEMS, CASE_ICON } from '../nav'
 
-const NAV_COMMANDS = [
-  { id: 'nav:dashboard',   label: 'Dashboard',          group: 'Navigate', to: '/',              Icon: LayoutDashboard },
-  { id: 'nav:cross',       label: 'Cross-case search',  group: 'Navigate', to: '/cross-search',  Icon: Search          },
-  { id: 'nav:watchlist',   label: 'IOC Watchlist',       group: 'Navigate', to: '/watchlist',     Icon: ListChecks      },
-  { id: 'nav:alerts',      label: 'Alert Rules',         group: 'Navigate', to: '/alert-rules',   Icon: Bell            },
-  { id: 'nav:yara',        label: 'YARA Rules',          group: 'Navigate', to: '/yara-rules',    Icon: FileCode        },
-  { id: 'nav:cti',         label: 'Threat Intel',        group: 'Navigate', to: '/cti',           Icon: Shield          },
-  { id: 'nav:malware',     label: 'Malware Analysis',    group: 'Navigate', to: '/malware',       Icon: FlaskConical    },
-  { id: 'nav:modules',     label: 'Modules',             group: 'Navigate', to: '/modules',       Icon: Cpu             },
-  { id: 'nav:collector',   label: 'Collector',           group: 'Navigate', to: '/collector',     Icon: PackageOpen     },
-  { id: 'nav:studio',      label: 'Studio',              group: 'Navigate', to: '/studio',        Icon: Code2           },
-  { id: 'nav:ingesters',   label: 'Ingesters',           group: 'Navigate', to: '/ingesters',     Icon: Puzzle          },
-  { id: 'nav:docs',        label: 'Docs',                group: 'Navigate', to: '/docs',          Icon: BookOpen        },
-  { id: 'nav:performance', label: 'Performance',         group: 'Navigate', to: '/performance',   Icon: Activity        },
-  { id: 'nav:users',       label: 'Users',               group: 'Navigate', to: '/users',         Icon: Users           },
-  { id: 'nav:settings',    label: 'Settings',            group: 'Navigate', to: '/settings',      Icon: Settings2       },
-]
+// Derived from the shared nav manifest so the palette can never fall behind the
+// top-nav (it used to miss Stack / Templates / Logs / Account).
+const NAV_COMMANDS = NAV_ITEMS.map(item => ({
+  id:    `nav:${item.to}`,
+  label: item.label,
+  group: 'Navigate',
+  to:    item.to,
+  Icon:  item.icon,
+}))
 
 export default function CommandPalette() {
   const [open, setOpen]   = useState(false)
@@ -74,7 +63,7 @@ export default function CommandPalette() {
       group: 'Cases',
       sub:   c.company || c.case_id,
       to:    `/cases/${c.case_id}`,
-      Icon:  FolderOpen,
+      Icon:  CASE_ICON,
     }))
     return [...NAV_COMMANDS, ...caseCmds]
   }, [cases])
