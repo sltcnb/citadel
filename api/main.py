@@ -71,7 +71,9 @@ from routers import auth as auth_router
 
 from config import settings
 
-logging.basicConfig(level=logging.INFO)
+from logging_config import configure_logging
+
+configure_logging()
 logger = logging.getLogger(__name__)
 
 

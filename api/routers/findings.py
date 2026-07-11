@@ -180,8 +180,12 @@ def promote_findings(
 
     try:
         storage.upload_fileobj(minio_key, io.BytesIO(payload), len(payload))
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Could not stage findings: {exc}") from exc
+    except storage.StorageUnavailable as exc:
+        logger.error("Storage unavailable staging findings %s: %s", minio_key, exc)
+        raise HTTPException(status_code=503, detail="Storage backend unavailable") from exc
+    except storage.StorageError as exc:
+        logger.error("Failed to stage findings %s: %s", minio_key, exc)
+        raise HTTPException(status_code=502, detail="Could not stage findings") from exc
 
     job_svc.create_job(job_id, case_id, filename, "")
     job_svc.update_job(job_id, minio_object_key=minio_key, status="PENDING")
