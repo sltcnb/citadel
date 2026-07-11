@@ -6,10 +6,14 @@ WORKDIR /app
 # (citadel_contracts is COPYed to /app/citadel_contracts below).
 ENV PYTHONPATH=/app
 
-# gcc + libtsk-dev so pytsk3 (The Sleuth Kit bindings) compiles — the disk-image
-# parser is discovered here for the UI, so its import must succeed too.
+# Build toolchain + native headers for the source-built wheels:
+#   - pytsk3 (Sleuth Kit bindings): gcc/g++, libtsk-dev, and its ./configure
+#     needs `file`, make and the autotools.
+#   - yara-python 4.3.1: bundles libyara, whose authenticode module needs the
+#     OpenSSL headers (openssl/asn1.h) -> libssl-dev, plus pkg-config.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc g++ libmagic1 libtsk-dev \
+    gcc g++ make file autoconf automake libtool pkg-config \
+    libssl-dev libmagic1 libtsk-dev \
     # WeasyPrint (report.pdf) runtime libs — Pango/Cairo/GDK-Pixbuf + font stack
     libpango-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf-2.0-0 libcairo2 \
     libffi8 shared-mime-info fonts-dejavu-core \
