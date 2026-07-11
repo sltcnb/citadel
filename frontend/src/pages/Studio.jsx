@@ -1209,7 +1209,7 @@ export default function Studio() {
           >
             <FileCode2 size={13} className="flex-shrink-0 opacity-60" />
             <span className="text-[11px] font-mono truncate flex-1">{f.name}</span>
-            {isDirtyTab && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" />}
+            {isDirtyTab && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" title="Unsaved changes" role="img" aria-label="Unsaved changes" />}
             {isActive && !isDirtyTab && <ChevronRight size={10} className="flex-shrink-0 opacity-50" />}
           </button>
 
