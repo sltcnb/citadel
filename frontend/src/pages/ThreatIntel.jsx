@@ -3,6 +3,7 @@ import { Shield, Plus, Trash2, RefreshCw, Download, Upload, Search, Globe, Hash,
 import { PageShell, PageHeader } from '../components/shared/PageShell'
 import { api } from '../api/client'
 import { formatDate } from '../utils/format'
+import Modal from '../components/shared/Modal'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -112,8 +113,7 @@ function FeedModal({ feed, onClose, onSaved }) {
   }
 
   return (
-    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal-box max-w-lg">
+    <Modal onClose={onClose} className="modal-box max-w-lg" ariaLabel={feed ? 'Edit feed' : 'Add CTI feed'}>
         <div className="modal-header">
           <div className="flex items-center gap-2">
             <Shield size={16} className="text-brand-accent" />
@@ -259,8 +259,7 @@ function FeedModal({ feed, onClose, onSaved }) {
             <button type="button" onClick={onClose} className="btn-ghost text-xs">Cancel</button>
           </div>
         </form>
-      </div>
-    </div>
+    </Modal>
   )
 }
 

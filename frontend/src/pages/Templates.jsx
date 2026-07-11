@@ -5,6 +5,7 @@ import {
 import { PageShell, PageHeader } from '../components/shared/PageShell'
 import { api } from '../api/client'
 import ConfirmDialog from '../components/ConfirmDialog'
+import Modal from '../components/shared/Modal'
 
 // Investigation-template authoring page. Built-ins can be edited in place
 // (the edit is stored as an override; Reset restores the shipped default) or
@@ -54,8 +55,7 @@ function TemplateEditor({ initial, isClone, onClose, onSaved }) {
   }
 
   return (
-    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal-box max-w-2xl">
+    <Modal onClose={onClose} className="modal-box max-w-2xl" ariaLabel={editingId ? 'Edit template' : 'New template'}>
         <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200">
           <h2 className="font-semibold text-brand-text flex items-center gap-2">
             <LayoutTemplate size={16} className="text-brand-accent" />
@@ -125,8 +125,7 @@ function TemplateEditor({ initial, isClone, onClose, onSaved }) {
           </button>
           <button onClick={onClose} className="btn-ghost text-sm">Cancel</button>
         </div>
-      </div>
-    </div>
+    </Modal>
   )
 }
 

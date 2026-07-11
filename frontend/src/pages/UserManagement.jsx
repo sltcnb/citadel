@@ -3,6 +3,7 @@ import { Users, Plus, Trash2, Pencil, Key, Shield, ShieldCheck, Loader2, Check, 
 import { PageShell, PageHeader } from '../components/shared/PageShell'
 import { api } from '../api/client'
 import { formatDate } from '../utils/format'
+import SharedModal from '../components/shared/Modal'
 
 /* ── Shared company hooks ─────────────────────────────────────────────────── */
 
@@ -33,15 +34,20 @@ const fmtDate = iso => formatDate(iso, 'date', '-')
 function Modal({ open, onClose, title, children, wide = false }) {
   if (!open) return null
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30" onClick={onClose}>
-      <div className={`card p-5 w-full ${wide ? 'max-w-2xl' : 'max-w-md'} mx-4 space-y-4 max-h-[90vh] overflow-y-auto`} onClick={e => e.stopPropagation()}>
+    <SharedModal
+      onClose={onClose}
+      overlayClassName="fixed inset-0 z-50 flex items-center justify-center bg-black/30"
+      className={`card p-5 w-full ${wide ? 'max-w-2xl' : 'max-w-md'} mx-4 space-y-4 max-h-[90vh] overflow-y-auto`}
+      ariaLabel={title}
+    >
+      <>
         <div className="flex items-center justify-between">
           <h3 className="font-semibold text-brand-text">{title}</h3>
           <button onClick={onClose} className="text-gray-500 hover:text-gray-600"><X size={16} /></button>
         </div>
         {children}
-      </div>
-    </div>
+      </>
+    </SharedModal>
   )
 }
 
