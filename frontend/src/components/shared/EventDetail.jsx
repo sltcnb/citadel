@@ -54,6 +54,7 @@ export default function EventDetail({ event: initialEvent, caseId, onClose, onFi
   const [explaining, setExplaining]   = useState(false)
   const [explanation, setExplanation] = useState(null)
   const [downloading, setDownloading] = useState(false)
+  const [actionError, setActionError] = useState('')
 
   // Find in panel
   const [findOpen,   setFindOpen]   = useState(false)
@@ -121,38 +122,64 @@ export default function EventDetail({ event: initialEvent, caseId, onClose, onFi
   const iocs  = extractIocs(event.message)
 
   async function toggleFlag() {
-    const r = await api.search.flagEvent(caseId, event.fo_id)
-    setEvent(p => ({ ...p, is_flagged: r.is_flagged }))
-    onFlagged?.(event.fo_id, r.is_flagged)
+    setActionError('')
+    try {
+      const r = await api.search.flagEvent(caseId, event.fo_id)
+      setEvent(p => ({ ...p, is_flagged: r.is_flagged }))
+      onFlagged?.(event.fo_id, r.is_flagged)
+    } catch (err) {
+      setActionError(err?.message || 'Failed to flag event')
+    }
   }
 
   async function togglePin() {
-    const r = await api.search.pinEvent(caseId, event.fo_id, {})
-    setEvent(p => ({ ...p, is_pinned: r.is_pinned }))
+    setActionError('')
+    try {
+      const r = await api.search.pinEvent(caseId, event.fo_id, {})
+      setEvent(p => ({ ...p, is_pinned: r.is_pinned }))
+    } catch (err) {
+      setActionError(err?.message || 'Failed to pin event')
+    }
   }
 
   async function saveNote() {
     setSaving(true)
-    await api.search.noteEvent(caseId, event.fo_id, note)
-    setEvent(p => ({ ...p, analyst_note: note }))
-    setSaving(false)
-    setNoteSaved(true)
-    setTimeout(() => setNoteSaved(false), 2000)
+    setActionError('')
+    try {
+      await api.search.noteEvent(caseId, event.fo_id, note)
+      setEvent(p => ({ ...p, analyst_note: note }))
+      setNoteSaved(true)
+      setTimeout(() => setNoteSaved(false), 2000)
+    } catch (err) {
+      setActionError(err?.message || 'Failed to save note')
+    } finally {
+      setSaving(false)
+    }
   }
 
   async function addTag(e) {
     e.preventDefault()
     if (!tagInput.trim()) return
+    setActionError('')
     const tags = [...(event.tags || []), tagInput.trim()]
-    await api.search.tagEvent(caseId, event.fo_id, tags)
-    setEvent(p => ({ ...p, tags }))
-    setTagInput('')
+    try {
+      await api.search.tagEvent(caseId, event.fo_id, tags)
+      setEvent(p => ({ ...p, tags }))
+      setTagInput('')
+    } catch (err) {
+      setActionError(err?.message || 'Failed to add tag')
+    }
   }
 
   async function removeTag(tag) {
+    setActionError('')
     const tags = (event.tags || []).filter(t => t !== tag)
-    await api.search.tagEvent(caseId, event.fo_id, tags)
-    setEvent(p => ({ ...p, tags }))
+    try {
+      await api.search.tagEvent(caseId, event.fo_id, tags)
+      setEvent(p => ({ ...p, tags }))
+    } catch (err) {
+      setActionError(err?.message || 'Failed to remove tag')
+    }
   }
 
   async function downloadFile() {
@@ -522,6 +549,9 @@ export default function EventDetail({ event: initialEvent, caseId, onClose, onFi
             {noteSaved ? <Check size={11} /> : <Save size={11} />}
             {saving ? 'Saving…' : noteSaved ? 'Saved' : 'Save Note'}
           </button>
+          {actionError ? (
+            <div role="alert" className="text-xs mt-1.5 text-red-600">{actionError}</div>
+          ) : null}
         </div>
 
         {/* Full message */}
