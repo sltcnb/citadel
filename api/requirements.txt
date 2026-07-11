@@ -1,3 +1,7 @@
+# Backend runtime dependencies for the Citadel API.
+# Target runtime: Python 3.11 (see api/Dockerfile). Every dependency is pinned
+# to a concrete version for reproducible builds; ranges are used only where a
+# constraint is intentional (see comments).
 fastapi==0.111.0
 uvicorn[standard]==0.29.0
 pydantic==2.7.1
@@ -7,22 +11,25 @@ redis==5.0.4
 celery==5.3.6
 minio==7.2.7
 python-magic==0.4.27
-pyyaml>=6.0
-httpx>=0.27.0
-yara-python>=4.3.1
-anthropic>=0.25.0
-openai>=1.30.0
+# 6.0.1 is the first 6.0.x that builds cleanly against Cython 3 / modern setuptools.
+pyyaml==6.0.1
+httpx==0.27.0
+yara-python==4.3.1
+anthropic==0.25.0
+openai==1.30.0
 # License validation
-PyJWT>=2.8.0
-requests>=2.31.0
+PyJWT==2.8.0
+requests==2.31.0
 # Auth
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
-bcrypt>=3.2.0,<4.0.0   # passlib 1.7.4 is not compatible with bcrypt 4.x
-pyotp>=2.9.0           # TOTP multi-factor auth
-qrcode[pil]>=7.4.2     # render the TOTP enrollment QR (server-side PNG)
+# Range is intentional: passlib 1.7.4 is not compatible with bcrypt 4.x
+# (it reads bcrypt.__about__.__version__, removed in 4.0). Keep <4.0.0.
+bcrypt>=3.2.0,<4.0.0
+pyotp==2.9.0           # TOTP multi-factor auth
+qrcode[pil]==7.4.2     # render the TOTP enrollment QR (server-side PNG)
 # Disk-image parser bindings — discovered here for the UI; needs libtsk-dev (Dockerfile)
-pytsk3>=20211111
+pytsk3==20211111
 # Report export — DOCX (pure python) + PDF (WeasyPrint; needs pango/cairo, see Dockerfile)
-python-docx>=1.1.0
-weasyprint>=62.0
+python-docx==1.1.0
+weasyprint==62.0
