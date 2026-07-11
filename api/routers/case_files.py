@@ -13,11 +13,12 @@ Endpoints:
 
 from __future__ import annotations
 
-import io
 import logging
 import mimetypes
+import os
 import re
 import tarfile
+import tempfile
 import zipfile
 from pathlib import Path
 from urllib.parse import quote
@@ -78,6 +79,30 @@ _DISK_IMAGE_EXTS = {
 
 _MAX_VIEW_BYTES = 5 * 1024 * 1024  # 5 MB
 _MAX_SEARCH_BYTES = 2 * 1024 * 1024  # 2 MB per file during search
+
+# Decompression-bomb cap for single-member extraction. A crafted archive can
+# declare a small member while inflating to gigabytes, so we both reject members
+# whose *declared* size exceeds the cap and abort mid-copy once the *actual*
+# extracted bytes cross it. Configurable via env; default 2 GiB.
+_MAX_EXTRACT_MEMBER_BYTES = int(
+    os.getenv("MAX_EXTRACT_MEMBER_BYTES", str(2 * 1024**3))
+)
+
+
+def _bounded_copy(src, dst, limit: int) -> int:
+    """Stream src→dst in 1 MiB chunks, aborting if more than ``limit`` bytes are
+    read. Mirrors ``routers.ingest._bounded_copy`` — defends against archive
+    members that lie about their uncompressed size (decompression bombs)."""
+    written = 0
+    while True:
+        chunk = src.read(1024 * 1024)
+        if not chunk:
+            break
+        written += len(chunk)
+        if written > limit:
+            raise ValueError(f"member exceeds extraction size cap ({limit} bytes)")
+        dst.write(chunk)
+    return written
 
 
 def _content_disposition(filename: str) -> str:
@@ -233,56 +258,102 @@ def extract_archive_member(
         raise HTTPException(status_code=400, detail="Invalid member path")
     member_name = norm_member.split("/")[-1]
 
+    fname = job.get("original_filename", "").lower()
+
+    # Stream the (potentially large) archive object to a temp file on disk rather
+    # than buffering the whole thing in RAM. zipfile/tarfile both need random
+    # access, so a disk-backed handle bounds memory while keeping seek support.
     try:
-        raw = storage.download_fileobj(minio_key)
+        archive_fd, archive_path = tempfile.mkstemp(prefix="fo_extract_arc_")
+        try:
+            with os.fdopen(archive_fd, "wb") as arc:
+                for chunk in storage.stream_object(minio_key):
+                    arc.write(chunk)
+        except storage.StorageError:
+            os.unlink(archive_path)
+            raise
     except storage.StorageError as exc:
         raise _storage_http_error(minio_key, exc) from exc
 
-    fname = job.get("original_filename", "").lower()
-    member_bytes: bytes | None = None
+    # Extract the requested member into its own temp file with a running byte cap,
+    # so a member lying about its declared size is aborted mid-copy.
+    member_fd, member_path = tempfile.mkstemp(prefix="fo_extract_mem_")
+    os.close(member_fd)
+    found = False
+    try:
+        cap = _MAX_EXTRACT_MEMBER_BYTES
 
-    # ── ZIP ───────────────────────────────────────────────────────────────────
-    if fname.endswith(".zip"):
-        try:
-            with zipfile.ZipFile(io.BytesIO(raw)) as zf:
-                # Exact path match (normalised to forward slashes)
-                for n in zf.namelist():
-                    if n.replace("\\", "/").strip("/") == norm_member:
-                        member_bytes = zf.read(n)
-                        break
-                # Fallback: filename-only match (handles path differences)
-                if member_bytes is None:
-                    for n in zf.namelist():
-                        if Path(n).name == member_name:
-                            member_bytes = zf.read(n)
+        # ── ZIP ───────────────────────────────────────────────────────────────
+        if fname.endswith(".zip"):
+            try:
+                with zipfile.ZipFile(archive_path) as zf:
+                    info = None
+                    for zi in zf.infolist():
+                        if zi.filename.replace("\\", "/").strip("/") == norm_member:
+                            info = zi
                             break
-        except zipfile.BadZipFile as exc:
-            raise HTTPException(status_code=422, detail=f"Bad ZIP: {exc}")
+                    if info is None:
+                        for zi in zf.infolist():
+                            if Path(zi.filename).name == member_name:
+                                info = zi
+                                break
+                    if info is not None:
+                        declared = getattr(info, "file_size", 0) or 0
+                        if declared > cap:
+                            raise HTTPException(
+                                status_code=413,
+                                detail=f"Member too large to extract "
+                                f"({declared} bytes > cap {cap})",
+                            )
+                        with zf.open(info) as src, open(member_path, "wb") as dst:
+                            _bounded_copy(src, dst, cap)
+                        found = True
+            except zipfile.BadZipFile as exc:
+                raise HTTPException(status_code=422, detail=f"Bad ZIP: {exc}")
 
-    # ── TAR family (.tar, .tgz, .tar.gz, …) ──────────────────────────────────
-    else:
-        try:
-            with tarfile.open(fileobj=io.BytesIO(raw)) as tf:
-                match = None
-                for m in tf.getmembers():
-                    if not m.isfile():
-                        continue
-                    if m.name.replace("\\", "/").strip("/") == norm_member:
-                        match = m
-                        break
-                if match is None:
+        # ── TAR family (.tar, .tgz, .tar.gz, …) ────────────────────────────────
+        else:
+            try:
+                with tarfile.open(archive_path) as tf:
+                    match = None
                     for m in tf.getmembers():
-                        if m.isfile() and Path(m.name).name == member_name:
+                        if not m.isfile():
+                            continue
+                        if m.name.replace("\\", "/").strip("/") == norm_member:
                             match = m
                             break
-                if match is not None:
-                    f = tf.extractfile(match)
-                    if f:
-                        member_bytes = f.read()
-        except tarfile.TarError as exc:
-            raise HTTPException(status_code=422, detail=f"TAR error: {exc}")
+                    if match is None:
+                        for m in tf.getmembers():
+                            if m.isfile() and Path(m.name).name == member_name:
+                                match = m
+                                break
+                    if match is not None:
+                        declared = getattr(match, "size", 0) or 0
+                        if declared > cap:
+                            raise HTTPException(
+                                status_code=413,
+                                detail=f"Member too large to extract "
+                                f"({declared} bytes > cap {cap})",
+                            )
+                        src = tf.extractfile(match)
+                        if src is not None:
+                            with src, open(member_path, "wb") as dst:
+                                _bounded_copy(src, dst, cap)
+                            found = True
+            except tarfile.TarError as exc:
+                raise HTTPException(status_code=422, detail=f"TAR error: {exc}")
+    except ValueError as exc:
+        # Raised by _bounded_copy when the actual bytes exceed the cap.
+        os.unlink(member_path)
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+    except BaseException:
+        os.unlink(member_path)
+        raise
+    finally:
+        os.unlink(archive_path)
 
-    if member_bytes is None:
+    if not found:
+        os.unlink(member_path)
         raise HTTPException(
             status_code=404,
             detail=f"Member '{norm_member}' not found in archive",
@@ -290,8 +361,22 @@ def extract_archive_member(
 
     content_type = mimetypes.guess_type(member_name)[0] or "application/octet-stream"
 
+    def _stream_member():
+        try:
+            with open(member_path, "rb") as fh:
+                while True:
+                    chunk = fh.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    yield chunk
+        finally:
+            try:
+                os.unlink(member_path)
+            except OSError:
+                pass
+
     return StreamingResponse(
-        iter([member_bytes]),
+        _stream_member(),
         media_type=content_type,
         headers={"Content-Disposition": _content_disposition(member_name)},
     )
