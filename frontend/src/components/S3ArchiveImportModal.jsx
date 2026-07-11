@@ -4,6 +4,7 @@ import {
   X, RefreshCw, CloudDownload, Folder, FileArchive, ChevronLeft,
 } from 'lucide-react'
 import { api } from '../api/client'
+import Modal from './shared/Modal'
 import { formatBytes } from '../utils/format'
 
 export default function S3ArchiveImportModal({ onClose, onImported }) {
@@ -51,16 +52,20 @@ export default function S3ArchiveImportModal({ onClose, onImported }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[80vh] flex flex-col">
-
+    <Modal
+      onClose={onClose}
+      overlayClassName="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4"
+      className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[80vh] flex flex-col"
+      ariaLabel="Import archive from S3"
+    >
+      <>
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
           <div className="flex items-center gap-2">
             <CloudDownload size={15} className="text-brand-accent" />
             <p className="font-semibold text-sm text-brand-text">Import Archive from S3</p>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+          <button onClick={onClose} aria-label="Close" className="text-gray-400 hover:text-gray-600">
             <X size={16} />
           </button>
         </div>
@@ -143,7 +148,7 @@ export default function S3ArchiveImportModal({ onClose, onImported }) {
             </>
           )}
         </div>
-      </div>
-    </div>
+      </>
+    </Modal>
   )
 }
