@@ -1242,7 +1242,7 @@ function LLMAnalysisPanel({ analysis }) {
 }
 
 function ModuleRunCard({
-  run, caseId, navigate, onClose,
+  run, caseId, navigate, onClose, onRunOptimistic, onRefreshRuns,
   // Hit-level filters (all optional — undefined = no filtering)
   activeLevels, activeComputers, activeChannels, activeTags, ruleSearch,
 }) {
@@ -1258,10 +1258,17 @@ function ModuleRunCard({
   async function retryRun() {
     setRetrying(true)
     setRetryErr('')
+    // Optimistically flip to PENDING so the card reflects the re-queue immediately
+    // and the parent's 3 s status poller re-arms (it watches for PENDING/RUNNING).
+    onRunOptimistic?.(run.run_id, 'PENDING')
     try {
       await api.modules.retryRun(run.run_id)
+      // Pull fresh state right away rather than waiting a full poll tick.
+      onRefreshRuns?.()
     } catch (err) {
       setRetryErr(err.message)
+      // Re-sync so the card doesn't stay stuck on the optimistic PENDING.
+      onRefreshRuns?.()
     } finally {
       setRetrying(false)
     }
@@ -1992,6 +1999,9 @@ function ModuleRunsPanel({ caseId, onClose, embedded = false }) {
                 caseId={caseId}
                 navigate={navigate}
                 onClose={onClose}
+                onRunOptimistic={(runId, status) =>
+                  setRuns(prev => prev.map(r => r.run_id === runId ? { ...r, status } : r))}
+                onRefreshRuns={fetchRuns}
                 activeLevels={activeLevels}
                 activeComputers={activeComputers}
                 activeChannels={activeChannels}
