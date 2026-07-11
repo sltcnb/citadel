@@ -2536,7 +2536,7 @@ function TemplateEditor({ editor, saving, error, onChange, onSave, onCancel, set
         <span className="text-xs font-semibold text-gray-900">
           {editor.editingId ? 'Edit template' : 'New template'}
         </span>
-        <button onClick={onCancel} className="btn-ghost p-1 rounded"><X size={13} /></button>
+        <button onClick={onCancel} className="btn-ghost p-1 rounded" aria-label="Cancel"><X size={13} /></button>
       </div>
 
       {error && <div className="text-[11px] text-red-700 bg-red-50 border border-red-200 rounded p-2">{error}</div>}

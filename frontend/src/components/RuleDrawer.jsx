@@ -6,6 +6,7 @@ import Editor from '@monaco-editor/react'
 import { api } from '../api/client'
 import { useCompanies } from '../pages/UserManagement'
 import { severityStyle } from '../utils/severity'
+import Modal from './shared/Modal'
 
 // ── Shared constants ──────────────────────────────────────────────────────────
 
@@ -256,7 +257,7 @@ export default function RuleDrawer({ rule = null, onClose, onSaved, inline = fal
             {isEdit && rule.sigma_level && <SigmaLevelBadge level={rule.sigma_level} />}
             {isEdit && rule.category    && <CategoryBadge category={rule.category} />}
           </div>
-          <button onClick={onClose} className="btn-ghost p-1"><X size={14} /></button>
+          <button onClick={onClose} className="btn-ghost p-1" aria-label="Close"><X size={14} /></button>
         </div>
 
         {/* Body: Monaco left + Metadata right */}
@@ -486,11 +487,13 @@ export default function RuleDrawer({ rule = null, onClose, onSaved, inline = fal
 
   if (inline) return drawerInner
   return (
-    <div
-      className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
-      onClick={e => e.target === e.currentTarget && onClose()}
+    <Modal
+      onClose={onClose}
+      overlayClassName="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+      className="contents"
+      ariaLabel={rule ? 'Edit rule' : 'New rule'}
     >
       {drawerInner}
-    </div>
+    </Modal>
   )
 }

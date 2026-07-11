@@ -1,6 +1,7 @@
 import { Loader2, X, AlertTriangle } from 'lucide-react'
 import PanelHelp from './PanelHelp'
 import { useResizableWidth, DrawerResizeHandle } from './resizableDrawer'
+import Modal from './Modal'
 
 /**
  * PanelShell — the ONE standard chrome for every case side-drawer panel.
@@ -66,12 +67,14 @@ export default function PanelShell({
   const [drawerWidth, handleProps] = useResizableWidth(slug, defaultWidthPx(width))
 
   return (
-    <div className="panel-backdrop" onClick={onClose}>
-      <div
-        className="panel-drawer"
-        style={{ width: drawerWidth, maxWidth: '96vw' }}
-        onClick={e => e.stopPropagation()}
-      >
+    <Modal
+      onClose={onClose}
+      overlayClassName="panel-backdrop"
+      className="panel-drawer"
+      style={{ width: drawerWidth, maxWidth: '96vw' }}
+      ariaLabel={title || 'Panel'}
+    >
+      <>
         <DrawerResizeHandle {...handleProps} />
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 flex-shrink-0">
           <div className="flex items-center gap-2 min-w-0">
@@ -106,7 +109,7 @@ export default function PanelShell({
             children
           )}
         </div>
-      </div>
-    </div>
+      </>
+    </Modal>
   )
 }
