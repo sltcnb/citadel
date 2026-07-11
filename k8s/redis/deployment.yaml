@@ -23,10 +23,34 @@ spec:
       labels:
         app: redis
     spec:
+      # redis:alpine runs as uid 999 (redis); fsGroup lets it write /data.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: redis
           image: redis:7.2-alpine
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+          # OPERATOR ACTION: clients (api, processor) must pass this password in
+          # their Redis URL, e.g. redis://:PASSWORD@redis-service:6379/0
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-secret
+                  key: redis_password
           args:
+            # Require auth for every connection (injected via env expansion).
+            - "--requirepass"
+            - "$(REDIS_PASSWORD)"
             # Persistence: AOF only — RDB snapshots disabled to prevent fork() OOM.
             # BGSAVE forks double peak memory (COW); AOF alone provides durability.
             - "--appendonly"
@@ -59,13 +83,13 @@ spec:
             - containerPort: 6379
           livenessProbe:
             exec:
-              command: ["redis-cli", "ping"]
+              command: ["sh", "-c", "redis-cli -a \"$REDIS_PASSWORD\" ping"]
             initialDelaySeconds: 30
             periodSeconds: 10
             failureThreshold: 3
           readinessProbe:
             exec:
-              command: ["redis-cli", "ping"]
+              command: ["sh", "-c", "redis-cli -a \"$REDIS_PASSWORD\" ping"]
             initialDelaySeconds: 5
             periodSeconds: 5
             failureThreshold: 3
@@ -84,6 +108,18 @@ spec:
           persistentVolumeClaim:
             claimName: redis-pvc
 
+---
+# Redis auth password. Value substituted from the operator environment
+# (foctl/fo.sh) — never hardcode. OPERATOR ACTION: set __FO_REDIS_PASSWORD__ and
+# include it in the REDIS_URL used by api + processor.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: redis-secret
+  namespace: __FO_NAMESPACE__
+type: Opaque
+stringData:
+  redis_password: __FO_REDIS_PASSWORD__
 ---
 apiVersion: v1
 kind: Service
