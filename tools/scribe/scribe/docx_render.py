@@ -16,7 +16,6 @@ from .labels import Labels
 from .render import (
     TEMPLATE_DEFAULTS,
     _ev_fields,
-    _source_basename,
     _ts,
 )
 

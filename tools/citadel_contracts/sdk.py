@@ -24,7 +24,7 @@ from collections.abc import Generator, Iterator
 from pathlib import Path
 from typing import Any, Callable
 
-from .parser import BasePlugin, PluginContext, iso_z
+from .parser import BasePlugin, iso_z
 
 
 class Ctx:
