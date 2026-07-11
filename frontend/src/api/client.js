@@ -38,7 +38,10 @@ async function request(method, path, body, options = {}) {
       body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined,
       ...options,
     })
-  } catch {
+  } catch (e) {
+    // A caller-initiated abort (AbortController) must surface as-is so the UI can
+    // tell "user cancelled" apart from a genuine network error.
+    if (e?.name === 'AbortError') throw e
     // Network-level failure (offline, DNS, server down) — fetch rejects with a
     // TypeError. Surface something a human can act on instead of "Failed to fetch".
     throw new Error('Cannot reach the API — check that the server is running')
@@ -103,10 +106,10 @@ export const api = {
     aiDeleteInvestigation: (id, idx) => request('DELETE', `/cases/${id}/ai/investigation/${idx}`),
     aiReportHistory:    (id)      => request('GET',    `/cases/${id}/ai/report_history`),
     aiDeleteReportHistory: (id, idx) => request('DELETE', `/cases/${id}/ai/report_history/${idx}`),
-    aiReport:    (id, runIds, language) => request('POST', `/cases/${id}/ai/report`, {
+    aiReport:    (id, runIds, language, signal) => request('POST', `/cases/${id}/ai/report`, {
                                               ...(runIds?.length ? { run_ids: runIds } : {}),
                                               ...(language ? { language } : {}),
-                                            }),
+                                            }, signal ? { signal } : {}),
   },
 
   ingest: {

@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {
   X, Loader2, Trash2, FileDown, FileText, Flag, Target, Crosshair, Sparkles,
   Cpu, ChevronDown, ChevronRight, ClipboardCheck, Printer, FileBarChart,
-  Download, ExternalLink,
+  Download, ExternalLink, XCircle,
 } from 'lucide-react'
 import { api, getToken } from '../../api/client'
 import { ResizableDrawer } from '../shared/resizableDrawer'
@@ -34,6 +34,10 @@ export default function ReportPanel({ caseId, onClose }) {
   const [aiLoading, setAiLoading] = useState(true)
   const [aiGenerating, setAiGen]  = useState(false)
   const [aiError, setAiError]     = useState(null)
+  // Report generation can run for several minutes. Track elapsed time and keep
+  // an AbortController so the analyst can cancel a request that's taking too long.
+  const [elapsed, setElapsed]     = useState(0)
+  const abortRef = useRef(null)
   const [reportHistory, setReportHistory] = useState([])
   const [showHistory, setShowHistory] = useState(false)
 
@@ -129,18 +133,45 @@ export default function ReportPanel({ caseId, onClose }) {
     })
   }
 
+  // Tick an elapsed-time counter while a report is generating, so the analyst
+  // sees progress instead of a bare, silent spinner over a multi-minute request.
+  useEffect(() => {
+    if (!aiGenerating) return
+    setElapsed(0)
+    const started = Date.now()
+    const t = setInterval(() => setElapsed(Math.floor((Date.now() - started) / 1000)), 1000)
+    return () => clearInterval(t)
+  }, [aiGenerating])
+
+  // Abort any in-flight request when the panel unmounts.
+  useEffect(() => () => abortRef.current?.abort(), [])
+
+  function cancelAi() {
+    abortRef.current?.abort()
+  }
+
   async function generateAi() {
     setAiGen(true); setAiError(null)
+    const controller = new AbortController()
+    abortRef.current = controller
     try {
       const runIds = selectedRunIds.size > 0 ? [...selectedRunIds] : undefined
-      const res = await api.cases.aiReport(caseId, runIds, reportLang)
+      const res = await api.cases.aiReport(caseId, runIds, reportLang, controller.signal)
       setAiReport(res)
       refreshHistory()
     } catch (e) {
-      setAiError(e.message || 'Report generation failed.')
+      if (e?.name === 'AbortError') setAiError('Report generation cancelled.')
+      else setAiError(e.message || 'Report generation failed.')
     } finally {
+      abortRef.current = null
       setAiGen(false)
     }
+  }
+
+  const fmtElapsed = (s) => {
+    const m = Math.floor(s / 60)
+    const sec = s % 60
+    return m > 0 ? `${m}m ${sec}s` : `${sec}s`
   }
 
   // Human-readable "based on" line from a report's manifest.
@@ -480,16 +511,22 @@ ul,ol{padding-left:1.5em;}li{margin:2px 0;}
                   </select>
                 )}
                 {aiEnabled && (
-                  <button
-                    onClick={generateAi}
-                    disabled={aiGenerating}
-                    className="btn-primary text-xs flex items-center gap-1.5"
-                  >
-                    {aiGenerating
-                      ? <><Loader2 size={11} className="animate-spin" /> Generating…</>
-                      : <><FileBarChart size={11} /> {aiReport ? 'Regenerate' : 'Generate'}</>
-                    }
-                  </button>
+                  aiGenerating ? (
+                    <button
+                      onClick={cancelAi}
+                      className="btn-ghost text-xs flex items-center gap-1.5 text-red-600 hover:text-red-700"
+                      title="Cancel report generation"
+                    >
+                      <XCircle size={11} /> Cancel
+                    </button>
+                  ) : (
+                    <button
+                      onClick={generateAi}
+                      className="btn-primary text-xs flex items-center gap-1.5"
+                    >
+                      <FileBarChart size={11} /> {aiReport ? 'Regenerate' : 'Generate'}
+                    </button>
+                  )
                 )}
               </div>
             </div>
@@ -500,7 +537,21 @@ ul,ol{padding-left:1.5em;}li{margin:2px 0;}
               </div>
             )}
 
-            {aiLoading ? (
+            {aiGenerating ? (
+              <div className="flex flex-col items-center justify-center py-6 gap-2 text-center" role="status" aria-live="polite">
+                <Loader2 size={20} className="animate-spin text-purple-600" />
+                <div className="text-xs font-medium text-gray-700">Generating report…</div>
+                <div className="text-[11px] text-gray-500 tabular-nums">
+                  Elapsed {fmtElapsed(elapsed)} · this can take a few minutes
+                </div>
+                <button
+                  onClick={cancelAi}
+                  className="mt-1 btn-ghost text-[11px] flex items-center gap-1 text-red-600 hover:text-red-700"
+                >
+                  <XCircle size={12} /> Cancel
+                </button>
+              </div>
+            ) : aiLoading ? (
               <div className="flex items-center justify-center py-6 text-xs text-gray-500 gap-2">
                 <Loader2 size={12} className="animate-spin" /> Loading…
               </div>
