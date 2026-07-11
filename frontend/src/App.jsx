@@ -4,6 +4,7 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation, useSearchParams } 
 import Layout         from './components/layout/ModernLayout'
 import Login          from './pages/Login'
 import RouteFallback  from './components/RouteFallback'
+import ErrorBoundary  from './components/ErrorBoundary'
 
 // Heavy page components are lazy-loaded so they ship as separate chunks.
 const Dashboard       = lazy(() => import('./pages/Dashboard'))
@@ -75,6 +76,7 @@ export default function App() {
     <LicenseProvider isAuthenticated={isAuthenticated()}>
     <UploadProvider>
       <BrowserRouter>
+        <ErrorBoundary>
         <Suspense fallback={<RouteFallback />}>
         <Routes>
           {/* ── Public ── */}
@@ -122,6 +124,7 @@ export default function App() {
           </Route>
         </Routes>
         </Suspense>
+        </ErrorBoundary>
       </BrowserRouter>
     </UploadProvider>
     </LicenseProvider>

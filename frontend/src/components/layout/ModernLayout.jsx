@@ -181,6 +181,7 @@ export default function ModernLayout({ user, onLogout }) {
   const [newCaseName, setNewCaseName] = useState('')
   const [newCaseCompany, setNewCaseCompany] = useState('')
   const [creating, setCreating] = useState(false)
+  const [newCaseError, setNewCaseError] = useState('')
   const [availableCompanies, setAvailableCompanies] = useState([])
   const newCaseRef = useRef(null)
 
@@ -196,6 +197,7 @@ export default function ModernLayout({ user, onLogout }) {
     e.preventDefault()
     if (!newCaseName.trim() || creating) return
     setCreating(true)
+    setNewCaseError('')
     try {
       const c = await api.cases.create({ name: newCaseName.trim(), company: newCaseCompany })
       setNewCaseName('')
@@ -204,7 +206,10 @@ export default function ModernLayout({ user, onLogout }) {
       localStorage.setItem('fo-last-case', c.case_id)
       setLastCaseId(c.case_id)
       navigate(`/cases/${c.case_id}`)
-    } catch { /* ignore */ }
+    } catch (err) {
+      // Surface the failure instead of leaving the form silently stuck.
+      setNewCaseError(err?.message || 'Failed to create case')
+    }
     finally { setCreating(false) }
   }
 
@@ -278,6 +283,7 @@ export default function ModernLayout({ user, onLogout }) {
 
           {/* New case */}
           {showNewCase ? (
+            <div className="relative">
             <form onSubmit={handleCreateCase} className="flex items-center gap-1.5 mr-1">
               <input
                 ref={newCaseRef}
@@ -302,12 +308,18 @@ export default function ModernLayout({ user, onLogout }) {
               >
                 {creating ? <Loader2 size={12} className="animate-spin" /> : 'Create'}
               </button>
-              <button type="button" onClick={() => setShowNewCase(false)}
+              <button type="button" onClick={() => { setShowNewCase(false); setNewCaseError('') }}
                 className="h-8 w-8 flex items-center justify-center rounded-md text-gray-500 hover:text-brand-text hover:bg-gray-100"
               >
                 <X size={14} />
               </button>
             </form>
+            {newCaseError ? (
+              <div role="alert" className="absolute left-0 top-full mt-1 text-[12px] text-red-600 bg-white border border-red-200 rounded-md px-2 py-1 shadow-sm z-50 whitespace-nowrap">
+                {newCaseError}
+              </div>
+            ) : null}
+            </div>
           ) : (
             <button onClick={() => setShowNewCase(true)}
               className="hidden md:flex items-center gap-1.5 h-8 px-3 text-[13px] font-medium text-gray-600 hover:text-brand-text hover:bg-gray-100 rounded-md transition-colors mr-1"
