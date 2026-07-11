@@ -12,22 +12,28 @@
  *   pivot(q)   push a query to the timeline and close this panel
  *   navigate   react-router navigate (for cross-page pivots)
  */
+import { lazy } from 'react'
 import { X, FileText, Crosshair, Bell } from 'lucide-react'
-import AlertRules from './AlertRules'
-import CaseNotes from './CaseNotes'
-import IocPanel from '../components/IocPanel'
-import TemplatesPanel from '../components/case/TemplatesPanel'
-import ReportPanel from '../components/case/ReportPanel'
-import AnomalyPanel from '../components/shared/AnomalyPanel'
-import ProcessTreePanel from '../components/shared/ProcessTreePanel'
-import MitrePanel from '../components/shared/MitrePanel'
-import BaselinePanel from '../components/shared/BaselinePanel'
-import EntityGraphPanel from '../components/shared/EntityGraphPanel'
-import KillChainPanel from '../components/shared/KillChainPanel'
-import EvidencePanel from '../components/shared/EvidencePanel'
-import CoPilotPanel from '../components/shared/CoPilotPanel'
 import PanelHelp from '../components/shared/PanelHelp'
 import { ResizableDrawer } from '../components/shared/resizableDrawer'
+
+// Heavy case sub-panels are lazy-loaded so they land in their own chunks and
+// don't weigh down the initial CaseTimeline paint — they only load when the
+// analyst actually opens the corresponding drawer. A Suspense boundary at the
+// CaseTimeline render site backs these.
+const AlertRules       = lazy(() => import('./AlertRules'))
+const CaseNotes        = lazy(() => import('./CaseNotes'))
+const IocPanel         = lazy(() => import('../components/IocPanel'))
+const TemplatesPanel   = lazy(() => import('../components/case/TemplatesPanel'))
+const ReportPanel      = lazy(() => import('../components/case/ReportPanel'))
+const AnomalyPanel     = lazy(() => import('../components/shared/AnomalyPanel'))
+const ProcessTreePanel = lazy(() => import('../components/shared/ProcessTreePanel'))
+const MitrePanel       = lazy(() => import('../components/shared/MitrePanel'))
+const BaselinePanel    = lazy(() => import('../components/shared/BaselinePanel'))
+const EntityGraphPanel = lazy(() => import('../components/shared/EntityGraphPanel'))
+const KillChainPanel   = lazy(() => import('../components/shared/KillChainPanel'))
+const EvidencePanel    = lazy(() => import('../components/shared/EvidencePanel'))
+const CoPilotPanel     = lazy(() => import('../components/shared/CoPilotPanel'))
 
 function NotesDrawer({ caseId, close }) {
   return (

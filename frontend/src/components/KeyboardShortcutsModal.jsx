@@ -1,5 +1,6 @@
-import { useEffect } from 'react'
 import { X } from 'lucide-react'
+import Modal from './shared/Modal'
+import { NAV_SHORTCUTS, GLOBAL_SHORTCUTS } from '../nav'
 
 const KBD_CLS = 'inline-flex items-center px-1.5 py-0.5 text-[10px] font-mono font-semibold rounded border border-gray-300 bg-gray-100 text-gray-700 shadow-sm'
 
@@ -7,44 +8,17 @@ function Kbd({ children }) {
   return <kbd className={KBD_CLS}>{children}</kbd>
 }
 
+// Derived from the shared nav manifest so the displayed keys always match the
+// bindings actually wired up in the layout.
 const SHORTCUT_SECTIONS = [
-  {
-    title: 'Navigation',
-    shortcuts: [
-      { keys: ['g', 'd'], label: 'Dashboard' },
-      { keys: ['g', 'c'], label: 'Cases' },
-      { keys: ['g', 'a'], label: 'Alert Rules' },
-      { keys: ['g', 't'], label: 'Threat Intel' },
-      { keys: ['g', 'm'], label: 'Modules' },
-      { keys: ['g', 's'], label: 'Studio' },
-      { keys: ['g', 'n'], label: 'New case' },
-    ],
-  },
-  {
-    title: 'Global',
-    shortcuts: [
-      { keys: ['?'], label: 'Show this help' },
-      { keys: ['Esc'], label: 'Close this panel' },
-    ],
-  },
+  { title: 'Navigation', shortcuts: NAV_SHORTCUTS.map(s => ({ keys: s.keys, label: s.label })) },
+  { title: 'Global',     shortcuts: GLOBAL_SHORTCUTS },
 ]
 
 export default function KeyboardShortcutsModal({ onClose }) {
-  // Close on Escape
-  useEffect(() => {
-    function handleKey(e) {
-      if (e.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', handleKey)
-    return () => window.removeEventListener('keydown', handleKey)
-  }, [onClose])
-
   return (
-    <div
-      className="modal-overlay"
-      onClick={e => e.target === e.currentTarget && onClose()}
-    >
-      <div className="modal-box w-full max-w-lg">
+    <Modal onClose={onClose} className="modal-box w-full max-w-lg" ariaLabel="Keyboard shortcuts">
+      <>
         {/* Header */}
         <div className="modal-header">
           <div className="flex items-center gap-2">
@@ -93,7 +67,7 @@ export default function KeyboardShortcutsModal({ onClose }) {
             Close
           </button>
         </div>
-      </div>
-    </div>
+      </>
+    </Modal>
   )
 }
