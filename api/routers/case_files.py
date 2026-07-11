@@ -150,18 +150,21 @@ def list_case_files(case_id: str, _case: dict = Depends(require_case_access)):
 # ── Download raw file ────────────────────────────────────────────────────────
 
 
+def _storage_http_error(minio_key: str, exc: Exception) -> HTTPException:
+    """Map a typed storage error to a precise HTTP status."""
+    if isinstance(exc, storage.ObjectNotFound):
+        logger.warning("Object missing for %s: %s", minio_key, exc)
+        return HTTPException(status_code=404, detail="Stored object no longer exists")
+    if isinstance(exc, storage.StorageUnavailable):
+        logger.error("Storage unavailable reading %s: %s", minio_key, exc)
+        return HTTPException(status_code=503, detail="Storage backend unavailable")
+    logger.error("Storage read error for %s: %s", minio_key, exc)
+    return HTTPException(status_code=502, detail="Storage read error")
+
+
 def _minio_stream(minio_key: str):
     """Generator that yields chunks directly from MinIO — no full-file RAM buffer."""
-    client = storage.get_minio()
-    response = client.get_object(settings.MINIO_BUCKET, minio_key)
-    try:
-        yield from response
-    finally:
-        try:
-            response.close()
-            response.release_conn()
-        except Exception:
-            pass
+    yield from storage.stream_object(minio_key)
 
 
 @router.get("/cases/{case_id}/files/{job_id}/download")
@@ -184,6 +187,13 @@ def download_file(
 
     fname = job.get("original_filename", "download")
     content_type = mimetypes.guess_type(fname)[0] or "application/octet-stream"
+
+    # Pre-flight stat so a missing/unreachable object surfaces a precise HTTP
+    # status BEFORE the streaming response headers are committed.
+    try:
+        storage.stat_object(minio_key)
+    except storage.StorageError as exc:
+        raise _storage_http_error(minio_key, exc) from exc
 
     return StreamingResponse(
         _minio_stream(minio_key),
@@ -225,9 +235,8 @@ def extract_archive_member(
 
     try:
         raw = storage.download_fileobj(minio_key)
-    except Exception as exc:
-        logger.error("Failed to download %s: %s", minio_key, exc)
-        raise HTTPException(status_code=502, detail=f"Storage read error: {exc}")
+    except storage.StorageError as exc:
+        raise _storage_http_error(minio_key, exc) from exc
 
     fname = job.get("original_filename", "").lower()
     member_bytes: bytes | None = None
@@ -317,9 +326,8 @@ def get_file_content(
 
     try:
         raw = storage.download_fileobj(minio_key)
-    except Exception as exc:
-        logger.error("Failed to download %s: %s", minio_key, exc)
-        raise HTTPException(status_code=502, detail=f"Storage read error: {exc}")
+    except storage.StorageError as exc:
+        raise _storage_http_error(minio_key, exc) from exc
 
     if len(raw) > _MAX_VIEW_BYTES:
         raise HTTPException(
@@ -385,7 +393,13 @@ def search_file_contents(
 
         try:
             raw = storage.download_fileobj(minio_key)
-        except Exception as exc:
+        except storage.StorageUnavailable as exc:
+            # Backend outage — don't silently return partial search results.
+            raise HTTPException(
+                status_code=503, detail="Storage backend unavailable"
+            ) from exc
+        except storage.StorageError as exc:
+            # Missing/corrupt single object — skip it and keep searching.
             logger.warning("Skipping '%s' — read failed: %s", fname, exc)
             continue
 

@@ -203,7 +203,7 @@ def delete_job(job_id: str, current_user: dict = Depends(get_current_user)):
         if minio_key:
             try:
                 storage.delete_object(minio_key)
-            except Exception as exc:
+            except storage.StorageError as exc:
                 logger.warning("MinIO delete skipped for %s: %s", minio_key, exc)
 
         # Remove indexed events from Elasticsearch
@@ -247,7 +247,7 @@ def delete_all_case_jobs(case_id: str, _case: dict = Depends(require_case_access
         if minio_key:
             try:
                 storage.delete_object(minio_key)
-            except Exception as exc:
+            except storage.StorageError as exc:
                 logger.warning("MinIO delete skipped for %s: %s", jid, exc)
 
         try:
