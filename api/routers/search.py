@@ -638,7 +638,7 @@ def aggregate(
     field: str = Query(..., min_length=1),
     agg: str = Query(
         "terms",
-        regex="^(terms|sum|avg|min|max|cardinality|stats|histogram|date_histogram|percentiles)$",
+        pattern="^(terms|sum|avg|min|max|cardinality|stats|histogram|date_histogram|percentiles)$",
     ),
     q: str = "",
     size: int = Query(20, ge=1, le=200),
