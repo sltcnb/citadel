@@ -4,7 +4,6 @@ landing as 'file'/'generic_text' blobs."""
 from __future__ import annotations
 
 import gzip
-import uuid
 from pathlib import Path
 
 from babel.base_plugin import PluginContext

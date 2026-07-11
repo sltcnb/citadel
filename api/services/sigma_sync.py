@@ -7,6 +7,7 @@ import logging
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Dict, List, Optional
 
 import redis_keys as rk
 

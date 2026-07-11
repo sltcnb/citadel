@@ -39,9 +39,6 @@ def _get_redis() -> redis.Redis:
 def _get_categories() -> dict:
     """Return HARVEST_CATEGORIES from the task module (or a static copy)."""
     try:
-        import importlib
-        import sys
-
         # processor tasks aren't installed in the API container;
         # fall back to a static definition that mirrors the task module.
         raise ImportError
