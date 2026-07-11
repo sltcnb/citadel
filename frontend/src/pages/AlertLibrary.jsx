@@ -127,7 +127,7 @@ function RunOnCaseModal({ rule, cases, onClose }) {
             <Play size={15} className="text-brand-accent" />
             <span className="font-semibold text-brand-text text-sm">Run Rule on Case</span>
           </div>
-          <button onClick={onClose} className="btn-ghost p-1"><X size={14} /></button>
+          <button onClick={onClose} className="btn-ghost p-1" aria-label="Close"><X size={14} /></button>
         </div>
 
         <div className="p-5 space-y-4 overflow-y-auto flex-1">

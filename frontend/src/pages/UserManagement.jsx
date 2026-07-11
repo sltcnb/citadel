@@ -43,7 +43,7 @@ function Modal({ open, onClose, title, children, wide = false }) {
       <>
         <div className="flex items-center justify-between">
           <h3 className="font-semibold text-brand-text">{title}</h3>
-          <button onClick={onClose} className="text-gray-500 hover:text-gray-600"><X size={16} /></button>
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-600" aria-label="Close"><X size={16} /></button>
         </div>
         {children}
       </>

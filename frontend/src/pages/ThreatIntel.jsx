@@ -121,7 +121,7 @@ function FeedModal({ feed, onClose, onSaved }) {
               {feed ? 'Edit Feed' : 'Add CTI Feed'}
             </span>
           </div>
-          <button onClick={onClose} className="icon-btn"><X size={14} /></button>
+          <button onClick={onClose} className="icon-btn" aria-label="Close"><X size={14} /></button>
         </div>
         <form onSubmit={save} className="p-5 space-y-4">
           {/* Name */}

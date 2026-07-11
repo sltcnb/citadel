@@ -80,6 +80,20 @@
   /* Keyboard focus only */
   :focus:not(:focus-visible) { outline: none; box-shadow: none; }
 
+  /* Visible keyboard-focus fallback for any interactive element that doesn't
+     carry its own focus-visible ring (raw <button>, links, [tabindex] rows).
+     Utility/component classes with their own ring keep it (higher specificity /
+     later cascade); this only fills the gap so nothing is focus-invisible. */
+  a:focus-visible,
+  button:focus-visible,
+  [role="button"]:focus-visible,
+  [tabindex]:focus-visible,
+  summary:focus-visible {
+    outline: 2px solid theme('colors.brand.accent');
+    outline-offset: 1px;
+    border-radius: 4px;
+  }
+
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after {
       animation-duration: 0.01ms !important;
@@ -275,7 +289,8 @@
   }
   .icon-btn {
     @apply w-8 h-8 flex items-center justify-center rounded-md text-gray-500
-           hover:text-brand-text hover:bg-gray-100 transition-colors flex-shrink-0;
+           hover:text-brand-text hover:bg-gray-100 transition-colors flex-shrink-0
+           focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/40;
   }
 
   /* ─ Kbd shortcut ─ */
