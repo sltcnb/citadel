@@ -7,5 +7,8 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: ['./src/test-setup.js'],
+    // Playwright e2e specs use their own runner (@playwright/test) — keep them
+    // out of the vitest unit run so they don't error on the Playwright import.
+    exclude: ['node_modules/**', 'dist/**', 'e2e/**'],
   },
 })
