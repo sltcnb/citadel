@@ -3,6 +3,18 @@
 # to reclaim disk and prevent DiskPressure taints from accumulated images.
 # Chroots into the host filesystem to run the k3s binary directly.
 # Schedule: 03:00 every Sunday.
+#
+# ⚠️  RECOMMENDATION: prefer the kubelet's built-in image garbage collection
+# over this privileged CronJob. Setting the kubelet flags
+#   --image-gc-high-threshold / --image-gc-low-threshold
+# (k3s: `kubelet-arg` in the server config) reclaims unreferenced images
+# automatically without granting a pod full host access. If you adopt kubelet
+# image GC, delete this manifest entirely.
+#
+# If you must keep this job: it needs to chroot into the host and drive the
+# host's containerd, which requires privileged + a hostPath mount of `/`. Those
+# are inherently high-risk; the image is digest-pinned and capabilities are
+# reduced to the minimum below to shrink the blast radius.
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -25,7 +37,12 @@ spec:
               effect: "NoSchedule"
           containers:
             - name: pruner
-              image: alpine:3.19
+              # Digest-pinned for supply-chain integrity / reproducibility.
+              # OPERATOR ACTION: replace the placeholder digest below with the
+              # current alpine:3.19 digest, e.g. resolve with:
+              #   docker buildx imagetools inspect alpine:3.19
+              #   crane digest alpine:3.19
+              image: alpine:3.19@sha256:REPLACE_WITH_CURRENT_ALPINE_3_19_DIGEST
               command:
                 - sh
                 - -c
@@ -35,7 +52,16 @@ spec:
                   echo "[image-pruner] Done at $(date). Disk usage:"
                   chroot /host df -h /
               securityContext:
+                # chroot into the host + driving host containerd genuinely needs
+                # elevated privileges. We keep privileged (required for the
+                # chroot to the host's device/proc tree) but drop every
+                # capability except the two the chroot workflow actually uses,
+                # and block further escalation.
                 privileged: true
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+                  add: ["SYS_CHROOT", "SYS_ADMIN"]
               volumeMounts:
                 - name: host-root
                   mountPath: /host

@@ -126,9 +126,35 @@ secret:
   existingSecret: ""        # set to use your own Secret instead of creating one
   jwtSecret: ""             # REQUIRED for stable sessions; auto-generated if empty (changes each upgrade!)
   authEnabled: "true"
-  minioAccessKey: "minioadmin"
-  minioSecretKey: "minioadmin"
+  # REQUIRED — no insecure default. The chart fails closed (see secret.yaml,
+  # which uses `required`) until you set these via --set / a values override,
+  # or point `existingSecret` at a pre-provisioned Secret.
+  minioAccessKey: ""
+  minioSecretKey: ""
   extra: {}                 # any additional secret env (e.g. license keys)
+
+# ── Pod hardening (securityContext) ────────────────────────────────────────────
+# Applied to the app pods. Images currently build as root, so a fixed non-root
+# UID + fsGroup is forced at runtime; verify pods start after upgrade.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+  readOnlyRootFilesystem: false
+
+# ── NetworkPolicy ──────────────────────────────────────────────────────────────
+# Ingress-scoped default-deny for the app tier (egress is left open because the
+# substrate — ES/Redis/MinIO — is external to this chart by default). Requires a
+# CNI that enforces NetworkPolicy. Off by default to avoid surprises.
+networkPolicy:
+  enabled: false
 
 # ── Substrate wiring (ConfigMap env) ───────────────────────────────────────────
 # These URLs are injected into every component via the chart ConfigMap. When a
