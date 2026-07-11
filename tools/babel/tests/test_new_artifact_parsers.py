@@ -13,9 +13,8 @@ import codecs
 import json
 import sqlite3
 import struct
-from datetime import UTC, datetime, timezone
+from datetime import datetime, timezone
 
-import pytest
 
 from babel.base_plugin import PluginContext
 

@@ -19,7 +19,7 @@ Run: python3 generate_all_text_logs.py
 Output lands in ./test_output/
 """
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 OUT = os.path.join(os.path.dirname(__file__), "test_output")
 os.makedirs(OUT, exist_ok=True)

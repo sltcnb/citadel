@@ -17,10 +17,8 @@ layered on top; this module guarantees a baseline that always works.
 from __future__ import annotations
 
 import json
-import logging
 import threading
 from collections.abc import Callable
-from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 

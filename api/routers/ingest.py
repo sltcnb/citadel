@@ -20,7 +20,6 @@ import hashlib
 import logging
 import os
 import re
-import shutil
 import tempfile
 import uuid
 import zipfile

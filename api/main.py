@@ -4,7 +4,6 @@ import asyncio
 import collections
 import json
 import logging
-import os
 import time
 
 from fastapi import Depends, FastAPI, Request
