@@ -19,6 +19,19 @@ spec:
       labels:
         app: api
     spec:
+      # ── Pod security context ──────────────────────────────────────────────
+      # Run the API as a fixed non-root UID; fsGroup lets the kubelet chown the
+      # mounted PVCs so writes still succeed. NOTE: the API image currently
+      # builds without a USER directive (runs as root); these settings force a
+      # non-root identity at runtime. Operators must verify pods start; ideally
+      # bake a matching non-root USER into the image (owned by the API PR).
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       initContainers:
         - name: seed-modules
           image: __FO_API_IMAGE__
@@ -42,6 +55,14 @@ spec:
         - name: api
           image: __FO_API_IMAGE__
           imagePullPolicy: __FO_PULL_POLICY__
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            # readOnlyRootFilesystem left false: the Python runtime writes
+            # bytecode caches / rendered report scratch to the image filesystem.
+            # Writable data paths are the mounted PVCs + /tmp emptyDir.
+            readOnlyRootFilesystem: false
           ports:
             - containerPort: 8000
           envFrom:
@@ -93,6 +114,20 @@ spec:
               value: "/app/uploads/_chunks"
             - name: MODULES_DIR
               value: "/app/anvil"
+            # ES now requires auth. Provide the elastic credentials; the client
+            # may also consume them embedded in ELASTICSEARCH_URL.
+            - name: ELASTICSEARCH_USERNAME
+              value: "elastic"
+            - name: ELASTICSEARCH_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: elasticsearch-secret
+                  key: elastic_password
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-secret
+                  key: redis_password
           resources:
             requests:
               memory: "__FO_API_MEMORY_REQUEST__"

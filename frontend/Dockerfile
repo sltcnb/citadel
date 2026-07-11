@@ -1,8 +1,10 @@
 FROM node:20-alpine AS builder
 
 WORKDIR /app
-COPY package.json .
-RUN npm install
+# Copy the manifest + lockfile first so the dependency layer is cached and
+# `npm ci` installs the exact locked versions (reproducible builds).
+COPY package.json package-lock.json ./
+RUN npm ci
 
 COPY . .
 RUN npm run build

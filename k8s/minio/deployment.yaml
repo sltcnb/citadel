@@ -13,9 +13,22 @@ spec:
       labels:
         app: minio
     spec:
+      # MinIO can run as any UID; fsGroup lets it own the data PVC.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: minio
           image: minio/minio:RELEASE.2024-04-18T19-09-19Z
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: false
           args: ["server", "/data", "--console-address", ":9001"]
           env:
             - name: MINIO_ROOT_USER
