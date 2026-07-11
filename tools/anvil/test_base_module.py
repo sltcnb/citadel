@@ -84,7 +84,10 @@ def test_result_to_dict_shape():
 def test_validate_skips_without_files():
     ctx = RunContext(run_id="r", case_id="c", source_files=[])
     out = _DemoModule().run(ctx).to_dict()
-    assert out["status"] == "skipped"
+    # A module with nothing to analyze is a run-status condition surfaced on the
+    # run card (status="error" with a message), not a timeline finding.
+    assert out["status"] == "error"
+    assert out["error"]
 
 
 def test_demo_result_conforms_to_schema():

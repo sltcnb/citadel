@@ -40,6 +40,9 @@ exclude = ['/template/', '\.venv', 'node_modules']
 asyncio_mode = "auto"
 testpaths = ["api", "tools", "tests"]
 addopts = "-q"
+# Never collect cookiecutter templates (invalid Python / placeholder names) or
+# setuptools build artifacts (duplicate copies of already-collected tests).
+norecursedirs = ["*template*", "build", "dist", ".venv", "node_modules", "*.egg-info"]
 
 [tool.coverage.run]
 source = ["api", "tools/sluice/worker", "tools/talon", "tools/babel", "tools/anvil"]
