@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import Modal from './Modal'
 
 /**
  * useResizableWidth — give any right-hand drawer a user-draggable width that
@@ -95,24 +96,26 @@ export function useResizableWidth(slug, defaultPx, { min = 360 } = {}) {
 export function ResizableDrawer({ slug, defaultWidth = 640, onClose, className = '', children }) {
   const [width, handleProps] = useResizableWidth(slug, defaultWidth)
   return (
-    <div className="panel-backdrop" onClick={onClose}>
-      <div
-        className={`absolute right-0 top-0 h-full flex flex-col ${className}`}
-        style={{
-          width,
-          maxWidth: '96vw',
-          // Token-driven surface — light + dark come from --ct-* (one source),
-          // same as .panel-drawer / PanelShell.
-          background: 'var(--ct-surface)',
-          borderLeft: '1px solid var(--ct-border)',
-          boxShadow: '-4px 0 24px rgba(0,0,0,0.10)',
-        }}
-        onClick={e => e.stopPropagation()}
-      >
+    <Modal
+      onClose={onClose}
+      overlayClassName="panel-backdrop"
+      className={`absolute right-0 top-0 h-full flex flex-col ${className}`}
+      style={{
+        width,
+        maxWidth: '96vw',
+        // Token-driven surface — light + dark come from --ct-* (one source),
+        // same as .panel-drawer / PanelShell.
+        background: 'var(--ct-surface)',
+        borderLeft: '1px solid var(--ct-border)',
+        boxShadow: '-4px 0 24px rgba(0,0,0,0.10)',
+      }}
+      ariaLabel="Panel"
+    >
+      <>
         <DrawerResizeHandle {...handleProps} />
         {children}
-      </div>
-    </div>
+      </>
+    </Modal>
   )
 }
 

@@ -40,6 +40,7 @@ import {
   LayoutTemplate,
 } from 'lucide-react'
 import Editor from '@monaco-editor/react'
+import Modal from '../components/shared/Modal'
 import { api, getToken } from '../api/client'
 import RuleDrawer, {
   CategoryBadge, SigmaLevelBadge,
@@ -473,14 +474,14 @@ function NewFileModal({ type, existing, onClose, onCreate }) {
   }
 
   return (
-    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal-box max-w-xl">
+    <Modal onClose={onClose} className="modal-box max-w-xl" ariaLabel="New file">
+      <>
         <div className="modal-header">
           <div className="flex items-center gap-2">
             <LayoutTemplate size={15} className="text-brand-accent" />
             <span className="text-sm font-semibold">{titles[type] || 'New File'}</span>
           </div>
-          <button className="icon-btn" onClick={onClose}><X size={14} /></button>
+          <button className="icon-btn" onClick={onClose} aria-label="Close"><X size={14} /></button>
         </div>
 
         <div className="p-5 space-y-4">
@@ -541,8 +542,8 @@ function NewFileModal({ type, existing, onClose, onCreate }) {
             </div>
           </form>
         </div>
-      </div>
-    </div>
+      </>
+    </Modal>
   )
 }
 
@@ -550,11 +551,11 @@ function NewFileModal({ type, existing, onClose, onCreate }) {
 
 function DeleteConfirmModal({ file, onClose, onConfirm }) {
   return (
-    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal-box max-w-sm">
+    <Modal onClose={onClose} className="modal-box max-w-sm" ariaLabel="Delete file">
+      <>
         <div className="modal-header">
           <span className="text-sm font-semibold text-red-600">Delete</span>
-          <button className="icon-btn" onClick={onClose}><X size={14} /></button>
+          <button className="icon-btn" onClick={onClose} aria-label="Close"><X size={14} /></button>
         </div>
         <div className="p-5 space-y-4">
           <p className="text-sm text-gray-600">
@@ -566,8 +567,8 @@ function DeleteConfirmModal({ file, onClose, onConfirm }) {
             <button className="btn-danger text-sm" onClick={onConfirm}>Delete</button>
           </div>
         </div>
-      </div>
-    </div>
+      </>
+    </Modal>
   )
 }
 
@@ -627,8 +628,8 @@ function ValidationModal({ type, validation, onClose }) {
   const isValid   = validation.valid === true
   const details   = validation.details   // for alertrule Sigma parse
   return (
-    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal-box max-w-lg">
+    <Modal onClose={onClose} className="modal-box max-w-lg" ariaLabel="Validation result">
+      <>
         <div className="modal-header">
           <div className="flex items-center gap-2">
             {isSkipped
@@ -638,7 +639,7 @@ function ValidationModal({ type, validation, onClose }) {
                 : <AlertCircle size={15} className="text-red-500" />}
             <span className="text-sm font-semibold">Validation Result</span>
           </div>
-          <button className="icon-btn" onClick={onClose}><X size={14} /></button>
+          <button className="icon-btn" onClick={onClose} aria-label="Close"><X size={14} /></button>
         </div>
         <div className="p-5 space-y-4">
           {isSkipped ? (
@@ -716,8 +717,8 @@ function ValidationModal({ type, validation, onClose }) {
             </div>
           )}
         </div>
-      </div>
-    </div>
+      </>
+    </Modal>
   )
 }
 
@@ -1208,7 +1209,7 @@ export default function Studio() {
           >
             <FileCode2 size={13} className="flex-shrink-0 opacity-60" />
             <span className="text-[11px] font-mono truncate flex-1">{f.name}</span>
-            {isDirtyTab && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" />}
+            {isDirtyTab && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" title="Unsaved changes" role="img" aria-label="Unsaved changes" />}
             {isActive && !isDirtyTab && <ChevronRight size={10} className="flex-shrink-0 opacity-50" />}
           </button>
 
@@ -1756,8 +1757,8 @@ export default function Studio() {
 
       {/* ── Module Run modal ──────────────────────────────────────────────── */}
       {modRun.show && activeTab?.type === 'module' && (
-        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setModRun(p => ({ ...p, show: false }))}>
-          <div className="modal-box max-w-lg">
+        <Modal onClose={() => setModRun(p => ({ ...p, show: false }))} className="modal-box max-w-lg" ariaLabel="Run module">
+          <>
             <div className="modal-header">
               <div className="flex items-center gap-2">
                 <Play size={14} className="text-purple-500" />
@@ -1825,8 +1826,8 @@ export default function Studio() {
                 </button>
               </div>
             </div>
-          </div>
-        </div>
+          </>
+        </Modal>
       )}
     </div>
   )

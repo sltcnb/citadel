@@ -1057,7 +1057,7 @@ export default function CaseAiPanel({ caseId, onClose, onSearchQuery, onOpenRepo
             >
               <Trash2 size={11} /> Clear AI
             </button>
-            <button onClick={onClose} className="btn-ghost p-1.5 rounded-lg"><X size={16} /></button>
+            <button onClick={onClose} className="btn-ghost p-1.5 rounded-lg" aria-label="Close"><X size={16} /></button>
           </div>
         </div>
 

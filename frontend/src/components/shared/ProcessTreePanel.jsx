@@ -140,6 +140,8 @@ function TreeNode({ pid, nodesByPid, visiblePids, depth, onPivot }) {
         <button
           type="button"
           onClick={() => hasChildren && setOpen(v => !v)}
+          aria-expanded={hasChildren ? open : undefined}
+          aria-label={hasChildren ? (open ? 'Collapse children' : 'Expand children') : undefined}
           className={`w-4 flex-shrink-0 ${hasChildren ? 'text-gray-500 hover:text-brand-text cursor-pointer' : 'text-transparent cursor-default'}`}
         >
           {hasChildren ? (open ? <ChevronDown size={11}/> : <ChevronRight size={11}/>) : '·'}
@@ -160,8 +162,9 @@ function TreeNode({ pid, nodesByPid, visiblePids, depth, onPivot }) {
         <span className="text-gray-600 truncate flex-1 min-w-0" title={node.cmdline}>{node.cmdline || node.path}</span>
         <button
           onClick={() => onPivot(node)}
-          className="opacity-0 group-hover:opacity-100 text-[10px] text-brand-accent hover:text-brand-accenthover px-1.5 py-0.5 rounded transition-opacity flex-shrink-0"
+          className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-[10px] text-brand-accent hover:text-brand-accenthover px-1.5 py-0.5 rounded transition-opacity flex-shrink-0"
           title="Open this PID in the timeline"
+          aria-label={`Open PID ${node.pid} in the timeline`}
         >
           <ExternalLink size={10} />
         </button>
