@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import os
 import re
@@ -28,6 +29,7 @@ from pathlib import Path
 
 from auth.dependencies import require_case_access
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from services import jobs as job_svc
 from services import storage
@@ -693,3 +695,49 @@ def cancel_case_ingestion(case_id: str, _case: dict = Depends(require_case_acces
         "cancelled": len(cancelled),
         "job_ids": cancelled,
     }
+
+
+# Statuses that mean a job is still doing work — while any exist the stream
+# keeps emitting; once none remain we send a final `done` event and close.
+_ACTIVE_STATUSES = ("PENDING", "QUEUED", "UPLOADING", "RUNNING")
+
+
+@router.get("/cases/{case_id}/ingest/stream")
+async def ingest_progress_stream(
+    case_id: str, _case: dict = Depends(require_case_access)
+):
+    """Server-Sent Events stream of per-case ingest progress.
+
+    Emits a `data:` event with the live status tally every ~2s until no job is
+    active, then a final `event: done`. Lets the UI show real progress instead
+    of blind client-side polling. EventSource cannot set headers, so the token
+    is supplied via ?_token= (handled by the standard auth dependency).
+    """
+
+    async def _gen():
+        # Hard cap so a wedged case can't hold a connection forever (~20 min).
+        for _ in range(600):
+            counts = job_svc.status_counts_for_case(case_id)
+            total = sum(counts.values())
+            done = sum(v for k, v in counts.items() if k not in _ACTIVE_STATUSES)
+            active = total - done
+            payload = {
+                "case_id": case_id,
+                "counts": counts,
+                "total": total,
+                "done": done,
+                "active": active,
+            }
+            yield f"data: {json.dumps(payload)}\n\n"
+            if total > 0 and active == 0:
+                yield "event: done\ndata: {}\n\n"
+                return
+            await asyncio.sleep(2)
+        # Timed out with work still pending — tell the client to fall back.
+        yield "event: timeout\ndata: {}\n\n"
+
+    return StreamingResponse(
+        _gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

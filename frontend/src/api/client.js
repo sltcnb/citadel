@@ -222,6 +222,13 @@ export const api = {
     sync:         ()      => request('POST', '/admin/tools/sync-capabilities'),
   },
 
+  storageReconcile: {
+    // Report-only orphan sweep: objects in storage with no DB record vs DB
+    // references with no object. Never deletes anything.
+    report: () => request('GET',  '/admin/storage-reconcile/report'),
+    run:    () => request('POST', '/admin/storage-reconcile/run'),
+  },
+
   health: {
     ready: () => request('GET', '/health/ready'),
   },
