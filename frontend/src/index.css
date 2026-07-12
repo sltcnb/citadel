@@ -729,6 +729,17 @@ mark[data-match][data-active] { background: #C7D2FE; color: #312E81; }
 
 .nord .bg-brand-accentlight { background-color: rgba(136,192,208,0.12); }
 
+/* Translucent light-gray panels (bg-gray-50/60 etc.) would otherwise render as
+   pale patches on the dark Nord canvas — remap them to subtle raised tints so
+   tinted section backgrounds stay cohesive. */
+.nord .bg-gray-50\/30,
+.nord .bg-gray-50\/50,
+.nord .bg-gray-50\/60,
+.nord .bg-gray-50\/80 { background-color: rgba(67, 76, 94, 0.40); }
+.nord .bg-gray-100\/30,
+.nord .bg-gray-100\/50 { background-color: rgba(67, 76, 94, 0.50); }
+.nord .bg-gray-200\/60 { background-color: rgba(76, 86, 106, 0.55); }
+
 .nord .hover\:bg-white:hover    { background-color: #434C5E; }
 .nord .hover\:bg-gray-50:hover  { background-color: #434C5E; }
 .nord .hover\:bg-gray-100:hover { background-color: #4C566A; }
