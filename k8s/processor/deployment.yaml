@@ -19,6 +19,16 @@ spec:
       labels:
         app: processor
     spec:
+      # ── Sandbox runtimeClass (optional) ───────────────────────────────────
+      # The processor executes untrusted third-party analysis modules, so it is
+      # a prime candidate for a hardened sandbox runtime (gVisor "runsc"/"gvisor"
+      # or Kata Containers). foctl substitutes the value from the optional
+      # `resources.processor_runtime_class` config key; when unset it renders
+      # empty (null) which means "use the cluster default runtime", so clusters
+      # without a sandbox runtime still schedule normally.
+      # NOTE: when set, the named RuntimeClass MUST already be installed
+      # cluster-side (e.g. `kubectl get runtimeclass`) or pods will not schedule.
+      runtimeClassName: __FO_PROCESSOR_RUNTIME_CLASS__
       # ── Pod security context ──────────────────────────────────────────────
       # The processor runs untrusted third-party analysis modules, so it is the
       # highest-priority target for sandboxing. Run as a fixed non-root UID and
@@ -63,13 +73,13 @@ spec:
             - name: modules-volume
               mountPath: /app/anvil
         - name: wait-redis
-          image: busybox:1.36
+          image: busybox:1.36@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
           command: ['sh', '-c', 'until nc -z redis-service 6379; do echo waiting; sleep 2; done']
         - name: wait-elasticsearch
-          image: busybox:1.36
+          image: busybox:1.36@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
           command: ['sh', '-c', 'until nc -z elasticsearch-service 9200; do echo waiting; sleep 3; done']
         - name: wait-minio
-          image: busybox:1.36
+          image: busybox:1.36@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
           command: ['sh', '-c', 'until nc -z minio-service 9000; do echo waiting; sleep 2; done']
       containers:
         - name: processor

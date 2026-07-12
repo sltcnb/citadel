@@ -1,3 +1,26 @@
+# ── Builder stage ─────────────────────────────────────────────────────────────
+# Carries the compile toolchain (gcc/g++) + libtsk-dev headers only long enough
+# to build wheels for the deps that ship as source (yara-python, pytsk3, …).
+# The resulting wheels are installed into the slim runtime stage with --no-index,
+# so gcc/g++/dev headers never land in the shipped image.
+FROM python:3.11-slim AS builder
+
+# Toolchain + native headers so the source-built wheels compile here (not at
+# runtime): gcc/g++, libtsk-dev for pytsk3 (whose ./configure also needs `file`,
+# make + autotools) and libssl-dev/pkg-config for yara-python 4.3.1's bundled
+# libyara authenticode module (needs openssl/asn1.h).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc g++ make file autoconf automake libtool pkg-config \
+    libssl-dev libtsk-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Build context is the repo root — copy api/ requirements first.
+COPY api/requirements.txt requirements.txt
+# Pin-preserving: pip wheel resolves the exact pinned versions from requirements
+# and writes them (plus their transitive deps) to /wheels for offline install.
+RUN pip wheel --no-cache-dir -r requirements.txt -w /wheels
+
+# ── Runtime stage ───────────────────────────────────────────────────────────────
 FROM python:3.11-slim
 
 WORKDIR /app
@@ -6,22 +29,21 @@ WORKDIR /app
 # (citadel_contracts is COPYed to /app/citadel_contracts below).
 ENV PYTHONPATH=/app
 
-# Build toolchain + native headers for the source-built wheels:
-#   - pytsk3 (Sleuth Kit bindings): gcc/g++, libtsk-dev, and its ./configure
-#     needs `file`, make and the autotools.
-#   - yara-python 4.3.1: bundles libyara, whose authenticode module needs the
-#     OpenSSL headers (openssl/asn1.h) -> libssl-dev, plus pkg-config.
+# Runtime libs only — no compiler/toolchain. libtsk-dev provides the libtsk
+# shared library that the pytsk3 wheel links against at import time; libmagic1
+# for python-magic; the WeasyPrint (report.pdf) Pango/Cairo/GDK-Pixbuf + font
+# stack; libssl is provided by the base image.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc g++ make file autoconf automake libtool pkg-config \
-    libssl-dev libmagic1 libtsk-dev \
-    # WeasyPrint (report.pdf) runtime libs — Pango/Cairo/GDK-Pixbuf + font stack
+    libmagic1 libtsk-dev \
     libpango-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf-2.0-0 libcairo2 \
     libffi8 shared-mime-info fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
-# Build context is the repo root — copy api/ sources first
+# Install the pre-built wheels with no network access — fast + reproducible.
 COPY api/requirements.txt requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+COPY --from=builder /wheels /wheels
+RUN pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.txt \
+    && rm -rf /wheels
 
 COPY api/ .
 
