@@ -52,15 +52,23 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{/*
 Resolve a component image reference.
 Usage: {{ include "citadel.image" (dict "ctx" . "component" .Values.api) }}
+When `image.digest` is set (sha256:...) the image is pinned by digest for
+supply-chain integrity/reproducibility, rendered as repo:tag@digest so the tag
+stays human-readable while the digest is authoritative.
 */}}
 {{- define "citadel.image" -}}
 {{- $registry := .ctx.Values.global.image.registry -}}
 {{- $repo := .component.image.repository -}}
 {{- $tag := .component.image.tag | default .ctx.Values.global.image.tag -}}
+{{- $digest := .component.image.digest | default .ctx.Values.global.image.digest -}}
+{{- $name := $repo -}}
 {{- if $registry -}}
-{{- printf "%s/%s:%s" (trimSuffix "/" $registry) $repo $tag -}}
+{{- $name = printf "%s/%s" (trimSuffix "/" $registry) $repo -}}
+{{- end -}}
+{{- if $digest -}}
+{{- printf "%s:%s@%s" $name $tag $digest -}}
 {{- else -}}
-{{- printf "%s:%s" $repo $tag -}}
+{{- printf "%s:%s" $name $tag -}}
 {{- end -}}
 {{- end }}
 

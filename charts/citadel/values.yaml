@@ -10,6 +10,11 @@ global:
     registry: ""
     # Default tag applied when a component does not override `image.tag`.
     tag: "1.0.0"
+    # Optional global digest (sha256:...) applied to every component that does
+    # not set its own `image.digest`. When set, images render as
+    # repo:tag@sha256:... for supply-chain integrity. Leave empty to pin per
+    # component (recommended) or to use plain tags.
+    digest: ""
     pullPolicy: IfNotPresent
   # Optional list of imagePullSecrets applied to every pod.
   imagePullSecrets: []
@@ -20,6 +25,8 @@ api:
   image:
     repository: citadel-api
     # tag: ""              # falls back to global.image.tag when empty
+    # digest: ""  # TODO digest-pin: set to sha256:... of the citadel-api image
+                 # built by the CI Build workflow (renders repo:tag@digest)
     pullPolicy: ""         # falls back to global.image.pullPolicy when empty
   service:
     type: ClusterIP
@@ -57,7 +64,15 @@ processor:
   image:
     repository: citadel-processor
     # tag: ""
+    # digest: ""  # TODO digest-pin: set to sha256:... of the citadel-processor image
+                 # built by the CI Build workflow (renders repo:tag@digest)
     pullPolicy: ""
+  # Optional sandbox RuntimeClass. The processor runs untrusted third-party
+  # analysis modules, so a hardened runtime (gVisor "runsc"/"gvisor" or Kata)
+  # is recommended. Leave empty (default) so clusters without a sandbox runtime
+  # still schedule. When set, the named RuntimeClass MUST already be installed
+  # cluster-side (`kubectl get runtimeclass`) or pods will not schedule.
+  runtimeClassName: ""
   resources:
     requests:
       cpu: "500m"
@@ -83,6 +98,8 @@ frontend:
   image:
     repository: citadel-frontend
     # tag: ""
+    # digest: ""  # TODO digest-pin: set to sha256:... of the citadel-frontend image
+                 # built by the CI Build workflow (renders repo:tag@digest)
     pullPolicy: ""
   service:
     type: ClusterIP
