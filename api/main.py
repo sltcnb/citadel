@@ -540,6 +540,16 @@ async def _on_startup():
             "SECURITY: MinIO is using default credentials (minioadmin/minioadmin). "
             "Set MINIO_ACCESS_KEY / MINIO_SECRET_KEY to protect evidence storage."
         )
+    # Ensure the relational schema (e.g. the authoritative evidence seal anchor
+    # table) exists. create_all is idempotent; deployments that manage schema via
+    # migrations can no-op this. Best-effort — never block startup on the DB.
+    try:
+        from db import init_db
+
+        init_db()
+    except Exception as _db_exc:
+        logger.warning("Could not initialise relational DB schema at startup: %s", _db_exc)
+
     _bootstrap_admin()
     asyncio.create_task(cti.start_cti_scheduler())
     asyncio.create_task(_metrics_background_loop())
