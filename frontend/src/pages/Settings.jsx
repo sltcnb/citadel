@@ -28,8 +28,12 @@ import {
   Webhook,
   Send,
   SlidersHorizontal,
+  Sun,
+  Moon,
+  Snowflake,
 } from 'lucide-react'
 import { api } from '../api/client'
+import { useTheme, THEMES, THEME_LABELS } from '../hooks/useTheme'
 import ConfirmDialog from '../components/ConfirmDialog'
 import LicenseGate from '../components/LicenseGate'
 import { useLicense } from '../contexts/LicenseContext'
@@ -944,6 +948,46 @@ function S3Form({ form, setF, showKey, setShowKey, secretKeySet, label = 'S3 Sto
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
+
+const THEME_ICONS = { light: Sun, dark: Moon, nord: Snowflake }
+
+// Appearance is a per-user preference (not platform config), so it lives outside
+// the admin-only tabs and is shown to everyone. Picking a theme applies it
+// immediately and persists it via the shared useTheme hook.
+function AppearanceSection() {
+  const { theme, setTheme } = useTheme()
+  return (
+    <section className="card p-5 space-y-4 mb-6">
+      <div>
+        <h2 className="font-semibold text-brand-text">Appearance</h2>
+        <p className="text-xs text-gray-500 mt-0.5">Choose a theme. Applies instantly and is saved to this browser.</p>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {THEMES.map(t => {
+          const Icon = THEME_ICONS[t]
+          const active = theme === t
+          return (
+            <button
+              key={t}
+              type="button"
+              onClick={() => setTheme(t)}
+              aria-pressed={active}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg border text-[13px] font-medium transition-colors ${
+                active
+                  ? 'border-brand-accent text-brand-accent bg-brand-accentlight'
+                  : 'border-gray-200 text-gray-600 hover:text-brand-text hover:border-gray-300 hover:bg-gray-50'
+              }`}
+            >
+              {Icon && <Icon size={14} />}
+              {THEME_LABELS[t] || t}
+              {active && <Check size={13} className="ml-0.5" />}
+            </button>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
 
 export default function Settings() {
   const { user } = useOutletContext() || {}
@@ -2524,6 +2568,9 @@ resources:
           </span>
         )}
       />
+
+      {/* Appearance — available to every user, outside the admin-only tabs. */}
+      <AppearanceSection />
 
       {/* Tab nav */}
       <div className="flex gap-1 border-b border-gray-200 mb-6 overflow-x-auto">
