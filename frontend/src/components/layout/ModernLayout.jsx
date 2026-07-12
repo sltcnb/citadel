@@ -25,23 +25,7 @@ function PageToolByline({ pathname, surfaceMap }) {
   return <div className="px-4 pt-3 pb-1"><ToolByline tool={tool} /></div>
 }
 import { useUpload } from '../../contexts/UploadContext'
-
-const THEMES = ['light', 'dark']
-function useTheme() {
-  const [theme, setTheme] = useState(() => {
-    if (typeof window === 'undefined') return 'light'
-    const saved = localStorage.getItem('fo-theme')
-    if (saved && THEMES.includes(saved)) return saved
-    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-  })
-  useEffect(() => {
-    const root = document.documentElement
-    THEMES.forEach(t => root.classList.remove(t))
-    if (theme !== 'light') root.classList.add(theme)
-    localStorage.setItem('fo-theme', theme)
-  }, [theme])
-  return [theme, () => setTheme(t => THEMES[(THEMES.indexOf(t) + 1) % THEMES.length])]
-}
+import { useTheme } from '../../hooks/useTheme'
 
 function Dropdown({ group, location }) {
   const [open, setOpen] = useState(false)
@@ -94,7 +78,7 @@ function Dropdown({ group, location }) {
 const isAdmin = (user) => user?.role === 'admin'
 
 export default function ModernLayout({ user, onLogout }) {
-  const [theme, cycleTheme]           = useTheme()
+  const { theme, cycleTheme }         = useTheme()
   const [showShortcuts, setShowShortcuts] = useState(false)
   const [mobileOpen, setMobileOpen]   = useState(false)
   const navigate  = useNavigate()
@@ -181,7 +165,9 @@ export default function ModernLayout({ user, onLogout }) {
 
   useEffect(() => { setMobileOpen(false) }, [location.pathname])
 
-  const logoFilter = theme === 'dark' ? 'invert(1) brightness(2)' : 'none'
+  // Dark and Nord both sit on dark backgrounds, so the dark logo treatment
+  // applies to any non-light theme.
+  const logoFilter = theme !== 'light' ? 'invert(1) brightness(2)' : 'none'
 
   return (
     <div className="flex flex-col h-screen bg-gray-50">
@@ -304,7 +290,7 @@ export default function ModernLayout({ user, onLogout }) {
 
           <button onClick={cycleTheme}
             className="w-8 h-8 flex items-center justify-center rounded-md text-gray-500 hover:text-brand-text hover:bg-gray-100 transition-colors"
-            title={theme === 'light' ? 'Dark mode' : 'Light mode'}
+            title={`Theme: ${theme} — click to cycle (light · dark · nord)`}
           >
             {theme === 'light' ? <Moon size={15} /> : <Sun size={15} />}
           </button>
