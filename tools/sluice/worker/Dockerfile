@@ -1,18 +1,52 @@
+# ── Builder stage ─────────────────────────────────────────────────────────────
+# Carries the compile toolchain (build-essential + dev headers) only long enough
+# to build wheels for the source-shipped deps (yara-python, pytsk3, the git-based
+# ccl_chromium_reader, …). Wheels are installed --no-index into the runtime stage
+# so gcc/build-essential/dev headers never land in the shipped image.
+FROM ubuntu:24.04 AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+WORKDIR /build
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-pip python3-dev python3-venv \
+    build-essential \
+    libmagic-dev libtsk-dev \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Isolated venv so pip is not externally-managed (PEP 668) and wheel building
+# stays reproducible.
+RUN python3 -m venv /opt/buildenv
+ENV PATH="/opt/buildenv/bin:$PATH"
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+
+# Build wheels for the pinned requirements (yara-python, pytsk3 compile here).
+COPY tools/sluice/worker/requirements.txt requirements.txt
+RUN pip wheel --no-cache-dir -r requirements.txt -w /wheels
+
+# ccl_chromium_reader is required by pyhindsight but is not on PyPI. Build it (and
+# its ccl_simplesnappy dep) into a wheel from GitHub so the runtime install is
+# fully offline.
+RUN pip wheel --no-cache-dir -w /wheels \
+    "git+https://github.com/cclgroupltd/ccl_chromium_reader.git"
+
+# ── Runtime stage ───────────────────────────────────────────────────────────────
 FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 WORKDIR /app
 
-# ── System deps ───────────────────────────────────────────────────────────────
+# ── System deps (runtime only — no compiler/toolchain) ──────────────────────────
 # binutils               → 'strings' command for Strings module
 # perl                   → RegRipper (Perl-based)
 # unzip                  → Hayabusa + RegRipper zip extraction
 # libimage-exiftool-perl → ExifTool metadata extractor
-# libjpeg-dev / zlib1g-dev → optional image libraries for ExifTool
+# libmagic1              → runtime lib for python-magic (dev headers live in builder)
+# libtsk-dev             → provides the libtsk shared lib the pytsk3 wheel links to
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 python3-pip python3-dev python3-venv \
-    build-essential \
-    libmagic1 libmagic-dev \
+    python3 python3-pip python3-venv \
+    libmagic1 \
     wget curl git \
     binutils \
     perl \
@@ -73,15 +107,15 @@ ENV PATH="/opt/venv/bin:$PATH"
 ENV PYTHONPATH=/app
 
 # ── Python deps (includes pyhindsight for the Hindsight module) ───────────────
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+# Install the pre-built wheels from the builder stage with no network access —
+# fast + reproducible, and no compiler in the runtime image. ccl_chromium_reader
+# (required by pyhindsight, not on PyPI) is among the wheels built upstream.
 COPY tools/sluice/worker/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# ccl_chromium_reader is required by pyhindsight but is not on PyPI.
-# Install from GitHub (has pyproject.toml so pip handles it, including its ccl_simplesnappy dep).
-RUN pip install --no-cache-dir \
-    "git+https://github.com/cclgroupltd/ccl_chromium_reader.git" \
-    && python3 -c "import ccl_chromium_reader; print('ccl_chromium_reader installed OK')"
+COPY --from=builder /wheels /wheels
+RUN pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.txt \
+    && pip install --no-cache-dir --no-index --find-links=/wheels ccl_chromium_reader \
+    && python3 -c "import ccl_chromium_reader; print('ccl_chromium_reader installed OK')" \
+    && rm -rf /wheels
 
 # Patch pyhindsight for Python < 3.11 compatibility.
 # datetime.UTC was introduced in Python 3.11; replace with datetime.timezone.utc.

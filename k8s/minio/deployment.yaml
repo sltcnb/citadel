@@ -23,7 +23,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: minio
-          image: minio/minio:RELEASE.2024-04-18T19-09-19Z
+          image: minio/minio:RELEASE.2024-04-18T19-09-19Z@sha256:036a068d7d6b69400da6bc07a480bee1e241ef3c341c41d988ed11f520f85124
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
