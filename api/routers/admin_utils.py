@@ -2,17 +2,54 @@
 
 from __future__ import annotations
 
+import json
 import logging
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from services import elasticsearch as es
 from services import storage
+from services import storage_reconcile
 
 from config import get_redis, settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["admin"])
+
+
+@router.get("/admin/storage-reconcile/report")
+def get_storage_reconcile_report():
+    """Return the latest persisted storage-reconcile report (report-only).
+
+    The scheduled sweep (when enabled) stores its result; this surfaces it for
+    the admin UI. Returns ``{"status": "none"}`` when no report exists yet.
+    """
+    report = storage_reconcile.latest_report()
+    if report is None:
+        return {"status": "none"}
+    return {"status": "ok", "report": report}
+
+
+@router.post("/admin/storage-reconcile/run")
+def run_storage_reconcile_now():
+    """Run an on-demand REPORT-ONLY reconcile sweep and persist the result.
+
+    Never deletes anything — it only classifies orphan objects vs dangling DB
+    references, independent of whether the periodic schedule is enabled.
+    """
+    try:
+        report = storage_reconcile.find_orphans()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail=f"Reconcile failed: {exc}") from exc
+    payload = report.as_dict()
+    payload["mode"] = "report-only"
+    try:
+        get_redis().set(
+            storage_reconcile.LATEST_REPORT_KEY, json.dumps(payload, default=str)
+        )
+    except Exception as exc:  # noqa: BLE001 — persistence best-effort
+        logger.warning("storage_reconcile: could not persist on-demand report: %s", exc)
+    return {"status": "ok", "report": payload}
 
 
 @router.post("/admin/purge-orphaned-data")

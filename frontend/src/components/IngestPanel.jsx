@@ -16,7 +16,7 @@ import {
 import PanelHelp from './shared/PanelHelp'
 import { ResizableDrawer } from './shared/resizableDrawer'
 import ArtifactSelector from './shared/ArtifactSelector'
-import { api } from '../api/client'
+import { api, getToken } from '../api/client'
 import { useUpload } from '../contexts/UploadContext'
 import { formatBytes as fmtSize } from '../utils/format'
 
@@ -937,6 +937,22 @@ export default function IngestPanel({ caseId, onClose, onComplete, autoPilot, se
     const id = setInterval(poll, 3000)
     return () => clearInterval(id)
   }, [])
+
+  // Live server-pushed progress via SSE. The server emits while any job is
+  // active, so we refresh immediately on each event instead of waiting for the
+  // 3 s poll tick. Purely additive — if EventSource errors or is unsupported,
+  // the poller above still keeps state current, so there is no regression.
+  useEffect(() => {
+    if (typeof EventSource === 'undefined' || !caseId) return
+    const token = getToken()
+    const url = `/api/v1/cases/${caseId}/ingest/stream${token ? `?_token=${encodeURIComponent(token)}` : ''}`
+    let es
+    try { es = new EventSource(url) } catch { return }
+    es.onmessage = () => { reloadJobs() }
+    es.addEventListener('done', () => { reloadJobs(); es.close() })
+    es.onerror = () => { es.close() }  // fall back to the poller
+    return () => es.close()
+  }, [caseId, reloadJobs])
 
   const addJobs = useCallback((newJobs) => {
     const ids = newJobs.map(j => j.job_id)
