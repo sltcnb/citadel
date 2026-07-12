@@ -700,6 +700,100 @@ function emptyS3Form(vendor = 'aws') {
   return { vendor, endpoint: '', access_key: '', secret_key: '', bucket: '', region: '', use_ssl: true }
 }
 
+/* ── Storage reconcile (orphan report) panel ──────────────────────────────── */
+
+function StorageReconcilePanel() {
+  const [report, setReport]   = useState(null)   // {orphan_objects, missing_objects, summary, ...}
+  const [status, setStatus]   = useState('idle')  // idle | loading | running | error | none
+  const [error, setError]     = useState('')
+
+  async function load() {
+    setStatus('loading'); setError('')
+    try {
+      const res = await api.storageReconcile.report()
+      if (res.status === 'none') { setReport(null); setStatus('none') }
+      else { setReport(res.report); setStatus('idle') }
+    } catch (e) { setError(e?.message || 'Failed to load report'); setStatus('error') }
+  }
+
+  async function runNow() {
+    setStatus('running'); setError('')
+    try {
+      const res = await api.storageReconcile.run()
+      setReport(res.report); setStatus('idle')
+    } catch (e) { setError(e?.message || 'Reconcile failed'); setStatus('error') }
+  }
+
+  useEffect(() => { load() }, [])
+
+  const orphans = report?.orphan_objects || []
+  const missing = report?.missing_objects || []
+  const summary = report?.summary || {}
+
+  return (
+    <section className="card p-5 space-y-4">
+      <div className="flex items-center gap-2">
+        <HardDrive size={15} className="text-blue-500" />
+        <h2 className="font-semibold text-brand-text">Storage Reconcile</h2>
+      </div>
+      <p className="text-xs text-gray-500">
+        Report-only sweep comparing object storage against the database:
+        <strong> orphan objects</strong> (in storage, no DB record) vs
+        <strong> missing objects</strong> (DB reference, no object). Read-only — nothing is deleted.
+      </p>
+
+      <div className="flex items-center gap-3 flex-wrap">
+        <button type="button" onClick={runNow} disabled={status === 'running' || status === 'loading'}
+          className="btn-outline text-xs px-4 py-1.5 flex items-center gap-1.5 disabled:opacity-50">
+          {status === 'running'
+            ? <Loader2 size={12} className="animate-spin" />
+            : <RefreshCw size={12} />}
+          {status === 'running' ? 'Scanning…' : 'Run reconcile now'}
+        </button>
+        {report?.generated_at && (
+          <span className="text-[11px] text-gray-400">Last run: {report.generated_at}</span>
+        )}
+      </div>
+
+      {status === 'error' && (
+        <div role="alert" className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-start gap-1.5">
+          <AlertCircle size={12} className="mt-0.5 flex-shrink-0" /><span>{error}</span>
+        </div>
+      )}
+
+      {status === 'none' && (
+        <p className="text-xs text-gray-400">No reconcile has run yet. Click “Run reconcile now”.</p>
+      )}
+
+      {report && (
+        <div className="text-xs bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 space-y-1">
+          <p className="font-medium text-brand-text flex items-center gap-1">
+            <Check size={12} className="text-green-600" /> Scanned {summary.scanned_objects ?? '—'} objects
+          </p>
+          <p className="text-gray-500">Orphan objects (no DB record): <strong>{orphans.length}</strong></p>
+          <p className="text-gray-500">Missing objects (dangling DB refs): <strong>{missing.length}</strong></p>
+          {orphans.length > 0 && (
+            <details className="mt-1"><summary className="cursor-pointer text-gray-500">Show orphan objects</summary>
+              <ul className="mt-1 max-h-40 overflow-auto font-mono text-[11px] text-gray-600">
+                {orphans.slice(0, 200).map(k => <li key={k}>{k}</li>)}
+                {orphans.length > 200 && <li className="text-gray-400">… {orphans.length - 200} more</li>}
+              </ul>
+            </details>
+          )}
+          {missing.length > 0 && (
+            <details className="mt-1"><summary className="cursor-pointer text-gray-500">Show missing objects</summary>
+              <ul className="mt-1 max-h-40 overflow-auto font-mono text-[11px] text-gray-600">
+                {missing.slice(0, 200).map(k => <li key={k}>{k}</li>)}
+                {missing.length > 200 && <li className="text-gray-400">… {missing.length - 200} more</li>}
+              </ul>
+            </details>
+          )}
+        </div>
+      )}
+    </section>
+  )
+}
+
 /* ── Reusable S3 form component ───────────────────────────────────────────── */
 
 function S3Form({ form, setF, showKey, setShowKey, secretKeySet, label = 'S3 Storage' }) {
@@ -2318,6 +2412,9 @@ resources:
             </div>
           </div>
         </section>
+
+        {/* Storage reconcile (report-only orphan sweep) */}
+        <StorageReconcilePanel />
 
         {/* System Maintenance */}
         <section className="card p-5 space-y-4">
