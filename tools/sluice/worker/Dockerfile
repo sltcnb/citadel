@@ -21,6 +21,12 @@ RUN python3 -m venv /opt/buildenv
 ENV PATH="/opt/buildenv/bin:$PATH"
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
+# Also wheel the build backend itself: some packages declare setuptools as an
+# install requirement, and the runtime stage installs with --no-index, so
+# setuptools/wheel/pip must be present in /wheels or that resolve fails
+# ("No matching distribution found for setuptools>=61.0").
+RUN pip wheel --no-cache-dir pip setuptools wheel -w /wheels
+
 # Build wheels for the pinned requirements (yara-python, pytsk3 compile here).
 COPY tools/sluice/worker/requirements.txt requirements.txt
 RUN pip wheel --no-cache-dir -r requirements.txt -w /wheels
