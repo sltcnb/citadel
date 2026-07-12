@@ -96,3 +96,47 @@ def test_max_objects_truncates(monkeypatch):
     report = sr.find_orphans(max_objects=2)
     assert report.truncated is True
     assert report.scanned_objects == 2
+
+
+# ── Scheduled (report-only) sweep ───────────────────────────────────────────────
+
+
+class _FakeRedis:
+    def __init__(self):
+        self.kv = {}
+
+    def set(self, k, v, **kw):
+        self.kv[k] = v
+        return True
+
+    def get(self, k):
+        return self.kv.get(k)
+
+
+def test_scheduled_reconcile_disabled_returns_none(monkeypatch):
+    monkeypatch.setattr(sr.settings, "STORAGE_RECONCILE_SCHEDULE_ENABLED", False)
+    assert sr.run_scheduled_reconcile() is None
+
+
+def test_scheduled_reconcile_dry_run_stores_report_no_delete(monkeypatch):
+    objects = [_Obj("cases/c1/orphan"), _Obj("cases/c1/keep")]
+    deleted = _setup(monkeypatch, objects, {"cases/c1/keep"})
+    monkeypatch.setattr(sr.settings, "STORAGE_RECONCILE_SCHEDULE_ENABLED", True)
+
+    fake = _FakeRedis()
+    import config
+
+    monkeypatch.setattr(config, "get_redis", lambda: fake)
+
+    payload = sr.run_scheduled_reconcile()
+    # Report-only: it classified the orphan but deleted nothing.
+    assert payload["mode"] == "report-only"
+    assert payload["orphan_objects"] == ["cases/c1/orphan"]
+    assert deleted == []
+    # The latest report was persisted to Redis for later surfacing.
+    import json as _json
+
+    stored = _json.loads(fake.get(sr.LATEST_REPORT_KEY))
+    assert stored["orphan_objects"] == ["cases/c1/orphan"]
+    assert "generated_at" in stored
+    assert sr.latest_report()["orphan_objects"] == ["cases/c1/orphan"]

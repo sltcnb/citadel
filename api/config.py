@@ -30,6 +30,15 @@ class Settings:
     STORAGE_RECONCILE_MAX_OBJECTS: int = int(
         os.getenv("STORAGE_RECONCILE_MAX_OBJECTS", "100000")
     )
+    # Periodic REPORT-ONLY orphan sweep. OFF by default — the scheduler only runs
+    # find_orphans() (never deletes) and persists the latest report to Redis so it
+    # can be surfaced later. Interval is in hours.
+    STORAGE_RECONCILE_SCHEDULE_ENABLED: bool = os.getenv(
+        "STORAGE_RECONCILE_SCHEDULE_ENABLED", "false"
+    ).lower() in ("true", "1", "yes")
+    STORAGE_RECONCILE_INTERVAL_HOURS: int = int(
+        os.getenv("STORAGE_RECONCILE_INTERVAL_HOURS", "24")
+    )
 
     # ── Pagination ─────────────────────────────────────────────────────────
     DEFAULT_PAGE_SIZE: int = int(os.getenv("DEFAULT_PAGE_SIZE", "100"))
