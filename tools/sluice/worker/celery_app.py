@@ -56,7 +56,11 @@ app.conf.update(
     task_track_started=True,
     task_acks_late=True,  # re-queue on worker crash
     task_reject_on_worker_lost=True,  # requeue if worker disappears mid-task
-    worker_prefetch_multiplier=1,  # one task at a time per worker slot
+    # Backpressure: prefetch how many messages each worker slot buffers ahead of
+    # processing. Kept at 1 by default so a burst of dispatches can't pile heavy
+    # tasks into a single worker's memory. See robustness.MAX_IN_FLIGHT for the
+    # fleet-wide in-flight cap enforced inside the ingest task itself.
+    worker_prefetch_multiplier=int(os.getenv("WORKER_PREFETCH_MULTIPLIER", "1")),
     # ── Time limits ────────────────────────────────────────────────────────
     task_soft_time_limit=3600,  # raise SoftTimeLimitExceeded at 1 h
     task_time_limit=7200,  # SIGKILL at 2 h
