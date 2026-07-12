@@ -485,6 +485,33 @@ async def _auto_archive_loop():
             logger.exception("Auto-archive loop error: %s", exc)
 
 
+async def _storage_reconcile_loop():
+    """Periodic REPORT-ONLY orphan sweep. Never deletes; persists the latest
+    report to Redis for later surfacing. Disabled unless
+    STORAGE_RECONCILE_SCHEDULE_ENABLED is set."""
+    import asyncio as _aio
+
+    interval = max(1, settings.STORAGE_RECONCILE_INTERVAL_HOURS) * 3600
+    # Let storage/redis settle before the first (potentially large) listing.
+    await _aio.sleep(60)
+    while True:
+        if settings.STORAGE_RECONCILE_SCHEDULE_ENABLED:
+            try:
+                from config import get_redis
+                from services import storage_reconcile as _sr
+
+                r = get_redis()
+                # Single-flight across uvicorn workers / replicas: only the holder
+                # of the lock runs the sweep this cycle.
+                if r.set("fo:storage_reconcile:lock", "1", nx=True, ex=max(60, interval - 60)):
+                    await _aio.get_event_loop().run_in_executor(
+                        None, _sr.run_scheduled_reconcile
+                    )
+            except Exception as exc:
+                logger.warning("Storage reconcile loop error: %s", exc)
+        await _aio.sleep(interval)
+
+
 @app.on_event("startup")
 async def _on_startup():
     # Ship the API's structured logs to Redis so the admin console can tail them
@@ -544,6 +571,7 @@ async def _on_startup():
     asyncio.create_task(cti.start_cti_scheduler())
     asyncio.create_task(_metrics_background_loop())
     asyncio.create_task(_auto_archive_loop())
+    asyncio.create_task(_storage_reconcile_loop())
     try:
         from services.elasticsearch import ensure_artifacts_index
 

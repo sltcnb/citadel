@@ -22,6 +22,7 @@ from typing import Any
 
 import redis
 import redis_keys as rk
+import robustness
 
 
 def _put_with_retry(minio_client, bucket: str, key: str, data: bytes, attempts: int = 3) -> None:
@@ -726,6 +727,23 @@ def process_artifact(
         Job result dict with stats.
     """
     r = get_redis()
+
+    # ── Idempotency ──────────────────────────────────────────────────────────
+    # acks_late + reject_on_worker_lost mean a task can be redelivered after a
+    # crash. If this job already reached a terminal successful state, a re-run
+    # must be a no-op — never re-index the same artifact twice.
+    if robustness.job_already_processed(r, job_id):
+        logger.info("[%s] Job already processed (idempotent skip)", job_id)
+        return {"status": "ALREADY_PROCESSED"}
+
+    # ── Backpressure ─────────────────────────────────────────────────────────
+    # Bound concurrent heavy work across the whole fleet. When the gate is full,
+    # re-queue this task with backoff so a burst can't OOM the worker.
+    if not robustness.acquire_slot(r):
+        logger.info("[%s] Backpressure: in-flight cap reached — re-queuing", job_id)
+        raise self.retry(countdown=robustness.retry_countdown(0), max_retries=None)
+    slot_held = True
+
     work_dir = Path(tempfile.mkdtemp(prefix=f"fo_{job_id}_"))
     local_file: Path | None = None
     # Initialized before the try so the except/cleanup handlers never hit an
@@ -1016,15 +1034,59 @@ def process_artifact(
         # permanently skipped (we only want to skip *successful* prior ingests).
         if claimed_sha256:
             bus_emit.forget_seen(r, case_id, artifact_sha256)
-        update_job_status(
-            r, job_id, status="FAILED", error=str(exc), completed_at=datetime.now(UTC).isoformat()
-        )
-        # Re-raise as RuntimeError so the IPC back to the Celery main process
-        # never requires importing custom exception classes (e.g. PluginFatalError
-        # from babel.base_plugin), which aren't on the main process's sys.path.
-        raise RuntimeError(str(exc)) from None
+        task_args = [job_id, case_id, minio_object_key, original_filename]
+        retries = self.request.retries or 0
+        # Bounded retries, then dead-letter — never retry a poison task forever
+        # and never let it silently vanish.
+        if robustness.retries_exhausted(retries):
+            robustness.to_dead_letter(
+                r,
+                task_name=self.name,
+                task_id=self.request.id,
+                args=task_args,
+                error=exc,
+                retries=retries,
+            )
+            update_job_status(
+                r,
+                job_id,
+                status="FAILED",
+                error=str(exc),
+                completed_at=datetime.now(UTC).isoformat(),
+            )
+            # Re-raise as RuntimeError so the IPC back to the Celery main process
+            # never requires importing custom exception classes (e.g.
+            # PluginFatalError from babel.base_plugin), which aren't on the main
+            # process's sys.path.
+            raise RuntimeError(str(exc)) from None
+        update_job_status(r, job_id, status="RETRYING", error=str(exc))
+        try:
+            raise self.retry(
+                exc=RuntimeError(str(exc)),
+                countdown=robustness.retry_countdown(retries),
+                max_retries=robustness.TASK_MAX_RETRIES,
+            )
+        except self.MaxRetriesExceededError:
+            robustness.to_dead_letter(
+                r,
+                task_name=self.name,
+                task_id=self.request.id,
+                args=task_args,
+                error=exc,
+                retries=retries,
+            )
+            update_job_status(
+                r,
+                job_id,
+                status="FAILED",
+                error=str(exc),
+                completed_at=datetime.now(UTC).isoformat(),
+            )
+            raise RuntimeError(str(exc)) from None
 
     finally:
+        if slot_held:
+            robustness.release_slot(r)
         if work_dir.exists():
             shutil.rmtree(work_dir, ignore_errors=True)
 
@@ -1137,6 +1199,25 @@ def s3_transfer(
 
     except Exception as exc:
         logger.exception("[%s] S3 transfer failed: %s", job_id, exc)
+        retries = self.request.retries or 0
+        if not robustness.retries_exhausted(retries):
+            update_job_status(r, job_id, status="RETRYING", error=f"S3 transfer failed: {exc}")
+            try:
+                raise self.retry(
+                    exc=RuntimeError(str(exc)),
+                    countdown=robustness.retry_countdown(retries),
+                    max_retries=robustness.TASK_MAX_RETRIES,
+                )
+            except self.MaxRetriesExceededError:
+                pass
+        robustness.to_dead_letter(
+            r,
+            task_name=self.name,
+            task_id=self.request.id,
+            args=[job_id, case_id, s3_config_key, s3_key, filename],
+            error=exc,
+            retries=retries,
+        )
         update_job_status(
             r,
             job_id,
