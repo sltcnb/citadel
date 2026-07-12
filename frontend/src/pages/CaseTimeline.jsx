@@ -2606,7 +2606,7 @@ function TemplateEditor({ editor, saving, error, onChange, onSave, onCancel, set
 
 function TemplatesPanel({ caseId, onClose }) {
   const navigate = useNavigate()
-  const isAdmin = _currentUser()?.role === 'admin'
+  const isAdmin = currentUser()?.role === 'admin'
   const [list, setList]         = useState([])
   const [loading, setLoading]   = useState(true)
   const [error, setError]       = useState(null)
