@@ -172,7 +172,6 @@ export const api = {
       markdown: (caseId) => `/api/v1/cases/${caseId}/report.md`,
       html:     (caseId) => `/api/v1/cases/${caseId}/report.html`,
     },
-    pinned: (caseId) => request('GET', `/cases/${caseId}/pinned`),
     processTree: (caseId, host) => request('GET', `/cases/${caseId}/process-tree${host ? `?host=${encodeURIComponent(host)}` : ''}`),
     whois:     (ip)                 => request('GET', `/whois/${encodeURIComponent(ip)}`),
     getEvent:  (caseId, foId)        => request('GET', `/cases/${caseId}/events/${foId}`),

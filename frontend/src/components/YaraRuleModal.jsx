@@ -33,8 +33,8 @@ function ensureYaraLang(monaco) {
         [/0x[0-9a-fA-F]+[KM]?/, 'number.hex'],
         [/[0-9]+[KM]?/, 'number'],
         [/[a-zA-Z_]\w*/, 'identifier'],
-        [/[{}()\[\]]/, '@brackets'],
-        [/[<>=!:+\-*\/&|^~?]/, 'operator'],
+        [/[{}()[\]]/, '@brackets'],
+        [/[<>=!:+\-*/&|^~?]/, 'operator'],
         [/[;,.]/, 'delimiter'],
       ],
       comment: [
