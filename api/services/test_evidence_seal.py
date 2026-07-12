@@ -21,6 +21,40 @@ def fake(monkeypatch):
     return r
 
 
+@pytest.fixture(autouse=True)
+def _isolate_db(tmp_path):
+    """Point the DB layer at a fresh per-test sqlite file with NO tables created.
+
+    This mirrors the real degraded path (anchor table absent / migrations not
+    applied): ``_read_db_anchor`` returns None and ``_write_db_anchor`` returns
+    False, so seals still succeed and verification falls back to genesis + Redis.
+    The ``db_anchor`` fixture opts in to an initialised schema on the same engine.
+    """
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    import db
+    import models  # noqa: F401  (registers models on db.Base.metadata)
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path}/seal_test.db",
+        future=True,
+        connect_args={"check_same_thread": False},
+    )
+    db.set_sessionmaker(sessionmaker(bind=engine, expire_on_commit=False, future=True))
+    yield engine
+    db.set_sessionmaker(None)
+
+
+@pytest.fixture
+def db_anchor(_isolate_db):
+    """Create the authoritative anchor table on the isolated per-test engine."""
+    import db
+
+    db.Base.metadata.create_all(_isolate_db)
+    return _isolate_db
+
+
 # ── Pure helpers ──────────────────────────────────────────────────────────────
 
 
@@ -313,3 +347,86 @@ def test_anchor_mismatch_detected(fake):
     assert res["ok"] is False
     assert res["anchor_ok"] is False
     assert res["reason"] == "anchor_mismatch"
+    # No DB anchor configured here → fell back to the Redis anchor.
+    assert res["anchor_source"] == "redis"
+
+
+# ── DB-backed authoritative anchor ──────────────────────────────────────────────
+
+
+def test_db_anchor_written_on_append(fake, db_anchor):
+    es.seal_artifact("c1", "a1", "AA")
+    es.seal_artifact("c1", "a2", "BB")
+    anchor = es._read_db_anchor("c1")
+    assert anchor is not None
+    assert anchor["length"] == 2
+    assert anchor["head_hash"] == es.list_seals("c1")[0]["seal_hash"]
+
+
+def test_verify_uses_db_anchor_as_authoritative(fake, db_anchor):
+    es.seal_artifact("c1", "a1", "AA")
+    es.seal_artifact("c1", "a2", "BB")
+    res = es.verify_seals("c1")
+    assert res["ok"] is True
+    assert res["anchor_ok"] is True
+    assert res["anchor_source"] == "db"
+
+
+def test_verify_detects_rewrite_that_missed_db_anchor(fake, db_anchor):
+    """Attacker rewrites BOTH the Redis chain list AND the Redis anchor
+    consistently (so the Redis-only check would pass), but cannot touch the
+    authoritative DB anchor → full verification must still flag anchor_mismatch."""
+    es.seal_artifact("c1", "a1", "AA")
+    es.seal_artifact("c1", "a2", "BB")
+
+    # Forge an internally-consistent, genesis-anchored 2-link chain.
+    forged = _build_chain(2)
+    forged[0]["artifact_id"] = "evil"
+    forged[0]["seal_hash"] = es._seal_hash(
+        es.GENESIS_HASH, {k: v for k, v in forged[0].items() if k != "seal_hash"}
+    )
+    forged[1]["prev_hash"] = forged[0]["seal_hash"]
+    forged[1]["seal_hash"] = es._seal_hash(
+        forged[1]["prev_hash"], {k: v for k, v in forged[1].items() if k != "seal_hash"}
+    )
+    fake.delete(es._list_key("c1"))
+    for rec in forged:
+        fake.rpush(es._list_key("c1"), json.dumps(rec))
+    fake.set(es._head_key("c1"), forged[-1]["seal_hash"])
+    # Attacker ALSO rewrites the Redis anchor to match the forgery.
+    fake.set(
+        es._anchor_key("c1"),
+        es._canonical_json({"head_hash": forged[-1]["seal_hash"], "length": 2}),
+    )
+    # The DB anchor still records the genuine head → mismatch.
+
+    res = es.verify_seals("c1")
+    assert res["ok"] is False
+    assert res["anchor_ok"] is False
+    assert res["reason"] == "anchor_mismatch"
+    assert res["anchor_source"] == "db"
+
+
+def test_empty_db_anchor_degrades_to_redis(fake):
+    """With NO anchor table (migrations not applied), seals still succeed and
+    verification degrades to the genesis + Redis checks with lower assurance."""
+    # No db_anchor fixture → table absent; _isolate_db keeps it uncreated.
+    es.seal_artifact("c1", "a1", "AA")
+    es.seal_artifact("c1", "a2", "BB")
+    assert es._read_db_anchor("c1") is None  # table absent → degraded
+
+    res = es.verify_seals("c1")
+    assert res["ok"] is True
+    assert res["anchor_source"] == "redis"
+
+
+def test_db_write_failure_surfaces_but_seal_succeeds(fake, monkeypatch, caplog):
+    """A DB anchor write failure must NOT fail the seal (chain already committed)
+    but must be surfaced as a loud integrity warning."""
+    import logging
+
+    monkeypatch.setattr(es, "_write_db_anchor", lambda *a, **k: False, raising=True)
+    with caplog.at_level(logging.WARNING):
+        rec = es.seal_artifact("c1", "a1", "AA")
+    assert rec["seq"] == 1  # seal succeeded despite the anchor-write failure
+    assert any("INTEGRITY WARNING" in r.message for r in caplog.records)
