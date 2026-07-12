@@ -974,10 +974,16 @@ def studio_yara_test(req: YaraTestRequest):
     if not minio_key:
         return {"matches": [], "error": "Job has no associated file"}
 
-    # Download up to 10 MB
+    # Stream up to 10 MB — stop as soon as the cap is reached so an arbitrarily
+    # large object is never fully buffered into the pod's RAM.
     _MAX_YARA_BYTES = 10 * 1024 * 1024
     try:
-        data = storage.download_fileobj(minio_key)[:_MAX_YARA_BYTES]
+        buf = bytearray()
+        for chunk in storage.stream_object(minio_key):
+            buf.extend(chunk)
+            if len(buf) >= _MAX_YARA_BYTES:
+                break
+        data = bytes(buf[:_MAX_YARA_BYTES])
     except Exception as exc:
         return {"matches": [], "error": f"File download failed: {exc}"}
 

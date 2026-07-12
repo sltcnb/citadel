@@ -409,16 +409,25 @@ def get_file_content(
     if not minio_key:
         raise HTTPException(status_code=404, detail="File not yet in storage")
 
+    # Pre-flight stat so an oversized object is rejected (413) BEFORE any bytes
+    # are pulled into the pod — avoids buffering a multi-GB file just to refuse it.
     try:
-        raw = storage.download_fileobj(minio_key)
+        st = storage.stat_object(minio_key)
     except storage.StorageError as exc:
         raise _storage_http_error(minio_key, exc) from exc
 
-    if len(raw) > _MAX_VIEW_BYTES:
+    if st.size > _MAX_VIEW_BYTES:
         raise HTTPException(
             status_code=413,
-            detail=f"File too large to view ({len(raw) // 1024} KB > {_MAX_VIEW_BYTES // 1024} KB). Download instead.",
+            detail=f"File too large to view ({st.size // 1024} KB > {_MAX_VIEW_BYTES // 1024} KB). Download instead.",
         )
+
+    # Size is bounded (<= _MAX_VIEW_BYTES); stream the chunks and join, so RAM
+    # use is capped by the view limit rather than the raw object size.
+    try:
+        raw = b"".join(storage.stream_object(minio_key))
+    except storage.StorageError as exc:
+        raise _storage_http_error(minio_key, exc) from exc
 
     content = raw.decode("utf-8", errors="replace")
     return {
@@ -476,8 +485,10 @@ def search_file_contents(
 
         files_searched += 1
 
+        # Stat first so an oversized file is reported skipped without ever
+        # pulling its bytes into the pod.
         try:
-            raw = storage.download_fileobj(minio_key)
+            st = storage.stat_object(minio_key)
         except storage.StorageUnavailable as exc:
             # Backend outage — don't silently return partial search results.
             raise HTTPException(
@@ -488,16 +499,28 @@ def search_file_contents(
             logger.warning("Skipping '%s' — read failed: %s", fname, exc)
             continue
 
-        if len(raw) > _MAX_SEARCH_BYTES:
+        if st.size > _MAX_SEARCH_BYTES:
             results.append(
                 {
                     "job_id": job.get("job_id"),
                     "filename": fname,
                     "skipped": True,
-                    "reason": f"File too large ({len(raw) // 1024} KB)",
+                    "reason": f"File too large ({st.size // 1024} KB)",
                     "matches": [],
                 }
             )
+            continue
+
+        # Size is bounded (<= _MAX_SEARCH_BYTES); stream and join so RAM stays
+        # capped by the search limit rather than the raw object size.
+        try:
+            raw = b"".join(storage.stream_object(minio_key))
+        except storage.StorageUnavailable as exc:
+            raise HTTPException(
+                status_code=503, detail="Storage backend unavailable"
+            ) from exc
+        except storage.StorageError as exc:
+            logger.warning("Skipping '%s' — read failed: %s", fname, exc)
             continue
 
         lines = raw.decode("utf-8", errors="replace").splitlines()
