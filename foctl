@@ -311,6 +311,10 @@ def build_substitutions(cfg, pull_policy):
         "__FO_API_MEMORY_LIMIT__":    res.get("api_memory_limit", "2Gi"),
         "__FO_API_CPU_REQUEST__":     res.get("api_cpu_request", "100m"),
         "__FO_API_CPU_LIMIT__":       res.get("api_cpu_limit", "1000m"),
+        # Optional sandbox RuntimeClass for the processor (untrusted modules).
+        # Empty → null → cluster default runtime. Set to e.g. "gvisor"/"runsc"
+        # or a Kata class ONLY if that RuntimeClass is installed cluster-side.
+        "__FO_PROCESSOR_RUNTIME_CLASS__": res.get("processor_runtime_class", ""),
         # Processor resources
         "__FO_PROCESSOR_MEMORY_REQUEST__": res.get("processor_memory_request", "1Gi"),
         "__FO_PROCESSOR_MEMORY_LIMIT__":   res.get("processor_memory_limit", "8Gi"),
