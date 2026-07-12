@@ -48,14 +48,26 @@ head + anchor *only if* the head/length are still what we read. On a CAS miss th
 append is recomputed and retried. Correctness no longer depends on the coarse
 per-case lock (kept only as a contention reducer).
 
+DB-backed authoritative anchor
+------------------------------
+The head+length anchor is ALSO persisted in the relational DB
+(``models.evidence_seal_anchor.EvidenceSealAnchor``, one row per case) — an
+**independent trust domain** from Redis. On each successful append the DB anchor
+is upserted in the same logical operation (best-effort transactional: the Redis
+append has already committed, so a DB-write failure is surfaced as a loud
+integrity warning rather than failing the seal). Full verification treats the DB
+anchor as **authoritative when present** and reports a distinct
+``anchor_mismatch`` failure when the live chain head/length disagree with it. The
+Redis anchor is retained as defense in depth. When the DB anchor table is
+empty/absent (first run / migrations not applied) verification degrades to the
+genesis + Redis checks with a noted lower assurance (``anchor_source == "none"``).
+
 Residual assumption
 -------------------
-The out-of-band anchor defends against tampering of *one* of {chain list, anchor}.
-It assumes the chain list and the anchor are **not both attacker-writable** — a
-single Redis with full write access lets an attacker rewrite both consistently.
-The stronger follow-up is to persist the anchor in the relational DB (a natural
-``case`` / ``custody_anchor`` table) or another trust domain so the two live in
-independent stores; see ``_ANCHOR_PREFIX``.
+With the DB anchor present, an attacker must now compromise BOTH Redis (the chain
+list) AND the relational DB (the authoritative anchor), consistently, to forge a
+chain undetectably — the two live in independent stores. When only the Redis
+anchor is available the weaker single-store assumption from the prior PR applies.
 """
 
 from __future__ import annotations
@@ -72,6 +84,11 @@ from datetime import UTC, datetime
 from config import get_redis
 
 logger = logging.getLogger(__name__)
+
+# The DB-backed anchor lives in an independent trust domain from Redis and is
+# treated as AUTHORITATIVE when present. Imports are done lazily inside the
+# helpers below so that merely importing this module (e.g. for the pure hashing
+# helpers, or before migrations have run) never requires SQLAlchemy or a live DB.
 
 # ── Redis keys (per case) ─────────────────────────────────────────────────────
 _LIST_PREFIX = "fo:evidence:seal:"          # + {case_id}        → chain list
@@ -304,26 +321,102 @@ def _read_anchor(r, case_id: str) -> dict | None:
     return None
 
 
+# ── DB-backed authoritative anchor (independent trust domain) ─────────────────
+
+
+def _write_db_anchor(case_id: str, head_hash: str, length: int) -> bool:
+    """Upsert the authoritative ``{head_hash, length}`` anchor row for a case.
+
+    Best-effort transactional: returns ``True`` on a committed write, ``False`` if
+    the DB anchor could not be persisted (table absent / DB unreachable / etc.).
+    Callers MUST log loudly on ``False`` — the chain append has already happened,
+    so a failure here is an *integrity warning*, not a hard error.
+    """
+    try:
+        import db
+        from models.evidence_seal_anchor import EvidenceSealAnchor
+    except Exception:  # pragma: no cover - SQLAlchemy/models unavailable
+        return False
+    try:
+        with db.session_scope() as session:
+            row = session.get(EvidenceSealAnchor, case_id)
+            if row is None:
+                session.add(
+                    EvidenceSealAnchor(
+                        case_id=case_id, head_hash=head_hash, length=length
+                    )
+                )
+            else:
+                row.head_hash = head_hash
+                row.length = length
+        return True
+    except Exception:
+        return False
+
+
+def _read_db_anchor(case_id: str) -> dict | None:
+    """Read the authoritative DB anchor as ``{head_hash, length}``, or None.
+
+    Returns ``None`` when the table is absent/empty (first run / migrations not
+    applied) or the DB is unreachable — callers then degrade to the genesis +
+    Redis checks with a noted lower assurance.
+    """
+    try:
+        import db
+        from models.evidence_seal_anchor import EvidenceSealAnchor
+    except Exception:  # pragma: no cover - SQLAlchemy/models unavailable
+        return None
+    try:
+        with db.session_scope() as session:
+            row = session.get(EvidenceSealAnchor, case_id)
+            if row is None:
+                return None
+            return {"head_hash": row.head_hash, "length": row.length}
+    except Exception:
+        return None
+
+
 def _verify_full(r, case_id: str) -> dict:
     """FULL verification of the live per-case chain.
 
     Combines :func:`_verify_chain_full` (genesis-anchored recompute) with a
-    cross-check of the live chain head/length against the independent out-of-band
-    anchor. Returns ``{ok, broken_at, sealed_count, reason, anchor_ok}``.
+    cross-check of the live chain head/length against an out-of-band anchor. The
+    **DB anchor is authoritative when present** (independent trust domain from
+    Redis); the Redis anchor is kept as defense in depth. When neither anchor is
+    available we degrade to the genesis-only check and mark the lower assurance
+    via ``anchor_source == "none"``.
+
+    Returns ``{ok, broken_at, sealed_count, reason, anchor_ok, anchor_source}``.
 
     ``reason`` values: ``None`` (intact), ``"not_anchored"`` (truncated / not
     anchored to genesis), ``"broken"`` (internal hash/continuity break), or
-    ``"anchor_mismatch"`` (chain head/length disagrees with the out-of-band anchor
-    — e.g. the chain list was rewritten but the anchor was not).
+    ``"anchor_mismatch"`` (chain head/length disagrees with the authoritative
+    anchor — e.g. the chain list was rewritten but the anchor was not).
+    ``anchor_source`` is one of ``"db"``, ``"redis"``, ``"none"``.
     """
     chain = _read_chain(r, case_id)
     result = _verify_chain_full(chain)
     result["anchor_ok"] = True
 
-    anchor = _read_anchor(r, case_id)
+    live_head = chain[-1].get("seal_hash") if chain else GENESIS_HASH
+    live_len = len(chain)
+
+    # DB anchor is authoritative (independent trust domain); fall back to the
+    # Redis anchor as defense in depth; if neither exists, note the degraded
+    # (genesis-only) assurance via anchor_source == "none".
+    db_anchor = _read_db_anchor(case_id)
+    redis_anchor = _read_anchor(r, case_id)
+    if db_anchor is not None:
+        result["anchor_source"] = "db"
+        anchor = db_anchor
+    elif redis_anchor is not None:
+        result["anchor_source"] = "redis"
+        anchor = redis_anchor
+    else:
+        result["anchor_source"] = "none"
+        anchor = None
+
     if anchor is not None:
-        live_head = chain[-1].get("seal_hash") if chain else GENESIS_HASH
-        live_len = len(chain)
         if anchor.get("head_hash") != live_head or anchor.get("length") != live_len:
             result["anchor_ok"] = False
             if result["ok"]:
@@ -332,6 +425,26 @@ def _verify_full(r, case_id: str) -> dict:
                 result["ok"] = False
                 result["reason"] = "anchor_mismatch"
                 result["broken_at"] = None
+
+    # Defense in depth: even when the authoritative DB anchor agrees, a divergent
+    # Redis mirror is worth surfacing (partial tamper / stale mirror).
+    if (
+        result["anchor_source"] == "db"
+        and redis_anchor is not None
+        and (
+            redis_anchor.get("head_hash") != live_head
+            or redis_anchor.get("length") != live_len
+        )
+    ):
+        logger.warning(
+            "Evidence seal Redis anchor disagrees with the authoritative DB anchor "
+            "for case %r (redis=%s live_head=%s live_len=%d) — possible partial "
+            "tamper or stale mirror.",
+            case_id,
+            redis_anchor,
+            live_head,
+            live_len,
+        )
     return result
 
 
@@ -400,6 +513,22 @@ def seal_artifact(
                 anchor_json,
             )
             if int(applied) == 1:
+                # Mirror the new head/length to the AUTHORITATIVE DB anchor in the
+                # same logical operation. Best-effort transactional: the chain
+                # append already committed, so a DB failure here cannot be rolled
+                # back — surface it loudly as an integrity warning rather than
+                # failing the seal (which is durably recorded in Redis).
+                if not _write_db_anchor(case_id, seal_hash, seq):
+                    logger.warning(
+                        "INTEGRITY WARNING: evidence seal appended for case %r "
+                        "(seq=%d head=%s) but the authoritative DB anchor could "
+                        "not be updated. The Redis chain and DB anchor are now out "
+                        "of sync; full verification will report anchor_mismatch "
+                        "until reconciled.",
+                        case_id,
+                        seq,
+                        seal_hash,
+                    )
                 return record
         raise RuntimeError(
             f"Could not atomically append evidence seal for case {case_id!r} "
@@ -470,6 +599,7 @@ def custody_manifest(case_id: str) -> dict:
         "broken_at": verification["broken_at"],
         "verification_reason": verification.get("reason"),
         "anchor_ok": verification.get("anchor_ok", True),
+        "anchor_source": verification.get("anchor_source", "none"),
         **signature,
         "verification_instruction": (
             "For each artifact, recompute its SHA-256 and compare to the seal's "

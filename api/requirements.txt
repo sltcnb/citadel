@@ -8,6 +8,9 @@ pydantic==2.7.1
 pydantic-settings==2.2.1
 python-multipart==0.0.9
 redis==5.0.4
+# Relational DB layer (SQLAlchemy 2.x) — backs the authoritative, out-of-band
+# evidence seal chain-of-custody anchor (services/evidence_seal.py).
+SQLAlchemy==2.0.51
 celery==5.3.6
 minio==7.2.7
 python-magic==0.4.27
