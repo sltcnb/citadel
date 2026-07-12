@@ -54,11 +54,12 @@ spec:
               securityContext:
                 # chroot into the host + driving host containerd genuinely needs
                 # elevated privileges. We keep privileged (required for the
-                # chroot to the host's device/proc tree) but drop every
-                # capability except the two the chroot workflow actually uses,
-                # and block further escalation.
+                # chroot to the host's device/proc tree) and drop every
+                # capability except the two the chroot workflow actually uses.
+                # NOTE: allowPrivilegeEscalation cannot be false when privileged
+                # is true (kubelet rejects the combo) — privileged already
+                # implies escalation. Prefer kubelet image GC to retire this job.
                 privileged: true
-                allowPrivilegeEscalation: false
                 capabilities:
                   drop: ["ALL"]
                   add: ["SYS_CHROOT", "SYS_ADMIN"]
