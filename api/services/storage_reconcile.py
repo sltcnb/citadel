@@ -17,6 +17,7 @@ in-flight upload whose DB record hasn't been written yet is never swept.
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -27,6 +28,10 @@ from services import storage
 logger = logging.getLogger(__name__)
 
 _CASE_PREFIX = "cases/"
+
+# Redis key holding the most recent scheduled (report-only) sweep result so the
+# API/UI can surface it without re-running an expensive full-bucket listing.
+LATEST_REPORT_KEY = "fo:storage_reconcile:latest"
 
 
 # ── Known-key collection (the "DB" side) ───────────────────────────────────────
@@ -206,3 +211,49 @@ def reconcile(
         f" for case {case_id}" if case_id else "",
     )
     return result
+
+
+# ── Scheduled sweep (report-only) ───────────────────────────────────────────────
+
+
+def run_scheduled_reconcile() -> dict | None:
+    """Periodic REPORT-ONLY orphan sweep for the scheduler.
+
+    NEVER deletes anything — it only classifies drift and persists the latest
+    report to Redis (``LATEST_REPORT_KEY``) so it can be surfaced later. Returns
+    the report dict, or ``None`` when the schedule is disabled.
+    """
+    if not settings.STORAGE_RECONCILE_SCHEDULE_ENABLED:
+        return None
+
+    report = find_orphans()  # report-only by construction; no deletion path here
+    payload = report.as_dict()
+    payload["mode"] = "report-only"
+    payload["generated_at"] = datetime.now(UTC).isoformat()
+
+    try:
+        from config import get_redis
+
+        get_redis().set(LATEST_REPORT_KEY, json.dumps(payload, default=str))
+    except Exception as exc:  # persistence is best-effort — never crash the loop
+        logger.warning("storage_reconcile: could not persist scheduled report: %s", exc)
+
+    logger.info(
+        "storage_reconcile scheduled sweep (report-only): orphan=%d missing=%d scanned=%d",
+        len(report.orphan_objects),
+        len(report.missing_objects),
+        report.scanned_objects,
+    )
+    return payload
+
+
+def latest_report() -> dict | None:
+    """Return the most recent persisted scheduled report, or None if none yet."""
+    try:
+        from config import get_redis
+
+        raw = get_redis().get(LATEST_REPORT_KEY)
+        return json.loads(raw) if raw else None
+    except Exception as exc:  # pragma: no cover - read is best-effort
+        logger.warning("storage_reconcile: could not read latest report: %s", exc)
+        return None
