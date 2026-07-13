@@ -1,4 +1,4 @@
-// AUTO-GENERATED from contracts/forensic_event.schema.json — do not edit by hand.
+// AUTO-GENERATED from contracts/forensic_event.schema.json -- do not edit by hand.
 // Regenerate: scripts/contracts_codegen.py
 // Contract: https://citadel.dfir/contracts/forensic_event/v1.json
 
