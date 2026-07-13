@@ -21,6 +21,26 @@ spec:
         fsGroup: 1000
         seccompProfile:
           type: RuntimeDefault
+      # One-time ownership fix: this deployment was previously run as root, so
+      # existing PVC data (including /data/.minio.sys) is owned root:root and the
+      # non-root (1000) container cannot rename/write within it — MinIO fails at
+      # bgFormatErasureCleanupTmp with "file access denied". fsGroup only sets the
+      # group, not the owning UID, so an explicit recursive chown is required.
+      # Idempotent: a no-op once the tree is already 1000:1000.
+      initContainers:
+        - name: fix-data-perms
+          image: busybox:1.36
+          command: ["sh", "-c", "chown -R 1000:1000 /data"]
+          securityContext:
+            runAsUser: 0
+            runAsNonRoot: false
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+              add: ["CHOWN", "FOWNER", "DAC_OVERRIDE"]
+          volumeMounts:
+            - name: minio-data
+              mountPath: /data
       containers:
         - name: minio
           image: minio/minio:RELEASE.2024-04-18T19-09-19Z@sha256:036a068d7d6b69400da6bc07a480bee1e241ef3c341c41d988ed11f520f85124
