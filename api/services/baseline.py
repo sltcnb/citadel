@@ -43,22 +43,37 @@ def _case_index(case_id: str) -> str:
     return f"fo-case-{case_id}-*"
 
 
-def compute_rare(buckets: list[dict], max_hosts: int) -> list[dict]:
+def compute_rare(buckets: list[dict], max_hosts: int, total_hosts: int | None = None) -> list[dict]:
     """Pure: from terms-agg buckets, keep values present on the TARGET host that
-    occur on <= max_hosts distinct hosts case-wide. Rarest (fewest hosts, then
-    fewest target hits) first — the top of the list is what to look at."""
+    occur on <= max_hosts distinct hosts case-wide.
+
+    Ranking (top of the list = look here first):
+      1. ``unique_to_target`` — the value appears on exactly one host, and that
+         host is the target. In stacking this is the strongest signal: an
+         artifact that exists ONLY on the host of interest.
+      2. fewest distinct hosts (rarest across the fleet)
+      3. fewest target hits (a single odd occurrence beats a noisy one)
+
+    When ``total_hosts`` is given, each result also carries a ``rarity`` score in
+    [0, 1] — ``1 - host_count/total_hosts`` — so the UI can rank/scale without
+    re-deriving it (1.0 ≈ present almost nowhere else, 0.0 ≈ everywhere)."""
     out = []
     for b in buckets:
         host_count = (b.get("host_count") or {}).get("value", 0)
         on_target = (b.get("on_target") or {}).get("doc_count", 0)
         if on_target > 0 and host_count <= max_hosts:
-            out.append({
+            row = {
                 "value": b.get("key"),
                 "target_count": on_target,
                 "host_count": host_count,
                 "total_count": b.get("doc_count", 0),
-            })
-    out.sort(key=lambda x: (x["host_count"], x["target_count"]))
+                "unique_to_target": host_count == 1,
+            }
+            if total_hosts and total_hosts > 0:
+                row["rarity"] = round(1 - host_count / total_hosts, 4)
+            out.append(row)
+    # unique-to-target first, then rarest, then fewest target hits.
+    out.sort(key=lambda x: (not x["unique_to_target"], x["host_count"], x["target_count"]))
     return out
 
 
@@ -71,23 +86,28 @@ def stack_field(
         "size": 0,
         "query": {"match_all": {}},
         "aggs": {
+            # Total distinct hosts case-wide — feeds the per-value rarity score.
+            "total_hosts": {"cardinality": {"field": _HOST_FIELD}},
             "vals": {
                 "terms": {"field": field, "size": size},
                 "aggs": {
                     "host_count": {"cardinality": {"field": _HOST_FIELD}},
                     "on_target": {"filter": {"term": {_HOST_FIELD: target_host}}},
                 },
-            }
+            },
         },
     }
     resp = es_req("POST", f"/{_case_index(case_id)}/_search", body)
-    buckets = (resp.get("aggregations") or {}).get("vals", {}).get("buckets", [])
+    aggs = resp.get("aggregations") or {}
+    buckets = aggs.get("vals", {}).get("buckets", [])
+    total_hosts = (aggs.get("total_hosts") or {}).get("value") or None
     return {
         "field": field,
         "target_host": target_host,
         "max_hosts": max_hosts,
+        "total_hosts": total_hosts,
         "values_examined": len(buckets),
-        "rare": compute_rare(buckets, max_hosts),
+        "rare": compute_rare(buckets, max_hosts, total_hosts),
     }
 
 
