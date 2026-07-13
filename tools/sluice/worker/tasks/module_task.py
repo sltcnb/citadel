@@ -41,11 +41,10 @@ from pathlib import Path
 
 import redis
 import redis_keys as rk
-from celery_app import app
+from celery_app import REDIS_URL, app  # REDIS_URL carries REDIS_PASSWORD auth
 
 logger = logging.getLogger(__name__)
 
-REDIS_URL = os.getenv("REDIS_URL", "redis://redis-service:6379/0")
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "minio-service:9000")
 MINIO_ACCESS = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
 MINIO_SECRET = os.getenv("MINIO_SECRET_KEY", "minioadmin")

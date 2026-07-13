@@ -7,6 +7,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4798 OR evtx.event_id:4799"
     threshold: 3
+    mitre: [T1087.001]
+    level: low
 
   - name: Network Share Enumeration
     description: >-
@@ -15,6 +17,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:5140"
     threshold: 5
+    mitre: [T1135]
+    level: low
 
   - name: System Information Commands
     description: >-
@@ -23,6 +27,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4688 AND (message:*systeminfo* OR message:*whoami* OR message:*ipconfig*)"
     threshold: 1
+    mitre: [T1082, T1033]
+    level: low
 
   - name: Network Scanning — Port / Host Discovery
     description: >-
@@ -31,6 +37,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4688 AND (message:*nmap* OR message:*masscan* OR message:*portscan*)"
     threshold: 1
+    mitre: [T1046]
+    level: medium
 
   - name: Active Directory Enumeration (LDAP)
     description: >-
@@ -39,3 +47,5 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4688 AND (message:*ldap* OR message:*\"net group\"* OR message:*\"net user\"* OR message:*Get-ADUser*)"
     threshold: 1
+    mitre: [T1087.002]
+    level: medium

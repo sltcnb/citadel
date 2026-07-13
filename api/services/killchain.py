@@ -133,8 +133,95 @@ def normalize_tactic(raw: str | None) -> str | None:
     return None
 
 
+# Windows Security / System channel event-id → ATT&CK tactic. Sourced from the
+# common DFIR triage IDs an analyst reasons about when reconstructing a host
+# story. Kept conservative: an ID maps to the tactic it most strongly signals.
+_SECURITY_EID_TACTIC: dict[int, str] = {
+    4688: "execution",  # process creation
+    4689: "execution",  # process termination
+    4648: "lateral-movement",  # explicit-credential logon (runas / pass-the-hash)
+    4624: "lateral-movement",  # successful logon (network auth to a host)
+    4625: "credential-access",  # failed logon (brute force / password spray)
+    4740: "credential-access",  # account locked out
+    4768: "credential-access",  # Kerberos TGT requested (AS-REP roasting surface)
+    4769: "credential-access",  # Kerberos TGS requested (kerberoasting)
+    4771: "credential-access",  # Kerberos pre-auth failed
+    4776: "credential-access",  # NTLM credential validation
+    4672: "privilege-escalation",  # special privileges assigned to new logon
+    4673: "privilege-escalation",  # privileged service called
+    4728: "privilege-escalation",  # member added to security-enabled global group
+    4732: "privilege-escalation",  # member added to security-enabled local group
+    4756: "privilege-escalation",  # member added to security-enabled universal group
+    4720: "persistence",  # user account created
+    4722: "persistence",  # user account enabled
+    4724: "persistence",  # password reset attempt
+    4697: "persistence",  # service installed (Security channel)
+    7045: "persistence",  # service installed (System channel)
+    4698: "persistence",  # scheduled task created
+    4702: "persistence",  # scheduled task updated
+    4699: "defense-evasion",  # scheduled task deleted
+    1102: "defense-evasion",  # Security audit log cleared
+    104: "defense-evasion",  # System/application event log cleared
+    4657: "defense-evasion",  # registry value modified
+    5140: "lateral-movement",  # network share accessed
+    5145: "lateral-movement",  # network share object checked (detailed)
+    4663: "collection",  # attempt to access an object
+    5156: "command-and-control",  # WFP permitted a connection
+}
+
+# Sysmon (Microsoft-Windows-Sysmon/Operational) event-id → ATT&CK tactic.
+# Distinct namespace from Security IDs, so resolved only when the event is
+# recognised as Sysmon (see `_evtx_source`).
+_SYSMON_EID_TACTIC: dict[int, str] = {
+    1: "execution",  # process create
+    2: "defense-evasion",  # file creation time changed (timestomping)
+    3: "command-and-control",  # network connection
+    7: "defense-evasion",  # image loaded (DLL side-loading surface)
+    8: "defense-evasion",  # CreateRemoteThread (process injection)
+    10: "credential-access",  # process access (LSASS dumping surface)
+    11: "persistence",  # file create
+    12: "persistence",  # registry object add/delete
+    13: "persistence",  # registry value set
+    14: "persistence",  # registry key/value rename
+    15: "defense-evasion",  # FileCreateStreamHash (alternate data stream)
+    22: "command-and-control",  # DNS query
+    23: "defense-evasion",  # file delete (archived)
+    26: "defense-evasion",  # file delete (logged)
+}
+
+
 def _evtx_event_id(event: dict):
-    return (event.get("evtx") or {}).get("event_id")
+    evtx = event.get("evtx") or {}
+    # Prefer the parser's evtx block; fall back to ECS `event.code`.
+    eid = evtx.get("event_id")
+    if eid is None:
+        eid = (event.get("event") or {}).get("code")
+    try:
+        return int(eid)
+    except (TypeError, ValueError):
+        return None
+
+
+def _evtx_source(event: dict) -> str:
+    """Classify the log source as 'sysmon' or 'security' from whatever
+    channel/provider hints the event carries (evtx block, ECS winlog, provider)."""
+    evtx = event.get("evtx") or {}
+    winlog = event.get("winlog") or {}
+    hints = " ".join(
+        str(x).lower()
+        for x in (
+            evtx.get("channel"),
+            evtx.get("provider"),
+            evtx.get("source"),
+            winlog.get("channel"),
+            winlog.get("provider_name"),
+            (event.get("event") or {}).get("provider"),
+        )
+        if x
+    )
+    if "sysmon" in hints:
+        return "sysmon"
+    return "security"
 
 
 def _derive_tactic(event: dict) -> str:
@@ -142,9 +229,9 @@ def _derive_tactic(event: dict) -> str:
 
     Priority:
       1. mitre.tactic (normalized)
-      2. artifact_type default
-      3. a couple of event-id heuristics (process creation → execution,
-         logon → credential-access)
+      2. Windows event-id → tactic (Sysmon or Security/System channel), using
+         the channel/provider to disambiguate the two ID namespaces
+      3. artifact_type default
       4. "execution" as a last-resort label so every step is placed.
     """
     mitre = event.get("mitre") or {}
@@ -152,17 +239,17 @@ def _derive_tactic(event: dict) -> str:
     if fromm:
         return fromm
 
+    eid = _evtx_event_id(event)
+    if eid is not None:
+        if _evtx_source(event) == "sysmon":
+            if eid in _SYSMON_EID_TACTIC:
+                return _SYSMON_EID_TACTIC[eid]
+        elif eid in _SECURITY_EID_TACTIC:
+            return _SECURITY_EID_TACTIC[eid]
+
     artifact = (event.get("artifact_type") or "").strip().lower()
     if artifact in _ARTIFACT_TACTIC:
         return _ARTIFACT_TACTIC[artifact]
-
-    eid = _evtx_event_id(event)
-    if eid in (4688, 1):  # process creation (EVTX 4688 / Sysmon 1)
-        return "execution"
-    if eid in (4624, 4625, 4768, 4769):  # logon / kerberos
-        return "credential-access"
-    if eid == 3:  # Sysmon network connection
-        return "command-and-control"
 
     return "execution"
 
@@ -341,7 +428,8 @@ def assemble_chain(
         "ts": anchor_event.get("timestamp", timestamp),
         "host": host,
         "user": (anchor_event.get("user") or {}).get("name", ""),
-        "summary": anchor_event.get("message") or (anchor_event.get("mitre") or {}).get("technique")
+        "summary": anchor_event.get("message")
+        or (anchor_event.get("mitre") or {}).get("technique")
         or "",
         "window_minutes": int(window_minutes),
     }

@@ -1,0 +1,94 @@
+category: Cloud Identity and SaaS
+# Identity-provider and SaaS abuse across AWS / Azure AD / Okta / GCP / M365.
+# The cloud_audit parser embeds the key signal in `message` (see 27_cloud_saas
+# header), so message-token matching is reliable.
+rules:
+  - name: Azure — Risky or Anomalous Sign-in
+    description: >-
+      Azure AD flagged a sign-in as risky (impossible travel, anonymous IP,
+      leaked credentials). Investigate the account for compromise.
+    artifact_type: azure_signin
+    query: 'message:*risk* OR message:*impossibleTravel* OR message:*anonymizedIP*'
+    threshold: 1
+    mitre: [T1078.004]
+    level: high
+
+  - name: Azure — MFA Method Disabled or Reset
+    description: >-
+      A strong-authentication (MFA) method was disabled or reset. Attackers
+      remove MFA to weaken an account they control.
+    artifact_type: azure_signin
+    query: 'message:*DisableStrongAuthentication* OR message:*StrongAuthenticationMethod* OR message:*Reset*MFA*'
+    threshold: 1
+    mitre: [T1556.006]
+    level: high
+
+  - name: AWS — Root Account Console Usage
+    description: >-
+      The AWS root account signed in to the console. Root should be reserved
+      for break-glass only; interactive use is a strong red flag.
+    artifact_type: aws_cloudtrail
+    query: 'message:*ConsoleLogin* AND message:*root*'
+    threshold: 1
+    mitre: [T1078.004]
+    level: high
+
+  - name: AWS — Bulk Secrets Manager Access
+    description: >-
+      Secrets Manager values were retrieved (GetSecretValue / BatchGetSecretValue).
+      Bulk retrieval suggests credential harvesting.
+    artifact_type: aws_cloudtrail
+    query: 'message:*GetSecretValue* OR message:*BatchGetSecretValue*'
+    threshold: 5
+    mitre: [T1552.001]
+    level: medium
+
+  - name: Okta — MFA Factor Deactivated or Reset
+    description: >-
+      An Okta MFA factor was deactivated or reset. Removing factors is a common
+      account-takeover persistence step.
+    artifact_type: okta_system_log
+    query: 'message:*factor.deactivate* OR message:*reset_factor* OR message:*factor.reset_all*'
+    threshold: 1
+    mitre: [T1556]
+    level: high
+
+  - name: Okta — Admin Privilege Granted
+    description: >-
+      A user was granted administrative privileges in Okta. Review whether the
+      grant was authorized — a direct privilege-escalation path.
+    artifact_type: okta_system_log
+    query: 'message:*user.account.privilege.grant* OR message:*group.privilege.grant*'
+    threshold: 1
+    mitre: [T1098]
+    level: high
+
+  - name: GCP — Service Account Key Created
+    description: >-
+      A new service-account key was created (CreateServiceAccountKey). Exported
+      keys grant durable, non-interactive access to cloud resources.
+    artifact_type: gcp_audit
+    query: 'message:*CreateServiceAccountKey* OR message:*serviceAccountKeys.create*'
+    threshold: 1
+    mitre: [T1098]
+    level: high
+
+  - name: M365 — Inbox Forwarding Rule Created
+    description: >-
+      A mailbox rule was created to auto-forward mail externally (New-InboxRule
+      / ForwardingSmtpAddress). A hallmark of BEC and data exfiltration.
+    artifact_type: o365_audit
+    query: 'message:*New-InboxRule* OR message:*ForwardingSmtpAddress* OR message:*Set-Mailbox*Forwarding*'
+    threshold: 1
+    mitre: [T1114.003]
+    level: high
+
+  - name: M365 — Mailbox Audit Bypass Configured
+    description: >-
+      Set-MailboxAuditBypassAssociation was used to exclude an account from
+      mailbox auditing — defense evasion prior to mail theft.
+    artifact_type: o365_audit
+    query: 'message:*Set-MailboxAuditBypassAssociation* OR message:*AuditBypassEnabled*'
+    threshold: 1
+    mitre: [T1562]
+    level: high

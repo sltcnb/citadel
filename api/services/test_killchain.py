@@ -58,15 +58,54 @@ def test_event_to_phase_artifact_fallback():
     assert event_to_phase(ev3)["tactic"] == "command-and-control"
 
 
-def test_event_to_phase_event_id_heuristics():
+def test_event_to_phase_security_event_ids():
     proc = {"timestamp": "t", "evtx": {"event_id": 4688}}
     assert event_to_phase(proc)["tactic"] == "execution"
 
     logon = {"timestamp": "t", "evtx": {"event_id": 4624}}
-    assert event_to_phase(logon)["tactic"] == "credential-access"
+    assert event_to_phase(logon)["tactic"] == "lateral-movement"
 
-    netconn = {"timestamp": "t", "evtx": {"event_id": 3}}
+    failed_logon = {"timestamp": "t", "evtx": {"event_id": 4625}}
+    assert event_to_phase(failed_logon)["tactic"] == "credential-access"
+
+    kerberoast = {"timestamp": "t", "evtx": {"event_id": 4769}}
+    assert event_to_phase(kerberoast)["tactic"] == "credential-access"
+
+    svc = {"timestamp": "t", "evtx": {"event_id": 7045}}
+    assert event_to_phase(svc)["tactic"] == "persistence"
+
+    log_cleared = {"timestamp": "t", "evtx": {"event_id": 1102}}
+    assert event_to_phase(log_cleared)["tactic"] == "defense-evasion"
+
+    priv = {"timestamp": "t", "evtx": {"event_id": 4672}}
+    assert event_to_phase(priv)["tactic"] == "privilege-escalation"
+
+    # ECS event.code is honoured when the evtx block is absent.
+    ecs_proc = {"timestamp": "t", "event": {"code": "4688"}}
+    assert event_to_phase(ecs_proc)["tactic"] == "execution"
+
+
+def test_event_to_phase_sysmon_event_ids():
+    # Sysmon IDs only resolve when the channel/provider says Sysmon.
+    netconn = {
+        "timestamp": "t",
+        "evtx": {"event_id": 3, "channel": "Microsoft-Windows-Sysmon/Operational"},
+    }
     assert event_to_phase(netconn)["tactic"] == "command-and-control"
+
+    lsass = {"timestamp": "t", "evtx": {"event_id": 10, "provider": "Microsoft-Windows-Sysmon"}}
+    assert event_to_phase(lsass)["tactic"] == "credential-access"
+
+    dns = {
+        "timestamp": "t",
+        "winlog": {"channel": "Microsoft-Windows-Sysmon/Operational"},
+        "evtx": {"event_id": 22},
+    }
+    assert event_to_phase(dns)["tactic"] == "command-and-control"
+
+    # Same low ID with no Sysmon hint is NOT treated as Sysmon → falls through.
+    ambiguous = {"timestamp": "t", "evtx": {"event_id": 3}}
+    assert event_to_phase(ambiguous)["tactic"] == "execution"
 
 
 def test_event_to_phase_summary_truncation():

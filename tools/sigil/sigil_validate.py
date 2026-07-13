@@ -46,7 +46,7 @@ except ImportError:  # pragma: no cover - yaml is a hard dependency of the API
 RULES_DIR = Path(__file__).resolve().parent
 
 # Files that live in the rule dirs but are not rule packs.
-NON_RULE_FILES = {"brick.yaml"}
+NON_RULE_FILES = {"brick.yaml", "capabilities.yaml"}
 
 # Required fields for a Citadel-native rule (query-style) ...
 NATIVE_REQUIRED = ("name", "description", "artifact_type", "query", "threshold")

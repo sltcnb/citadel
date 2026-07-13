@@ -114,6 +114,19 @@ def test_edges_link_right_ids_with_counts():
     assert len(g["edges"]) == 6
 
 
+def test_node_degree_flags_pivots():
+    g = assemble_graph(_realistic_aggs())
+    deg = {n["id"]: n["degree"] for n in g["nodes"]}
+    # The shared IP is touched by 2 hosts + 1 user → degree 3 (beacon candidate).
+    assert deg["ip:10.0.0.5"] == 3
+    # alice: host_user(WIN-01), host_user(WIN-02), user_ip → degree 3 (pivot user).
+    assert deg["user:alice"] == 3
+    # bob only touches WIN-01 → degree 1.
+    assert deg["user:bob"] == 1
+    # degree equals total edge endpoints.
+    assert sum(deg.values()) == 2 * len(g["edges"])
+
+
 def test_empty_response_yields_empty_graph():
     assert assemble_graph({}) == {"nodes": [], "edges": []}
     assert assemble_graph(None) == {"nodes": [], "edges": []}
@@ -150,6 +163,7 @@ def test_missing_and_blank_keys_skipped():
 if __name__ == "__main__":
     test_nodes_deduped_with_correct_types_and_ids()
     test_edges_link_right_ids_with_counts()
+    test_node_degree_flags_pivots()
     test_empty_response_yields_empty_graph()
     test_missing_and_blank_keys_skipped()
     print("all entity_graph tests passed")
