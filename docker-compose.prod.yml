@@ -15,8 +15,8 @@ version: "3.9"
 #   cp .env.example .env && $EDITOR .env          # fill in JWT_SECRET at minimum
 #   docker compose -f docker-compose.prod.yml up -d --build
 #
-# Or use fo.sh which handles the above automatically:
-#   ./fo.sh deploy docker
+# Or use foctl which handles the above automatically:
+#   ./foctl deploy docker
 # ══════════════════════════════════════════════════════════════════════════════
 
 services:

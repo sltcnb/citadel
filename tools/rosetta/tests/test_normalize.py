@@ -170,3 +170,52 @@ def test_cli_end_to_end(tmp_path):
     assert d1["event"]["category"] == ["host"]
     assert d1["process"]["name"] == "sshd"
     assert d0["ecs"]["version"] == "8.11"
+
+
+def test_attack_technique_extracted_from_message(fieldmap):
+    """A technique id embedded in the message is lifted into threat.technique.id."""
+    event = {
+        "timestamp": "2026-01-02T03:04:05Z",
+        "message": "Suspicious PowerShell download cradle (T1059.001) observed",
+        "artifact_type": "process",
+    }
+    doc = normalize_event(event, fieldmap, "8.11")
+    assert "T1059.001" in (doc.get("threat", {}).get("technique", {}).get("id") or [])
+
+
+def test_attack_explicit_tag_and_tactic(fieldmap):
+    event = {
+        "timestamp": "2026-01-02T03:04:05Z",
+        "message": "reg run key added",
+        "artifact_type": "registry",
+        "mitre": ["T1547.001"],
+        "tactic": "Persistence",
+    }
+    doc = normalize_event(event, fieldmap, "8.11")
+    threat = doc.get("threat", {})
+    assert "T1547.001" in (threat.get("technique", {}).get("id") or [])
+    assert threat.get("tactic", {}).get("name") == "Persistence"
+
+
+def test_attack_artifact_type_fallback(fieldmap):
+    """Untagged event falls back to the artifact_type default technique/tactic."""
+    event = {
+        "timestamp": "2026-01-02T03:04:05Z",
+        "message": "at.exe created a task",
+        "artifact_type": "scheduled_task",
+    }
+    doc = normalize_event(event, fieldmap, "8.11")
+    threat = doc.get("threat", {})
+    assert threat.get("technique", {}).get("id") == ["T1053"]
+    assert threat.get("tactic", {}).get("name") == "Persistence"
+
+
+def test_attack_rejects_out_of_range_lookalike(fieldmap):
+    """A ticket-like 'T4688' in free text must NOT be treated as a technique."""
+    event = {
+        "timestamp": "2026-01-02T03:04:05Z",
+        "message": "Ticket T4688 closed; temp reached T9999",
+        "artifact_type": "process",
+    }
+    doc = normalize_event(event, fieldmap, "8.11")
+    assert not (doc.get("threat", {}).get("technique", {}).get("id"))

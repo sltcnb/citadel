@@ -24,18 +24,18 @@ dev:
 dev-down:
 	docker compose down -v
 
-# ── Kubernetes — all-in-one via deploy.py ─────────────────────────────────────
+# ── Kubernetes — all-in-one via foctl ─────────────────────────────────────────
 deploy:
-	python3 deploy.py
+	./foctl deploy k8s
 
 deploy-no-build:
-	python3 deploy.py --no-build
+	./foctl deploy k8s --no-build
 
 status:
-	python3 deploy.py --status
+	./foctl status k8s
 
 destroy:
-	python3 deploy.py --destroy
+	./foctl destroy k8s
 
 undeploy: destroy
 
