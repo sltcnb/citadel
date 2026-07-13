@@ -1,0 +1,84 @@
+category: Active Directory Attacks
+# Domain-focused detections keyed off Security-log directory-service and
+# Kerberos events (4662/4768/4769/4706/5136/4765). Avoid raw colons in tokens;
+# encryption types etc. are matched as message wildcards.
+rules:
+  - name: AD — Kerberoasting (RC4 Service Ticket)
+    description: >-
+      A Kerberos service ticket (EID 4769) was requested with RC4 encryption
+      (0x17) — the signature of kerberoasting to crack service-account hashes.
+    artifact_type: evtx
+    query: 'evtx.event_id:4769 AND message:*0x17*'
+    threshold: 5
+    mitre: [T1558.003]
+    level: high
+
+  - name: AD — AS-REP Roasting (Pre-Auth Disabled)
+    description: >-
+      A TGT was requested (EID 4768) for an account that does not require
+      Kerberos pre-authentication — exploitable for offline AS-REP cracking.
+    artifact_type: evtx
+    query: 'evtx.event_id:4768 AND (message:*DONT_REQUIRE_PREAUTH* OR message:*0x0*)'
+    threshold: 1
+    mitre: [T1558.004]
+    level: high
+
+  - name: AD — AdminSDHolder Modified
+    description: >-
+      The AdminSDHolder object was modified (EID 4662). Attackers alter it to
+      re-stamp privileged-group ACLs and regain rights persistently.
+    artifact_type: evtx
+    query: 'evtx.event_id:4662 AND message:*AdminSDHolder*'
+    threshold: 1
+    mitre: [T1098]
+    level: high
+
+  - name: AD — Group Policy Object Modified
+    description: >-
+      A GPO or its links were changed (EID 5136 on gPLink/gPCMachineExtension).
+      GPO abuse pushes attacker code/scripts to many hosts at once.
+    artifact_type: evtx
+    query: 'evtx.event_id:5136 AND (message:*gPLink* OR message:*gPCMachineExtension* OR message:*gPCUserExtension*)'
+    threshold: 1
+    mitre: [T1484.001]
+    level: high
+
+  - name: AD — Domain Trust Created
+    description: >-
+      A new domain/forest trust was created (EID 4706). Rogue trusts enable
+      cross-domain privilege escalation (SID-history / trust abuse).
+    artifact_type: evtx
+    query: 'evtx.event_id:4706 OR evtx.event_id:4707'
+    threshold: 1
+    mitre: [T1484.002]
+    level: medium
+
+  - name: AD — SID History Added to Account
+    description: >-
+      SID history was added to an account (EID 4765/4766). Injecting a
+      privileged SID grants hidden domain-admin-equivalent access.
+    artifact_type: evtx
+    query: 'evtx.event_id:4765 OR evtx.event_id:4766'
+    threshold: 1
+    mitre: [T1134.005]
+    level: high
+
+  - name: AD — Constrained Delegation Modified
+    description: >-
+      An account's msDS-AllowedToDelegateTo attribute changed (EID 5136).
+      Delegation abuse allows impersonation of privileged users to services.
+    artifact_type: evtx
+    query: 'evtx.event_id:5136 AND (message:*AllowedToDelegateTo* OR message:*AllowedToActOnBehalf*)'
+    threshold: 1
+    mitre: [T1098]
+    level: high
+
+  - name: AD — LAPS Local Admin Password Read
+    description: >-
+      The LAPS ms-Mcs-AdmPwd attribute was read (EID 4662). Bulk reads harvest
+      local administrator passwords across the fleet.
+    artifact_type: evtx
+    query: 'evtx.event_id:4662 AND message:*ms-Mcs-AdmPwd*'
+    threshold: 1
+    mitre: [T1555]
+    level: high

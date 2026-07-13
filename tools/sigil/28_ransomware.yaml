@@ -1,0 +1,84 @@
+category: Ransomware and Extortion
+# Ransomware kill-chain detections: recovery sabotage, mass encryption, and
+# pre-encryption service killing. Tokens are space-free so the ES query_string
+# whitespace split matches reliably.
+rules:
+  - name: Ransomware — Ransom Note Dropped
+    description: >-
+      Multiple files matching common ransom-note naming (README, DECRYPT,
+      RECOVER, HOW-TO) were written. A high-confidence encryption indicator.
+    artifact_type: evtx
+    query: 'evtx.event_id:4663 AND (message:*readme* OR message:*decrypt* OR message:*recover* OR message:*restore-my-files* OR message:*how_to*)'
+    threshold: 3
+    mitre: [T1486]
+    level: high
+
+  - name: Ransomware — Known Family Extension Rename
+    description: >-
+      Files were renamed to a known ransomware extension (.lockbit, .conti,
+      .ryuk, .revil, .blackcat). Strong evidence of active encryption.
+    artifact_type: evtx
+    query: 'evtx.event_id:4663 AND (message:*.lockbit* OR message:*.conti* OR message:*.ryuk* OR message:*.revil* OR message:*.blackcat* OR message:*.basta*)'
+    threshold: 10
+    mitre: [T1486]
+    level: critical
+
+  - name: Ransomware — Backup Catalog Deleted (wbadmin)
+    description: >-
+      wbadmin was used to delete the Windows backup catalog before encryption,
+      a common step to block recovery.
+    artifact_type: evtx
+    query: 'evtx.event_id:4688 AND message:*wbadmin* AND message:*delete* AND message:*catalog*'
+    threshold: 1
+    mitre: [T1490]
+    level: critical
+
+  - name: Ransomware — Boot Recovery Disabled (bcdedit)
+    description: >-
+      bcdedit disabled boot recovery or set ignoreallfailures — used by
+      ransomware to stop Windows from offering automatic repair.
+    artifact_type: evtx
+    query: 'evtx.event_id:4688 AND message:*bcdedit* AND (message:*ignoreallfailures* OR message:*bootstatuspolicy* OR message:*recoveryenabled*)'
+    threshold: 1
+    mitre: [T1490]
+    level: high
+
+  - name: Ransomware — Free Space Wiped (cipher)
+    description: >-
+      cipher.exe /w was run to wipe unallocated space, destroying recoverable
+      remnants of deleted files.
+    artifact_type: evtx
+    query: 'evtx.event_id:4688 AND message:*cipher* AND message:*/w*'
+    threshold: 1
+    mitre: [T1485]
+    level: medium
+
+  - name: Ransomware — Service Stopping Spree
+    description: >-
+      Multiple net stop / sc stop commands targeting backup, database, or
+      security services — pre-encryption unlocking of files in use.
+    artifact_type: evtx
+    query: 'evtx.event_id:4688 AND (message:*net*stop* OR message:*sc*stop*) AND (message:*sql* OR message:*veeam* OR message:*backup* OR message:*vss*)'
+    threshold: 3
+    mitre: [T1489]
+    level: high
+
+  - name: Ransomware — Inline PowerShell Encryption
+    description: >-
+      PowerShell script block referenced .NET AES cryptography primitives,
+      consistent with in-memory file encryption.
+    artifact_type: evtx
+    query: 'evtx.event_id:4104 AND message:*System.Security.Cryptography* AND (message:*AesManaged* OR message:*RijndaelManaged* OR message:*CreateEncryptor*)'
+    threshold: 1
+    mitre: [T1486]
+    level: medium
+
+  - name: Ransomware — Mass File Modification Burst
+    description: >-
+      A very high number of file-write operations from a single host in a short
+      window — the tell-tale I/O signature of bulk encryption.
+    artifact_type: evtx
+    query: 'evtx.event_id:4663 AND message:*WriteData*'
+    threshold: 200
+    mitre: [T1486]
+    level: high

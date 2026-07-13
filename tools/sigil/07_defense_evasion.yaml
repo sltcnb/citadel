@@ -7,6 +7,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:5001 OR evtx.event_id:5010 OR evtx.event_id:5012"
     threshold: 1
+    mitre: [T1562.001]
+    level: high
 
   - name: Firewall Rule Added or Modified
     description: >-
@@ -15,6 +17,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4946 OR evtx.event_id:4948 OR evtx.event_id:4950"
     threshold: 1
+    mitre: [T1562.004]
+    level: medium
 
   - name: Event Log Service Stopped
     description: >-
@@ -23,6 +27,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:6006"
     threshold: 1
+    mitre: [T1562.002]
+    level: high
 
   - name: Process Injection — Remote Thread Created
     description: >-
@@ -31,6 +37,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:8 AND message:*CreateRemoteThread*"
     threshold: 1
+    mitre: [T1055]
+    level: high
 
   - name: AMSI Bypass Indicator
     description: >-
@@ -39,6 +47,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4104 AND (message:*amsiContext* OR message:*AmsiScanBuffer* OR message:*amsiInitFailed*)"
     threshold: 1
+    mitre: [T1562.001]
+    level: high
 
   - name: DLL Hijacking — Suspicious Side-Load Path
     description: >-
@@ -47,3 +57,5 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:7 AND message:*\\\\Temp\\\\* AND message:*.dll*"
     threshold: 1
+    mitre: [T1574.002]
+    level: high
