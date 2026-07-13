@@ -2,7 +2,7 @@
 # Externalise every vendored tool into its own git repo.
 #
 # Reads tools/versions.yaml and, for each tool, runs `git subtree split` on its
-# path — producing a branch `split/<repo>` whose history is just that tool's
+# path -- producing a branch `split/<repo>` whose history is just that tool's
 # commits, README at the repo root, ready to push to github.com/<org>/<repo>.
 # A local tag `<repo>/<ref>` is laid on each split head so the pinned ref in
 # versions.yaml exists in the new repo from day one.
@@ -39,13 +39,13 @@ PY
 ORG="$(python3 -c "import yaml,sys;print(yaml.safe_load(open('$MANIFEST'))['org'])")"
 
 if [ "$PRINT" != 1 ] && { ! git diff --quiet || ! git diff --cached --quiet; }; then
-  echo "working tree not clean — commit or stash first" >&2; exit 1
+  echo "working tree not clean -- commit or stash first" >&2; exit 1
 fi
 
 # The standalone contracts repo carries the language-neutral schemas; they are
 # vendored from the platform's contracts/ dir and must not drift.
 if [ "$PRINT" != 1 ] && ! diff -rq contracts tools/citadel_contracts/contracts >/dev/null 2>&1; then
-  echo "contracts/ and tools/citadel_contracts/contracts/ differ — sync (cp -R contracts/* tools/citadel_contracts/contracts/) and commit first" >&2
+  echo "contracts/ and tools/citadel_contracts/contracts/ differ -- sync (cp -R contracts/* tools/citadel_contracts/contracts/) and commit first" >&2
   exit 1
 fi
 
@@ -56,11 +56,11 @@ while IFS=$'\t' read -r name repo ref path; do
     printf '  %-14s %-28s %-8s %s\n' "$name" "$url" "$ref" "$path"
     continue
   fi
-  echo "── split $name ($path → split/$repo)"
+  echo "-- split $name ($path -> split/$repo)"
   git subtree split --prefix="$path" -b "split/$repo" >/dev/null
   git tag -f "$repo/$ref" "split/$repo" >/dev/null
   if [ "$PUSH" = 1 ]; then
-    echo "   push → $url (main + $ref)"
+    echo "   push -> $url (main + $ref)"
     git push "$url" "refs/heads/split/$repo:refs/heads/main" \
                     "+refs/tags/$repo/$ref:refs/tags/$ref"
   else
@@ -68,4 +68,4 @@ while IFS=$'\t' read -r name repo ref path; do
   fi
 done <<< "$PLAN"
 
-[ "$PRINT" = 1 ] || echo "done — $(git branch --list 'split/*' | wc -l | tr -d ' ') split branches ready"
+[ "$PRINT" = 1 ] || echo "done -- $(git branch --list 'split/*' | wc -l | tr -d ' ') split branches ready"
