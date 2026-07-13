@@ -110,7 +110,7 @@ spec:
 
 ---
 # Redis auth password. Value substituted from the operator environment
-# (foctl/fo.sh) — never hardcode. OPERATOR ACTION: set __FO_REDIS_PASSWORD__ and
+# (foctl) — never hardcode. OPERATOR ACTION: set __FO_REDIS_PASSWORD__ and
 # include it in the REDIS_URL used by api + processor.
 apiVersion: v1
 kind: Secret
