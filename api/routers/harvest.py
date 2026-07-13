@@ -24,7 +24,9 @@ from pydantic import BaseModel, Field
 
 router = APIRouter(tags=["harvest"])
 
-REDIS_URL = os.getenv("REDIS_URL", "redis://redis-service:6379/0")
+from config import settings
+
+REDIS_URL = settings.REDIS_URL  # carries REDIS_PASSWORD auth
 RUN_TTL = 7 * 24 * 3600
 
 

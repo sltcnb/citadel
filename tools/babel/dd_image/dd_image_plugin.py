@@ -160,8 +160,10 @@ def _minio() -> _MinioClient:
 
 
 def _redis() -> _redis_lib.Redis:
+    from citadel_contracts import redis_url_with_auth  # noqa: PLC0415
+
     return _redis_lib.Redis.from_url(
-        os.environ.get("REDIS_URL", "redis://redis:6379/0"),
+        redis_url_with_auth(os.environ.get("REDIS_URL", "redis://redis:6379/0")),
         decode_responses=True,
     )
 
