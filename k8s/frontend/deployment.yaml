@@ -17,9 +17,10 @@ spec:
       # ── Pod security context ──────────────────────────────────────────────
       # The stock nginx:alpine image must start as root to bind port 80 and to
       # write its cache/pid; runAsNonRoot is therefore NOT set here. We still
-      # drop all capabilities except NET_BIND_SERVICE and block privilege
-      # escalation. To run fully non-root, switch to nginxinc/nginx-unprivileged
-      # (listens on 8080) and update the Service/Ingress ports accordingly.
+      # drop all capabilities except the minimum the stock entrypoint needs, and
+      # block privilege escalation. To run fully non-root, switch to
+      # nginxinc/nginx-unprivileged (listens on 8080) and update the
+      # Service/Ingress ports accordingly.
       securityContext:
         seccompProfile:
           type: RuntimeDefault
@@ -31,7 +32,15 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
-              add: ["NET_BIND_SERVICE"]
+              # The stock nginx entrypoint runs as root: it chowns the cache
+              # dirs (/var/cache/nginx/*) to the nginx user and the master then
+              # drops worker privileges. drop:[ALL] strips CAP_CHOWN, so even as
+              # root the chown fails ("Operation not permitted") and nginx exits.
+              # Add back the minimal set that root nginx requires:
+              #   CHOWN/DAC_OVERRIDE  — chown + write the cache/pid/temp dirs
+              #   SETUID/SETGID       — drop workers to the nginx (101) user
+              #   NET_BIND_SERVICE    — bind port 80
+              add: ["CHOWN", "DAC_OVERRIDE", "SETUID", "SETGID", "NET_BIND_SERVICE"]
             # readOnlyRootFilesystem left false: nginx writes cache/pid/temp
             # under /var/cache/nginx and /var/run.
             readOnlyRootFilesystem: false
