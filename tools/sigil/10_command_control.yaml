@@ -7,6 +7,8 @@ rules:
     artifact_type: suricata
     query: "suricata.event_type:alert AND suricata.alert.severity:1"
     threshold: 1
+    mitre: [T1071]
+    level: high
 
   - name: Suricata — Malware Signature Match
     description: >-
@@ -15,6 +17,8 @@ rules:
     artifact_type: suricata
     query: "suricata.event_type:alert AND message:*ET\\ MALWARE*"
     threshold: 1
+    mitre: [T1071]
+    level: high
 
   - name: Suricata — Trojan / Exploit Kit Traffic
     description: >-
@@ -23,6 +27,8 @@ rules:
     artifact_type: suricata
     query: "suricata.event_type:alert AND (message:*ET\\ TROJAN* OR message:*ET\\ EXPLOIT*)"
     threshold: 1
+    mitre: [T1071]
+    level: critical
 
   - name: Suricata — Network Scanning Detected
     description: >-
@@ -31,6 +37,8 @@ rules:
     artifact_type: suricata
     query: "suricata.event_type:alert AND message:*ET\\ SCAN*"
     threshold: 5
+    mitre: [T1046]
+    level: medium
 
   - name: Suricata — DNS Anomaly / Tunneling
     description: >-
@@ -39,6 +47,8 @@ rules:
     artifact_type: suricata
     query: "suricata.event_type:alert AND message:*ET\\ DNS*"
     threshold: 1
+    mitre: [T1071.004, T1048]
+    level: high
 
   - name: Outbound Connection to Non-Standard Port
     description: >-
@@ -47,3 +57,5 @@ rules:
     artifact_type: suricata
     query: "suricata.event_type:flow AND NOT (suricata.dest_port:80 OR suricata.dest_port:443 OR suricata.dest_port:53)"
     threshold: 10
+    mitre: [T1571]
+    level: medium

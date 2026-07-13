@@ -62,6 +62,22 @@ _NAME_TO_TACTIC = {
     "reconnaissance": "Reconnaissance",
     "authentication": "Credential Access",
     "anti_forensics": "Defense Evasion",
+    # Themed native packs — mapped to their dominant tactic (matched by filename
+    # stem when the human-readable category text doesn't normalise to a key).
+    "ransomware": "Impact",
+    "windows_lolbins": "Execution",
+    "active_directory": "Credential Access",
+    "linux_endpoint": "Persistence",
+    "cloud_identity": "Credential Access",
+    "edr_av_tampering": "Defense Evasion",
+    "powershell_specific": "Execution",
+    "enhanced_authentication": "Credential Access",
+    "web_server": "Initial Access",
+    "registry_forensics": "Persistence",
+    "prefetch_analysis": "Execution",
+    "lnk_analysis": "Execution",
+    "zeek_analysis": "Command and Control",
+    "sysmon_specific": "Execution",
 }
 
 
