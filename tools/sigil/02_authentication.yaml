@@ -7,6 +7,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4625"
     threshold: 10
+    mitre: [T1110]
+    level: medium
 
   - name: Explicit Credential Use (Pass-the-Hash / RunAs)
     description: >-
@@ -15,6 +17,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4648"
     threshold: 1
+    mitre: [T1550.002]
+    level: medium
 
   - name: Account Locked Out
     description: >-
@@ -23,6 +27,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4740"
     threshold: 1
+    mitre: [T1110]
+    level: low
 
   - name: Kerberos Pre-Authentication Failure
     description: >-
@@ -31,6 +37,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4771"
     threshold: 5
+    mitre: [T1110.003]
+    level: medium
 
   - name: Interactive RDP Logon (Type 10)
     description: >-
@@ -39,6 +47,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4624 AND message:*LogonType\\:10*"
     threshold: 1
+    mitre: [T1021.001]
+    level: low
 
   - name: NTLM Network Logon (Type 3) — Lateral Movement Candidate
     description: >-
@@ -47,6 +57,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4624 AND message:*LogonType\\:3* AND message:*NTLM*"
     threshold: 1
+    mitre: [T1021.002]
+    level: medium
 
   - name: Service Account Interactive Logon
     description: >-
@@ -55,3 +67,5 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4624 AND message:*svc* AND (message:*LogonType\\:2* OR message:*LogonType\\:10*)"
     threshold: 1
+    mitre: [T1078.003]
+    level: high

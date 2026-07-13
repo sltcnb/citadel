@@ -1,0 +1,94 @@
+category: Living-off-the-Land Binaries
+# Signed-binary proxy execution (LOLBINs) used to run attacker code while
+# blending in with legitimate Windows tooling. All keyed off process-creation
+# (EID 4688) command-line content.
+rules:
+  - name: LOLBIN — MSBuild Inline Task
+    description: >-
+      MSBuild compiled and ran an inline task from a project/XML file — a common
+      application-whitelisting bypass that executes arbitrary C#.
+    artifact_type: evtx
+    query: 'evtx.event_id:4688 AND message:*msbuild* AND (message:*.xml* OR message:*.csproj* OR message:*.proj*)'
+    threshold: 1
+    mitre: [T1127.001]
+    level: high
+
+  - name: LOLBIN — InstallUtil Proxy Execution
+    description: >-
+      InstallUtil executed a managed assembly (often via the /logfile= /U trick)
+      to run code outside normal execution paths.
+    artifact_type: evtx
+    query: 'evtx.event_id:4688 AND message:*installutil* AND (message:*/logfile* OR message:*/U* OR message:*.dll*)'
+    threshold: 1
+    mitre: [T1218.004]
+    level: high
+
+  - name: LOLBIN — Bitsadmin Transfer
+    description: >-
+      bitsadmin created a transfer job to download a payload — a stealthy,
+      reboot-persistent alternative to certutil/curl.
+    artifact_type: evtx
+    query: 'evtx.event_id:4688 AND message:*bitsadmin* AND (message:*transfer* OR message:*addfile* OR message:*download*)'
+    threshold: 1
+    mitre: [T1197]
+    level: high
+
+  - name: LOLBIN — WMIC XSL Execution (Squiblytwo)
+    description: >-
+      wmic invoked a remote or local XSL stylesheet with format:, executing
+      embedded script (the squiblytwo technique).
+    artifact_type: evtx
+    query: 'evtx.event_id:4688 AND message:*wmic* AND message:*format* AND (message:*.xsl* OR message:*http*)'
+    threshold: 1
+    mitre: [T1220]
+    level: high
+
+  - name: LOLBIN — Msiexec Remote Package Install
+    description: >-
+      msiexec installed a package directly from a URL — used to fetch and run
+      an MSI payload from attacker infrastructure.
+    artifact_type: evtx
+    query: 'evtx.event_id:4688 AND message:*msiexec* AND message:*http*'
+    threshold: 1
+    mitre: [T1218.007]
+    level: high
+
+  - name: LOLBIN — Odbcconf DLL Execution
+    description: >-
+      odbcconf was used with regsvr to load and execute a DLL, bypassing
+      application control.
+    artifact_type: evtx
+    query: 'evtx.event_id:4688 AND message:*odbcconf* AND (message:*regsvr* OR message:*.dll* OR message:*.rsp*)'
+    threshold: 1
+    mitre: [T1218.008]
+    level: high
+
+  - name: LOLBIN — Forfiles Command Proxy
+    description: >-
+      forfiles /c was used to spawn a child command, a technique for obscuring
+      the real process ancestry of an execution.
+    artifact_type: evtx
+    query: 'evtx.event_id:4688 AND message:*forfiles* AND message:*/c*'
+    threshold: 1
+    mitre: [T1059]
+    level: medium
+
+  - name: LOLBIN — SyncAppvPublishingServer Script Proxy
+    description: >-
+      SyncAppvPublishingServer.vbs / .exe was abused to run arbitrary
+      PowerShell, a lesser-known signed-binary proxy.
+    artifact_type: evtx
+    query: 'evtx.event_id:4688 AND message:*SyncAppvPublishingServer*'
+    threshold: 1
+    mitre: [T1218]
+    level: high
+
+  - name: LOLBIN — Regasm/Regsvcs Assembly Execution
+    description: >-
+      regasm or regsvcs executed a .NET assembly to proxy code execution via a
+      trusted Microsoft binary.
+    artifact_type: evtx
+    query: 'evtx.event_id:4688 AND (message:*regasm* OR message:*regsvcs*) AND message:*.dll*'
+    threshold: 1
+    mitre: [T1218.009]
+    level: high

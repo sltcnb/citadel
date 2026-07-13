@@ -1,0 +1,84 @@
+category: EDR and AV Tampering
+# Detections for attempts to blind endpoint security controls (Defender, ETW,
+# Sysmon, third-party AV) before or during an intrusion.
+rules:
+  - name: Defender — Exclusion Path Added
+    description: >-
+      Add-MpPreference registered a Defender exclusion (path, process, or
+      extension). Attackers exclude their staging directory before dropping
+      payloads.
+    artifact_type: evtx
+    query: 'evtx.event_id:4104 AND message:*Add-MpPreference* AND (message:*Exclusion* OR message:*ExclusionPath* OR message:*ExclusionProcess*)'
+    threshold: 1
+    mitre: [T1562.001]
+    level: high
+
+  - name: Defender — Disabled via Registry
+    description: >-
+      A Defender kill-switch registry value was set (DisableAntiSpyware,
+      DisableRealtimeMonitoring). Turns off protection persistently.
+    artifact_type: evtx
+    query: 'evtx.event_id:4657 AND (message:*DisableAntiSpyware* OR message:*DisableRealtimeMonitoring* OR message:*DisableBehaviorMonitoring*)'
+    threshold: 1
+    mitre: [T1562.001]
+    level: high
+
+  - name: Defender — Tamper Protection Disabled
+    description: >-
+      Windows Defender Tamper Protection was turned off, removing the guard
+      that blocks changes to security settings.
+    artifact_type: evtx
+    query: 'evtx.event_id:4657 AND message:*TamperProtection*'
+    threshold: 1
+    mitre: [T1562.001]
+    level: high
+
+  - name: Security Service Set to Disabled
+    description: >-
+      sc config marked a security service (WinDefend, Sense, wuauserv, EventLog)
+      as disabled — preventing it from starting on reboot.
+    artifact_type: evtx
+    query: 'evtx.event_id:4688 AND message:*sc*config* AND message:*disabled* AND (message:*WinDefend* OR message:*Sense* OR message:*eventlog*)'
+    threshold: 1
+    mitre: [T1562.001]
+    level: high
+
+  - name: ETW Provider Tampering
+    description: >-
+      Event Tracing for Windows was disabled or a logging trace stopped
+      (logman stop, EtwEventWrite patch) to blind telemetry.
+    artifact_type: evtx
+    query: 'evtx.event_id:4104 AND (message:*EtwEventWrite* OR message:*logman*stop* OR message:*Remove-EtwTraceProvider*)'
+    threshold: 1
+    mitre: [T1562.006]
+    level: high
+
+  - name: Sysmon Unloaded or Reconfigured
+    description: >-
+      Sysmon was uninstalled (-u) or its config swapped (-c) from the command
+      line — a direct attempt to stop endpoint recording.
+    artifact_type: evtx
+    query: 'evtx.event_id:4688 AND message:*sysmon* AND (message:*-u* OR message:*-c*)'
+    threshold: 1
+    mitre: [T1562.001]
+    level: high
+
+  - name: Security Product Uninstalled via WMIC
+    description: >-
+      wmic product call uninstall was used to silently remove an installed
+      security product.
+    artifact_type: evtx
+    query: 'evtx.event_id:4688 AND message:*wmic* AND message:*product* AND message:*uninstall*'
+    threshold: 1
+    mitre: [T1562.001]
+    level: high
+
+  - name: Safe Mode Boot Configured for Evasion
+    description: >-
+      bcdedit configured safeboot (optionally with network) — some ransomware
+      and evasion tooling reboots into Safe Mode where most AV/EDR does not run.
+    artifact_type: evtx
+    query: 'evtx.event_id:4688 AND message:*bcdedit* AND message:*safeboot*'
+    threshold: 1
+    mitre: [T1562.009]
+    level: medium

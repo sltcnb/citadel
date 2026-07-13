@@ -16,61 +16,153 @@
     },
     {
       "tactic": "Initial Access",
-      "native": 6,
+      "native": 19,
       "sigma": 0,
-      "total": 6,
-      "techniques": []
+      "total": 19,
+      "techniques": [
+        "T1189",
+        "T1218.001",
+        "T1553.005",
+        "T1566.001"
+      ]
     },
     {
       "tactic": "Execution",
-      "native": 9,
+      "native": 42,
       "sigma": 321,
-      "total": 330,
+      "total": 363,
       "techniques": [
-        "T1047"
+        "T1027",
+        "T1036",
+        "T1047",
+        "T1059",
+        "T1059.001",
+        "T1105",
+        "T1127.001",
+        "T1140",
+        "T1197",
+        "T1204.002",
+        "T1218",
+        "T1218.004",
+        "T1218.005",
+        "T1218.007",
+        "T1218.008",
+        "T1218.009",
+        "T1218.010",
+        "T1218.011",
+        "T1220",
+        "T1566.001"
       ]
     },
     {
       "tactic": "Persistence",
-      "native": 7,
+      "native": 21,
       "sigma": 321,
-      "total": 328,
-      "techniques": []
+      "total": 342,
+      "techniques": [
+        "T1053.003",
+        "T1053.005",
+        "T1070.003",
+        "T1098.004",
+        "T1136.001",
+        "T1197",
+        "T1543.002",
+        "T1543.003",
+        "T1546.003",
+        "T1547.001",
+        "T1547.006",
+        "T1548.003",
+        "T1562.004"
+      ]
     },
     {
       "tactic": "Privilege Escalation",
       "native": 5,
       "sigma": 0,
       "total": 5,
-      "techniques": []
+      "techniques": [
+        "T1078",
+        "T1098",
+        "T1134",
+        "T1136.001"
+      ]
     },
     {
       "tactic": "Defense Evasion",
-      "native": 11,
+      "native": 19,
       "sigma": 0,
-      "total": 11,
-      "techniques": []
+      "total": 19,
+      "techniques": [
+        "T1055",
+        "T1070.001",
+        "T1070.004",
+        "T1070.006",
+        "T1490",
+        "T1562.001",
+        "T1562.002",
+        "T1562.004",
+        "T1562.006",
+        "T1562.009",
+        "T1574.002"
+      ]
     },
     {
       "tactic": "Credential Access",
-      "native": 18,
+      "native": 35,
       "sigma": 0,
-      "total": 18,
-      "techniques": []
+      "total": 35,
+      "techniques": [
+        "T1003",
+        "T1003.001",
+        "T1003.002",
+        "T1003.003",
+        "T1003.006",
+        "T1021.001",
+        "T1021.002",
+        "T1078.003",
+        "T1078.004",
+        "T1098",
+        "T1110",
+        "T1110.003",
+        "T1114.003",
+        "T1134.005",
+        "T1484.001",
+        "T1484.002",
+        "T1550.002",
+        "T1552.001",
+        "T1555",
+        "T1556",
+        "T1556.006",
+        "T1558.003",
+        "T1558.004",
+        "T1562"
+      ]
     },
     {
       "tactic": "Discovery",
       "native": 5,
       "sigma": 56,
       "total": 61,
-      "techniques": []
+      "techniques": [
+        "T1033",
+        "T1046",
+        "T1082",
+        "T1087.001",
+        "T1087.002",
+        "T1135"
+      ]
     },
     {
       "tactic": "Lateral Movement",
       "native": 5,
       "sigma": 0,
       "total": 5,
-      "techniques": []
+      "techniques": [
+        "T1021.001",
+        "T1021.002",
+        "T1543.003",
+        "T1569.002"
+      ]
     },
     {
       "tactic": "Collection",
@@ -81,37 +173,59 @@
     },
     {
       "tactic": "Command and Control",
-      "native": 6,
+      "native": 12,
       "sigma": 0,
-      "total": 6,
-      "techniques": []
+      "total": 12,
+      "techniques": [
+        "T1046",
+        "T1048",
+        "T1071",
+        "T1071.004",
+        "T1571"
+      ]
     },
     {
       "tactic": "Exfiltration",
       "native": 5,
       "sigma": 20,
       "total": 25,
-      "techniques": []
+      "techniques": [
+        "T1048",
+        "T1048.003",
+        "T1560.001",
+        "T1567.002"
+      ]
     },
     {
       "tactic": "Impact",
-      "native": 6,
+      "native": 14,
       "sigma": 38,
-      "total": 44,
-      "techniques": []
+      "total": 52,
+      "techniques": [
+        "T1485",
+        "T1486",
+        "T1489",
+        "T1490"
+      ]
     },
     {
       "tactic": "Uncategorized",
-      "native": 58,
+      "native": 47,
       "sigma": 699,
-      "total": 757,
-      "techniques": []
+      "total": 746,
+      "techniques": [
+        "T1071.001",
+        "T1071.004",
+        "T1090.003",
+        "T1102",
+        "T1496"
+      ]
     }
   ],
   "totals": {
     "tactics_covered": 13,
     "tactics_total": 14,
-    "rules": 1628,
-    "techniques_tagged": 1
+    "rules": 1716,
+    "techniques_tagged": 92
   }
 }

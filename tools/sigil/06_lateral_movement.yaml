@@ -7,6 +7,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:5140 AND (message:*ADMIN$* OR message:*C$* OR message:*IPC$*)"
     threshold: 1
+    mitre: [T1021.002]
+    level: medium
 
   - name: PsExec Service Installed
     description: >-
@@ -15,6 +17,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:7045 AND message:*PSEXESVC*"
     threshold: 1
+    mitre: [T1569.002, T1021.002]
+    level: high
 
   - name: RDP Session Reconnected
     description: >-
@@ -23,6 +27,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4778"
     threshold: 1
+    mitre: [T1021.001]
+    level: medium
 
   - name: Remote Service Created via SCM
     description: >-
@@ -31,6 +37,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:7045 AND message:*\\\\\\\\*"
     threshold: 1
+    mitre: [T1543.003, T1021.002]
+    level: high
 
   - name: SMB File Write to Remote Share
     description: >-
@@ -39,3 +47,5 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:5145 AND message:*WriteData*"
     threshold: 1
+    mitre: [T1021.002]
+    level: medium
