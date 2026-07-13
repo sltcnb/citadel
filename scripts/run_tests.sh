@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Citadel test gate — runs every standalone test suite across the tool suite.
+# Citadel test gate -- runs every standalone test suite across the tool suite.
 # Each suite is runnable without pytest (stdlib __main__ runners) and exits
 # non-zero on failure, so this is a real, dependency-light CI gate.
 #

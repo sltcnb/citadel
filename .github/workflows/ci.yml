@@ -185,7 +185,7 @@ jobs:
         run: pip install pyyaml jsonschema cryptography requests
       - name: Run suite test gate
         # Enforced (no continue-on-error): the dependency-light gate that runs
-        # every tool's standalone suite + the Babel→Rosetta→Sigil integration.
+        # every tool's standalone suite + the Babel->Rosetta->Sigil integration.
         # Invoked via `bash` so it works regardless of the script's exec bit.
         run: bash scripts/run_tests.sh
       - name: Generated TS contracts are up to date

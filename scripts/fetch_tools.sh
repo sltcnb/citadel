@@ -39,7 +39,7 @@ for t in m.get("tools", []):
 PY
 )" || { echo "failed to parse manifest" >&2; exit 1; }
 
-# Never block on an interactive credential prompt — an unreachable/private repo
+# Never block on an interactive credential prompt -- an unreachable/private repo
 # should cleanly "skip", not hang asking for a GitHub username/password.
 export GIT_TERMINAL_PROMPT=0
 export GIT_SSH_COMMAND="ssh -oBatchMode=yes"
@@ -57,14 +57,14 @@ while IFS=$'\t' read -r name url ref path vendored; do
   fi
   dest="$ROOT/$path"
   if [ -d "$dest/.git" ]; then
-    echo "fetch $name → $path @ $ref"
+    echo "fetch $name -> $path @ $ref"
     git -C "$dest" fetch --tags --quiet origin && git -C "$dest" checkout --quiet "$ref" || { echo "  ! $name fetch/checkout failed"; rc=1; }
   elif git ls-remote "$url" >/dev/null 2>&1; then
-    echo "clone $name → $path @ $ref"
+    echo "clone $name -> $path @ $ref"
     mkdir -p "$(dirname "$dest")"
     git clone --quiet "$url" "$dest" && git -C "$dest" checkout --quiet "$ref" || { echo "  ! $name clone failed"; rc=1; }
   else
-    echo "skip $name ($url not reachable — provision the repo or keep vendored)"
+    echo "skip $name ($url not reachable -- provision the repo or keep vendored)"
   fi
 done <<< "$PLAN"
 
