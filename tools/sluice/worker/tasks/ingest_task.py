@@ -42,14 +42,13 @@ def _put_with_retry(minio_client, bucket: str, key: str, data: bytes, attempts: 
 
 
 import bus_emit
-from celery_app import app
+from celery_app import REDIS_URL, app  # REDIS_URL carries REDIS_PASSWORD auth
 from plugin_loader import PluginLoader
 from utils.es_bulk import ESBulkIndexer
 from utils.file_type import detect_mime
 
 logger = logging.getLogger(__name__)
 
-REDIS_URL = os.getenv("REDIS_URL", "redis://redis-service:6379/0")
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "minio-service:9000")
 MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
 MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "minioadmin")

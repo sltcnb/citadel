@@ -2,11 +2,17 @@
 
 import os
 
+from citadel_contracts import redis_url_with_auth
+
 
 class Settings:
     # ── Infrastructure ─────────────────────────────────────────────────────
     ELASTICSEARCH_URL: str = os.getenv("ELASTICSEARCH_URL", "http://elasticsearch-service:9200")
-    REDIS_URL: str = os.getenv("REDIS_URL", "redis://redis-service:6379/0")
+    # REDIS_URL carries the AUTH credential from REDIS_PASSWORD folded in, so a
+    # plain redis.from_url(REDIS_URL) authenticates against a --requirepass Redis.
+    REDIS_URL: str = redis_url_with_auth(
+        os.getenv("REDIS_URL", "redis://redis-service:6379/0")
+    )
     MINIO_ENDPOINT: str = os.getenv("MINIO_ENDPOINT", "minio-service:9000")
     MINIO_ACCESS_KEY: str = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
     MINIO_SECRET_KEY: str = os.getenv("MINIO_SECRET_KEY", "minioadmin")
