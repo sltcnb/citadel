@@ -7,6 +7,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4663 AND (message:*.encrypted* OR message:*.locked* OR message:*.crypto* OR message:*.ransom*)"
     threshold: 10
+    mitre: [T1486]
+    level: critical
 
   - name: Mass File Deletion
     description: >-
@@ -15,6 +17,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4660"
     threshold: 50
+    mitre: [T1485]
+    level: high
 
   - name: Boot Configuration Modified
     description: >-
@@ -23,6 +27,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4657 AND (message:*BCD* OR message:*bootcfg*)"
     threshold: 1
+    mitre: [T1490]
+    level: high
 
   - name: Windows Recovery Disabled
     description: >-
@@ -31,6 +37,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4688 AND message:*bcdedit* AND message:*recoveryenabled*"
     threshold: 1
+    mitre: [T1490]
+    level: critical
 
   - name: Volume Shadow Copy Deleted
     description: >-
@@ -39,6 +47,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4688 AND (message:*vssadmin* OR message:*wmic* OR message:*powershell*) AND (message:*delete* OR message:*remove*) AND (message:*shadow* OR message:*vss*)"
     threshold: 1
+    mitre: [T1490]
+    level: critical
 
   - name: Encrypting File System Activity
     description: >-
@@ -47,3 +57,5 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:5051 OR evtx.event_id:5052"
     threshold: 5
+    mitre: [T1486]
+    level: medium

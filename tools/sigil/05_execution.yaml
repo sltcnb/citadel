@@ -7,6 +7,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4104"
     threshold: 1
+    mitre: [T1059.001]
+    level: low
 
   - name: Encoded PowerShell Command
     description: >-
@@ -15,6 +17,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4688 AND message:*powershell* AND (message:*-EncodedCommand* OR message:*-enc* OR message:*-e *)"
     threshold: 1
+    mitre: [T1059.001, T1027]
+    level: high
 
   - name: Process Spawned by Office Application
     description: >-
@@ -23,6 +27,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4688 AND (message:*winword* OR message:*excel* OR message:*powerpnt* OR message:*outlook*)"
     threshold: 1
+    mitre: [T1204.002, T1566.001]
+    level: high
 
   - name: WMIC Remote Process Creation
     description: >-
@@ -31,6 +37,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4688 AND message:*wmic* AND (message:*process* OR message:*call* OR message:*create*)"
     threshold: 1
+    mitre: [T1047]
+    level: high
 
   - name: Regsvr32 Executing Script (Squiblydoo)
     description: >-
@@ -39,6 +47,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4688 AND message:*regsvr32* AND (message:*scrobj* OR message:*http*)"
     threshold: 1
+    mitre: [T1218.010]
+    level: high
 
   - name: Mshta Executing Remote Script
     description: >-
@@ -47,6 +57,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4688 AND message:*mshta* AND (message:*http* OR message:*vbscript* OR message:*javascript*)"
     threshold: 1
+    mitre: [T1218.005]
+    level: high
 
   - name: CertUtil File Download (LOLBIN)
     description: >-
@@ -55,6 +67,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4688 AND message:*certutil* AND (message:*-urlcache* OR message:*-decode* OR message:*http*)"
     threshold: 1
+    mitre: [T1105, T1140]
+    level: high
 
   - name: Process Running from Temp / AppData
     description: >-
@@ -63,6 +77,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4688 AND (message:*\\\\Temp\\\\* OR message:*\\\\AppData\\\\Local\\\\Temp\\\\*)"
     threshold: 1
+    mitre: [T1036]
+    level: medium
 
   - name: Rundll32 Executing Non-DLL / Remote Path
     description: >-
@@ -71,3 +87,5 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4688 AND message:*rundll32* AND (message:*http* OR message:*.txt* OR message:*.dat*)"
     threshold: 1
+    mitre: [T1218.011]
+    level: high

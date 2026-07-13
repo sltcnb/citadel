@@ -7,6 +7,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4688 AND (message:*winword* OR message:*excel* OR message:*powerpnt*) AND (message:*.docm* OR message:*.xlsm* OR message:*.pptm*)"
     threshold: 1
+    mitre: [T1566.001]
+    level: medium
 
   - name: Outlook Attachment Downloaded
     description: >-
@@ -15,6 +17,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4688 AND message:*outlook* AND (message:*TempOLK* OR message:*Content.Outlook*)"
     threshold: 1
+    mitre: [T1566.001]
+    level: medium
 
   - name: Browser Downloaded Executable
     description: >-
@@ -23,6 +27,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4688 AND (message:*chrome* OR message:*firefox* OR message:*msedge*) AND (message:*.exe* OR message:*.bat* OR message:*.ps1*)"
     threshold: 1
+    mitre: [T1189]
+    level: medium
 
   - name: OneNote Attachment Executed
     description: >-
@@ -31,6 +37,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4688 AND message:*onenote* AND message:*embed*"
     threshold: 1
+    mitre: [T1566.001]
+    level: high
 
   - name: CHM File Executed
     description: >-
@@ -39,6 +47,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4688 AND message:*.chm*"
     threshold: 1
+    mitre: [T1218.001]
+    level: high
 
   - name: ISO/VHD File Mounted
     description: >-
@@ -47,3 +57,5 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4688 AND (message:*mountvol* OR message:*DiskMount*) AND (message:*.iso* OR message:*.vhd* OR message:*.vhdx*)"
     threshold: 1
+    mitre: [T1553.005]
+    level: medium

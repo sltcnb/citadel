@@ -7,6 +7,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:7045"
     threshold: 1
+    mitre: [T1543.003]
+    level: medium
 
   - name: Scheduled Task Created
     description: >-
@@ -15,6 +17,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4698"
     threshold: 1
+    mitre: [T1053.005]
+    level: medium
 
   - name: Scheduled Task Modified or Deleted
     description: >-
@@ -23,6 +27,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4702 OR evtx.event_id:4699"
     threshold: 1
+    mitre: [T1053.005]
+    level: medium
 
   - name: WMI Permanent Event Subscription Created
     description: >-
@@ -31,6 +37,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:5861"
     threshold: 1
+    mitre: [T1546.003]
+    level: high
 
   - name: BITS Transfer Job Created
     description: >-
@@ -39,6 +47,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:59 OR evtx.event_id:60"
     threshold: 1
+    mitre: [T1197]
+    level: medium
 
   - name: Registry Run Key Modified
     description: >-
@@ -47,6 +57,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4657 AND (message:*\\\\Run* OR message:*\\\\RunOnce*) AND (message:*HKLM* OR message:*HKCU* OR message:*Software\\\\Microsoft\\\\Windows*)"
     threshold: 1
+    mitre: [T1547.001]
+    level: medium
 
   - name: Startup Folder File Created
     description: >-
@@ -55,3 +67,5 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4663 AND (message:*\\\\Start Menu\\\\Programs\\\\Startup* OR message:*\\\\AppData\\\\Roaming\\\\Microsoft\\\\Windows\\\\Start Menu*)"
     threshold: 1
+    mitre: [T1547.001]
+    level: medium

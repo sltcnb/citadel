@@ -22,7 +22,7 @@ Detect stage: consumes the normalized event stream, produces detections.
 
 ## Rule library
 
-- **27 native packs** by ATT&CK tactic — `01_anti_forensics.yaml` … `27_cloud_saas.yaml` (anti-forensics, authentication, privilege escalation, persistence, execution, lateral movement, defense evasion, credential access, discovery, C2, exfiltration, initial access, impact, plus Sysmon/browser/registry/prefetch/MFT/LNK/Zeek/PowerShell/container/cloud-specific packs).
+- **33 native packs** by ATT&CK tactic — `01_anti_forensics.yaml` … `33_edr_av_tampering.yaml` (anti-forensics, authentication, privilege escalation, persistence, execution, lateral movement, defense evasion, credential access, discovery, C2, exfiltration, initial access, impact, plus Sysmon/browser/registry/prefetch/MFT/LNK/Zeek/PowerShell/container/cloud-specific packs and themed attack packs: ransomware, Windows LOLBINs, Active Directory attacks, Linux endpoint, cloud identity/SaaS, and EDR/AV tampering). Native rules carry `mitre` technique tags and a `level` severity.
 - **SigmaHQ imports** under `sigma_hq/` (execution, persistence, discovery, collection, exfiltration, impact, other).
 - `coverage_matrix.json` / `.md` — generated ATT&CK coverage.
 
