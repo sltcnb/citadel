@@ -5,10 +5,10 @@ TAG        ?= latest
 NAMESPACE  := citadel
 
 help:
-	@echo "Citadel — Kubernetes forensics analysis platform"
+	@echo "Citadel -- Kubernetes forensics analysis platform"
 	@echo ""
 	@echo "  make dev          Start local dev stack with docker-compose (no K8s needed)"
-	@echo "  make deploy       Full K8s deploy — reads config.json, sets up cluster"
+	@echo "  make deploy       Full K8s deploy -- reads config.json, sets up cluster"
 	@echo "  make status       Show all pods and services"
 	@echo "  make destroy      Delete cluster and all data"
 	@echo "  make logs-api     Stream API logs"
@@ -17,14 +17,14 @@ help:
 	@echo "  make shell-api    Shell into API pod"
 	@echo "  make shell-proc   Shell into processor pod"
 
-# ── Local development (no Kubernetes) ─────────────────────────────────────────
+# -- Local development (no Kubernetes) -----------------------------------------
 dev:
 	docker compose up --build
 
 dev-down:
 	docker compose down -v
 
-# ── Kubernetes — all-in-one via deploy.py ─────────────────────────────────────
+# -- Kubernetes -- all-in-one via deploy.py -------------------------------------
 deploy:
 	python3 deploy.py
 
@@ -39,7 +39,7 @@ destroy:
 
 undeploy: destroy
 
-# ── Logs ───────────────────────────────────────────────────────────────────────
+# -- Logs -----------------------------------------------------------------------
 logs-api:
 	kubectl logs -n $(NAMESPACE) -l app=api -f --tail=100
 
@@ -49,7 +49,7 @@ logs-proc:
 logs-frontend:
 	kubectl logs -n $(NAMESPACE) -l app=frontend -f --tail=100
 
-# ── Debugging ──────────────────────────────────────────────────────────────────
+# -- Debugging ------------------------------------------------------------------
 shell-api:
 	kubectl exec -it -n $(NAMESPACE) deploy/api -- bash
 
@@ -61,7 +61,7 @@ reload-plugins:
 	@echo ""
 	@echo "Plugins reloaded."
 
-# ── Plugin management ──────────────────────────────────────────────────────────
+# -- Plugin management ----------------------------------------------------------
 # Example: make copy-plugin PLUGIN=./my_plugin/my_plugin_plugin.py
 copy-plugin:
 	@PROC_POD=$$(kubectl get pod -n $(NAMESPACE) -l app=processor -o jsonpath='{.items[0].metadata.name}'); \
