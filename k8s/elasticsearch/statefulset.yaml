@@ -92,7 +92,7 @@ spec:
             storage: __FO_ES_STORAGE__
 ---
 # Bootstrap password for the built-in `elastic` superuser. The value is
-# substituted from the operator's environment (foctl/fo.sh) — never hardcode.
+# substituted from the operator's environment (foctl) — never hardcode.
 # OPERATOR ACTION: set __FO_ES_PASSWORD__ to a strong random value and configure
 # api/processor/kibana clients with ELASTICSEARCH_USERNAME=elastic + this value.
 apiVersion: v1
