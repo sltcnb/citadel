@@ -66,6 +66,26 @@ try:
 except ImportError:
     sys.exit("Missing dependency: pip install bcrypt")
 
+try:
+    from citadel_contracts import redis_url_with_auth
+except ImportError:
+    # Standalone use without the full venv: minimal inline equivalent.
+    from urllib.parse import quote, urlsplit, urlunsplit
+
+    def redis_url_with_auth(url: str, password: str | None = None) -> str:
+        if password is None:
+            password = os.getenv("REDIS_PASSWORD", "")
+        if not password:
+            return url
+        parts = urlsplit(url)
+        if parts.username or parts.password:
+            return url
+        host = parts.hostname or ""
+        if parts.port is not None:
+            host = f"{host}:{parts.port}"
+        netloc = f":{quote(password, safe='')}@{host}"
+        return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+
 
 def _hash_password(password: str) -> str:
     return _bcrypt_lib.hashpw(password.encode("utf-8"), _bcrypt_lib.gensalt()).decode("utf-8")
@@ -179,6 +199,7 @@ def _auto_redis_url(explicit_url: str, namespace: str) -> tuple[str, "subprocess
 
 def _connect(redis_url: str) -> redis_lib.Redis:
     try:
+        redis_url = redis_url_with_auth(redis_url)
         r = redis_lib.Redis.from_url(redis_url, decode_responses=True, socket_connect_timeout=3)
         r.ping()
         return r
