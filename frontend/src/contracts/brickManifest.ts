@@ -1,4 +1,4 @@
-// AUTO-GENERATED from contracts/brick.schema.json — do not edit by hand.
+// AUTO-GENERATED from contracts/brick.schema.json -- do not edit by hand.
 // Regenerate: scripts/contracts_codegen.py
 // Contract: https://citadel.dfir/contracts/brick/v1.json
 
