@@ -1,0 +1,84 @@
+category: Linux Endpoint
+# Linux host detections over syslog / auditd / shell_history. Fields available:
+# message, process.command_line, user.name, network.src_ip. Tokens are
+# space-free for the ES query_string whitespace split.
+rules:
+  - name: Linux — Cron Persistence Added
+    description: >-
+      A cron job was installed via crontab or written under /etc/cron*.
+      A durable, reboot-surviving Linux persistence mechanism.
+    artifact_type: syslog
+    query: 'process.command_line:*crontab* OR message:*/etc/cron* OR process.command_line:*/var/spool/cron*'
+    threshold: 1
+    mitre: [T1053.003]
+    level: medium
+
+  - name: Linux — SSH authorized_keys Modified
+    description: >-
+      An SSH authorized_keys file was written or appended. Adding a public key
+      is a classic backdoor for passwordless re-entry.
+    artifact_type: syslog
+    query: 'process.command_line:*authorized_keys* OR message:*authorized_keys*'
+    threshold: 1
+    mitre: [T1098.004]
+    level: high
+
+  - name: Linux — Systemd Service Persistence
+    description: >-
+      A systemd unit was created or enabled. Attackers register services to
+      launch payloads at boot with root privileges.
+    artifact_type: syslog
+    query: 'process.command_line:*systemctl*enable* OR process.command_line:*/etc/systemd/system* OR message:*.service*'
+    threshold: 1
+    mitre: [T1543.002]
+    level: medium
+
+  - name: Linux — Shell History Cleared
+    description: >-
+      Shell history was truncated, unset, or redirected to /dev/null — an
+      anti-forensics step to hide executed commands.
+    artifact_type: syslog
+    query: 'process.command_line:*history*-c* OR process.command_line:*HISTFILE* OR process.command_line:*.bash_history*'
+    threshold: 1
+    mitre: [T1070.003]
+    level: medium
+
+  - name: Linux — Kernel Module Loaded
+    description: >-
+      insmod or modprobe loaded a kernel module. Malicious LKMs implement
+      rootkits that hide processes, files, and network connections.
+    artifact_type: syslog
+    query: 'process.command_line:*insmod* OR process.command_line:*modprobe* OR message:*kernel*module*'
+    threshold: 1
+    mitre: [T1547.006]
+    level: medium
+
+  - name: Linux — Sudoers Modified
+    description: >-
+      The sudoers configuration was edited (visudo or /etc/sudoers.d). Grants
+      of NOPASSWD or new sudo rights are a privilege-escalation foothold.
+    artifact_type: syslog
+    query: 'process.command_line:*visudo* OR process.command_line:*/etc/sudoers* OR message:*/etc/sudoers*'
+    threshold: 1
+    mitre: [T1548.003]
+    level: high
+
+  - name: Linux — Firewall Disabled or Flushed
+    description: >-
+      iptables was flushed or ufw/firewalld disabled, opening the host to
+      inbound C2 or lateral connections.
+    artifact_type: syslog
+    query: 'process.command_line:*iptables*-F* OR process.command_line:*ufw*disable* OR process.command_line:*systemctl*stop*firewalld*'
+    threshold: 1
+    mitre: [T1562.004]
+    level: medium
+
+  - name: Linux — Account Manipulation (useradd/usermod)
+    description: >-
+      A local account was created or modified (useradd, usermod, passwd) —
+      backdoor account creation or privilege changes.
+    artifact_type: syslog
+    query: 'process.command_line:*useradd* OR process.command_line:*usermod*-aG* OR message:*new*user*'
+    threshold: 1
+    mitre: [T1136.001]
+    level: medium

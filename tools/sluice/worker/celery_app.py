@@ -3,9 +3,12 @@
 import os
 
 from celery import Celery
+from citadel_contracts import redis_url_with_auth
 from kombu import Exchange, Queue
 
-REDIS_URL = os.getenv("REDIS_URL", "redis://redis-service:6379/0")
+# Fold REDIS_PASSWORD into the URL so the Celery broker/backend and every
+# from_url() client authenticates against a --requirepass Redis.
+REDIS_URL = redis_url_with_auth(os.getenv("REDIS_URL", "redis://redis-service:6379/0"))
 
 # Observability: structured JSON logs to stdout + a capped Redis stream the
 # admin log viewer reads (citadel:logs:processor). Best-effort — never fatal.

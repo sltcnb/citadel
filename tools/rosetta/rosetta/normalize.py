@@ -200,28 +200,47 @@ class Normalizer:
 
     _TECH_RE = re.compile(r"\bT\d{4}(?:\.\d{3})?\b")
 
+    @classmethod
+    def _valid_tech(cls, token: str) -> bool:
+        """True if ``token`` is a well-formed ATT&CK technique id in the real
+        enterprise number range (T1000–T1699). Rejects look-alikes such as a
+        ticket number ``T4688`` or a temperature that the regex alone matches —
+        important now that free-text ``message`` is scanned."""
+        tok = str(token).upper()
+        if not cls._TECH_RE.fullmatch(tok):
+            return False
+        base = int(tok[1:5])
+        return 1000 <= base <= 1699
+
     def _extract_attack(self, event, raw_obj, artifact_type):
         """Return ``(technique_ids, tactic_name)``.
 
         Prefers explicit ATT&CK signals on the event (``mitre``/``technique``/
-        ``attack`` keys, or ``attack.tNNNN`` tags) — OSSEM-style provenance —
-        and falls back to the artifact_type default map for untagged events."""
+        ``attack`` keys, ``attack.tNNNN`` tags, or technique IDs embedded in the
+        ``message``) — OSSEM-style provenance — and falls back to the
+        artifact_type default map for untagged events. All ids are validated
+        against the real ATT&CK number range to avoid free-text false hits."""
         ids: list[str] = []
         tactic = None
         for src in (event, raw_obj):
-            for key in ("mitre", "technique", "attack", "techniques", "tags"):
+            for key in ("mitre", "technique", "attack", "techniques", "tags", "message"):
                 val = src.get(key) if isinstance(src, dict) else None
                 if not val:
                     continue
                 blob = " ".join(val) if isinstance(val, list) else str(val)
                 for m in self._TECH_RE.findall(blob.upper()):
-                    if m not in ids:
+                    if m not in ids and self._valid_tech(m):
                         ids.append(m)
             for tkey in ("tactic", "mitre_tactic"):
                 tactic = tactic or (src.get(tkey) if isinstance(src, dict) else None)
         if not ids and artifact_type in self._attack:
             entry = self._attack[artifact_type]
-            ids = [entry["technique"]]
+            # The fallback entry may carry a single ``technique`` or a list of
+            # ``techniques``; keep only well-formed, in-range ids.
+            raw_ids = entry.get("techniques") or entry.get("technique") or []
+            if isinstance(raw_ids, str):
+                raw_ids = [raw_ids]
+            ids = [str(t).upper() for t in raw_ids if self._valid_tech(t)]
             tactic = tactic or entry.get("tactic")
         return ids, tactic
 

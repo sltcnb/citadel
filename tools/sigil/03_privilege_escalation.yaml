@@ -7,6 +7,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4728 OR evtx.event_id:4732 OR evtx.event_id:4756"
     threshold: 1
+    mitre: [T1098]
+    level: high
 
   - name: New Local User Account Created
     description: >-
@@ -15,6 +17,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4720"
     threshold: 1
+    mitre: [T1136.001]
+    level: medium
 
   - name: Special Privileges Assigned to New Logon
     description: >-
@@ -23,6 +27,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4672"
     threshold: 1
+    mitre: [T1078]
+    level: low
 
   - name: User Account Enabled
     description: >-
@@ -31,6 +37,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4722"
     threshold: 1
+    mitre: [T1098]
+    level: medium
 
   - name: Token Privileges Adjusted
     description: >-
@@ -39,3 +47,5 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4703 OR evtx.event_id:4674"
     threshold: 1
+    mitre: [T1134]
+    level: medium

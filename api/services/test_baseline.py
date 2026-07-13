@@ -19,9 +19,9 @@ def _b(key, host_count, on_target, total=None):
 
 def test_keeps_only_rare_and_on_target():
     buckets = [
-        _b("svchost.exe", 50, 10),    # common — dropped
-        _b("evil.exe", 1, 3),         # rare + on target — keep
-        _b("other.exe", 1, 0),        # rare but NOT on target — dropped
+        _b("svchost.exe", 50, 10),  # common — dropped
+        _b("evil.exe", 1, 3),  # rare + on target — keep
+        _b("other.exe", 1, 0),  # rare but NOT on target — dropped
     ]
     out = compute_rare(buckets, max_hosts=2)
     assert [r["value"] for r in out] == ["evil.exe"]
@@ -43,7 +43,32 @@ def test_sorted_rarest_first():
 def test_max_hosts_threshold_inclusive():
     buckets = [_b("x", 3, 1), _b("y", 2, 1)]
     out = compute_rare(buckets, max_hosts=2)
-    assert [r["value"] for r in out] == ["y"]   # 3 > 2 dropped, 2 <= 2 kept
+    assert [r["value"] for r in out] == ["y"]  # 3 > 2 dropped, 2 <= 2 kept
+
+
+def test_unique_to_target_flag_and_priority():
+    buckets = [
+        _b("shared.exe", 2, 4),  # on 2 hosts — rare but NOT unique to target
+        _b("only-here.exe", 1, 1),  # on 1 host (the target) — unique
+    ]
+    out = compute_rare(buckets, max_hosts=2)
+    # unique-to-target ranks first even though it has fewer target hits.
+    assert [r["value"] for r in out] == ["only-here.exe", "shared.exe"]
+    assert out[0]["unique_to_target"] is True
+    assert out[1]["unique_to_target"] is False
+
+
+def test_rarity_score_when_total_hosts_given():
+    buckets = [_b("evil.exe", 1, 3), _b("semi.exe", 5, 3)]
+    out = compute_rare(buckets, max_hosts=10, total_hosts=100)
+    by_val = {r["value"]: r for r in out}
+    assert by_val["evil.exe"]["rarity"] == 0.99  # 1 - 1/100
+    assert by_val["semi.exe"]["rarity"] == 0.95  # 1 - 5/100
+
+
+def test_no_rarity_key_without_total_hosts():
+    out = compute_rare([_b("x", 1, 1)], max_hosts=2)
+    assert "rarity" not in out[0]
 
 
 def test_empty():

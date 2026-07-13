@@ -7,14 +7,19 @@ rules:
     artifact_type: suricata
     query: "suricata.event_type:dns AND (suricata.dns.domain:*malware* OR suricata.dns.domain:*c2* OR suricata.dns.domain:*evil*)"
     threshold: 1
+    mitre: [T1071.004]
+    level: high
 
-  - name: Rare User-Agent String
+  - name: Suspicious or Missing HTTP User-Agent
     description: >-
-      HTTP request with an unusual or empty User-Agent string.
-      Malware often uses custom or missing User-Agent headers.
+      HTTP request carrying a User-Agent tied to malware/offensive tooling, a
+      scripting runtime, or with no User-Agent at all. Malware frequently uses
+      custom, empty, or default library User-Agent headers for C2 beacons.
     artifact_type: suricata
-    query: "suricata.event_type:http AND (suricata.http.http_user_agent:* OR suricata.http.http_user_agent:*)"
-    threshold: 5
+    query: "suricata.event_type:http AND (NOT suricata.http.http_user_agent:* OR suricata.http.http_user_agent:*curl* OR suricata.http.http_user_agent:*wget* OR suricata.http.http_user_agent:*python-requests* OR suricata.http.http_user_agent:*powershell* OR suricata.http.http_user_agent:*Go-http-client*)"
+    threshold: 1
+    mitre: [T1071.001]
+    level: low
 
   - name: TOR Network Activity
     description: >-
@@ -23,6 +28,8 @@ rules:
     artifact_type: suricata
     query: "suricata.event_type:flow AND (suricata.dest_port:9001 OR suricata.dest_port:9030 OR suricata.dest_port:9150)"
     threshold: 1
+    mitre: [T1090.003]
+    level: high
 
   - name: Cryptocurrency Mining Pool Connection
     description: >-
@@ -31,6 +38,8 @@ rules:
     artifact_type: suricata
     query: "suricata.event_type:flow AND (message:*stratum* OR message:*mining* OR message:*cryptonight* OR message:*monero*)"
     threshold: 1
+    mitre: [T1496]
+    level: high
 
   - name: Paste Site Access
     description: >-
@@ -39,3 +48,5 @@ rules:
     artifact_type: suricata
     query: "suricata.event_type:http AND (message:*pastebin* OR message:*ghostbin* OR message:*controlc* OR message:*hastebin*)"
     threshold: 1
+    mitre: [T1102]
+    level: medium

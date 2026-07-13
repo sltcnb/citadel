@@ -134,9 +134,7 @@ def assemble_graph(agg_response: dict[str, Any]) -> dict[str, Any]:
                 continue
             ipcount = int(ipb.get("doc_count", 0))
             ip_id = _add_node("ip", ip, ipcount, top_level=False)
-            edges.append(
-                {"source": host_id, "target": ip_id, "type": "host_ip", "count": ipcount}
-            )
+            edges.append({"source": host_id, "target": ip_id, "type": "host_ip", "count": ipcount})
 
     # --- Users and their destination IPs (user→ip) ---
     for ub in agg_response.get("users", {}).get("buckets", []):
@@ -152,9 +150,19 @@ def assemble_graph(agg_response: dict[str, Any]) -> dict[str, Any]:
                 continue
             ipcount = int(ipb.get("doc_count", 0))
             ip_id = _add_node("ip", ip, ipcount, top_level=False)
-            edges.append(
-                {"source": user_id, "target": ip_id, "type": "user_ip", "count": ipcount}
-            )
+            edges.append({"source": user_id, "target": ip_id, "type": "user_ip", "count": ipcount})
+
+    # Annotate each node with its degree (number of incident edges). A high
+    # degree flags a pivot: a host many users/IPs touch, or — most useful — an IP
+    # that many distinct hosts talk to (a shared C2 / beacon candidate). Lets the
+    # UI size/highlight hubs without a second pass.
+    for n in nodes.values():
+        n["degree"] = 0
+    for e in edges:
+        for endpoint in (e["source"], e["target"]):
+            node = nodes.get(endpoint)
+            if node is not None:
+                node["degree"] += 1
 
     return {"nodes": list(nodes.values()), "edges": edges}
 

@@ -7,6 +7,8 @@ rules:
     artifact_type: suricata
     query: "suricata.event_type:alert AND (message:*ET\\ INFO* OR message:*ET\\ POLICY*) AND message:*upload*"
     threshold: 1
+    mitre: [T1048]
+    level: medium
 
   - name: Archive File Created in Staging Location
     description: >-
@@ -15,6 +17,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4663 AND (message:*.zip* OR message:*.7z* OR message:*.rar*) AND (message:*\\\\Temp\\\\* OR message:*\\\\Public\\\\*)"
     threshold: 1
+    mitre: [T1560.001]
+    level: medium
 
   - name: Large Outbound File Transfer
     description: >-
@@ -23,6 +27,8 @@ rules:
     artifact_type: suricata
     query: "suricata.event_type:flow AND suricata.flow.bytes_toserver:>10000000"
     threshold: 1
+    mitre: [T1048]
+    level: medium
 
   - name: Cloud Storage Upload (Dropbox / OneDrive / Google Drive)
     description: >-
@@ -31,6 +37,8 @@ rules:
     artifact_type: suricata
     query: "suricata.event_type:flow AND (message:*dropbox* OR message:*onedrive* OR message:*drive.google*)"
     threshold: 1
+    mitre: [T1567.002]
+    level: high
 
   - name: FTP / SCP Outbound Transfer
     description: >-
@@ -39,3 +47,5 @@ rules:
     artifact_type: suricata
     query: "suricata.event_type:flow AND (suricata.dest_port:21 OR suricata.dest_port:22)"
     threshold: 1
+    mitre: [T1048.003]
+    level: medium

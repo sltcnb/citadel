@@ -53,6 +53,9 @@ from .sdk import (  # noqa: F401
     event,
     parser,
 )
+from .redis_conn import (  # noqa: F401
+    redis_url_with_auth,
+)
 from .capabilities import (  # noqa: F401
     CAPABILITIES_KEY_PREFIX,
     FIELD_TYPES,
@@ -94,6 +97,7 @@ __all__ = [
     "manifest_from_dict",
     "register_capability",
     "capabilities_redis_key",
+    "redis_url_with_auth",
     "CAPABILITIES_KEY_PREFIX",
     "FIELD_TYPES",
     "PLATFORMS",
