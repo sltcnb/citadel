@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate TypeScript types from the JSON-Schema contracts.
 
-Single source of truth: ``contracts/*.schema.json`` → ``frontend/src/contracts/*.ts``.
+Single source of truth: ``contracts/*.schema.json`` -> ``frontend/src/contracts/*.ts``.
 Eliminates hand-maintained, drift-prone event types in the frontend. Run in CI /
 pre-commit so the generated types always track the schemas.
 
@@ -74,7 +74,7 @@ def _render(schema_file: str, iface: str) -> str:
     title = schema.get("title", iface)
     sid = schema.get("$id", schema_file)
     body = _object_type(schema, 0)
-    return (f"// AUTO-GENERATED from contracts/{schema_file} — do not edit by hand.\n"
+    return (f"// AUTO-GENERATED from contracts/{schema_file} -- do not edit by hand.\n"
             f"// Regenerate: scripts/contracts_codegen.py\n"
             f"// Contract: {sid}\n\n"
             f"/** {title} */\n"
@@ -84,7 +84,7 @@ def _render(schema_file: str, iface: str) -> str:
 def generate() -> dict[str, str]:
     out = {f"{iface[0].lower() + iface[1:]}.ts": _render(f, iface)
            for f, iface in SCHEMAS.items()}
-    index = "// AUTO-GENERATED — do not edit.\n" + "".join(
+    index = "// AUTO-GENERATED -- do not edit.\n" + "".join(
         f"export type {{ {iface} }} from './{iface[0].lower() + iface[1:]}';\n"
         for iface in SCHEMAS.values())
     out["index.ts"] = index
