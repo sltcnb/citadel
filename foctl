@@ -50,6 +50,7 @@ import json
 import os
 import re
 import secrets as _secrets
+import shlex
 import shutil
 import subprocess
 import sys
@@ -165,6 +166,9 @@ SECRET_GENERATORS = {
     "minio_secret_key": lambda: _secrets.token_urlsafe(32),
     "jwt_secret":       lambda: _secrets.token_hex(32),
     "admin_password":   lambda: _secrets.token_urlsafe(12),
+    # Redis requires auth (--requirepass); URL-safe so it folds cleanly into
+    # redis://:<pass>@host URLs without escaping.
+    "redis_password":   lambda: _secrets.token_urlsafe(32),
     # Shared token for in-cluster service calls (worker → API finalize chain).
     "internal_service_token": lambda: _secrets.token_hex(32),
 }
@@ -289,6 +293,7 @@ def build_substitutions(cfg, pull_policy):
         "__FO_PULL_POLICY__":      pull_policy,
         "__FO_MINIO_ACCESS_KEY__": cfg.get("secrets", {}).get("minio_access_key", "minioadmin"),
         "__FO_MINIO_SECRET_KEY__": cfg.get("secrets", {}).get("minio_secret_key", "minioadmin"),
+        "__FO_REDIS_PASSWORD__":   cfg.get("secrets", {}).get("redis_password", ""),
         "__FO_JWT_SECRET__":              cfg["secrets"].get("jwt_secret", "CHANGE_ME_IN_PRODUCTION"),
         "__FO_INTERNAL_SERVICE_TOKEN__":  cfg["secrets"].get("internal_service_token", ""),
         "__FO_ADMIN_USERNAME__":          cfg["secrets"].get("admin_username", "admin"),
@@ -749,10 +754,27 @@ def rollout_restart_apps():
                  f"(check: kubectl get pods -n {NS})")
 
 
+def redis_cli(args, interactive=False, stdin_text=None):
+    """Run redis-cli inside the redis pod, authenticated.
+
+    Redis requires auth (--requirepass), so a bare `redis-cli` returns
+    'NOAUTH Authentication required.'. We wrap the call in `sh -c` so the
+    server pod's own $REDIS_PASSWORD env supplies AUTH — no password ever
+    leaves the pod or gets baked into an argv. --no-auth-warning keeps stderr
+    clean so callers can parse stdout.
+    """
+    inner = ('exec redis-cli -a "$REDIS_PASSWORD" --no-auth-warning '
+             + " ".join(shlex.quote(str(a)) for a in args))
+    cmd = ["kubectl", "exec"]
+    if interactive:
+        cmd.append("-i")
+    cmd += ["-n", NS, "deploy/redis", "--", "sh", "-c", inner]
+    return run(cmd, capture=True, check=False, stdin_text=stdin_text)
+
+
 def clear_stale_celery_tasks():
     step("Recovering tasks stuck in 'celery' queue → moving to 'default'")
-    r_len = run(["kubectl", "exec", "-n", NS, "deploy/redis", "--",
-                 "redis-cli", "LLEN", "celery"], capture=True, check=False)
+    r_len = redis_cli(["LLEN", "celery"])
     if r_len.returncode != 0:
         warn("Could not reach Redis — skipping stuck-task recovery")
         return
@@ -763,8 +785,7 @@ def clear_stale_celery_tasks():
     warn(f"Found {count} stuck task(s) in 'celery' queue — moving to 'default'")
     lua = ("local n=redis.call('llen','celery'); "
            "for i=1,n do redis.call('rpoplpush','celery','default') end; return n")
-    r_move = run(["kubectl", "exec", "-n", NS, "deploy/redis", "--",
-                  "redis-cli", "EVAL", lua, "0"], capture=True, check=False)
+    r_move = redis_cli(["EVAL", lua, "0"])
     if r_move.returncode == 0:
         ok(f"Moved {count} stuck task(s) from 'celery' → 'default' for reprocessing")
     else:
@@ -800,9 +821,8 @@ def sync_capabilities():
             continue
         payload = _json.dumps(doc)
         # redis-cli -x reads the value from stdin → no shell-quoting of JSON.
-        r = run(["kubectl", "exec", "-i", "-n", NS, "deploy/redis", "--",
-                 "redis-cli", "-x", "SET", f"fo:capabilities:{tool}"],
-                capture=True, check=False, stdin_text=payload)
+        r = redis_cli(["-x", "SET", f"fo:capabilities:{tool}"],
+                      interactive=True, stdin_text=payload)
         if r.returncode == 0:
             synced += 1
         else:
@@ -816,8 +836,7 @@ def sync_capabilities():
 def verify_celery_queues():
     step("Verifying Celery queue configuration")
     for queue in ["ingest", "modules", "celery"]:
-        r = run(["kubectl", "exec", "-n", NS, "deploy/redis", "--",
-                 "redis-cli", "llen", queue], capture=True, check=False)
+        r = redis_cli(["llen", queue])
         if r.returncode == 0:
             info(f"Queue '{queue}': {r.stdout.strip()} tasks")
     r = run(["kubectl", "logs", "-n", NS, "-l", "app=processor", "--tail=20"],
