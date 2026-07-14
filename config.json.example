@@ -45,6 +45,7 @@
     "minio_access_key": "",
     "minio_secret_key": "",
     "jwt_secret": "",
+    "redis_password": "",
     "admin_username": "admin",
     "admin_password": "",
 
