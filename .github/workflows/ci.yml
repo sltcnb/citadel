@@ -123,6 +123,22 @@ jobs:
             api/test_sigma_settings.py api/test_agg_rules.py \
             --ignore=api/services/test_evidence_seal.py
 
+  foctl-tests:
+    name: foctl unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install test deps
+        run: pip install pytest pyyaml
+      - name: Run foctl tests
+        # Pins Redis-auth wiring (password generated + substituted, every
+        # redis-cli call authenticated) so 'NOAUTH Authentication required.'
+        # cannot regress.
+        run: pytest -q tests/test_foctl_redis_auth.py
+
   frontend-build-test:
     name: Frontend build + test
     runs-on: ubuntu-latest
