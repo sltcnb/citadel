@@ -13,7 +13,6 @@ DELETE /harvest/runs/{run_id}         — cancel a pending/running harvest run (
 from __future__ import annotations
 
 import json
-import os
 import uuid
 from datetime import UTC, datetime
 
@@ -295,9 +294,7 @@ def list_levels():
 
 
 @router.post("/cases/{case_id}/harvest")
-def start_harvest(
-    case_id: str, req: HarvestRequest, _case: dict = Depends(require_case_access)
-):
+def start_harvest(case_id: str, req: HarvestRequest, _case: dict = Depends(require_case_access)):
     """
     Start a harvest run against a disk image or mounted directory.
 

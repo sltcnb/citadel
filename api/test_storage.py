@@ -5,7 +5,6 @@ required.
 """
 
 import hashlib
-import io
 from datetime import UTC, datetime
 
 import pytest
@@ -131,9 +130,10 @@ def test_download_correct_hash_passes(monkeypatch):
     data = b"payload"
     _use(monkeypatch, _FakeMinio({"cases/c1/f": data}))
     good = hashlib.sha256(data).hexdigest()
-    assert storage.download_fileobj(
-        "cases/c1/f", expected_size=len(data), expected_sha256=good
-    ) == data
+    assert (
+        storage.download_fileobj("cases/c1/f", expected_size=len(data), expected_sha256=good)
+        == data
+    )
 
 
 def test_stream_object_yields_chunks(monkeypatch):

@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
 
 import robustness
 
@@ -115,8 +114,8 @@ def test_backpressure_unbounded_by_default(fake_redis, monkeypatch):
 
 def test_backpressure_bounds_in_flight(fake_redis, monkeypatch):
     monkeypatch.setattr(robustness, "MAX_IN_FLIGHT", 2)
-    assert robustness.acquire_slot(fake_redis) is True   # 1
-    assert robustness.acquire_slot(fake_redis) is True   # 2
+    assert robustness.acquire_slot(fake_redis) is True  # 1
+    assert robustness.acquire_slot(fake_redis) is True  # 2
     assert robustness.acquire_slot(fake_redis) is False  # over cap
     # Releasing a slot frees capacity again.
     robustness.release_slot(fake_redis)
