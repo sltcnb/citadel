@@ -1,0 +1,78 @@
+---
+version: 2
+updates:
+  # Backend API Python dependencies
+  - package-ecosystem: pip
+    directory: /api
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - python
+    groups:
+      python-dev:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
+  # Worker Python dependencies
+  - package-ecosystem: pip
+    directory: /tools/sluice/worker
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - python
+
+  # Frontend npm dependencies
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - javascript
+    groups:
+      npm-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
+  # GitHub Actions workflow pins
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    labels:
+      - dependencies
+      - ci
+
+  # Container base images
+  - package-ecosystem: docker
+    directory: /api
+    schedule:
+      interval: weekly
+    labels:
+      - dependencies
+      - docker
+  - package-ecosystem: docker
+    directory: /frontend
+    schedule:
+      interval: weekly
+    labels:
+      - dependencies
+      - docker
+  - package-ecosystem: docker
+    directory: /tools/sluice/worker
+    schedule:
+      interval: weekly
+    labels:
+      - dependencies
+      - docker

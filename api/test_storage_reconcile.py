@@ -5,7 +5,6 @@ MinIO listing/deletion is mocked; the DB known-key set is injected.
 
 from datetime import UTC, datetime, timedelta
 
-import pytest
 
 from services import storage, storage_reconcile as sr
 
@@ -18,9 +17,13 @@ class _Obj:
 
 def _setup(monkeypatch, objects, known):
     deleted = []
-    monkeypatch.setattr(storage, "list_objects", lambda prefix, recursive=True: iter(
-        [o for o in objects if o.object_name.startswith(prefix)]
-    ))
+    monkeypatch.setattr(
+        storage,
+        "list_objects",
+        lambda prefix, recursive=True: iter(
+            [o for o in objects if o.object_name.startswith(prefix)]
+        ),
+    )
     monkeypatch.setattr(storage, "delete_object", lambda k: deleted.append(k))
     monkeypatch.setattr(sr, "known_object_keys", lambda: set(known))
     return deleted
@@ -28,8 +31,8 @@ def _setup(monkeypatch, objects, known):
 
 def test_find_orphans_classifies(monkeypatch):
     objects = [
-        _Obj("cases/c1/a"),   # known -> ok
-        _Obj("cases/c1/b"),   # unknown, old -> orphan
+        _Obj("cases/c1/a"),  # known -> ok
+        _Obj("cases/c1/b"),  # unknown, old -> orphan
         _Obj("cases/c1/new", age_hours=1),  # unknown, recent -> skipped
     ]
     known = {"cases/c1/a", "cases/c1/missing"}  # missing has no object
