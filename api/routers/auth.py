@@ -37,7 +37,37 @@ from auth.service import (
 )
 from license.gate import check_user_limit
 
-from config import get_redis as _get_redis
+from config import get_redis as _get_redis, settings
+
+
+def _resolve_client_ip(xff_header: str | None, direct_peer: str, trusted_hops: int) -> str:
+    """Derive the real client IP from X-Forwarded-For, trusting only the
+    entries our own reverse-proxy chain appended.
+
+    nginx (see nginx/nginx.prod.conf) sets
+    ``proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for``, which
+    APPENDS the peer address it sees to whatever XFF value it received. So the
+    header ends up shaped like::
+
+        "<anything the client sent — fully attacker-controlled>, <ip nginx saw>"
+
+    Only the trailing ``trusted_hops`` entries were appended by trusted
+    proxies; everything left of them is client-controlled and can be forged
+    to a fresh, random value on every request. Using it (or naively taking the
+    first/leftmost entry) lets an attacker mint a brand-new rate-limit bucket
+    per request and brute-force login unthrottled — so it must NEVER be used
+    to key a rate limit or any other security decision.
+
+    If there are fewer comma-separated hops than ``trusted_hops`` configured
+    (header missing, truncated, or proxying misconfigured), we don't trust any
+    client-supplied value and fall back to the immediate TCP peer instead.
+    """
+    if trusted_hops <= 0 or not xff_header:
+        return direct_peer
+    hops = [h.strip() for h in xff_header.split(",") if h.strip()]
+    if len(hops) < trusted_hops:
+        return direct_peer
+    return hops[-trusted_hops] or direct_peer
 
 
 def _check_login_rate_limit(request: Request) -> None:
@@ -51,8 +81,11 @@ def _check_login_rate_limit(request: Request) -> None:
         window = int(_cfg["login_rate_window_seconds"])
     except Exception:
         limit, window = 10, 60
-    client_ip = (request.headers.get("X-Forwarded-For") or "").split(",")[0].strip() or (
-        request.client.host if request.client else "unknown"
+    direct_peer = request.client.host if request.client else "unknown"
+    client_ip = _resolve_client_ip(
+        request.headers.get("X-Forwarded-For"),
+        direct_peer,
+        settings.TRUSTED_PROXY_HOPS,
     )
     key = rk.login_ratelimit(client_ip)
     try:

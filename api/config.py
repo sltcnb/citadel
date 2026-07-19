@@ -82,6 +82,22 @@ class Settings:
         o.strip() for o in os.getenv("ALLOWED_ORIGINS", "").split(",") if o.strip()
     ]
 
+    # ── Reverse proxy trust ─────────────────────────────────────────────────
+    # Number of trusted reverse-proxy hops sitting in front of the API that
+    # APPEND to X-Forwarded-For using the standard proxy convention (nginx's
+    # $proxy_add_x_forwarded_for — see nginx/nginx.prod.conf: it takes whatever
+    # XFF value it received and appends $remote_addr, the peer nginx itself
+    # saw). That means the header looks like:
+    #   "<anything the client sent, fully attacker-controlled>, <ip nginx saw>"
+    # Only the trailing TRUSTED_PROXY_HOPS entries were appended by our own
+    # proxies and can be trusted for security decisions (e.g. rate-limit
+    # keys); everything to their left is client-controlled and MUST NOT be
+    # trusted (a client can set it to a fresh random value on every request).
+    # Default is 1 (single nginx hop, matching the shipped prod topology). Set
+    # to 0 if the API is reachable directly with no reverse proxy in front of
+    # it, so request.client.host (the real TCP peer) is used instead.
+    TRUSTED_PROXY_HOPS: int = int(os.getenv("CITADEL_TRUSTED_PROXY_HOPS", "1"))
+
     # ── Licensing ──────────────────────────────────────────────────────────
     # Leave CITADEL_LICENSE_KEY empty to run in Community mode.
     CITADEL_LICENSE_KEY: str = os.getenv("CITADEL_LICENSE_KEY", "")
