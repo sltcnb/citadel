@@ -32,7 +32,7 @@ bcrypt>=3.2.0,<4.0.0
 pyotp==2.9.0           # TOTP multi-factor auth
 qrcode[pil]==7.4.2     # render the TOTP enrollment QR (server-side PNG)
 # Disk-image parser bindings — discovered here for the UI; needs libtsk-dev (Dockerfile)
-pytsk3==20211111
+pytsk3==20260715
 # Report export — DOCX (pure python) + PDF (WeasyPrint; needs pango/cairo, see Dockerfile)
 python-docx==1.1.0
 weasyprint==62.0
