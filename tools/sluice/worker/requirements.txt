@@ -15,7 +15,7 @@ pefile>=2023.2.7
 oletools>=0.60
 dpkt>=1.9.8
 # YARA — pattern-based malware detection (used by the yara module)
-yara-python>=4.3.1
+yara-python>=4.5.4
 # Volatility 3 — memory forensics (used by the volatility3 module)
 volatility3>=2.5.0
 # pyscca (libscca-python) — install manually if MAM-compressed prefetch support needed
