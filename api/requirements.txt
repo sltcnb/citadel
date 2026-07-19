@@ -28,7 +28,7 @@ python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 # Range is intentional: passlib 1.7.4 is not compatible with bcrypt 4.x
 # (it reads bcrypt.__about__.__version__, removed in 4.0). Keep <4.0.0.
-bcrypt>=3.2.0,<4.0.0
+bcrypt>=5.0.0,<6.0.0
 pyotp==2.9.0           # TOTP multi-factor auth
 qrcode[pil]==7.4.2     # render the TOTP enrollment QR (server-side PNG)
 # Disk-image parser bindings — discovered here for the UI; needs libtsk-dev (Dockerfile)
