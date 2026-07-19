@@ -27,7 +27,7 @@ malwoverview
 # Disk image filesystem browsing (The Sleuth Kit Python bindings)
 # Requires libtsk-dev + libewf-dev system packages in the container (see Dockerfile)
 # pyewf has no PyPI package — E01/EWF support requires the libyal C build; optional.
-pytsk3>=20211111
+pytsk3>=20260715
 # Sigma HQ integration - comment out if build fails, use manual install instead
 # pysigma>=0.11.0
 # pysigma-backend-elasticsearch>=1.0.0
