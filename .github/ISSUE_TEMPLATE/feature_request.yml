@@ -1,0 +1,43 @@
+---
+name: Feature request
+description: Suggest a new capability, tool, or parser
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / use case
+      description: What are you trying to accomplish that Citadel doesn't support yet?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the feature or change you'd like to see.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Acquisition (Talon)
+        - Ingestion / parser (Sluice / Babel)
+        - Normalization (Rosetta)
+        - Detection (Sigil)
+        - Analysis (Anvil)
+        - Threat intel (Augur)
+        - Investigation (Pilot)
+        - Reporting (Scribe)
+        - Platform / API / frontend
+        - Deployment / foctl
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: false

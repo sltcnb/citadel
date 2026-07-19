@@ -1,0 +1,56 @@
+---
+name: Bug report
+description: Report a defect in Citadel or one of its tools
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. Please do **not** include
+        real evidence, credentials, or secrets. For security vulnerabilities,
+        see [SECURITY.md](../../SECURITY.md) instead.
+  - type: input
+    id: component
+    attributes:
+      label: Component
+      description: Which part is affected?
+      placeholder: "api / worker / frontend / foctl / tools/<name>"
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear description of the bug and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Deploy with `./foctl deploy docker`
+        2. Ingest ...
+        3. See error
+    validations:
+      required: true
+  - type: dropdown
+    id: deploy-mode
+    attributes:
+      label: Deployment mode
+      options:
+        - docker
+        - k8s
+        - k8s-new
+        - helm
+        - standalone tool
+        - other / not applicable
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Version/commit, OS, Python/Docker versions, relevant logs.
+    validations:
+      required: false

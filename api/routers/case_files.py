@@ -31,7 +31,6 @@ from services import elasticsearch as es
 from services import jobs as job_svc
 from services import storage
 
-from config import settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["case-files"])
@@ -84,9 +83,7 @@ _MAX_SEARCH_BYTES = 2 * 1024 * 1024  # 2 MB per file during search
 # declare a small member while inflating to gigabytes, so we both reject members
 # whose *declared* size exceeds the cap and abort mid-copy once the *actual*
 # extracted bytes cross it. Configurable via env; default 2 GiB.
-_MAX_EXTRACT_MEMBER_BYTES = int(
-    os.getenv("MAX_EXTRACT_MEMBER_BYTES", str(2 * 1024**3))
-)
+_MAX_EXTRACT_MEMBER_BYTES = int(os.getenv("MAX_EXTRACT_MEMBER_BYTES", str(2 * 1024**3)))
 
 
 def _bounded_copy(src, dst, limit: int) -> int:
@@ -193,9 +190,7 @@ def _minio_stream(minio_key: str):
 
 
 @router.get("/cases/{case_id}/files/{job_id}/download")
-def download_file(
-    case_id: str, job_id: str, _case: dict = Depends(require_case_access)
-):
+def download_file(case_id: str, job_id: str, _case: dict = Depends(require_case_access)):
     """
     Stream the original stored file as a browser download.
 
@@ -386,9 +381,7 @@ def extract_archive_member(
 
 
 @router.get("/cases/{case_id}/files/{job_id}/content")
-def get_file_content(
-    case_id: str, job_id: str, _case: dict = Depends(require_case_access)
-):
+def get_file_content(case_id: str, job_id: str, _case: dict = Depends(require_case_access)):
     """
     Return the text content of a readable file stored in MinIO.
     HTTP 415 for binary/unreadable files, HTTP 413 if file exceeds 5 MB.
@@ -491,9 +484,7 @@ def search_file_contents(
             st = storage.stat_object(minio_key)
         except storage.StorageUnavailable as exc:
             # Backend outage — don't silently return partial search results.
-            raise HTTPException(
-                status_code=503, detail="Storage backend unavailable"
-            ) from exc
+            raise HTTPException(status_code=503, detail="Storage backend unavailable") from exc
         except storage.StorageError as exc:
             # Missing/corrupt single object — skip it and keep searching.
             logger.warning("Skipping '%s' — read failed: %s", fname, exc)
@@ -516,9 +507,7 @@ def search_file_contents(
         try:
             raw = b"".join(storage.stream_object(minio_key))
         except storage.StorageUnavailable as exc:
-            raise HTTPException(
-                status_code=503, detail="Storage backend unavailable"
-            ) from exc
+            raise HTTPException(status_code=503, detail="Storage backend unavailable") from exc
         except storage.StorageError as exc:
             logger.warning("Skipping '%s' — read failed: %s", fname, exc)
             continue

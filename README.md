@@ -1,5 +1,11 @@
 # Citadel
 
+[![CI](https://github.com/sltcnb/citadel/actions/workflows/ci.yml/badge.svg)](https://github.com/sltcnb/citadel/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/sltcnb/citadel/actions/workflows/codeql.yml/badge.svg)](https://github.com/sltcnb/citadel/actions/workflows/codeql.yml)
+[![Build](https://github.com/sltcnb/citadel/actions/workflows/build.yml/badge.svg)](https://github.com/sltcnb/citadel/actions/workflows/build.yml)
+[![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue)](https://www.python.org/)
+[![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-lightgrey)](LICENSE)
+
 **A DFIR platform built from independent, standalone tools — each useful on its own, all composed by Citadel.**
 
 Citadel takes a forensic artifact from acquisition to a finished, searchable, detection-rich case — acquire → ingest → parse → normalize → detect → analyze → enrich → investigate → report. Every stage is a **standalone tool** with its own CLI; the platform wires them together over **shared contracts**.
@@ -129,6 +135,13 @@ Every stage runs over the async pipeline as a Celery/Redis-Streams consumer grou
 | Search | Elasticsearch 8 · **Broker/state** Redis 7 · **Artifacts** MinIO (S3) · **Ingress** Traefik |
 
 Layout: `api/` + `frontend/` (platform) · `tools/` (standalone suite + `citadel_contracts`) · `contracts/` (schemas) · `charts/citadel/` (Helm) · `k8s/` (manifests). Resource sizing (`scripts/allocate_resources.py`) reads real host RAM/CPU and never over-commits.
+
+## Security
+
+Found a vulnerability? Please report it privately — see [`SECURITY.md`](SECURITY.md).
+Do not open a public issue for security reports. Hardening guidance (secrets,
+default credentials, auth) lives in [`docs/DEPLOY.md`](docs/DEPLOY.md) and
+[`.env.example`](.env.example).
 
 ## Contributing
 
