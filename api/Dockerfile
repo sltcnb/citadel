@@ -3,7 +3,7 @@
 # to build wheels for the deps that ship as source (yara-python, pytsk3, …).
 # The resulting wheels are installed into the slim runtime stage with --no-index,
 # so gcc/g++/dev headers never land in the shipped image.
-FROM python:3.11-slim AS builder
+FROM python:3.14-slim AS builder
 
 # Toolchain + native headers so the source-built wheels compile here (not at
 # runtime): gcc/g++, libtsk-dev for pytsk3 (whose ./configure also needs `file`,
@@ -21,7 +21,7 @@ COPY api/requirements.txt requirements.txt
 RUN pip wheel --no-cache-dir -r requirements.txt -w /wheels
 
 # ── Runtime stage ───────────────────────────────────────────────────────────────
-FROM python:3.11-slim
+FROM python:3.14-slim
 
 WORKDIR /app
 
