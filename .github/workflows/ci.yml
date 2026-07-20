@@ -160,11 +160,14 @@ jobs:
         run: npm test
 
   cve-scan:
-    name: CVE scan (non-blocking)
+    name: CVE scan
     runs-on: ubuntu-latest
-    # NOTE: non-blocking for now (continue-on-error) so the existing known-CVE
-    # backlog does not wall PRs. Flip these to blocking (remove continue-on-error
-    # / set trivy exit-code: "1") once the backlog has been triaged.
+    # Blocking as of 2026-07-20: the pre-existing HIGH/CRITICAL backlog was
+    # triaged and is allowlisted with justification + a review-by date in
+    # .trivyignore (see SECURITY.md, "CVE triage process"). Any *new*
+    # HIGH/CRITICAL finding not in that allowlist fails the job. LOW/MEDIUM
+    # findings and pip-audit remain informational (continue-on-error) since
+    # they aren't part of the triaged gate.
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v6
@@ -172,10 +175,24 @@ jobs:
           python-version: "3.11"
       - name: Install pip-audit
         run: pip install pip-audit
-      - name: pip-audit (backend deps)
+      - name: pip-audit (backend deps, informational)
         continue-on-error: true
         run: pip-audit -r api/requirements.txt --desc
-      - name: Trivy filesystem scan
+      - name: Trivy filesystem scan (HIGH/CRITICAL, blocking)
+        # Fails the job on any HIGH/CRITICAL finding not listed in
+        # .trivyignore. Add new findings to .trivyignore with a justification
+        # and a review-by date rather than raising the severity threshold or
+        # re-adding continue-on-error.
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+          trivyignores: .trivyignore
+      - name: Trivy filesystem scan (LOW/MEDIUM, informational)
         continue-on-error: true
         uses: aquasecurity/trivy-action@master
         with:
@@ -184,7 +201,7 @@ jobs:
           format: table
           exit-code: "0"
           ignore-unfixed: true
-          severity: CRITICAL,HIGH
+          severity: LOW,MEDIUM
 
   test:
     name: Tests
