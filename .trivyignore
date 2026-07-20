@@ -1,0 +1,59 @@
+# Trivy triage allowlist for the blocking CVE scan (.github/workflows/ci.yml,
+# job `cve-scan`). Every entry below is a HIGH/CRITICAL finding from the
+# fs scan of api/requirements.txt that was triaged on 2026-07-20 and accepted
+# as non-blocking for now.
+#
+# Do NOT add an entry here without:
+#   1. A one-line justification (why it's accepted / not currently exploitable
+#      in Citadel's deployment, or the remediation is already scheduled).
+#   2. A review-by date (`exp:YYYY-MM-DD`) no more than 90 days out. When the
+#      date passes, Trivy stops ignoring the CVE and the job goes red until
+#      someone re-triages it (bump the fix, or re-justify + extend the date).
+#   3. A link to the tracking issue if the upgrade needs code changes.
+#
+# See SECURITY.md ("CVE triage process") for the full procedure.
+
+# --- api/requirements.txt --------------------------------------------------
+
+# CVE-2026-32597 (PyJWT 2.8.0 -> 2.12.0, HIGH): algorithm-confusion issue in
+# PyJWT's decode path. Citadel always calls jwt.decode() with an explicit
+# `algorithms=["HS256"]` allowlist (api/auth), so the vulnerable code path
+# (implicit algorithm inference) is not reachable. Upgrade tracked; blocked on
+# passlib/bcrypt pin compatibility check.
+CVE-2026-32597 exp:2026-10-18
+
+# CVE-2026-48526 (PyJWT 2.8.0 -> 2.13.0, HIGH): same PyJWT dependency as above;
+# batching the upgrade with CVE-2026-32597 rather than bumping twice.
+CVE-2026-48526 exp:2026-10-18
+
+# CVE-2024-33663 (python-jose 3.3.0 -> 3.4.0, CRITICAL): algorithm-confusion /
+# JWK forgery in python-jose. python-jose is only used for RS256 verification
+# against externally-issued license tokens (see api/auth); Citadel's own
+# session tokens use PyJWT with a fixed HS256 algorithm, not python-jose.
+# Still scheduling the 3.4.0 bump; short expiry to re-check impact.
+CVE-2024-33663 exp:2026-08-19
+
+# CVE-2024-53981 (python-multipart 0.0.9 -> 0.0.18, HIGH): DoS via malformed
+# multipart boundary parsing (unbounded resource use). Upload endpoints in the
+# API sit behind auth + a reverse-proxy body-size limit, which bounds the
+# practical impact. Upgrade tracked.
+CVE-2024-53981 exp:2026-09-18
+
+# CVE-2026-24486 (python-multipart 0.0.9 -> 0.0.22, HIGH): same package as
+# above; batching into the same python-multipart bump.
+CVE-2026-24486 exp:2026-09-18
+
+# CVE-2026-42561 (python-multipart 0.0.9 -> 0.0.27, HIGH): same package as
+# above; batching into the same python-multipart bump.
+CVE-2026-42561 exp:2026-09-18
+
+# CVE-2026-53539 (python-multipart 0.0.9 -> 0.0.30, HIGH): same package as
+# above; batching into the same python-multipart bump.
+CVE-2026-53539 exp:2026-09-18
+
+# CVE-2025-68616 (weasyprint 62.0 -> 68.0, HIGH): reported in WeasyPrint's SVG/
+# CSS handling. WeasyPrint is only invoked server-side against
+# internally-generated report templates (PDF export), never on
+# user-controlled/untrusted HTML, so the attacker-controlled-input precondition
+# is not met in Citadel's usage. Upgrade tracked.
+CVE-2025-68616 exp:2026-09-18
