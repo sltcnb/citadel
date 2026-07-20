@@ -395,6 +395,7 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
   const [page, setPage]                   = useState(0)
   const [hasMore, setHasMore]             = useState(true)  // last page was full → more to load
   const [loading, setLoading]             = useState(false)
+  const [hasLoaded, setHasLoaded]         = useState(false) // first page has come back at least once
   const [selectedTypesStr, setSelectedTypesStr] = useState(_urlTypes || (_hasTypesFilter ? (_sf.selectedTypesStr || '') : ''))
   const [typeDropdownOpen, setTypeDropdownOpen] = useState(false)
   const [fromTs, setFromTs]               = useState(_urlFrom || _sf.fromTs || '')
@@ -710,7 +711,7 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
       })
       setPage(pg)
     } catch (e) { console.error(e) }
-    finally { setLoading(false) }
+    finally { setLoading(false); setHasLoaded(true) }
   }, [caseId, selectedTypesStr, fromTs, toTs, query, flaggedOnly, selectedLevel, facetFilters, sortField, sortOrder])
 
   useEffect(() => { load(0, true) }, [load])
@@ -1950,14 +1951,22 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
 
         {/* Events table */}
         <div className="flex-1 overflow-y-auto overflow-x-auto">
-          {events.length === 0 && !loading && query && (
+          {/* First load, nothing yet: a single centered spinner — do NOT also
+              render the empty-state text, so the two can't flip on/off. */}
+          {events.length === 0 && loading && !hasLoaded && (
+            <div className="flex flex-col items-center justify-center h-48 text-center text-gray-500 gap-2">
+              <Loader2 size={22} className="animate-spin" />
+              <p className="text-sm">Loading timeline…</p>
+            </div>
+          )}
+          {events.length === 0 && hasLoaded && query && (
             <div className="flex flex-col items-center justify-center h-48 text-center">
               <Search size={28} className="text-gray-500 mb-3" />
               <p className="text-gray-500 text-sm">No events match your search.</p>
               <p className="text-gray-500 text-xs mt-1">Try a broader query, or clear filters.</p>
             </div>
           )}
-          {events.length === 0 && !loading && !query && (
+          {events.length === 0 && hasLoaded && !query && (
             <div className="flex flex-col items-center justify-center py-12 text-center max-w-md mx-auto">
               <Search size={28} className="text-brand-accent mb-3" />
               <p className="text-brand-text text-sm font-semibold">No events yet — here's the workflow</p>
@@ -1974,6 +1983,7 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
               colgroup sum when columns overflow (so row backgrounds extend
               the full scroll width), but still fills the viewport when
               columns are narrower than the panel. */}
+          {events.length > 0 && (
           <table className="text-xs" style={{ tableLayout: 'fixed', width: 'max-content', minWidth: '100%' }}>
             <colgroup>
               <col style={{ width: 28 }} />{/* checkbox */}
@@ -2138,16 +2148,19 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
               ))}
             </tbody>
           </table>
+          )}
 
-          <div ref={loaderRef} className="py-5 flex items-center justify-center text-gray-500 text-xs gap-2">
-            {loading
-              ? <><Loader2 size={13} className="animate-spin" /> Loading…</>
-              : events.length < total
-              ? <span className="text-gray-500">↓ Scroll for more</span>
-              : events.length > 0
-              ? <span className="text-gray-500">— End of results —</span>
-              : null}
-          </div>
+          {/* Infinite-scroll sentinel — only rendered when there are rows, so
+              an empty case shows no spinner and no observer stays live. */}
+          {events.length > 0 && (
+            <div ref={loaderRef} className="py-5 flex items-center justify-center text-gray-500 text-xs gap-2">
+              {loading
+                ? <><Loader2 size={13} className="animate-spin" /> Loading…</>
+                : events.length < total
+                ? <span className="text-gray-500">↓ Scroll for more</span>
+                : <span className="text-gray-500">— End of results —</span>}
+            </div>
+          )}
         </div>
       </div>
 
