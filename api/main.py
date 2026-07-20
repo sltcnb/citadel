@@ -21,6 +21,7 @@ import redis_keys as rk
 from auth.dependencies import require_admin, require_analyst_or_admin, require_developer_or_admin
 from license.router import router as license_router
 from routers import (
+    admin_dead_letter,
     admin_logs,
     admin_utils,
     alert_rules,
@@ -707,6 +708,7 @@ app.include_router(llm_config.router, prefix="/api/v1", dependencies=_analyst_or
 app.include_router(s3_integration.router, prefix="/api/v1", dependencies=_admin_only)
 app.include_router(admin_utils.router, prefix="/api/v1", dependencies=_admin_only)
 app.include_router(admin_logs.router, prefix="/api/v1", dependencies=_admin_only)
+app.include_router(admin_dead_letter.router, prefix="/api/v1", dependencies=_admin_only)
 app.include_router(platform_settings.router, prefix="/api/v1")
 app.include_router(pilot_settings.router, prefix="/api/v1")
 app.include_router(webhooks.router, prefix="/api/v1", dependencies=_admin_only)
