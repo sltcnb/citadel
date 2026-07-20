@@ -149,8 +149,26 @@ COPY tools/babel/ /app/babel_builtin/
 # Built-in analysis modules — seeded into modules-pvc by the seed-modules init container.
 COPY tools/anvil/ /app/anvil_builtin/
 
-# Mount points for shared volumes (populated at runtime by init containers)
-RUN mkdir -p /app/babel /app/anvil
+# Mount points for shared volumes (populated at runtime by init containers, or
+# by named Docker volumes in docker-compose.prod.yml — /app/uploads must exist
+# here so a *fresh* named volume inherits uid 1000 on first population instead
+# of defaulting to root, which would break writes once the container drops to
+# a non-root user below).
+RUN mkdir -p /app/babel /app/anvil /app/uploads
+
+# ── Run as non-root ───────────────────────────────────────────────────────────
+# This image parses hostile third-party input (forensic artifacts, custom
+# analysis modules); it must not run as root. Fixed uid/gid 1000 matches the
+# runAsUser/fsGroup already forced at the pod level in k8s/processor/deployment.yaml
+# and charts/citadel/values.yaml (podSecurityContext), so ownership lines up
+# whether the container is started directly (docker compose) or under k8s.
+# chown happens *before* the USER switch so Docker-managed named volumes
+# (docker-compose.prod.yml plugins_data/uploads_data) inherit uid 1000 on
+# first population instead of root.
+# ubuntu:24.04 already ships an "ubuntu" user/group at uid/gid 1000 — reuse it
+# instead of colliding with it (useradd -u 1000 fails: "UID 1000 is not unique").
+RUN chown -R 1000:1000 /app /opt/venv
+USER 1000:1000
 
 # CELERY_CONCURRENCY — number of parallel worker processes per pod replica.
 # Default 4 is a good baseline for mixed I/O + CPU workloads.
