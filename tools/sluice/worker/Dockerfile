@@ -3,7 +3,7 @@
 # to build wheels for the source-shipped deps (yara-python, pytsk3, the git-based
 # ccl_chromium_reader, …). Wheels are installed --no-index into the runtime stage
 # so gcc/build-essential/dev headers never land in the shipped image.
-FROM ubuntu:24.04 AS builder
+FROM ubuntu:26.04 AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 WORKDIR /build
@@ -38,7 +38,7 @@ RUN pip wheel --no-cache-dir -w /wheels \
     "git+https://github.com/cclgroupltd/ccl_chromium_reader.git"
 
 # ── Runtime stage ───────────────────────────────────────────────────────────────
-FROM ubuntu:24.04
+FROM ubuntu:26.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 WORKDIR /app
