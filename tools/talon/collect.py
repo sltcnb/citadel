@@ -5148,37 +5148,146 @@ class ExternalDiskCollector(Collector):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def upload_via_presigned(zip_path: Path, presigned_url: str) -> None:
-    """HTTP PUT to a pre-signed S3/MinIO URL — no credentials needed at runtime."""
+def _fmt_bytes(n: float) -> str:
+    """Human-readable byte size."""
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1024 or unit == "TB":
+            return f"{n:.1f} {unit}"
+        n /= 1024
+    return f"{n:.1f} TB"
+
+
+def upload_via_presigned(zip_path: Path, presigned_url: str, max_retries: int = 4) -> None:
+    """HTTP PUT to a pre-signed S3/MinIO URL — no credentials needed at runtime.
+
+    Hardened for tens-of-GB archives over slow/internal links:
+      * streams the file in chunks (never loads it into memory);
+      * scales the socket timeout to file size with a conservative 1 MB/s floor;
+      * uses ``Expect: 100-continue`` so an expired/rejected URL fails in seconds
+        instead of after streaming the whole archive;
+      * prints live throughput + ETA so a long upload does not look hung;
+      * retries with exponential backoff on transient network errors.
+
+    Note: a plain presigned PUT cannot be resumed mid-stream (S3 has no
+    byte-range PUT); each retry restarts the transfer. True resume needs a
+    multipart upload, which requires per-part presigned URLs the offline
+    collector does not have.
+    """
+    import http.client
+    import socket
     import ssl
-    import urllib.error
-    import urllib.request
+    import time
+    import urllib.parse
 
     print(f"\n  [*] Uploading {zip_path.name} → S3 (presigned URL)")
 
-    with open(zip_path, "rb") as fh:
-        file_data = fh.read()
+    file_size = zip_path.stat().st_size
+    # Budget for a pessimistic 1 MB/s sustained rate: floor 900 s, cap 12 h.
+    # The socket timeout is per-operation (send/recv), so this only fires when
+    # the link is genuinely stalled, not merely slow.
+    timeout = min(43200, max(900, int(file_size / (1 * 1024 * 1024))))
+    print(f"      Size {_fmt_bytes(file_size)}, stall timeout {timeout}s")
 
-    req = urllib.request.Request(
-        presigned_url,
-        data=file_data,
-        headers={"Content-Type": "application/zip"},
-        method="PUT",
-    )
-    # MinIO is typically deployed with a self-signed cert on internal networks.
     _ssl_ctx = ssl.create_default_context()
     _ssl_ctx.check_hostname = False
     _ssl_ctx.verify_mode = ssl.CERT_NONE
-    try:
-        with urllib.request.urlopen(req, timeout=600, context=_ssl_ctx) as resp:
-            print(f"  [+] Upload successful  (HTTP {resp.status})")
-    except urllib.error.HTTPError as exc:
-        body_preview = exc.read(256).decode(errors="replace")
-        print(f"  [!] Upload failed: HTTP {exc.code} — {body_preview}", file=sys.stderr)
-        sys.exit(1)
-    except Exception as exc:
-        print(f"  [!] Upload error: {exc}", file=sys.stderr)
-        sys.exit(1)
+
+    parsed = urllib.parse.urlsplit(presigned_url)
+    path = urllib.parse.urlunsplit(("", "", parsed.path, parsed.query, ""))
+    is_https = parsed.scheme == "https"
+    chunk_size = 8 * 1024 * 1024
+
+    for attempt in range(1, max_retries + 1):
+        conn = None
+        try:
+            conn_cls = http.client.HTTPSConnection if is_https else http.client.HTTPConnection
+            conn_kwargs = {"timeout": timeout}
+            if is_https:
+                conn_kwargs["context"] = _ssl_ctx
+            conn = conn_cls(parsed.netloc, **conn_kwargs)
+
+            conn.putrequest("PUT", path, skip_accept_encoding=True)
+            conn.putheader("Content-Type", "application/zip")
+            conn.putheader("Content-Length", str(file_size))
+            # Ask the server to validate the request (auth/URL) before we ship
+            # gigabytes. S3/MinIO reply 100 Continue, or an error we catch fast.
+            conn.putheader("Expect", "100-continue")
+            conn.endheaders()
+
+            # Give the server a moment to reject before streaming the body.
+            early = None
+            sock = conn.sock
+            if sock is not None:
+                try:
+                    sock.settimeout(30)
+                    if sock.recv(1, socket.MSG_PEEK):
+                        early = conn.getresponse()
+                except (OSError, http.client.HTTPException):
+                    early = None  # no early reply → proceed with the upload
+                finally:
+                    try:
+                        sock.settimeout(timeout)
+                    except OSError:
+                        pass
+            if early is not None:
+                body = early.read(256).decode(errors="replace")
+                if early.status >= 300:
+                    print(f"  [!] Upload rejected before send: HTTP {early.status} — {body}", file=sys.stderr)
+                    sys.exit(1)
+
+            sent = 0
+            t0 = time.monotonic()
+            last = t0
+            with open(zip_path, "rb") as fh:
+                while True:
+                    chunk = fh.read(chunk_size)
+                    if not chunk:
+                        break
+                    conn.send(chunk)
+                    sent += len(chunk)
+                    now = time.monotonic()
+                    if now - last >= 5:
+                        elapsed = now - t0
+                        rate = sent / elapsed if elapsed else 0
+                        eta = (file_size - sent) / rate if rate else 0
+                        pct = sent * 100 / file_size if file_size else 100
+                        print(
+                            f"      {pct:5.1f}%  {_fmt_bytes(sent)}/{_fmt_bytes(file_size)}  "
+                            f"{_fmt_bytes(rate)}/s  ETA {int(eta)}s",
+                            flush=True,
+                        )
+                        last = now
+
+            resp = conn.getresponse()
+            body = resp.read(256)
+            if resp.status >= 300:
+                print(
+                    f"  [!] Upload failed: HTTP {resp.status} — {body.decode(errors='replace')}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            elapsed = time.monotonic() - t0
+            avg = file_size / elapsed if elapsed else 0
+            print(f"  [+] Upload successful  (HTTP {resp.status}, {_fmt_bytes(avg)}/s avg)")
+            return
+        except SystemExit:
+            raise
+        except Exception as exc:
+            if attempt >= max_retries:
+                print(f"  [!] Upload error after {attempt} attempts: {exc}", file=sys.stderr)
+                sys.exit(1)
+            backoff = 15 * attempt
+            print(
+                f"  [!] Upload attempt {attempt} failed ({exc}), retrying in {backoff}s",
+                file=sys.stderr,
+            )
+            time.sleep(backoff)
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
 
 def upload_log_via_presigned(log_path: Path, presigned_url: str) -> bool:
