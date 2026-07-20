@@ -265,6 +265,12 @@ export const api = {
     delete: (caseId, id)   => request('DELETE', `/cases/${caseId}/saved-searches/${id}`),
   },
 
+  timelineViews: {
+    list:   (caseId)       => request('GET',    `/cases/${caseId}/timeline-views`),
+    create: (caseId, data) => request('POST',   `/cases/${caseId}/timeline-views`, data),
+    delete: (caseId, id)   => request('DELETE', `/cases/${caseId}/timeline-views/${id}`),
+  },
+
   collab: {
     publish: (caseId, type, payload = {}) => request('POST', `/cases/${caseId}/collab/event`, { type, payload }),
     recent:  (caseId) => request('GET', `/cases/${caseId}/collab/recent`),

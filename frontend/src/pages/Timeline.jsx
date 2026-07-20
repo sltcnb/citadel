@@ -444,6 +444,11 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
   const [showSaveForm, setShowSaveForm]     = useState(false)
   const [saveSearchName, setSaveSearchName] = useState('')
   const [confirmDeleteSearch, setConfirmDeleteSearch] = useState(null) // saved search | null
+
+  const [timelineViews, setTimelineViews]         = useState([])
+  const [showSaveViewForm, setShowSaveViewForm]   = useState(false)
+  const [saveViewName, setSaveViewName]           = useState('')
+  const [confirmDeleteView, setConfirmDeleteView] = useState(null) // saved view | null
   const [showAiAssist, setShowAiAssist]     = useState(false)
 
   const [sortField, setSortField]           = useState('timestamp')
@@ -559,6 +564,54 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
   useEffect(() => {
     api.savedSearches.list(caseId).then(r => setSavedSearches(r.searches || [])).catch(() => {})
   }, [caseId])
+
+  // Load saved timeline views on mount
+  useEffect(() => {
+    api.timelineViews.list(caseId).then(r => setTimelineViews(r.views || [])).catch(() => {})
+  }, [caseId])
+
+  // Persist the *current* filter set as a named view an analyst can re-apply later.
+  async function saveCurrentView(name) {
+    const view = await api.timelineViews.create(caseId, {
+      name,
+      query,
+      selected_types: selectedTypesStr,
+      level: selectedLevel,
+      flagged: flaggedOnly,
+      from_ts: fromTs,
+      to_ts: toTs,
+      columns: visibleCols,
+      sort_field: sortField,
+      sort_order: sortOrder,
+    })
+    setTimelineViews(p => [...p, view])
+    return view
+  }
+
+  // Re-apply every field of a saved view — switches the analyst into manual
+  // column mode since the view snapshotted an explicit column set.
+  function applyTimelineView(v) {
+    setInputVal(v.query || '')
+    setQuery(v.query || '')
+    setSelectedTypesStr(v.selected_types || '')
+    setSelectedLevel(v.level || '')
+    setFlaggedOnly(!!v.flagged)
+    setFromTs(v.from_ts || '')
+    setToTs(v.to_ts || '')
+    setSortField(v.sort_field || 'timestamp')
+    setSortOrder(v.sort_order || 'desc')
+    if (Array.isArray(v.columns) && v.columns.length > 0) {
+      setAutoMode(false)
+      localStorage.setItem(LS_AUTO_KEY, 'false')
+      setVisibleCols(v.columns)
+      localStorage.setItem(LS_KEY, JSON.stringify(v.columns))
+    }
+  }
+
+  async function deleteTimelineView(v) {
+    await api.timelineViews.delete(caseId, v.id)
+    setTimelineViews(p => p.filter(x => x.id !== v.id))
+  }
 
   // Initialize selectedTypesStr: all types except file/binary_file selected by default
   useLayoutEffect(() => {
@@ -1456,6 +1509,52 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
             ))}
           </div>
 
+          {/* ── Saved timeline views ─────────────────── */}
+          <div className="border-t border-gray-100 pt-3">
+            <div className="flex items-center justify-between mb-1.5">
+              <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider flex items-center gap-1">
+                <Layers size={9} /> Views
+              </p>
+              <button onClick={() => setShowSaveViewForm(v => !v)}
+                title="Save the current filters, columns and sort as a named view"
+                className="text-[10px] text-brand-accent hover:text-brand-accenthover">+ Save view</button>
+            </div>
+            {showSaveViewForm && (
+              <div className="mb-1.5 flex gap-1">
+                <input value={saveViewName} onChange={e => setSaveViewName(e.target.value)}
+                  placeholder="Name…" className="input flex-1 text-[11px] py-0.5 px-1.5" />
+                <button
+                  onClick={async () => {
+                    if (!saveViewName.trim()) return
+                    await saveCurrentView(saveViewName.trim())
+                    setSaveViewName(''); setShowSaveViewForm(false)
+                  }}
+                  className="btn-primary text-xs px-1.5 py-0.5">
+                  <BookmarkCheck size={10} />
+                </button>
+              </div>
+            )}
+            {timelineViews.length === 0 && (
+              <p className="text-[10px] text-gray-500 italic">None yet</p>
+            )}
+            {timelineViews.map(v => (
+              <div key={v.id} className="flex items-center gap-0.5 mb-0.5 group">
+                <button
+                  onClick={() => applyTimelineView(v)}
+                  title="Apply this saved view"
+                  className="flex-1 text-left text-[11px] text-gray-600 hover:text-brand-text truncate px-1 py-0.5 rounded hover:bg-gray-50 transition-colors">
+                  {v.name}
+                </button>
+                <button
+                  onClick={() => setConfirmDeleteView(v)}
+                  title="Delete saved view"
+                  className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-gray-100 text-gray-500 hover:text-red-500 transition-all">
+                  <Trash2 size={9} />
+                </button>
+              </div>
+            ))}
+          </div>
+
           {/* ── Facet chips ──────────────────────────── */}
           {['by_hostname','by_username','by_event_id','by_channel','by_src_ip','by_dest_ip','by_status_code','by_http_method','by_domain'].map(facetKey => {
             const filterKey = { by_hostname:'hostname', by_username:'username', by_event_id:'event_id', by_channel:'channel', by_src_ip:'src_ip', by_dest_ip:'dest_ip', by_status_code:'status_code', by_http_method:'http_method', by_domain:'domain' }[facetKey]
@@ -2282,6 +2381,22 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
             setSavedSearches(p => p.filter(x => x.id !== s.id))
           }}
           onCancel={() => setConfirmDeleteSearch(null)}
+        />
+      )}
+
+      {confirmDeleteView && (
+        <ConfirmDialog
+          title="Delete saved view"
+          icon={<Trash2 size={14} className="text-red-500" />}
+          message={`Delete saved view "${confirmDeleteView.name}"? This can't be undone.`}
+          confirmLabel="Delete"
+          confirmClass="btn-danger"
+          onConfirm={async () => {
+            const v = confirmDeleteView
+            setConfirmDeleteView(null)
+            await deleteTimelineView(v)
+          }}
+          onCancel={() => setConfirmDeleteView(null)}
         />
       )}
     </div>
