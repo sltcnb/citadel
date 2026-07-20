@@ -5,7 +5,6 @@ Core ingest task: download artifact from MinIO, detect type, run plugin, index t
 from __future__ import annotations
 
 import hashlib
-import io as _io
 import json
 import logging
 import os
@@ -30,11 +29,51 @@ except Exception:  # noqa: BLE001 - metrics must never block ingestion
     _obs = None
 
 
-def _put_with_retry(minio_client, bucket: str, key: str, data: bytes, attempts: int = 3) -> None:
-    """PUT bytes to MinIO with retries — handles transient SignatureDoesNotMatch / network blips."""
+# Decompression-bomb cap for archive entries expanded into child jobs — an
+# entry with a lying/absent size header could otherwise be extracted (and
+# buffered) without bound. Mirrors MAX_ZIP_ENTRY_BYTES in api/routers/ingest.py.
+_MAX_ENTRY_BYTES = int(os.getenv("MAX_ZIP_ENTRY_BYTES", str(10 * 1024**3)))  # 10 GiB
+
+
+def _spool_entry_to_temp(src, limit: int = _MAX_ENTRY_BYTES) -> tuple[str, int]:
+    """
+    Stream an open archive-entry file object to a bounded local temp file in
+    fixed-size chunks (never buffering the whole entry in RAM).
+
+    Returns (temp_path, size). Raises ValueError if the entry exceeds *limit*
+    uncompressed bytes (defends against decompression bombs / lying headers).
+    Caller is responsible for deleting the temp file.
+    """
+    fd, tmp_path = tempfile.mkstemp(prefix="fo_entry_")
+    written = 0
+    try:
+        with os.fdopen(fd, "wb") as dst:
+            while True:
+                chunk = src.read(1024 * 1024)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > limit:
+                    raise ValueError(f"entry exceeds uncompressed size cap ({limit} bytes)")
+                dst.write(chunk)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+    return tmp_path, written
+
+
+def _put_file_with_retry(
+    minio_client, bucket: str, key: str, path: str, size: int, attempts: int = 3
+) -> None:
+    """PUT a local file to MinIO with retry, streaming its contents (no full
+    in-memory buffering) — used for large archive entries."""
     for attempt in range(1, attempts + 1):
         try:
-            minio_client.put_object(bucket, key, _io.BytesIO(data), len(data))
+            with open(path, "rb") as fh:
+                minio_client.put_object(bucket, key, fh, size)
             return
         except Exception as exc:
             if attempt == attempts:
@@ -404,15 +443,19 @@ def _expand_zip_into_child_jobs(
             r.expire(f"case:{case_id}:jobs:zs", JOB_TTL)
 
             # ── Extract entry and upload to MinIO ─────────────────────────────
+            # Streamed via a bounded local temp file — the entry is never
+            # buffered whole in memory, so multi-GB embedded artifacts (e.g. a
+            # disk image nested in a zip) don't blow up worker RSS.
+            tmp_path = None
             try:
                 with zf.open(info) as src:
-                    data = src.read()
-                _put_with_retry(minio_client, MINIO_BUCKET, minio_key, data)
+                    tmp_path, size = _spool_entry_to_temp(src)
+                _put_file_with_retry(minio_client, MINIO_BUCKET, minio_key, tmp_path, size)
                 r.hset(
                     f"job:{child_id}",
                     mapping={
                         "minio_object_key": minio_key,
-                        "size_bytes": str(len(data)),
+                        "size_bytes": str(size),
                         "status": "PENDING",
                     },
                 )
@@ -432,6 +475,12 @@ def _expand_zip_into_child_jobs(
                     },
                 )
                 continue
+            finally:
+                if tmp_path:
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
 
             # ── Dispatch child process_artifact task ──────────────────────────
             app.send_task(
@@ -522,17 +571,19 @@ def _expand_tar_into_child_jobs(
             r.zadd(f"case:{case_id}:jobs:zs", {child_id: time.time()})
             r.expire(f"case:{case_id}:jobs:zs", JOB_TTL)
 
+            # Streamed via a bounded local temp file — see _expand_zip_into_child_jobs.
+            tmp_path = None
             try:
                 fobj = tf.extractfile(member)
                 if fobj is None:
                     raise ValueError("extractfile returned None (symlink or special file)")
-                data = fobj.read()
-                _put_with_retry(minio_client, MINIO_BUCKET, minio_key, data)
+                tmp_path, size = _spool_entry_to_temp(fobj)
+                _put_file_with_retry(minio_client, MINIO_BUCKET, minio_key, tmp_path, size)
                 r.hset(
                     f"job:{child_id}",
                     mapping={
                         "minio_object_key": minio_key,
-                        "size_bytes": str(len(data)),
+                        "size_bytes": str(size),
                         "status": "PENDING",
                     },
                 )
@@ -552,6 +603,12 @@ def _expand_tar_into_child_jobs(
                     },
                 )
                 continue
+            finally:
+                if tmp_path:
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
 
             app.send_task(
                 "ingest.process_artifact",

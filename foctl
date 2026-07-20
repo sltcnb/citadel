@@ -847,6 +847,150 @@ def verify_celery_queues():
         warn("Celery workers may not be ready yet")
 
 
+# ── Dead-letter queue: list / replay ─────────────────────────────────────────
+# Mirrors tools/sluice/worker/robustness.DEAD_LETTER_KEY and the envelope
+# format api/services/celery_dispatch.py._push builds — foctl talks to the
+# same Redis list directly (via the redis-cli-in-pod helper above) rather than
+# going through the API, so this works even when the API is unreachable.
+
+_DLQ_KEY = "fo:worker:dead_letter"
+_DLQ_TASK_QUEUE = {
+    "ingest.process_artifact": "ingest",
+    "ingest.s3_transfer": "ingest",
+    "module.run": "modules",
+    "harvest.run_harvest": "modules",
+}
+_DLQ_TERMINAL_STATUSES = ("COMPLETED", "SKIPPED")
+
+
+def _dlq_entries(limit=200):
+    """Return (index, entry_dict) pairs, newest first, or None on Redis error."""
+    r = redis_cli(["lrange", _DLQ_KEY, "0", str(max(limit - 1, 0))])
+    if r.returncode != 0:
+        return None
+    out = []
+    for i, line in enumerate(r.stdout.splitlines()):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            out.append((i, json.loads(line)))
+        except Exception:
+            continue
+    return out
+
+
+def dlq_list(limit=50):
+    step("Dead-letter queue")
+    entries = _dlq_entries(limit=limit)
+    if entries is None:
+        warn("Could not reach Redis")
+        return
+    if not entries:
+        ok("Dead-letter queue is empty")
+        return
+    for i, e in entries:
+        job_id = (e.get("args") or [None])[0]
+        info(f"[{i}] {e.get('task')}  job={job_id}  retries={e.get('retries')}  "
+             f"failed_at={e.get('failed_at')}")
+        info(f"     error: {str(e.get('error'))[:200]}")
+    ok(f"{len(entries)} dead-letter entr{'y' if len(entries) == 1 else 'ies'}")
+
+
+def _dlq_job_already_done(job_id):
+    if not job_id:
+        return False
+    r = redis_cli(["hget", f"job:{job_id}", "status"])
+    if r.returncode != 0:
+        return False
+    return r.stdout.strip() in _DLQ_TERMINAL_STATUSES
+
+
+def _dlq_build_envelope(queue, task_name, task_id, args):
+    """Build the same Celery v5 JSON envelope api/services/celery_dispatch.py
+    pushes for normal dispatch, so a replayed task is indistinguishable from
+    one the API dispatched directly. Sent to the '_high' twin of *queue* since
+    a replay is an explicit operator action."""
+    _msg_body = [
+        args,
+        {},
+        {"callbacks": None, "errbacks": None, "chain": None, "chord": None},
+    ]
+    body_b64 = base64.b64encode(json.dumps(_msg_body).encode()).decode()
+    return json.dumps({
+        "body": body_b64,
+        "content-encoding": "utf-8",
+        "content-type": "application/json",
+        "headers": {
+            "lang": "py", "task": task_name, "id": task_id, "shadow": None,
+            "eta": None, "expires": None, "group": None, "group_index": None,
+            "retries": 0, "timelimit": [None, None], "root_id": task_id,
+            "parent_id": None, "origin": "foctl", "utc": True,
+            "argsrepr": repr(args), "kwargsrepr": "{}",
+        },
+        "properties": {
+            "correlation_id": task_id, "reply_to": task_id, "delivery_mode": 2,
+            "delivery_info": {"exchange": "", "routing_key": f"{queue}_high"},
+            "priority": 0, "body_encoding": "base64", "delivery_tag": task_id,
+        },
+    })
+
+
+def _dlq_replay_index(index):
+    """Replay the entry currently at *index* (0 = newest) and remove it from
+    the dead-letter list — whether replayed or skipped, it never lingers."""
+    r = redis_cli(["lindex", _DLQ_KEY, str(index)])
+    if r.returncode != 0 or not r.stdout.strip():
+        warn(f"No dead-letter entry at index {index}")
+        return False
+    raw = r.stdout.rstrip("\n")
+    entry = json.loads(raw)
+    task_name = entry.get("task")
+    args = entry.get("args") or []
+    job_id = args[0] if args else None
+
+    redis_cli(["lrem", _DLQ_KEY, "1", raw])
+
+    if _dlq_job_already_done(job_id):
+        ok(f"job {job_id} already terminal — cleared stale entry, did not replay")
+        return True
+
+    queue = _DLQ_TASK_QUEUE.get(task_name)
+    if not queue:
+        warn(f"Unknown dead-letter task '{task_name}' — cannot replay, entry cleared")
+        return False
+
+    envelope = _dlq_build_envelope(queue, task_name, job_id or entry.get("task_id") or "", args)
+    push = redis_cli(["-x", "rpush", f"{queue}_high"], interactive=True, stdin_text=envelope)
+    if push.returncode == 0:
+        ok(f"Replayed {task_name} (job {job_id}) → queue '{queue}_high'")
+        return True
+    warn(f"Could not re-enqueue {task_name} (job {job_id}) — entry cleared, may need manual retry")
+    return False
+
+
+def dlq_replay(index=None, replay_all=False):
+    step("Dead-letter replay")
+    if replay_all:
+        entries = _dlq_entries(limit=1000)
+        if entries is None:
+            warn("Could not reach Redis")
+            return
+        n = len(entries)
+        if n == 0:
+            ok("Nothing to replay")
+            return
+        replayed = 0
+        for _ in range(n):
+            if _dlq_replay_index(0):
+                replayed += 1
+        ok(f"Processed {n} dead-letter entr{'y' if n == 1 else 'ies'}")
+        return
+    if index is None:
+        die("Usage: ./foctl dead-letter replay <index>|--all")
+    _dlq_replay_index(index)
+
+
 def wait_for_elasticsearch():
     step("Waiting for Elasticsearch (up to 3 minutes)")
     for i in range(36):
@@ -1383,6 +1527,12 @@ def _usage():
     update  [docker|k8s]        Rebuild images + redeploy
     destroy [docker|k8s]        Remove all services and data (confirms first)
     config                      Show parsed config.json + redacted .env
+
+  DEAD-LETTER QUEUE  (poison tasks parked after exhausting retries)
+    dead-letter list             List dead-lettered tasks, newest first
+    dead-letter replay <index>   Re-enqueue one entry (0 = newest); no-op if
+                                 that job already completed
+    dead-letter replay --all     Re-enqueue every dead-lettered entry
 """)
 
 
@@ -1603,6 +1753,26 @@ def main():
 
     elif cmd == "config":
         cmd_config()
+
+    elif cmd == "dead-letter":
+        if not rest:
+            die("Usage: ./foctl dead-letter <list|replay> [args]")
+        sub = rest[0]
+        if sub == "list":
+            dlq_list()
+        elif sub == "replay":
+            if len(rest) < 2:
+                die("Usage: ./foctl dead-letter replay <index>|--all")
+            if rest[1] == "--all":
+                dlq_replay(replay_all=True)
+            else:
+                try:
+                    idx = int(rest[1])
+                except ValueError:
+                    die("Usage: ./foctl dead-letter replay <index>|--all")
+                dlq_replay(index=idx)
+        else:
+            die(f"Unknown 'dead-letter' subcommand '{sub}'. Use 'list' or 'replay'.")
 
     else:
         die(f"Unknown command '{cmd}'. Run ./foctl --help for usage.")

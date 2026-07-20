@@ -173,6 +173,24 @@ services:
     mem_limit: ${WORKER_MEM_LIMIT:-4g}
     cpus: ${WORKER_CPU_LIMIT:-2}
     restart: unless-stopped
+    # ── Container hardening ─────────────────────────────────────────────────
+    # This worker parses hostile third-party input (forensic artifacts,
+    # custom analysis modules) — treat it as the highest-priority sandboxing
+    # target. The image itself now runs as uid/gid 1000 (see Dockerfile); the
+    # explicit `user:` below just makes that non-negotiable even if a future
+    # image change reintroduces a root default.
+    user: "1000:1000"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+      - seccomp:./tools/sluice/worker/seccomp-profile.json
+    # Root filesystem is read-only; all runtime scratch space (module work
+    # dirs, Hayabusa/Volatility3/RegRipper output, tempfile.mkdtemp()) lives
+    # under /tmp, given its own volume so it isn't bound by the read-only root.
+    read_only: true
+    tmpfs:
+      - /tmp:size=4g
 
   # ── Module worker ──────────────────────────────────────────────────────────
   # Handles analysis modules: Hayabusa, YARA, Hindsight, RegRipper, Wintriage.
@@ -214,6 +232,19 @@ services:
     mem_limit: ${WORKER_MEM_LIMIT:-4g}
     cpus: ${WORKER_CPU_LIMIT:-2}
     restart: unless-stopped
+    # ── Container hardening ─────────────────────────────────────────────────
+    # See worker-ingest above — this queue runs the same untrusted-input
+    # parsers (Hayabusa, YARA, Volatility3, RegRipper, Wintriage) and gets the
+    # same treatment.
+    user: "1000:1000"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+      - seccomp:./tools/sluice/worker/seccomp-profile.json
+    read_only: true
+    tmpfs:
+      - /tmp:size=4g
 
   frontend:
     build:

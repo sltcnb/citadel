@@ -21,6 +21,7 @@ import redis_keys as rk
 from auth.dependencies import require_admin, require_analyst_or_admin, require_developer_or_admin
 from license.router import router as license_router
 from routers import (
+    admin_dead_letter,
     admin_logs,
     admin_utils,
     alert_rules,
@@ -62,6 +63,7 @@ from routers import (
     search,
     sigma_sync,
     sso,
+    timeline_views,
     tools as tools_router,
     watchlist,
     webhooks,
@@ -674,6 +676,7 @@ app.include_router(tools_router.router, prefix="/api/v1", dependencies=_analyst_
 # Internal service chain — own token auth (NOT user auth); in-cluster only.
 app.include_router(internal_chain.router, prefix="/api/v1")
 app.include_router(saved_searches.router, prefix="/api/v1", dependencies=_analyst_or_admin)
+app.include_router(timeline_views.router, prefix="/api/v1", dependencies=_analyst_or_admin)
 app.include_router(notes.router, prefix="/api/v1", dependencies=_analyst_or_admin)
 app.include_router(alert_rules.router, prefix="/api/v1", dependencies=_analyst_or_admin)
 app.include_router(export.router, prefix="/api/v1", dependencies=_analyst_or_admin)
@@ -707,6 +710,7 @@ app.include_router(llm_config.router, prefix="/api/v1", dependencies=_analyst_or
 app.include_router(s3_integration.router, prefix="/api/v1", dependencies=_admin_only)
 app.include_router(admin_utils.router, prefix="/api/v1", dependencies=_admin_only)
 app.include_router(admin_logs.router, prefix="/api/v1", dependencies=_admin_only)
+app.include_router(admin_dead_letter.router, prefix="/api/v1", dependencies=_admin_only)
 app.include_router(platform_settings.router, prefix="/api/v1")
 app.include_router(pilot_settings.router, prefix="/api/v1")
 app.include_router(webhooks.router, prefix="/api/v1", dependencies=_admin_only)

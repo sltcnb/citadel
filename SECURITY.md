@@ -67,3 +67,40 @@ The project runs the following automated checks (see `.github/workflows/`):
   that blocks fixable critical CVEs on tagged releases.
 - **pip-audit** against `api/requirements.txt`.
 - **SBOM** generation for built images.
+
+### CVE triage process
+
+The `cve-scan` job in `.github/workflows/ci.yml` runs Trivy against the
+repository filesystem and **fails the build** on any new HIGH/CRITICAL,
+fixable CVE. Existing CVEs that have been reviewed and accepted (e.g. the
+vulnerable code path isn't reachable, or a fix is scheduled but blocked on
+something else) are allowlisted in [`.trivyignore`](.trivyignore) at the repo
+root — that file is the source of truth for what's currently accepted and why.
+
+LOW/MEDIUM severity findings and `pip-audit` stay informational
+(`continue-on-error`) — they're surfaced in the job log but never block a PR.
+
+**When the blocking Trivy step fails on a PR:**
+
+1. Confirm the finding is real (not a scanner false-positive) and check
+   whether a fixed version is available (`ignore-unfixed: true` already drops
+   no-fix-available CVEs from the gate).
+2. If it's fixable in the same PR (a routine dependency bump), fix it — that's
+   almost always preferred over allowlisting.
+3. If it can't be fixed immediately, add an entry to `.trivyignore` with:
+   - The **CVE ID**.
+   - A one-line **justification**: why it's accepted now (e.g. the vulnerable
+     code path is unreachable in Citadel's usage, the component isn't exposed
+     to untrusted input, or the fix is tracked but blocked on a compatibility
+     constraint).
+   - A **review-by date** using the `exp:YYYY-MM-DD` suffix, no more than 90
+     days out. Trivy stops honoring the ignore once that date passes, so the
+     job goes red again until someone re-triages it (either the fix has
+     landed by then, or the entry needs a fresh justification and a new date).
+   - A link to a tracking issue if the fix needs code changes beyond a version
+     bump.
+4. Never widen the allowlist by raising the `severity` threshold in the
+   workflow or re-adding `continue-on-error` to the blocking step — the
+   allowlist file is the only sanctioned way to unblock a known, accepted CVE.
+
+See `.trivyignore` for the current allowlist and the expected entry format.
