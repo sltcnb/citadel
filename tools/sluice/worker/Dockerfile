@@ -156,4 +156,7 @@ RUN mkdir -p /app/babel /app/anvil
 # Default 4 is a good baseline for mixed I/O + CPU workloads.
 # For CPU-heavy modules (Hayabusa, Volatility3) set to number of vCPUs assigned.
 # For I/O-heavy ingest-only workers set to 8–16.
-CMD ["sh", "-c", "celery -A celery_app worker --loglevel=info --concurrency=${CELERY_CONCURRENCY:-4} -Q ingest,modules,default"]
+# Queue order matters: the *_high queues are listed first so Redis always
+# hands back a high-priority task ahead of its base-queue twin whenever both
+# have pending work (see celery_app.py's task_queues comment).
+CMD ["sh", "-c", "celery -A celery_app worker --loglevel=info --concurrency=${CELERY_CONCURRENCY:-4} -Q ingest_high,modules_high,ingest,modules,default"]
