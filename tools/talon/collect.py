@@ -5163,8 +5163,6 @@ def upload_via_presigned(zip_path: Path, presigned_url: str, max_retries: int = 
     Hardened for tens-of-GB archives over slow/internal links:
       * streams the file in chunks (never loads it into memory);
       * scales the socket timeout to file size with a conservative 1 MB/s floor;
-      * uses ``Expect: 100-continue`` so an expired/rejected URL fails in seconds
-        instead of after streaming the whole archive;
       * prints live throughput + ETA so a long upload does not look hung;
       * retries with exponential backoff on transient network errors.
 
@@ -5174,7 +5172,6 @@ def upload_via_presigned(zip_path: Path, presigned_url: str, max_retries: int = 
     collector does not have.
     """
     import http.client
-    import socket
     import ssl
     import time
     import urllib.parse
@@ -5209,31 +5206,7 @@ def upload_via_presigned(zip_path: Path, presigned_url: str, max_retries: int = 
             conn.putrequest("PUT", path, skip_accept_encoding=True)
             conn.putheader("Content-Type", "application/zip")
             conn.putheader("Content-Length", str(file_size))
-            # Ask the server to validate the request (auth/URL) before we ship
-            # gigabytes. S3/MinIO reply 100 Continue, or an error we catch fast.
-            conn.putheader("Expect", "100-continue")
             conn.endheaders()
-
-            # Give the server a moment to reject before streaming the body.
-            early = None
-            sock = conn.sock
-            if sock is not None:
-                try:
-                    sock.settimeout(30)
-                    if sock.recv(1, socket.MSG_PEEK):
-                        early = conn.getresponse()
-                except (OSError, http.client.HTTPException):
-                    early = None  # no early reply → proceed with the upload
-                finally:
-                    try:
-                        sock.settimeout(timeout)
-                    except OSError:
-                        pass
-            if early is not None:
-                body = early.read(256).decode(errors="replace")
-                if early.status >= 300:
-                    print(f"  [!] Upload rejected before send: HTTP {early.status} — {body}", file=sys.stderr)
-                    sys.exit(1)
 
             sent = 0
             t0 = time.monotonic()
