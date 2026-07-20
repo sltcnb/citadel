@@ -41,6 +41,8 @@ from pathlib import Path
 
 import redis
 import redis_keys as rk
+import resource_limits
+import robustness
 from celery_app import REDIS_URL, app  # REDIS_URL carries REDIS_PASSWORD auth
 
 logger = logging.getLogger(__name__)
@@ -248,6 +250,41 @@ def _run_custom_module(
     return hits
 
 
+def _run_builtin_module_limited(
+    runner, run_id: str, work_dir: Path, sources_dir: Path, params: dict, tool_meta: dict
+) -> list[dict]:
+    """Run a built-in RUNNERS entry (hayabusa/yara/volatility3/...) under CPU,
+    memory, and wall-clock limits (see resource_limits.py).
+
+    Built-in runners execute directly in the Celery worker process — some
+    in-process (yara-python), some via subprocess (vol3, hayabusa binary...).
+    Either way a pathological input (crafted memory image, oversized EVTX,
+    a YARA scan target designed to explode backtracking) can burn CPU/RAM
+    without bound; the global Celery task_time_limit only bounds wall clock
+    and would otherwise let one poison task take the whole worker pod (and
+    every other in-flight task on it) down via OOM.
+
+    The runner mutates ``tool_meta`` in place for logging; since it now runs
+    in a forked child, its copy of tool_meta is returned alongside the hits
+    and merged back into the caller's dict.
+    """
+
+    def _adapter(run_id, work_dir, sources_dir, params, tool_meta):
+        hits = runner(run_id, work_dir, sources_dir, params, tool_meta)
+        return hits, tool_meta
+
+    try:
+        hits, child_tool_meta = resource_limits.run_limited(
+            _adapter, run_id, work_dir, sources_dir, params, tool_meta
+        )
+    except resource_limits.ResourceLimitExceeded as exc:
+        tool_meta["log"] += f"\n[resource limit] {exc}\n"
+        raise RuntimeError(f"Module '{run_id}' aborted: {exc}") from exc
+
+    tool_meta.update(child_tool_meta)
+    return hits
+
+
 def get_redis() -> redis.Redis:
     return redis.Redis.from_url(REDIS_URL, decode_responses=True)
 
@@ -429,7 +466,9 @@ def run_module(
                         case_id,
                         _co_exc,
                     )
-            results = runner(run_id, work_dir, sources_dir, params, tool_meta)
+            results = _run_builtin_module_limited(
+                runner, run_id, work_dir, sources_dir, params, tool_meta
+            )
         else:
             # Custom module — run in isolated sandboxed subprocess
             _mod_meta = _read_module_constants(module_id)
@@ -622,6 +661,21 @@ def run_module(
             tool_stderr=tool_meta.get("stderr", "")[:4000] if "tool_meta" in dir() else "",
             completed_at=datetime.now(UTC).isoformat(),
         )
+        # A task that blew a CPU/memory/wall-clock limit (or any other module
+        # failure) is never retried here — retrying would just burn the limit
+        # again — so park it directly on the dead-letter list instead of
+        # letting it vanish once marked FAILED above.
+        try:
+            robustness.to_dead_letter(
+                r,
+                task_name=self.name,
+                task_id=self.request.id,
+                args=[run_id, case_id, module_id],
+                error=exc,
+                retries=0,
+            )
+        except Exception as _dl_exc:  # noqa: BLE001 - dead-letter bookkeeping must never mask the original failure
+            logger.warning("[%s] failed to record dead-letter entry: %s", run_id, _dl_exc)
         raise RuntimeError(str(exc)) from None
 
     finally:

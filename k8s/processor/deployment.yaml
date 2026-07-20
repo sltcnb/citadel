@@ -42,6 +42,13 @@ spec:
         runAsUser: 1000
         runAsGroup: 1000
         fsGroup: 1000
+        # RuntimeDefault is the enforced baseline everywhere (works without any
+        # node-side setup). tools/sluice/worker/seccomp-profile.json is a
+        # tightened, hand-curated allow-list (blocks module loading, raw
+        # sockets, ptrace, mount, kexec, BPF, ...) used for the equivalent
+        # docker-compose services; to enforce it here too, distribute it to
+        # every node (e.g. under the kubelet's seccomp profile root) and switch
+        # this to `type: Localhost` + `localhostProfile: <path>`.
         seccompProfile:
           type: RuntimeDefault
       initContainers:
