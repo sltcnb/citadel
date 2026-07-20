@@ -37,6 +37,16 @@ except Exception:  # missing dep / redis down must not stop the worker booting
 # ingest   — I/O-bound file parsing; run with higher concurrency
 # modules  — CPU/memory-bound analysis binaries; run with lower concurrency
 # default  — fallback for any unrouted tasks
+#
+# ingest_high / modules_high — the "_high" twin of each base queue. The API's
+# services/celery_dispatch.py pushes analyst-triggered work (module + harvest
+# runs) here by default, while bulk background ingest stays on the base
+# queue. Priority is enforced purely by *worker subscription order*: the
+# Dockerfile's `celery worker -Q ...` lists every *_high queue before its base
+# queue, and Kombu's redis transport issues one BLPOP/BRPOP across all
+# subscribed keys in that order — Redis always returns from the first
+# non-empty key, so a high queue drains ahead of its base queue whenever both
+# have work. No custom scheduler needed.
 _default_exchange = Exchange("forensics", type="direct")
 
 app = Celery(
@@ -74,6 +84,8 @@ app.conf.update(
     worker_max_tasks_per_child=int(os.getenv("WORKER_MAX_TASKS", "50")),
     # ── Queues & routing ───────────────────────────────────────────────────
     task_queues=(
+        Queue("ingest_high", _default_exchange, routing_key="ingest_high"),
+        Queue("modules_high", _default_exchange, routing_key="modules_high"),
         Queue("ingest", _default_exchange, routing_key="ingest"),
         Queue("modules", _default_exchange, routing_key="modules"),
         Queue("default", _default_exchange, routing_key="default"),
