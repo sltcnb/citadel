@@ -45,6 +45,11 @@ import resource_limits
 import robustness
 from celery_app import REDIS_URL, app  # REDIS_URL carries REDIS_PASSWORD auth
 
+try:  # pragma: no cover - observability is always present in-tree
+    import observability as _obs
+except Exception:  # noqa: BLE001 - metrics must never block a module run
+    _obs = None
+
 logger = logging.getLogger(__name__)
 
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "minio-service:9000")
@@ -389,6 +394,17 @@ def run_module(
     work_dir = Path(tempfile.mkdtemp(prefix=f"fo_mod_{run_id}_"))
     params = params or {}
 
+    # Metrics bookkeeping — resolved up front (mirrors the artifact_type
+    # resolution used for ES indexing below) so both the success and
+    # failure paths report against the same artifact type.
+    _early_mod_meta = _read_module_constants(module_id)
+    _metrics_atype = (
+        _early_mod_meta.get("artifact_type")
+        or _MODULE_ARTIFACT_TYPE.get(module_id)
+        or module_id.replace("-", "_").replace(" ", "_")
+    )
+    _metrics_start = time.monotonic()
+
     try:
         _check_cancel(r, run_id)  # cancelled while still queued
         _update(r, run_id, status="RUNNING", started_at=datetime.now(UTC).isoformat())
@@ -640,6 +656,16 @@ def run_module(
             except Exception as _wh_exc:  # noqa: BLE001 - notification is best-effort; never fail a completed run over it
                 logger.warning("[%s] webhook notify failed: %s", run_id, _wh_exc)
 
+        if _obs is not None:
+            try:
+                _obs.record_parse(
+                    _metrics_atype,
+                    "success",
+                    time.monotonic() - _metrics_start,
+                    events_normalized=len(results),
+                )
+            except Exception:  # pragma: no cover - metrics must never break a module run
+                pass
         return {"status": "COMPLETED", "total_hits": len(results)}
 
     except _Cancelled:
@@ -647,6 +673,11 @@ def run_module(
         _push_log(r, run_id, "Cancelled by analyst")
         _update(r, run_id, status="CANCELLED", completed_at=datetime.now(UTC).isoformat())
         r.delete(rk.module_cancel(run_id))
+        if _obs is not None:
+            try:
+                _obs.record_parse(_metrics_atype, "cancelled", time.monotonic() - _metrics_start)
+            except Exception:  # pragma: no cover - metrics must never break a module run
+                pass
         return {"status": "CANCELLED", "total_hits": 0}
 
     except Exception as exc:
@@ -661,6 +692,11 @@ def run_module(
             tool_stderr=tool_meta.get("stderr", "")[:4000] if "tool_meta" in dir() else "",
             completed_at=datetime.now(UTC).isoformat(),
         )
+        if _obs is not None:
+            try:
+                _obs.record_parse(_metrics_atype, "failure", time.monotonic() - _metrics_start)
+            except Exception:  # pragma: no cover - metrics must never break a module run
+                pass
         # A task that blew a CPU/memory/wall-clock limit (or any other module
         # failure) is never retried here — retrying would just burn the limit
         # again — so park it directly on the dead-letter list instead of

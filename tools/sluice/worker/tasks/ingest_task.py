@@ -23,6 +23,11 @@ import redis
 import redis_keys as rk
 import robustness
 
+try:  # pragma: no cover - observability is always present in-tree
+    import observability as _obs
+except Exception:  # noqa: BLE001 - metrics must never block ingestion
+    _obs = None
+
 
 # Decompression-bomb cap for archive entries expanded into child jobs — an
 # entry with a lying/absent size header could otherwise be extracted (and
@@ -784,6 +789,12 @@ def process_artifact(
     """
     r = get_redis()
 
+    # Metrics bookkeeping — populated once a parser is selected; used by the
+    # outer except handler to report a parse failure against the right
+    # artifact type even when the failure happens mid-parse.
+    _metrics_atype: str = "unknown"
+    _metrics_parse_start: float | None = None
+
     # ── Idempotency ──────────────────────────────────────────────────────────
     # acks_late + reject_on_worker_lost mean a task can be redelivered after a
     # crash. If this job already reached a terminal successful state, a re-run
@@ -957,8 +968,15 @@ def process_artifact(
                 minio_object_key,
                 skipped_at,
             )
+            if _obs is not None:
+                try:
+                    _obs.record_parse(mime_type or "unknown", "skipped", 0.0)
+                except Exception:  # pragma: no cover - metrics must never break ingestion
+                    pass
             return
 
+        _metrics_atype = plugin_class.PLUGIN_NAME
+        _metrics_parse_start = time.monotonic()
         update_job_status(r, job_id, plugin_used=plugin_class.PLUGIN_NAME)
         try:
             from citadel_contracts.logship import tool_logger
@@ -1005,6 +1023,7 @@ def process_artifact(
                 plugin_exc,
             )
             update_job_status(r, job_id, plugin_used="plaso (fallback)")
+            _metrics_atype = "plaso (fallback)"
             try:
                 from babel.plaso.plaso_plugin import PlasoPlugin
 
@@ -1021,6 +1040,7 @@ def process_artifact(
                 # ── Strings last resort ──────────────────────────────────────
                 logger.warning("[%s] Trying strings fallback as last resort", job_id)
                 update_job_status(r, job_id, plugin_used="strings (fallback)")
+                _metrics_atype = "strings (fallback)"
                 try:
                     from babel.strings_fallback.strings_fallback_plugin import StringsFallbackPlugin
 
@@ -1069,6 +1089,17 @@ def process_artifact(
         )
         logger.info("[%s] Completed: %d events indexed", job_id, events_indexed)
 
+        if _obs is not None and _metrics_parse_start is not None:
+            try:
+                _obs.record_parse(
+                    _metrics_atype,
+                    "success",
+                    time.monotonic() - _metrics_parse_start,
+                    events_normalized=events_indexed,
+                )
+            except Exception:  # pragma: no cover - metrics must never break ingestion
+                pass
+
         # ── 5b. Bus emit → events.parsed (feature-flagged side channel) ───────
         # Publish the parsed ForensicEvents so Rosetta can normalize them to ECS.
         # No-op when BUS_EMIT_ENABLED is off; never fails the job (see bus_emit).
@@ -1086,6 +1117,13 @@ def process_artifact(
 
     except Exception as exc:
         logger.exception("[%s] Failed: %s", job_id, exc)
+        if _obs is not None and _metrics_parse_start is not None:
+            try:
+                _obs.record_parse(
+                    _metrics_atype, "failure", time.monotonic() - _metrics_parse_start
+                )
+            except Exception:  # pragma: no cover - metrics must never break ingestion
+                pass
         # Release the dedup claim so a genuine retry of this artifact isn't
         # permanently skipped (we only want to skip *successful* prior ingests).
         if claimed_sha256:
