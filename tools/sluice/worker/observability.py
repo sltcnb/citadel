@@ -48,12 +48,25 @@ from citadel_contracts.logship import (  # noqa: E402,F401
 
 
 # ── metrics registry ─────────────────────────────────────────────────────────
+#: Default histogram bucket boundaries (seconds) — spans sub-second parses up
+#: to the multi-minute end of the distribution (large EVTX/registry hives,
+#: memory images). Shared by every histogram unless the caller overrides it.
+DEFAULT_DURATION_BUCKETS: tuple[float, ...] = (
+    0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300, 600,
+)
+
+
 class Metrics:
-    """Minimal counter/gauge registry with Prometheus text rendering."""
+    """Minimal counter/gauge/histogram registry with Prometheus text rendering."""
 
     def __init__(self) -> None:
         self._counters: dict[tuple[str, tuple], float] = {}
         self._gauges: dict[tuple[str, tuple], float] = {}
+        # histogram bucket counts: (name, labels) -> {bucket_le: count}
+        self._hist_buckets: dict[tuple[str, tuple], dict[float, int]] = {}
+        self._hist_sum: dict[tuple[str, tuple], float] = {}
+        self._hist_count: dict[tuple[str, tuple], int] = {}
+        self._hist_bounds: dict[str, tuple[float, ...]] = {}
         self._help: dict[str, str] = {}
         self._lock = threading.Lock()
 
@@ -75,6 +88,27 @@ class Metrics:
             self._help.setdefault(name, help or name)
             self._gauges[self._key(name, labels)] = value
 
+    def observe(
+        self,
+        name: str,
+        value: float,
+        *,
+        labels: dict | None = None,
+        buckets: tuple[float, ...] = DEFAULT_DURATION_BUCKETS,
+        help: str = "",
+    ) -> None:
+        """Record one observation (e.g. a parse duration) into a histogram."""
+        key = self._key(name, labels)
+        with self._lock:
+            self._help.setdefault(name, help or name)
+            self._hist_bounds.setdefault(name, buckets)
+            bucket_counts = self._hist_buckets.setdefault(key, {b: 0 for b in buckets})
+            for b in buckets:
+                if value <= b:
+                    bucket_counts[b] += 1
+            self._hist_sum[key] = self._hist_sum.get(key, 0.0) + value
+            self._hist_count[key] = self._hist_count.get(key, 0) + 1
+
     def render_prometheus(self) -> str:
         lines: list[str] = []
         with self._lock:
@@ -87,10 +121,79 @@ class Metrics:
                         seen.add(name)
                     lbl = ("{" + ",".join(f'{k}="{v}"' for k, v in labels) + "}") if labels else ""
                     lines.append(f"{name}{lbl} {val}")
+
+            seen_hist: set[str] = set()
+            for (name, labels), bucket_counts in sorted(self._hist_buckets.items()):
+                if name not in seen_hist:
+                    lines.append(f"# HELP {name} {self._help.get(name, name)}")
+                    lines.append(f"# TYPE {name} histogram")
+                    seen_hist.add(name)
+                base_labels = list(labels)
+                for b in self._hist_bounds.get(name, DEFAULT_DURATION_BUCKETS):
+                    lbl_items = [*base_labels, ("le", b)]
+                    lbl = "{" + ",".join(f'{k}="{v}"' for k, v in lbl_items) + "}"
+                    lines.append(f"{name}_bucket{lbl} {bucket_counts.get(b, 0)}")
+                inf_lbl_items = [*base_labels, ("le", "+Inf")]
+                inf_lbl = "{" + ",".join(f'{k}="{v}"' for k, v in inf_lbl_items) + "}"
+                lines.append(f"{name}_bucket{inf_lbl} {self._hist_count.get((name, labels), 0)}")
+                lbl = ("{" + ",".join(f'{k}="{v}"' for k, v in labels) + "}") if labels else ""
+                lines.append(f"{name}_sum{lbl} {self._hist_sum.get((name, labels), 0.0)}")
+                lines.append(f"{name}_count{lbl} {self._hist_count.get((name, labels), 0)}")
         return "\n".join(lines) + "\n"
 
 
 METRICS = Metrics()
+
+
+# ── parse pipeline metrics (per artifact type) ───────────────────────────────
+# Shared by tasks/ingest_task.py (Babel plugins) and tasks/module_task.py
+# (analysis modules) so both parse pipelines report through the same names.
+#
+#   parser_parse_total{artifact_type, status}   — status: success|failure|skipped
+#   parser_parse_duration_seconds{artifact_type} — histogram, seconds
+#   parser_events_normalized_total{artifact_type} — events successfully indexed/normalized
+#   worker_dead_letter_total{task}               — tasks parked on the dead-letter queue
+def record_parse(
+    artifact_type: str,
+    status: str,
+    duration_seconds: float,
+    *,
+    events_normalized: int = 0,
+) -> None:
+    """Record one parse attempt's outcome for a given artifact type.
+
+    Called once per parse attempt from the ingest and module task pipelines.
+    ``status`` is typically one of "success", "failure", "skipped", or
+    "cancelled" (module runs cancelled by an analyst).
+    """
+    atype = artifact_type or "unknown"
+    METRICS.inc(
+        "parser_parse_total",
+        labels={"artifact_type": atype, "status": status},
+        help="Parse attempts per artifact type and outcome",
+    )
+    METRICS.observe(
+        "parser_parse_duration_seconds",
+        duration_seconds,
+        labels={"artifact_type": atype},
+        help="Parse duration in seconds per artifact type",
+    )
+    if events_normalized:
+        METRICS.inc(
+            "parser_events_normalized_total",
+            events_normalized,
+            labels={"artifact_type": atype},
+            help="Events successfully normalized/indexed per artifact type",
+        )
+
+
+def record_dead_letter(task_name: str) -> None:
+    """Record a task being parked on the dead-letter queue."""
+    METRICS.inc(
+        "worker_dead_letter_total",
+        labels={"task": task_name or "unknown"},
+        help="Tasks parked on the dead-letter queue, by task name",
+    )
 
 
 # ── health server ─────────────────────────────────────────────────────────────
