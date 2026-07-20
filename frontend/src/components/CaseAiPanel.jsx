@@ -25,6 +25,39 @@ import { api } from '../api/client'
 import { RISK_CONFIG } from '../utils/severity'
 import PanelHelp from './shared/PanelHelp'
 
+// Key findings are written by the prompt to cite the fo_ids they're grounded
+// in, e.g. "Suspicious PowerShell download (event_ids: abc123, def456)". Parse
+// that suffix out so each cited id becomes a clickable pivot into the
+// timeline, rather than an opaque string the analyst has to trust blind.
+const EVENT_ID_CITATION_RE = /\s*\(event_ids?:\s*([^)]+)\)\s*$/i
+
+function KeyFindingText({ text, onSearchQuery }) {
+  const m = EVENT_ID_CITATION_RE.exec(text)
+  if (!m) return <span>{text}</span>
+  const ids = m[1].split(',').map(s => s.trim()).filter(Boolean)
+  const body = text.slice(0, m.index)
+  return (
+    <span>
+      {body}
+      {ids.length > 0 && (
+        <span className="block mt-1 flex flex-wrap gap-1">
+          {ids.map(id => (
+            <button
+              key={id}
+              type="button"
+              title={`Pivot the timeline to event ${id}`}
+              onClick={() => onSearchQuery?.(`fo_id:"${id}"`)}
+              className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-brand-accent/10 text-brand-accent hover:bg-brand-accent/20 transition-colors"
+            >
+              {id}
+            </button>
+          ))}
+        </span>
+      )}
+    </span>
+  )
+}
+
 function RiskGauge({ score, level }) {
   const cfg = RISK_CONFIG[level] || RISK_CONFIG.unknown
   const pct = score != null ? Math.round((score / 10) * 100) : 0
@@ -1281,7 +1314,7 @@ export default function CaseAiPanel({ caseId, onClose, onSearchQuery, onOpenRepo
                         {analysis.key_findings.map((f, i) => (
                           <li key={i} className="flex items-start gap-2 text-sm text-gray-700">
                             <ChevronRight size={13} className="text-brand-accent flex-shrink-0 mt-0.5" />
-                            <span>{f}</span>
+                            <KeyFindingText text={f} onSearchQuery={q => { onSearchQuery?.(q); onClose?.() }} />
                           </li>
                         ))}
                       </ul>
@@ -1314,6 +1347,48 @@ export default function CaseAiPanel({ caseId, onClose, onSearchQuery, onOpenRepo
                   <p className="text-[10px] text-gray-500">
                     Confidence: {analysis.confidence} · {analysis.model_used} · {analysis.analyzed_at ? new Date(analysis.analyzed_at).toLocaleString() : ''}
                   </p>
+
+                  {/* ── Provenance — what fed this analysis, so it's auditable
+                      rather than a black box. Every id here can be pivoted
+                      to in the timeline. ── */}
+                  {analysis.provenance && (
+                    <div className="border-t border-gray-100 pt-3">
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-widest mb-1.5">Provenance</p>
+                      <p className="text-[11px] text-gray-600 leading-relaxed">
+                        Model <span className="font-mono">{analysis.provenance.model}</span> analyzed{' '}
+                        <strong>{analysis.provenance.event_count_analyzed ?? 0}</strong> source event(s)
+                        {analysis.provenance.total_case_events != null && (
+                          <> out of {analysis.provenance.total_case_events.toLocaleString()} total in the case</>
+                        )}
+                        {analysis.provenance.artifact_types?.length > 0 && (
+                          <> across {analysis.provenance.artifact_types.join(', ')}</>
+                        )}.
+                      </p>
+                      {analysis.provenance.source_event_ids?.length > 0 && (
+                        <div className="mt-1.5 flex flex-wrap gap-1">
+                          {[...new Set(analysis.provenance.source_event_ids)].slice(0, 15).map(id => (
+                            <button
+                              key={id}
+                              type="button"
+                              title={`Pivot the timeline to event ${id}`}
+                              onClick={() => { onSearchQuery?.(`fo_id:"${id}"`); onClose?.() }}
+                              className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 hover:bg-brand-accent/10 hover:text-brand-accent transition-colors"
+                            >
+                              {id}
+                            </button>
+                          ))}
+                          {analysis.provenance.source_event_ids.length > 15 && (
+                            <span className="text-[10px] text-gray-400 self-center">
+                              +{analysis.provenance.source_event_ids.length - 15} more
+                            </span>
+                          )}
+                        </div>
+                      )}
+                      <p className="text-[10px] text-gray-400 mt-1.5 font-mono truncate" title={analysis.provenance.input_hash}>
+                        input hash: {analysis.provenance.input_hash?.slice(0, 16)}…
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
             </section>
