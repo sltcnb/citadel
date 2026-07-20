@@ -50,6 +50,10 @@ def case_saved_searches(case_id: str) -> str:
     return f"fo:saved_searches:{case_id}"
 
 
+def case_timeline_views(case_id: str) -> str:
+    return f"fo:timeline_views:{case_id}"
+
+
 def case_module_runs(case_id: str) -> str:
     return f"fo:case:{case_id}:module_runs"
 
