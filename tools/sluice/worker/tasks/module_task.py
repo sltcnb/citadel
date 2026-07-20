@@ -1580,7 +1580,7 @@ def _parse_hindsight_timestamp(ts) -> str:
         if ts_int > 10**15:
             unix_ts = (ts_int / 1_000_000) - 11_644_473_600
             return datetime.fromtimestamp(unix_ts, tz=UTC).isoformat()
-    except (ValueError, TypeError, OSError):
+    except (ValueError, TypeError, OSError, OverflowError):
         pass
 
     return ts_str
