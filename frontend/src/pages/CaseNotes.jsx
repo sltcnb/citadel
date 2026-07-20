@@ -20,6 +20,8 @@ import {
 } from 'lucide-react'
 import { api } from '../api/client'
 import { relativeTime } from '../utils/format'
+import { useCollab } from '../hooks/useCollab'
+import { currentUser } from '../utils/caseConstants'
 
 // ── WYSIWYG toolbar ───────────────────────────────────────────────────────────
 
@@ -83,23 +85,51 @@ function NotesTab({ caseId }) {
   const [updatedAt, setUpdatedAt]     = useState(null)
   const [saving, setSaving]           = useState(false)
   const [error, setError]             = useState(null)
+  const [staleNotice, setStaleNotice] = useState(null) // {user} — someone else saved while we had unsaved edits
   const [, setTick] = useState(0)
 
-  useEffect(() => {
+  // Collaborative notes: reuse the case's existing SSE collab channel (also used
+  // for flag/pin/presence) rather than building a bespoke realtime layer. Other
+  // clients' saves show up as 'note' events — reload if we have no unsaved
+  // local edits, otherwise surface a non-destructive "stale" banner.
+  const me = currentUser()
+  const { events, publish } = useCollab(caseId, me)
+  const lastAppliedTsRef = useRef(0)
+
+  const reload = useCallback(() => {
     api.notes.get(caseId).then(d => {
       const body = d.body || ''
       setSavedBody(body)
       setCurrentBody(body)
       setUpdatedAt(d.updated_at)
       setError(null)
+      setStaleNotice(null)
       if (editorRef.current) editorRef.current.innerHTML = DOMPurify.sanitize(body)
     }).catch(err => setError(err.message || 'Failed to load notes'))
   }, [caseId])
+
+  useEffect(() => { reload() }, [reload])
 
   useEffect(() => {
     const id = setInterval(() => setTick(t => t + 1), 30_000)
     return () => clearInterval(id)
   }, [])
+
+  // React to other analysts' saves broadcast over collab.
+  useEffect(() => {
+    const noteEvents = events.filter(e => e.type === 'note' && e.ts > lastAppliedTsRef.current)
+    if (!noteEvents.length) return
+    const latest = noteEvents[noteEvents.length - 1]
+    lastAppliedTsRef.current = latest.ts
+    if (latest.user === me?.username) return  // our own save echoing back
+    const dirty = editorRef.current && editorRef.current.innerHTML !== savedBody
+    if (dirty) {
+      setStaleNotice({ user: latest.user })
+    } else {
+      reload()
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [events])
 
   const save = useCallback(async () => {
     if (saving || !editorRef.current) return
@@ -111,12 +141,14 @@ function NotesTab({ caseId }) {
       setCurrentBody(body)
       setUpdatedAt(res.updated_at)
       setError(null)
+      setStaleNotice(null)
+      publish('note', { updated_at: res.updated_at })
     } catch (err) {
       setError(err.message || 'Failed to save notes')
     } finally {
       setSaving(false)
     }
-  }, [caseId, saving])
+  }, [caseId, saving, publish])
 
   useEffect(() => {
     const handler = e => {
@@ -184,6 +216,12 @@ function NotesTab({ caseId }) {
           {!error && dirty && <span className="text-xs text-amber-500">unsaved changes</span>}
         </div>
         <div className="flex items-center gap-2">
+          {staleNotice && (
+            <span className="text-xs text-amber-600 flex items-center gap-1">
+              {staleNotice.user || 'Another analyst'} saved newer notes —
+              <button onClick={reload} className="underline hover:text-amber-700">reload</button>
+            </span>
+          )}
           <button onClick={handleExportPDF} className="btn-ghost text-xs flex items-center gap-1.5">
             <Printer size={11} /> Export
           </button>
