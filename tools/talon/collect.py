@@ -5185,27 +5185,36 @@ def upload_via_presigned(zip_path: Path, presigned_url: str, max_retries: int = 
     timeout = min(43200, max(900, int(file_size / (1 * 1024 * 1024))))
     print(f"      Size {_fmt_bytes(file_size)}, stall timeout {timeout}s")
 
-    _ssl_ctx = ssl.create_default_context()
-    _ssl_ctx.check_hostname = False
-    _ssl_ctx.verify_mode = ssl.CERT_NONE
-
     parsed = urllib.parse.urlsplit(presigned_url)
-    path = urllib.parse.urlunsplit(("", "", parsed.path, parsed.query, ""))
+    # Match fo_uploader: raw path + query, no re-encoding, matches the signature.
+    path = parsed.path + ("?" + parsed.query if parsed.query else "")
     is_https = parsed.scheme == "https"
-    chunk_size = 8 * 1024 * 1024
+    chunk_size = 4 * 1024 * 1024
+
+    # Use a normal verified TLS context (like fo_uploader). Only fall back to an
+    # unverified context if the peer's certificate genuinely fails to verify —
+    # e.g. a self-signed MinIO on an internal network. Forcing CERT_NONE up front
+    # made some TLS front-ends (proxies/WAFs) drop the connection with
+    # "EOF occurred in violation of protocol".
+    insecure = False
 
     for attempt in range(1, max_retries + 1):
         conn = None
         try:
-            conn_cls = http.client.HTTPSConnection if is_https else http.client.HTTPConnection
-            conn_kwargs = {"timeout": timeout}
             if is_https:
-                conn_kwargs["context"] = _ssl_ctx
-            conn = conn_cls(parsed.netloc, **conn_kwargs)
+                if insecure:
+                    ctx = ssl.create_default_context()
+                    ctx.check_hostname = False
+                    ctx.verify_mode = ssl.CERT_NONE
+                else:
+                    ctx = ssl.create_default_context()
+                conn = http.client.HTTPSConnection(parsed.netloc, context=ctx, timeout=timeout)
+            else:
+                conn = http.client.HTTPConnection(parsed.netloc, timeout=timeout)
 
-            conn.putrequest("PUT", path, skip_accept_encoding=True)
-            conn.putheader("Content-Type", "application/zip")
+            conn.putrequest("PUT", path)
             conn.putheader("Content-Length", str(file_size))
+            conn.putheader("Content-Type", "application/zip")
             conn.endheaders()
 
             sent = 0
@@ -5245,6 +5254,19 @@ def upload_via_presigned(zip_path: Path, presigned_url: str, max_retries: int = 
             return
         except SystemExit:
             raise
+        except ssl.SSLCertVerificationError as exc:
+            # Self-signed / internal MinIO: retry the same attempt unverified.
+            if not insecure:
+                insecure = True
+                print(
+                    f"  [!] TLS certificate did not verify ({exc}); retrying without verification",
+                    file=sys.stderr,
+                )
+                continue
+            if attempt >= max_retries:
+                print(f"  [!] Upload error after {attempt} attempts: {exc}", file=sys.stderr)
+                sys.exit(1)
+            time.sleep(15 * attempt)
         except Exception as exc:
             if attempt >= max_retries:
                 print(f"  [!] Upload error after {attempt} attempts: {exc}", file=sys.stderr)
