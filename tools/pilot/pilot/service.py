@@ -17,6 +17,7 @@ Supported providers:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re as _re
@@ -1671,21 +1672,32 @@ def _gather_case_context(case_id: str) -> dict:
     # Concrete threat signal — high/critical detections + external CTI matches,
     # read from the INDEXED events (cti_match, hayabusa, etc.). Without this the
     # LLM only saw raw event counts and always returned a near-zero risk score.
+    # source_event_ids: the exact fo_id/_id set actually pulled from the
+    # index to feed this analysis. Kept separate from the summary counts so
+    # any downstream AI finding can be traced back to concrete events, not
+    # just aggregate numbers.
+    source_event_ids: list[str] = []
+
     findings = {"high_severity": 0, "cti_high": 0, "by_artifact": []}
     try:
         from services.elasticsearch import _request as _esf
         hi_q = ("hayabusa.level:high OR hayabusa.level:critical OR evtx.level:high "
                 "OR evtx.level:critical OR level:high OR level:critical OR cti_match.level:high")
         res = _esf("POST", f"/fo-case-{case_id}-*/_search", {
-            "size": 0, "track_total_hits": True,
+            "size": 25, "track_total_hits": True,
             "query": {"query_string": {"query": hi_q, "analyze_wildcard": True}},
             "aggs": {"by_artifact": {"terms": {"field": "artifact_type", "size": 15}}},
+            "_source": ["fo_id"],
         })
         findings["high_severity"] = (res.get("hits", {}).get("total", {}) or {}).get("value", 0)
         findings["by_artifact"] = [
             {"type": b["key"], "count": b["doc_count"]}
             for b in (res.get("aggregations", {}).get("by_artifact", {}) or {}).get("buckets", [])
         ]
+        for h in res.get("hits", {}).get("hits", []):
+            fo_id = (h.get("_source") or {}).get("fo_id") or h.get("_id")
+            if fo_id:
+                source_event_ids.append(fo_id)
         res2 = _esf("POST", f"/fo-case-{case_id}-*/_search", {
             "size": 0, "track_total_hits": True,
             "query": {"query_string": {"query": "artifact_type:cti_match AND cti_match.level:high"}},
@@ -1706,6 +1718,7 @@ def _gather_case_context(case_id: str) -> dict:
             "size": 25,
             "track_total_hits": True,
             "sort": [{"severity_int": {"order": "desc", "unmapped_type": "integer"}}],
+            "_source": ["kind", "severity", "message", "source_feature", "evidence", "fo_id"],
             "aggs": {
                 "by_kind": {"terms": {"field": "kind", "size": 50}},
                 "by_severity": {"terms": {"field": "severity", "size": 10}},
@@ -1719,17 +1732,34 @@ def _gather_case_context(case_id: str) -> dict:
         findings_store["by_severity"] = {
             b["key"]: b["doc_count"] for b in aggs.get("by_severity", {}).get("buckets", [])
         }
-        findings_store["top"] = [
-            {
-                "kind": h["_source"].get("kind"),
-                "severity": h["_source"].get("severity"),
-                "title": h["_source"].get("message"),
-                "source": h["_source"].get("source_feature"),
-            }
-            for h in res.get("hits", {}).get("hits", [])
-        ]
+        findings_store["top"] = []
+        for h in res.get("hits", {}).get("hits", []):
+            src = h.get("_source", {}) or {}
+            # `evidence` is the finding's own list of source-event fo_ids —
+            # the concrete events that produced the finding. Fall back to the
+            # finding document's own fo_id when a finding has no evidence.
+            evidence = [e for e in (src.get("evidence") or []) if e]
+            event_ids = evidence or ([src.get("fo_id")] if src.get("fo_id") else [])
+            source_event_ids.extend(event_ids)
+            findings_store["top"].append(
+                {
+                    "kind": src.get("kind"),
+                    "severity": src.get("severity"),
+                    "title": src.get("message"),
+                    "source": src.get("source_feature"),
+                    "event_ids": event_ids,
+                }
+            )
     except Exception:
         pass
+
+    # Dedupe while keeping order, cap so the provenance payload stays small.
+    seen = set()
+    deduped_ids: list[str] = []
+    for eid in source_event_ids:
+        if eid not in seen:
+            seen.add(eid)
+            deduped_ids.append(eid)
 
     return {
         "case_name": case.get("name", case_id),
@@ -1744,6 +1774,7 @@ def _gather_case_context(case_id: str) -> dict:
         "findings": findings,
         "findings_store": findings_store,
         "notes_body": notes_body,
+        "source_event_ids": deduped_ids[:200],
     }
 
 
@@ -1759,10 +1790,12 @@ def _build_case_analysis_prompt(ctx: dict) -> str:
     store = ctx.get("findings_store", {}) or {}
     store_kinds = ", ".join(f"{k}: {n}" for k, n in (store.get("by_kind") or {}).items())
     store_sev = ", ".join(f"{k}: {n}" for k, n in (store.get("by_severity") or {}).items())
-    store_top = "".join(
-        f"    - [{t.get('severity')}] {t.get('kind')}: {t.get('title')}\n"
-        for t in (store.get("top") or [])[:15]
-    )
+    def _fmt_top(t: dict) -> str:
+        ids = ", ".join(t.get("event_ids") or [])
+        cite = f" (event_ids: {ids})" if ids else ""
+        return f"    - [{t.get('severity')}] {t.get('kind')}: {t.get('title')}{cite}\n"
+
+    store_top = "".join(_fmt_top(t) for t in (store.get("top") or [])[:15])
     findings_text = (
         f"High/critical detections (indexed): {fnd.get('high_severity', 0)}\n"
         f"External CTI matches (high severity): {fnd.get('cti_high', 0)}\n"
@@ -1783,7 +1816,10 @@ def _build_case_analysis_prompt(ctx: dict) -> str:
         f"Notes excerpt:\n{ctx['notes_body'] or '  (none)'}\n\n"
         "Provide a comprehensive risk assessment. Base risk_score primarily on the "
         "concrete findings above: high/critical detections and external CTI matches mean "
-        "elevated-to-high risk; a clean case with only informational events is low risk."
+        "elevated-to-high risk; a clean case with only informational events is low risk. "
+        "Where a key_finding is grounded in one of the findings listed above with event_ids, "
+        "append the event_ids in parentheses, e.g. 'Suspicious PowerShell download (event_ids: "
+        "abc123)', so the finding can be traced back to the source event(s)."
     )
 
 
@@ -1840,8 +1876,27 @@ def ai_analyze_case(case_id: str):
     result["risk_level"] = computed["level"]
     result["score_basis"] = computed["basis"]
 
-    result["analyzed_at"] = datetime.now(UTC).isoformat()
-    result["model_used"] = f"{cfg.get('provider', '?')}/{cfg.get('model', '?')}"
+    analyzed_at = datetime.now(UTC).isoformat()
+    model_used = f"{cfg.get('provider', '?')}/{cfg.get('model', '?')}"
+    result["analyzed_at"] = analyzed_at
+    result["model_used"] = model_used
+
+    # Provenance — what the model actually saw, so any finding above can be
+    # traced back to concrete evidence rather than trusted as a black box.
+    # `source_event_ids` are the fo_ids of the events/findings that fed the
+    # prompt; `input_hash` is a content hash of the exact prompt text sent,
+    # so a re-run against unchanged evidence is verifiably reproducible.
+    input_text = _CASE_ANALYSIS_PROMPT + "\n" + user_msg
+    result["provenance"] = {
+        "model": model_used,
+        "analyzed_at": analyzed_at,
+        "source_event_ids": ctx.get("source_event_ids", []),
+        "event_count_analyzed": len(ctx.get("source_event_ids", [])),
+        "total_case_events": ctx.get("event_count", 0),
+        "artifact_types": ctx.get("artifact_types", []),
+        "input_hash": hashlib.sha256(input_text.encode("utf-8")).hexdigest(),
+    }
+
     # Persist
     r.set(f"case:{case_id}:ai:analysis", json.dumps(result))
     return result
