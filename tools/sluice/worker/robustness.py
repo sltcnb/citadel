@@ -29,6 +29,11 @@ import os
 from datetime import UTC, datetime
 from typing import Any
 
+try:  # pragma: no cover - observability is always present in-tree
+    import observability as _obs
+except Exception:  # noqa: BLE001 - metrics must never block dead-lettering
+    _obs = None
+
 logger = logging.getLogger(__name__)
 
 # ── Config (env, safe defaults) ────────────────────────────────────────────────
@@ -125,6 +130,11 @@ def to_dead_letter(
         )
     except Exception as exc:  # pragma: no cover
         logger.warning("could not write dead-letter entry for %s: %s", task_name, exc)
+    if _obs is not None:
+        try:
+            _obs.record_dead_letter(task_name)
+        except Exception:  # pragma: no cover - metrics must never break dead-lettering
+            pass
     return entry
 
 

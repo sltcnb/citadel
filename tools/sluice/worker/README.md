@@ -81,6 +81,12 @@ docker run -e REDIS_URL=redis://redis:6379/0 -e BUS_EMIT_ENABLED=true sluice-wor
 - **Queues** — `ingest` (I/O-bound parsing), `modules` (CPU-bound Anvil analysis + harvest), `default` (fallback).
 - **Resilience** — `worker_prefetch_multiplier=1`; process recycling after `WORKER_MAX_TASKS` to bound memory on large EVTX/MFT/registry hives; soft/hard time limits (1 h / 2 h); `task_acks_late` + `task_reject_on_worker_lost` re-queue on crash.
 - **Observability** — JSON logs, Prometheus `/metrics`, `/healthz` + `/readyz` (`observability.py`); per-service logs shipped to `citadel:logs:processor`.
+  - Parse throughput/failure metrics, emitted per **artifact type** (Babel plugin name for `tasks/ingest_task.py`, module id / `ARTIFACT_TYPE` for `tasks/module_task.py`) via `observability.record_parse()`:
+    - `parser_parse_total{artifact_type,status}` — counter; `status` is `success` | `failure` | `skipped` (no plugin matched) | `cancelled` (module run cancelled by an analyst).
+    - `parser_parse_duration_seconds{artifact_type}` — histogram of parse/module-run wall time.
+    - `parser_events_normalized_total{artifact_type}` — counter of events successfully indexed/normalized per artifact type.
+    - `worker_dead_letter_total{task}` — counter of tasks parked on the dead-letter queue (`robustness.to_dead_letter()`), labeled by Celery task name.
+  - All four are rendered on the same `/metrics` endpoint as the rest of the registry (see `observability.render_prometheus()`) — no `prometheus_client` dependency required.
 
 ## Key modules
 
