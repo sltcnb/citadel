@@ -25,9 +25,10 @@ PyJWT==2.13.0
 requests==2.34.2
 # Auth
 python-jose[cryptography]==3.5.0
-passlib[bcrypt]==1.7.4
-# Range is intentional: passlib 1.7.4 is not compatible with bcrypt 4.x
-# (it reads bcrypt.__about__.__version__, removed in 4.0). Keep <4.0.0.
+# Password hashing calls the bcrypt library directly (auth/service.py).
+# passlib was removed: 1.7.4 reads bcrypt.__about__.__version__ (dropped in
+# bcrypt 4.0) and raises "password cannot be longer than 72 bytes" for *every*
+# password under bcrypt >= 4, breaking login entirely.
 bcrypt>=5.0.0,<6.0.0
 pyotp==2.10.0           # TOTP multi-factor auth
 qrcode[pil]==8.2     # render the TOTP enrollment QR (server-side PNG)
