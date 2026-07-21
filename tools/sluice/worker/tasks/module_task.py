@@ -44,6 +44,7 @@ import redis_keys as rk
 import resource_limits
 import robustness
 from celery_app import REDIS_URL, app  # REDIS_URL carries REDIS_PASSWORD auth
+from utils.es_auth import install_es_auth
 
 try:  # pragma: no cover - observability is always present in-tree
     import observability as _obs
@@ -57,6 +58,8 @@ MINIO_ACCESS = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
 MINIO_SECRET = os.getenv("MINIO_SECRET_KEY", "minioadmin")
 MINIO_BUCKET = os.getenv("MINIO_BUCKET", "forensics-cases")
 ELASTICSEARCH_URL = os.getenv("ELASTICSEARCH_URL", "http://elasticsearch-service:9200")
+# ES security is enabled — install scoped basic-auth for every urllib ES call.
+install_es_auth()
 
 # Custom modules directory (shared volume, created via Studio UI)
 CUSTOM_MODULES_DIR = Path(os.getenv("MODULES_DIR", "/app/anvil"))

@@ -15,6 +15,28 @@ logger = logging.getLogger(__name__)
 
 ES_URL = settings.ELASTICSEARCH_URL
 
+
+def _install_es_auth() -> None:
+    """ES runs with security enabled, so every request needs HTTP Basic auth.
+    Rather than thread credentials through every urllib call site, install a
+    process-wide opener whose auth handler is SCOPED to the ES host — MinIO/S3
+    and any other urllib traffic never receive the credentials. Reactive (adds
+    auth on the 401 challenge), which the native-realm ES sends. No-op when
+    credentials are not configured."""
+    user = settings.ELASTICSEARCH_USERNAME
+    password = settings.ELASTICSEARCH_PASSWORD
+    if not (user and password):
+        logger.warning("No Elasticsearch credentials configured; requests will be unauthenticated")
+        return
+    mgr = urllib.request.HTTPPasswordMgrWithDefaultRealm()
+    mgr.add_password(None, ES_URL, user, password)
+    urllib.request.install_opener(
+        urllib.request.build_opener(urllib.request.HTTPBasicAuthHandler(mgr))
+    )
+
+
+_install_es_auth()
+
 INDEX_TEMPLATE = {
     "index_patterns": ["fo-case-*"],
     "template": {
