@@ -65,6 +65,61 @@ def _triage_minio(cfg: dict):
     )
 
 
+# Multipart provisioning tunables. 256 part slots at a 128 MiB target part size
+# covers a ~32 GiB archive without growing the part size; larger archives get a
+# proportionally larger part size (the collector recomputes from the real file
+# size) up to the 256 × 5 GiB hard ceiling.
+_MP_TARGET_PART = 128 * 1024 * 1024
+_MP_MAX_PARTS = 256
+
+
+def _provision_multipart(mc, bucket: str, key: str, expires):
+    """Initiate an S3 multipart upload and presign every URL the offline
+    collector needs — one PUT per part slot, plus complete and abort. Returns
+    the baked config block, or ``None`` if the backend can't provision it (in
+    which case the collector falls back to a single presigned PUT).
+
+    Note: this creates a real multipart upload at package-download time. If the
+    collector never runs, that leaves an incomplete upload on the bucket; a
+    lifecycle rule (AbortIncompleteMultipartUpload) should sweep those, and the
+    collector aborts its own upload on failure.
+    """
+    create = getattr(mc, "_create_multipart_upload", None)
+    if create is None:
+        logger.warning("minio client lacks _create_multipart_upload; multipart disabled")
+        return None
+    try:
+        upload_id = create(bucket, key, {"Content-Type": "application/zip"})
+        part_urls = [
+            mc.get_presigned_url(
+                "PUT",
+                bucket,
+                key,
+                expires=expires,
+                extra_query_params={"partNumber": str(n), "uploadId": upload_id},
+            )
+            for n in range(1, _MP_MAX_PARTS + 1)
+        ]
+        complete_url = mc.get_presigned_url(
+            "POST", bucket, key, expires=expires, extra_query_params={"uploadId": upload_id}
+        )
+        abort_url = mc.get_presigned_url(
+            "DELETE", bucket, key, expires=expires, extra_query_params={"uploadId": upload_id}
+        )
+        return {
+            "key": key,
+            "upload_id": upload_id,
+            "part_urls": part_urls,
+            "complete_url": complete_url,
+            "abort_url": abort_url,
+            "part_size": _MP_TARGET_PART,
+            "parallelism": 4,
+        }
+    except Exception as exc:  # noqa: BLE001 — non-fatal, single PUT still works
+        logger.warning("Could not provision multipart upload (large files disabled): %s", exc)
+        return None
+
+
 def _zwrite(zf: zipfile.ZipFile, name: str, data: bytes, exe: bool = False) -> None:
     """Write a zip member preserving the unix executable bit when requested.
 
@@ -563,6 +618,16 @@ def download_harvester_package(
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"Could not generate presigned URL: {exc}")
 
+        # Provision a full multipart upload so the offline collector can ship
+        # archives larger than the 5 GiB single-PUT ceiling — and upload big
+        # files as many small, parallel, retryable parts (robust on slow/flaky
+        # WAN links). Every URL is presigned now because the collector has no
+        # API connectivity at runtime. Best-effort: if provisioning fails the
+        # package still ships and simply falls back to the single PUT.
+        _mp = _provision_multipart(_mc, _s3cfg["bucket"], _key, _expires)
+        if _mp:
+            config["multipart_upload"] = _mp
+
     try:
         script_bytes = _find_collect_script().read_bytes()
     except FileNotFoundError as exc:
@@ -724,10 +789,14 @@ def _inject_uploader_config(source: str, cfg: dict) -> str:
     return source
 
 
-def _inject_presigned_config(source: str, presigned_urls: list) -> str:
-    """Inject pre-signed PUT URLs into fo_uploader.py (preferred mode — no credentials)."""
+def _inject_presigned_config(source: str, presigned_urls: list, multipart_uploads=None) -> str:
+    """Inject pre-signed PUT URLs (and optional multipart sessions, one per file
+    slot) into fo_uploader.py (preferred mode — no credentials)."""
     urls_repr = "[" + ", ".join(json.dumps(u) for u in presigned_urls) + "]"
-    return source.replace("PRESIGNED_URLS = []", f"PRESIGNED_URLS = {urls_repr}", 1)
+    out = source.replace("PRESIGNED_URLS = []", f"PRESIGNED_URLS = {urls_repr}", 1)
+    return out.replace(
+        "MULTIPART_UPLOADS = []", f"MULTIPART_UPLOADS = {json.dumps(multipart_uploads or [])}", 1
+    )
 
 
 @router.get("/collector/uploader", dependencies=[Depends(require_admin)])
@@ -870,6 +939,7 @@ def download_uploader_presigned(
 
     presigned_urls = []
     keys = []
+    multipart_uploads = []
     try:
         for i in range(count):
             uid = _uuid.uuid4().hex[:8]
@@ -877,6 +947,10 @@ def download_uploader_presigned(
             url = client.presigned_put_object(cfg["bucket"], key, expires=expires)
             presigned_urls.append(url)
             keys.append(key)
+            # Provision a multipart session per slot so files over the 5 GiB
+            # single-PUT ceiling can still be uploaded (best-effort; None falls
+            # back to the single PUT).
+            multipart_uploads.append(_provision_multipart(client, cfg["bucket"], key, expires))
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Could not generate presigned URL: {exc}")
 
@@ -887,7 +961,7 @@ def download_uploader_presigned(
     except FileNotFoundError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
 
-    injected = _inject_presigned_config(source, presigned_urls)
+    injected = _inject_presigned_config(source, presigned_urls, multipart_uploads)
 
     slot_lines = "\n".join(f"  Slot {i + 1}: {cfg['bucket']}/{k}" for i, k in enumerate(keys))
     readme = (
@@ -1254,6 +1328,11 @@ def download_s3_bootstrap(
         config["presigned_url"] = mc.presigned_put_object(bucket, evidence_key, expires=expires)
     except Exception as exc:
         logger.warning("Could not generate evidence presigned URL: %s", exc)
+    # Multipart upload for archives over the 5 GiB single-PUT ceiling (see
+    # _provision_multipart). Best-effort: falls back to the single PUT above.
+    _mp = _provision_multipart(mc, bucket, evidence_key, expires)
+    if _mp:
+        config["multipart_upload"] = _mp
 
     # ── Build the collector zip ───────────────────────────────────────────────
     try:
