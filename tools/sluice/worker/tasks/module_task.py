@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import csv
 import importlib.util
+import io
 import json
 import logging
 import os
@@ -340,6 +341,14 @@ def _minio_op(fn, max_tries: int = 4, base_delay: float = 3.0):
     raise last_exc  # type: ignore[misc]
 
 
+def _is_missing_object(exc: Exception) -> bool:
+    """True if *exc* is a MinIO 'object does not exist' error (NoSuchKey)."""
+    if getattr(exc, "code", "") in ("NoSuchKey", "NoSuchObject"):
+        return True
+    msg = str(exc).lower()
+    return "nosuchkey" in msg or "does not exist" in msg
+
+
 def _update(r: redis.Redis, run_id: str, **fields) -> None:
     key = rk.module_run(run_id)
     r.hset(
@@ -431,7 +440,19 @@ def run_module(
                 _check_cancel(r, run_id)
                 dest = sources_dir / sf["filename"]
                 _push_log(r, run_id, f"Downloading {sf['filename']} …")
-                _minio_op(lambda d=dest, k=sf["minio_key"]: minio.fget_object(MINIO_BUCKET, k, str(d)))
+                try:
+                    _minio_op(lambda d=dest, k=sf["minio_key"]: minio.fget_object(MINIO_BUCKET, k, str(d)))
+                except Exception as exc:  # noqa: BLE001 - missing-object handled, rest re-raised
+                    # An artifact the collector never uploaded (e.g. hiberfil.sys
+                    # when hibernation is off) must not fail the whole module —
+                    # skip it and run on whatever sources are present.
+                    if _is_missing_object(exc):
+                        _push_log(
+                            r, run_id,
+                            f"WARNING: source '{sf['filename']}' not found in storage — skipping"
+                        )
+                        continue
+                    raise
                 _push_log(r, run_id, f"Downloaded {sf['filename']} ({dest.stat().st_size:,} bytes)")
 
         _check_cancel(r, run_id)
@@ -589,12 +610,22 @@ def run_module(
                 )
 
         # ── 3. Upload full results to MinIO ───────────────────────────────────
+        # Serialize once to UTF-8 bytes and upload from an in-memory buffer with
+        # an exact Content-Length. fput_object derived the length from the
+        # on-disk file, which could disagree with the bytes actually streamed
+        # (locale-dependent write encoding / stat race) and made S3 reject the
+        # PUT with "IncompleteBody". put_object from the exact bytes is precise.
+        payload = json.dumps(results, ensure_ascii=False).encode("utf-8")
         results_json = work_dir / "results.json"
-        results_json.write_text(json.dumps(results, ensure_ascii=False))
+        results_json.write_bytes(payload)
         output_key = f"cases/{case_id}/modules/{run_id}/results.json"
         _minio_op(
-            lambda: minio.fput_object(
-                MINIO_BUCKET, output_key, str(results_json), content_type="application/json"
+            lambda: minio.put_object(
+                MINIO_BUCKET,
+                output_key,
+                io.BytesIO(payload),
+                length=len(payload),
+                content_type="application/json",
             )
         )
         logger.info("[%s] Uploaded %d hits to MinIO", run_id, len(results))
