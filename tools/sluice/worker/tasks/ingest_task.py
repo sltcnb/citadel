@@ -88,6 +88,7 @@ def _put_file_with_retry(
 import bus_emit
 from celery_app import REDIS_URL, app  # REDIS_URL carries REDIS_PASSWORD auth
 from plugin_loader import PluginLoader
+from utils.es_auth import install_es_auth
 from utils.es_bulk import ESBulkIndexer
 from utils.file_type import detect_mime
 
@@ -98,6 +99,8 @@ MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
 MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "minioadmin")
 MINIO_BUCKET = os.getenv("MINIO_BUCKET", "forensics-cases")
 ELASTICSEARCH_URL = os.getenv("ELASTICSEARCH_URL", "http://elasticsearch-service:9200")
+# ES security is enabled — install scoped basic-auth for every urllib ES call.
+install_es_auth()
 BULK_SIZE = int(os.getenv("BULK_SIZE", "500"))
 
 # Shared plugin loader instance (reused across tasks in the same worker)

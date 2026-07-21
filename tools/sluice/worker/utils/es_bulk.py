@@ -10,6 +10,8 @@ from typing import Any
 import requests
 import requests.adapters
 
+from utils.es_auth import ES_AUTH, install_es_auth
+
 logger = logging.getLogger(__name__)
 
 # compresslevel=1 gives ~70-80% payload reduction with minimal CPU overhead.
@@ -52,7 +54,12 @@ def _sanitize(obj: Any) -> Any:
 class ESBulkIndexer:
     def __init__(self, es_url: str) -> None:
         self.es_url = es_url.rstrip("/")
+        # Cover any sibling urllib ES calls in this worker process too.
+        install_es_auth()
         self._session = requests.Session()
+        # ES security is enabled — authenticate every _bulk request.
+        if ES_AUTH:
+            self._session.auth = ES_AUTH
         adapter = requests.adapters.HTTPAdapter(
             pool_connections=2,
             pool_maxsize=4,
