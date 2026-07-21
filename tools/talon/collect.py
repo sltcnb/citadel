@@ -153,6 +153,7 @@ if not EMBEDDED_CONFIG:
                 "api_token": _raw.get("api_token", ""),
                 "presigned_url": _raw.get("presigned_url", ""),
                 "presigned_log_url": _raw.get("presigned_log_url", ""),
+                "multipart_upload": _raw.get("multipart_upload") or None,
                 "fetch_patterns": list(_raw.get("fetch_patterns", []) or []),
                 "fetch_roots": list(_raw.get("fetch_roots", []) or []),
                 "fetch_max_files": int(_raw.get("fetch_max_files", 0) or 0),
@@ -5148,6 +5149,21 @@ class ExternalDiskCollector(Collector):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+# S3 / Scaleway object-storage limits (fixed by the S3 API contract):
+#   * a single PUT (presigned or not) accepts at most 5 GiB;
+#   * a multipart part must be >= 5 MiB (except the final part) and <= 5 GiB;
+#   * an upload may have at most 10 000 parts.
+S3_SINGLE_PUT_MAX = 5 * 1024 * 1024 * 1024  # 5 GiB
+S3_MIN_PART = 5 * 1024 * 1024  # 5 MiB
+S3_MAX_PART = 5 * 1024 * 1024 * 1024  # 5 GiB
+
+# Prefer multipart for anything this large even when it would fit in a single
+# PUT: many small, independently-retryable parts uploaded in parallel survive
+# flaky/slow WAN links far better than one multi-GB firehose, and a reset costs
+# one part instead of the whole transfer.
+MULTIPART_PREFER_ABOVE = 256 * 1024 * 1024  # 256 MiB
+
+
 def _fmt_bytes(n: float) -> str:
     """Human-readable byte size."""
     for unit in ("B", "KB", "MB", "GB", "TB"):
@@ -5179,6 +5195,25 @@ def upload_via_presigned(zip_path: Path, presigned_url: str, max_retries: int = 
     print(f"\n  [*] Uploading {zip_path.name} → S3 (presigned URL)")
 
     file_size = zip_path.stat().st_size
+
+    # S3/Scaleway hard limit: a single PUT accepts at most 5 GiB. Above that the
+    # object *must* be sent as a multipart upload. A plain presigned PUT larger
+    # than this is rejected by the server with HTTP 400 (EntityTooLarge) — and
+    # because we stream the body before reading the response, that rejection
+    # surfaces as a confusing "EOF occurred in violation of protocol" TLS error
+    # rather than a clean 400. Refuse up front with an actionable message.
+    if file_size > S3_SINGLE_PUT_MAX:
+        print(
+            f"  [!] Archive is {_fmt_bytes(file_size)} — larger than the "
+            f"{_fmt_bytes(S3_SINGLE_PUT_MAX)} single-PUT limit for S3/Scaleway.\n"
+            f"      This package has no multipart upload URLs baked in, so it "
+            f"cannot ship a file this large.\n"
+            f"      Re-download a fresh collector package (multipart is enabled "
+            f"by default), or upload the archive with a multipart-capable client.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     # Budget for a pessimistic 1 MB/s sustained rate: floor 900 s, cap 12 h.
     # The socket timeout is per-operation (send/recv), so this only fires when
     # the link is genuinely stalled, not merely slow.
@@ -5283,6 +5318,274 @@ def upload_via_presigned(zip_path: Path, presigned_url: str, max_retries: int = 
                     conn.close()
                 except Exception:
                     pass
+
+
+def upload_via_multipart(zip_path: Path, mp: dict, max_retries: int = 5) -> None:
+    """Upload a large archive via a pre-provisioned S3/Scaleway multipart upload.
+
+    This is the only way to ship objects larger than the 5 GiB single-PUT
+    ceiling, and it is far more robust than one giant PUT on slow/flaky links:
+    the file is split into many independently-retryable parts uploaded in
+    parallel, so a mid-transfer reset costs a single part instead of restarting
+    the whole archive.
+
+    ``mp`` is the config block baked at package-download time (the offline
+    collector has no API connectivity at runtime, so every URL is pre-signed
+    ahead of time):
+
+        {
+          "key":          object key,
+          "upload_id":    S3 multipart upload id,
+          "part_urls":    [presigned PUT url, ...],  # one per part slot
+          "complete_url": presigned POST url,        # CompleteMultipartUpload
+          "abort_url":    presigned DELETE url,      # AbortMultipartUpload (cleanup)
+          "part_size":    target part size in bytes (hint),
+          "parallelism":  concurrent part uploads,
+        }
+
+    The part size is (re)computed from the *real* file size so the number of
+    parts never exceeds the pre-provisioned slot count.
+    """
+    import concurrent.futures
+    import http.client
+    import socket as _socket
+    import ssl
+    import time
+    import urllib.parse
+
+    print(f"\n  [*] Uploading {zip_path.name} → S3 (multipart, presigned)")
+
+    file_size = zip_path.stat().st_size
+    part_urls = mp.get("part_urls") or []
+    n_slots = len(part_urls)
+    complete_url = mp.get("complete_url") or ""
+    abort_url = mp.get("abort_url") or ""
+    if not part_urls or not complete_url:
+        print("  [!] Multipart config is incomplete (missing part/complete URLs).", file=sys.stderr)
+        sys.exit(1)
+
+    # ── Choose a part size ─────────────────────────────────────────────────────
+    # Honour the baked target, but grow it if the file would need more parts than
+    # we have URL slots for. Clamp to the S3 min/max part size.
+    target = int(mp.get("part_size") or (128 * 1024 * 1024))
+    part_size = max(target, -(-file_size // max(1, n_slots)))  # ceil(size / slots)
+    part_size = max(S3_MIN_PART, min(part_size, S3_MAX_PART))
+    num_parts = max(1, -(-file_size // part_size))  # ceil
+    if num_parts > n_slots:
+        cap = n_slots * S3_MAX_PART
+        print(
+            f"  [!] Archive is {_fmt_bytes(file_size)} but this package provisioned only {n_slots} "
+            f"part slots (max {_fmt_bytes(cap)}).\n"
+            f"      Re-download a fresh collector package or reduce the collection scope.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    parallelism = max(1, min(int(mp.get("parallelism") or 4), 8, num_parts))
+    # Per-part stall timeout, scaled to part size at a pessimistic 1 MB/s floor.
+    part_timeout = min(7200, max(300, int(part_size / (1 * 1024 * 1024))))
+    print(
+        f"      Size {_fmt_bytes(file_size)}  ·  {num_parts} part(s) × {_fmt_bytes(part_size)}  ·  "
+        f"{parallelism} parallel  ·  per-part timeout {part_timeout}s"
+    )
+
+    # ── TLS context: verify by default; fall back to unverified only if the peer
+    # certificate genuinely fails (self-signed internal MinIO). Decided once, up
+    # front, so worker threads can share it.
+    sample = urllib.parse.urlsplit(part_urls[0])
+    ctx = None
+    if sample.scheme == "https":
+        ctx = ssl.create_default_context()
+        try:
+            with _socket.create_connection(
+                (sample.hostname, sample.port or 443), timeout=30
+            ) as _s:
+                with ctx.wrap_socket(_s, server_hostname=sample.hostname):
+                    pass
+        except ssl.SSLCertVerificationError:
+            print(
+                "  [!] TLS certificate did not verify; continuing without verification.",
+                file=sys.stderr,
+            )
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+        except Exception:
+            # Not a cert problem — let the per-part uploads surface it with retry.
+            pass
+
+    def _put_part(part_no: int):
+        """Upload one 1-based part; returns (part_no, etag, length). Retries."""
+        offset = (part_no - 1) * part_size
+        length = min(part_size, file_size - offset)
+        u = urllib.parse.urlsplit(part_urls[part_no - 1])
+        path = u.path + ("?" + u.query if u.query else "")
+        last_exc = None
+        for attempt in range(1, max_retries + 1):
+            conn = None
+            try:
+                if u.scheme == "https":
+                    conn = http.client.HTTPSConnection(u.netloc, context=ctx, timeout=part_timeout)
+                else:
+                    conn = http.client.HTTPConnection(u.netloc, timeout=part_timeout)
+                conn.putrequest("PUT", path)
+                conn.putheader("Content-Length", str(length))
+                conn.endheaders()
+                with open(zip_path, "rb") as fh:
+                    fh.seek(offset)
+                    remaining = length
+                    while remaining > 0:
+                        chunk = fh.read(min(4 * 1024 * 1024, remaining))
+                        if not chunk:
+                            break
+                        conn.send(chunk)
+                        remaining -= len(chunk)
+                resp = conn.getresponse()
+                body = resp.read(512)
+                if resp.status not in (200, 201):
+                    raise RuntimeError(
+                        f"HTTP {resp.status}: {body.decode(errors='replace')[:200]}"
+                    )
+                etag = resp.getheader("ETag") or resp.getheader("Etag")
+                if not etag:
+                    raise RuntimeError("part upload returned no ETag")
+                return part_no, etag, length
+            except Exception as exc:  # noqa: BLE001 — retried below
+                last_exc = exc
+                if attempt < max_retries:
+                    backoff = min(30, 3 * attempt)
+                    print(
+                        f"  [!] Part {part_no}/{num_parts} attempt {attempt} failed ({exc}); "
+                        f"retry in {backoff}s",
+                        file=sys.stderr,
+                    )
+                    time.sleep(backoff)
+            finally:
+                if conn is not None:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+        raise RuntimeError(f"part {part_no} failed after {max_retries} attempts: {last_exc}")
+
+    def _abort() -> None:
+        if not abort_url:
+            return
+        try:
+            u = urllib.parse.urlsplit(abort_url)
+            path = u.path + ("?" + u.query if u.query else "")
+            if u.scheme == "https":
+                c = http.client.HTTPSConnection(u.netloc, context=ctx, timeout=60)
+            else:
+                c = http.client.HTTPConnection(u.netloc, timeout=60)
+            c.request("DELETE", path)
+            c.getresponse().read()
+            c.close()
+            print("  [*] Aborted incomplete multipart upload (server-side parts cleaned up).")
+        except Exception as exc:  # noqa: BLE001 — best effort
+            print(f"  [!] Could not abort multipart upload: {exc}", file=sys.stderr)
+
+    # ── Upload parts in parallel ───────────────────────────────────────────────
+    etags: dict[int, str] = {}
+    done_bytes = 0
+    t0 = time.monotonic()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=parallelism) as ex:
+        futs = {ex.submit(_put_part, n): n for n in range(1, num_parts + 1)}
+        try:
+            for fut in concurrent.futures.as_completed(futs):
+                part_no, etag, length = fut.result()
+                etags[part_no] = etag
+                done_bytes += length
+                elapsed = time.monotonic() - t0
+                rate = done_bytes / elapsed if elapsed else 0
+                eta = (file_size - done_bytes) / rate if rate else 0
+                pct = done_bytes * 100 / file_size if file_size else 100
+                print(
+                    f"      {pct:5.1f}%  {len(etags)}/{num_parts} parts  "
+                    f"{_fmt_bytes(done_bytes)}/{_fmt_bytes(file_size)}  {_fmt_bytes(rate)}/s  "
+                    f"ETA {int(eta)}s",
+                    flush=True,
+                )
+        except Exception as exc:  # noqa: BLE001 — a part exhausted its retries
+            for f in futs:
+                f.cancel()
+            print(f"  [!] Multipart upload failed: {exc}", file=sys.stderr)
+            _abort()
+            sys.exit(1)
+
+    # ── Complete the multipart upload ──────────────────────────────────────────
+    parts_xml = "".join(
+        f"<Part><PartNumber>{n}</PartNumber><ETag>{etags[n]}</ETag></Part>"
+        for n in range(1, num_parts + 1)
+    )
+    xml = ("<CompleteMultipartUpload>" + parts_xml + "</CompleteMultipartUpload>").encode()
+    u = urllib.parse.urlsplit(complete_url)
+    path = u.path + ("?" + u.query if u.query else "")
+    for attempt in range(1, 4):
+        conn = None
+        try:
+            if u.scheme == "https":
+                conn = http.client.HTTPSConnection(u.netloc, context=ctx, timeout=300)
+            else:
+                conn = http.client.HTTPConnection(u.netloc, timeout=300)
+            conn.putrequest("POST", path)
+            conn.putheader("Content-Type", "application/xml")
+            conn.putheader("Content-Length", str(len(xml)))
+            conn.endheaders()
+            conn.send(xml)
+            resp = conn.getresponse()
+            body = resp.read().decode(errors="replace")
+            # S3 can return HTTP 200 with an <Error> body on completion failure.
+            if resp.status not in (200, 201) or "<Error>" in body:
+                raise RuntimeError(f"HTTP {resp.status}: {body[:300]}")
+            elapsed = time.monotonic() - t0
+            avg = file_size / elapsed if elapsed else 0
+            print(
+                f"  [+] Upload successful  ({num_parts} parts, HTTP {resp.status}, "
+                f"{_fmt_bytes(avg)}/s avg)"
+            )
+            return
+        except Exception as exc:  # noqa: BLE001
+            if attempt >= 3:
+                print(f"  [!] Multipart completion failed: {exc}", file=sys.stderr)
+                _abort()
+                sys.exit(1)
+            print(
+                f"  [!] Completion attempt {attempt} failed ({exc}); retrying in {5 * attempt}s",
+                file=sys.stderr,
+            )
+            time.sleep(5 * attempt)
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+
+def _abort_multipart(mp: dict) -> None:
+    """Best-effort release of a pre-initiated multipart upload we did not use —
+    e.g. the archive was small enough for a single PUT. The API provisions a
+    multipart session for every package up front (the offline collector cannot
+    call back to initiate one at runtime); if we never use it, aborting here
+    stops orphaned incomplete uploads from accruing storage cost. Never raises.
+    """
+    import ssl
+    import urllib.request
+
+    abort_url = (mp or {}).get("abort_url")
+    if not abort_url:
+        return
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    try:
+        req = urllib.request.Request(abort_url, method="DELETE")
+        with urllib.request.urlopen(req, timeout=60, context=ctx) as r:
+            r.read()
+        print("  [*] Released unused multipart upload slot.")
+    except Exception:  # noqa: BLE001 — cleanup is best effort
+        pass
 
 
 def upload_log_via_presigned(log_path: Path, presigned_url: str) -> bool:
@@ -5500,6 +5803,7 @@ def main() -> None:
     api_token = cfg.get("api_token", "")
     presigned_url = cfg.get("presigned_url", "")
     presigned_log_url = cfg.get("presigned_log_url", "")
+    multipart_upload = cfg.get("multipart_upload") or None
     case_name = cfg.get("case_name", "") or ""
 
     # Build output path — case_name, hostname, date, OS type in filename
@@ -5561,7 +5865,9 @@ def main() -> None:
     if case_name:
         print(f"  Case      : {case_name}")
     print(f"  Output    : {output}")
-    if presigned_url:
+    if multipart_upload:
+        print("  Upload    : S3 presigned (multipart for large files)")
+    elif presigned_url:
         print("  Upload    : S3 presigned URL")
     elif api_url and case_id:
         print(f"  Upload    : {api_url}  →  case {case_id}")
@@ -5724,8 +6030,18 @@ def main() -> None:
                 file=sys.stderr,
             )
             rc = 2
+        elif multipart_upload and (
+            output.stat().st_size > MULTIPART_PREFER_ABOVE or not presigned_url
+        ):
+            # Large archives (and anything over the single-PUT ceiling) go via
+            # parallel multipart — the robust path on slow/flaky WAN links.
+            upload_via_multipart(output, multipart_upload)
         elif presigned_url:
             upload_via_presigned(output, presigned_url)
+            # Small archive: we took the single PUT, so release the multipart
+            # session the API pre-provisioned for us (avoids an orphan).
+            if multipart_upload:
+                _abort_multipart(multipart_upload)
         elif api_url and case_id:
             upload_to_fo(output, api_url, case_id, api_token=api_token)
         elif api_url or case_id:

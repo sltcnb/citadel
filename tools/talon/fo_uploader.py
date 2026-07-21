@@ -21,6 +21,7 @@ from __future__ import annotations
 
 # ── Injected configuration — DO NOT EDIT ─────────────────────────────────────
 PRESIGNED_URLS = []  # Pre-signed PUT URLs — one slot per file (preferred, no credentials needed)
+MULTIPART_UPLOADS = []  # Pre-provisioned multipart sessions (per file slot) for files > 5 GiB
 ENDPOINT = ""  # S3 endpoint hostname (credentials mode)
 ACCESS_KEY = ""  # S3 access key        (credentials mode)
 SECRET_KEY = ""  # S3 secret key        (credentials mode)
@@ -59,6 +60,11 @@ def _upload_presigned(file_path: Path, url: str) -> str:
     Returns the SHA-256 hex digest of the uploaded file.
     """
     size = file_path.stat().st_size
+    if size > _S3_SINGLE_PUT_MAX:
+        raise RuntimeError(
+            f"{file_path.name} is {size / 1024 ** 3:.1f} GiB — larger than the 5 GiB single-PUT "
+            f"limit. Re-download the uploader from ForensicsOperator for multipart support."
+        )
     digest = _sha256(file_path)
     size_mb = size / 1024 / 1024
 
@@ -97,6 +103,170 @@ def _upload_presigned(file_path: Path, url: str) -> str:
 
     if resp.status not in (200, 204):
         raise RuntimeError(f"Upload rejected: HTTP {resp.status} {resp.reason}")
+
+    print("\n  Uploaded successfully.")
+    return digest
+
+
+# ── Multipart pre-signed upload (stdlib only) ────────────────────────────────
+# S3 / Scaleway limits fixed by the API contract: a single PUT accepts at most
+# 5 GiB, a part is 5 MiB–5 GiB, and an upload has at most 10 000 parts.
+_S3_SINGLE_PUT_MAX = 5 * 1024 * 1024 * 1024  # 5 GiB
+_S3_MIN_PART = 5 * 1024 * 1024  # 5 MiB
+_S3_MAX_PART = 5 * 1024 * 1024 * 1024  # 5 GiB
+_MULTIPART_PREFER_ABOVE = 256 * 1024 * 1024  # 256 MiB
+
+
+def _abort_multipart(mp: dict) -> None:
+    """Best-effort release of an unused/failed multipart session. Never raises."""
+    import urllib.request
+
+    abort_url = (mp or {}).get("abort_url")
+    if not abort_url:
+        return
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    try:
+        req = urllib.request.Request(abort_url, method="DELETE")
+        with urllib.request.urlopen(req, timeout=60, context=ctx) as r:
+            r.read()
+    except Exception:
+        pass
+
+
+def _upload_multipart(file_path: Path, mp: dict) -> str:
+    """Upload via a pre-provisioned S3 multipart session — the only way to ship
+    objects over the 5 GiB single-PUT ceiling, and far more robust on slow links
+    (many small, independently-retryable parts uploaded in parallel). Returns
+    the SHA-256 hex digest. Aborts the multipart upload on failure."""
+    import concurrent.futures
+    import socket as _socket
+    import time
+
+    size = file_path.stat().st_size
+    digest = _sha256(file_path)
+    print(f"\nUploading {file_path.name} ({size / 1024 / 1024:.1f} MB) via multipart")
+    print(f"  SHA-256 : {digest}")
+
+    part_urls = mp.get("part_urls") or []
+    n_slots = len(part_urls)
+    complete_url = mp.get("complete_url") or ""
+    if not part_urls or not complete_url:
+        raise RuntimeError("multipart config is incomplete (missing part/complete URLs)")
+
+    target = int(mp.get("part_size") or (128 * 1024 * 1024))
+    part_size = max(target, -(-size // max(1, n_slots)))  # ceil(size / slots)
+    part_size = max(_S3_MIN_PART, min(part_size, _S3_MAX_PART))
+    num_parts = max(1, -(-size // part_size))  # ceil
+    if num_parts > n_slots:
+        cap = n_slots * _S3_MAX_PART // (1024 ** 3)
+        raise RuntimeError(
+            f"file needs {num_parts} parts but only {n_slots} slots were provisioned "
+            f"(max ~{cap} GiB); re-download the uploader"
+        )
+    parallelism = max(1, min(int(mp.get("parallelism") or 4), 8, num_parts))
+    part_timeout = min(7200, max(300, part_size // (1024 * 1024)))
+
+    sample = urllib.parse.urlsplit(part_urls[0])
+    ctx = None
+    if sample.scheme == "https":
+        ctx = ssl.create_default_context()
+        try:
+            with _socket.create_connection(
+                (sample.hostname, sample.port or 443), timeout=30
+            ) as _s:
+                with ctx.wrap_socket(_s, server_hostname=sample.hostname):
+                    pass
+        except ssl.SSLCertVerificationError:
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+        except Exception:
+            pass
+
+    def _put_part(part_no):
+        offset = (part_no - 1) * part_size
+        length = min(part_size, size - offset)
+        u = urllib.parse.urlsplit(part_urls[part_no - 1])
+        path = u.path + ("?" + u.query if u.query else "")
+        last = None
+        for attempt in range(1, 6):
+            conn = None
+            try:
+                if u.scheme == "https":
+                    conn = http.client.HTTPSConnection(u.netloc, context=ctx, timeout=part_timeout)
+                else:
+                    conn = http.client.HTTPConnection(u.netloc, timeout=part_timeout)
+                conn.putrequest("PUT", path)
+                conn.putheader("Content-Length", str(length))
+                conn.endheaders()
+                with open(file_path, "rb") as fh:
+                    fh.seek(offset)
+                    remaining = length
+                    while remaining > 0:
+                        chunk = fh.read(min(4 * 1024 * 1024, remaining))
+                        if not chunk:
+                            break
+                        conn.send(chunk)
+                        remaining -= len(chunk)
+                resp = conn.getresponse()
+                body = resp.read(512)
+                if resp.status not in (200, 201):
+                    raise RuntimeError(f"HTTP {resp.status}: {body[:200]!r}")
+                etag = resp.getheader("ETag") or resp.getheader("Etag")
+                if not etag:
+                    raise RuntimeError("part response had no ETag")
+                return part_no, etag, length
+            except Exception as exc:
+                last = exc
+                if attempt < 5:
+                    time.sleep(min(30, 3 * attempt))
+            finally:
+                if conn is not None:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+        raise RuntimeError(f"part {part_no} failed after 5 attempts: {last}")
+
+    try:
+        etags = {}
+        done = 0
+        with concurrent.futures.ThreadPoolExecutor(max_workers=parallelism) as ex:
+            futs = [ex.submit(_put_part, n) for n in range(1, num_parts + 1)]
+            for fut in concurrent.futures.as_completed(futs):
+                part_no, etag, length = fut.result()
+                etags[part_no] = etag
+                done += length
+                pct = int(done * 100 / size) if size else 100
+                bar = "#" * (pct // 2) + "-" * (50 - pct // 2)
+                print(f"\r  [{bar}] {pct:3d}% ({len(etags)}/{num_parts})", end="", flush=True)
+
+        parts_xml = "".join(
+            f"<Part><PartNumber>{n}</PartNumber><ETag>{etags[n]}</ETag></Part>"
+            for n in range(1, num_parts + 1)
+        )
+        xml = ("<CompleteMultipartUpload>" + parts_xml + "</CompleteMultipartUpload>").encode()
+        u = urllib.parse.urlsplit(complete_url)
+        path = u.path + ("?" + u.query if u.query else "")
+        if u.scheme == "https":
+            conn = http.client.HTTPSConnection(u.netloc, context=ctx, timeout=300)
+        else:
+            conn = http.client.HTTPConnection(u.netloc, timeout=300)
+        conn.putrequest("POST", path)
+        conn.putheader("Content-Type", "application/xml")
+        conn.putheader("Content-Length", str(len(xml)))
+        conn.endheaders()
+        conn.send(xml)
+        resp = conn.getresponse()
+        cbody = resp.read().decode("utf-8", "replace")
+        conn.close()
+        if resp.status not in (200, 201) or "<Error>" in cbody:
+            raise RuntimeError(f"complete failed: HTTP {resp.status}: {cbody[:200]}")
+    except Exception:
+        _abort_multipart(mp)
+        raise
 
     print("\n  Uploaded successfully.")
     return digest
@@ -238,11 +408,21 @@ def main() -> None:
                 file=sys.stderr,
             )
             files = files[:slots]
-        for file_path, url in zip(files, PRESIGNED_URLS):
+        for i, (file_path, url) in enumerate(zip(files, PRESIGNED_URLS)):  # noqa: B905 — py3.6 compat
             if not file_path.exists():
                 print(f"ERROR: File not found: {file_path}", file=sys.stderr)
                 continue
-            digest = _upload_presigned(file_path, url)
+            mp = MULTIPART_UPLOADS[i] if i < len(MULTIPART_UPLOADS) else None
+            if mp and file_path.stat().st_size > _MULTIPART_PREFER_ABOVE:
+                # Large archive (and anything over the single-PUT ceiling): use
+                # the robust parallel multipart path.
+                digest = _upload_multipart(file_path, mp)
+            else:
+                digest = _upload_presigned(file_path, url)
+                # Small archive took the single PUT — release the multipart
+                # session the server pre-provisioned so it does not orphan.
+                if mp:
+                    _abort_multipart(mp)
             print("\n  Chain of custody hash  (record this):")
             print(f"  File   : {file_path.name}")
             print(f"  SHA-256: {digest}")
