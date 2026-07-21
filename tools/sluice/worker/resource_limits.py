@@ -111,10 +111,14 @@ def _child_entrypoint(func, args, kwargs, queue, cpu_seconds, mem_bytes, nproc) 
             resource.setrlimit(resource.RLIMIT_AS, (mem_bytes, mem_bytes))
         except (ValueError, OSError):
             pass
-        try:
-            resource.setrlimit(resource.RLIMIT_NPROC, (nproc, nproc))
-        except (ValueError, OSError):
-            pass
+        # NB: RLIMIT_NPROC is intentionally NOT applied. It caps processes for
+        # the whole real UID (not this child's subtree), and the worker
+        # container already runs many threads/processes under the same uid
+        # (Celery prefork + its thread pools). Setting it below the current
+        # count makes even one queue.put() feeder thread fail with
+        # "can't start new thread", so it broke every sandboxed call. Fork-bomb
+        # protection belongs at the pod cgroup (pids.max), not a per-uid rlimit.
+        _ = nproc  # accepted for signature/back-compat; deliberately unused
     except ImportError:
         pass
     except Exception:  # noqa: BLE001
@@ -178,9 +182,25 @@ def run_limited(
     proc = ctx.Process(
         target=_child_entrypoint,
         args=(func, args, kwargs, queue, cpu_seconds, mem_bytes, nproc),
-        daemon=True,
+        # NOT daemon: (1) Celery's prefork workers are themselves daemonic and a
+        # daemonic process may not start children, and (2) some parsers (e.g.
+        # Volatility 3) fork their own workers, which a daemonic child forbids.
+        # The child stays bounded by the rlimits, RLIMIT_NPROC, and the
+        # join/terminate/kill below, so it cannot run away or leak.
+        daemon=False,
     )
-    proc.start()
+    # Celery's prefork pool runs this task inside a daemonic worker process, and
+    # multiprocessing refuses to let a daemonic process create children
+    # ("daemonic processes are not allowed to have children"). Temporarily clear
+    # the current process's daemon flag across start(); the child is joined (and
+    # terminated on timeout) right here, so nothing else observes the change.
+    _cur = multiprocessing.current_process()
+    _saved_daemon = _cur._config.get("daemon")
+    _cur._config["daemon"] = False
+    try:
+        proc.start()
+    finally:
+        _cur._config["daemon"] = _saved_daemon
     proc.join(timeout)
 
     if proc.is_alive():
