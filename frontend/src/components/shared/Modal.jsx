@@ -26,12 +26,25 @@ export default function Modal({
   const boxRef = useRef(null)
   const restoreRef = useRef(null)
 
+  // Keep the latest onClose without making it an effect dependency. Callers
+  // routinely pass an inline arrow (`onClose={() => setOpen(false)}`), whose
+  // identity changes on every parent render — so if the setup effect depended
+  // on onClose it would tear down and re-run on each keystroke inside the
+  // dialog, yanking focus back to the first focusable (the close button). The
+  // effect must run once per mount only.
+  const onCloseRef = useRef(onClose)
+  useEffect(() => {
+    onCloseRef.current = onClose
+  }, [onClose])
+
   useEffect(() => {
     restoreRef.current = document.activeElement
 
-    // Move focus into the dialog (first focusable, else the box itself).
+    // Move focus into the dialog on open — but only if a child hasn't already
+    // claimed it (e.g. an input with autoFocus). Otherwise focus the first
+    // focusable, else the box itself.
     const box = boxRef.current
-    if (box) {
+    if (box && !box.contains(document.activeElement)) {
       const first = box.querySelector(FOCUSABLE)
       ;(first || box).focus?.()
     }
@@ -39,7 +52,7 @@ export default function Modal({
     function onKeyDown(e) {
       if (e.key === 'Escape') {
         e.stopPropagation()
-        onClose?.()
+        onCloseRef.current?.()
         return
       }
       if (e.key !== 'Tab') return
@@ -70,7 +83,10 @@ export default function Modal({
       const el = restoreRef.current
       if (el && typeof el.focus === 'function') el.focus()
     }
-  }, [onClose])
+    // Mount-once: focus trap + listener are set up when the dialog opens and
+    // torn down when it unmounts — never on onClose identity changes (onClose
+    // is read via onCloseRef, so it is intentionally not a dependency).
+  }, [])
 
   return (
     <div
