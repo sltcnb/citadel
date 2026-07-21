@@ -8,6 +8,10 @@ from citadel_contracts import redis_url_with_auth
 class Settings:
     # ── Infrastructure ─────────────────────────────────────────────────────
     ELASTICSEARCH_URL: str = os.getenv("ELASTICSEARCH_URL", "http://elasticsearch-service:9200")
+    # ES runs with xpack.security enabled; every request must carry HTTP Basic
+    # auth for the built-in `elastic` user (password from the elasticsearch-secret).
+    ELASTICSEARCH_USERNAME: str = os.getenv("ELASTICSEARCH_USERNAME", "")
+    ELASTICSEARCH_PASSWORD: str = os.getenv("ELASTICSEARCH_PASSWORD", "")
     # REDIS_URL carries the AUTH credential from REDIS_PASSWORD folded in, so a
     # plain redis.from_url(REDIS_URL) authenticates against a --requirepass Redis.
     REDIS_URL: str = redis_url_with_auth(
