@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -98,11 +99,28 @@ class LicenseClient:
                 payload["signing_key"] = candidate_signing
             try:
                 LICENSE_OVERRIDE_FILE.parent.mkdir(parents=True, exist_ok=True)
-                LICENSE_OVERRIDE_FILE.write_text(json.dumps(payload), encoding="utf-8")
+                # Atomic write: stage in a temp file in the same directory and
+                # rename it over the target. Rename only needs write on the
+                # *directory*, so this still succeeds when an existing license
+                # file is owned by another user (e.g. a root-owned file left by a
+                # pre-hardening pod that the non-root pod can no longer truncate),
+                # and it never leaves a half-written license on crash.
+                fd, tmp = tempfile.mkstemp(
+                    dir=str(LICENSE_OVERRIDE_FILE.parent),
+                    prefix=".citadel-license.",
+                    suffix=".tmp",
+                )
                 try:
-                    os.chmod(LICENSE_OVERRIDE_FILE, 0o600)
+                    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                        fh.write(json.dumps(payload))
+                    os.chmod(tmp, 0o600)
+                    os.replace(tmp, LICENSE_OVERRIDE_FILE)
                 except OSError:
-                    pass
+                    try:
+                        os.unlink(tmp)
+                    except OSError:
+                        pass
+                    raise
             except OSError as exc:
                 raise RuntimeError(f"could not persist license file: {exc}") from exc
             self._key = key
