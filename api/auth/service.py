@@ -4,25 +4,22 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Optional
 
-import re
-
+import bcrypt
 import redis_keys as rk
 from jose import jwt
-from passlib.context import CryptContext
+from services.redis_mutate import mutate_json
 
 from auth import rbac
 from config import get_redis as _redis
 from config import settings
-from services.redis_mutate import mutate_json
 
 logger = logging.getLogger(__name__)
-
-_pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # Keep module-level aliases so external importers (main.py) don't break.
 _USERS_SET = rk.USERS_SET
@@ -34,12 +31,24 @@ _GROUPS_KEY = "fo:groups"
 # ── Password helpers ──────────────────────────────────────────────────────────
 
 
+def _bcrypt_bytes(password: str) -> bytes:
+    """bcrypt uses at most the first 72 bytes of a password. bcrypt 5.x raises on
+    longer input instead of truncating, and passlib 1.7.4 is incompatible with
+    bcrypt >= 4 (it reads the removed ``bcrypt.__about__``), so we call bcrypt
+    directly. Truncating to 72 bytes matches what every previously stored hash
+    already encoded, so existing logins keep verifying unchanged."""
+    return password.encode("utf-8")[:72]
+
+
 def hash_password(password: str) -> str:
-    return _pwd_ctx.hash(password)
+    return bcrypt.hashpw(_bcrypt_bytes(password), bcrypt.gensalt()).decode("ascii")
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return _pwd_ctx.verify(plain, hashed)
+    try:
+        return bcrypt.checkpw(_bcrypt_bytes(plain), hashed.encode("utf-8"))
+    except (ValueError, TypeError):
+        return False
 
 
 # ── JWT helpers ───────────────────────────────────────────────────────────────
