@@ -5,7 +5,7 @@ minio==7.2.20
 python-evtx==0.8.1
 python-registry==1.3.1
 olefile==0.47          # Jump Lists (AutomaticDestinations OLE / DestList)
-LnkParse3==1.4.0
+LnkParse3==1.6.0
 mft==0.7.0
 python-magic==0.4.27
 pyhindsight>=20260600
