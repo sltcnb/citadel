@@ -40,7 +40,7 @@ jobs:
       # for scanning. Emulated arm64 under QEMU is ~10-50x slower (pip crawls),
       # so the cross-arch build runs only on release tags below.
       - name: Build image (amd64)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ${{ matrix.image.context }}
           file: ${{ matrix.image.dockerfile }}
@@ -52,7 +52,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=${{ matrix.image.name }}
       - name: Build multi-arch (release tags only)
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ${{ matrix.image.context }}
           file: ${{ matrix.image.dockerfile }}
