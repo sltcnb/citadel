@@ -35,6 +35,17 @@ registration. See `tools/babel/sdk/README.md`.
 - Never `import` another tool's internals. Cross only via contracts.
 - Timestamps are ISO-8601 **Z**; structured artifact types must carry `raw`.
 - Add a test; `scripts/run_tests.sh` must stay green.
+- **Never commit real evidence, case data, or identifiers** — not in tests, not
+  in fixtures, not in an issue attachment. Synthesise fixtures from the format
+  spec instead (see `tools/sluice/worker/collection_inventory.py`). This is
+  binding, not advisory: see
+  [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md#handling-evidence-and-sensitive-data).
+
+## Code of conduct
+
+Participation is governed by [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md), which
+covers the usual community standards plus the obligations specific to forensics
+tooling — handling evidence, case data, and dual-use technique responsibly.
 
 See the **Architecture** and **Develop, test & contribute** sections of the
 [root README](README.md), plus the contract schemas in [`contracts/`](contracts/),
