@@ -5778,9 +5778,14 @@ def _ids_surfaced_in_run(run: dict) -> list[str]:
     "/cases/{case_id}/ai/agent/{run_idx}/flag_evidence",
     dependencies=[Depends(require_feature("ai_assist"))],
 )
-def ai_agent_flag_evidence(case_id: str, run_idx: int, user: dict = Depends(require_admin)):
+def ai_agent_flag_evidence(case_id: str, run_idx: int):
     """Flag every event surfaced during an agent run so they show up in the
-    case's flagged filter. Idempotent — re-flagging is a no-op."""
+    case's flagged filter. Idempotent — re-flagging is a no-op.
+
+    Authz is the router-level analyst-or-admin gate (same as running the agent);
+    flagging events is an analyst action — see the single-event flag endpoint,
+    which only needs case access — so this must NOT additionally require admin
+    (that gave analysts who ran the agent a 403 when flagging its findings)."""
     run = _load_agent_run(case_id, run_idx)
     if not run:
         raise HTTPException(404, "Agent run not found")
@@ -5788,12 +5793,11 @@ def ai_agent_flag_evidence(case_id: str, run_idx: int, user: dict = Depends(requ
     if not fo_ids:
         return {"flagged": 0, "skipped": 0, "note": "no fo_ids surfaced in this run"}
 
-    import urllib.error
-
     from services.elasticsearch import _request as _es_req
 
     index = f"fo-case-{case_id}-*"
     flagged = skipped = 0
+    last_err = None
     note = f"AI agent run #{run_idx} — {(run.get('circumstance') or '')[:120]}"
     for fo_id in fo_ids:
         try:
@@ -5818,8 +5822,16 @@ def ai_agent_flag_evidence(case_id: str, run_idx: int, user: dict = Depends(requ
                 },
             )
             flagged += 1
-        except (urllib.error.HTTPError, Exception):
+        except Exception as exc:  # noqa: BLE001 - collected and surfaced below
+            last_err = exc
             skipped += 1
+    # Don't silently return "flagged: 0" when every update failed (e.g. an
+    # Elasticsearch auth/connection error): that reads to the user as a no-op.
+    # Surface the real reason so the failure is actionable.
+    if flagged == 0 and skipped:
+        raise HTTPException(
+            502, f"could not flag events — Elasticsearch update failed: {last_err}"
+        )
     return {"flagged": flagged, "skipped": skipped, "fo_ids": fo_ids}
 
 
@@ -5832,7 +5844,7 @@ def ai_agent_flag_evidence(case_id: str, run_idx: int, user: dict = Depends(requ
 )
 def ai_agent_pin_evidence_compat(case_id: str, run_idx: int, user: dict = Depends(require_admin)):
     """Deprecated — use /flag_evidence. Internally flags the events."""
-    return ai_agent_flag_evidence(case_id, run_idx, user)
+    return ai_agent_flag_evidence(case_id, run_idx)
 
 
 @router.post(
