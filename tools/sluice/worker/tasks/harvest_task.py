@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 import redis
+import robustness
 from celery_app import REDIS_URL, app  # REDIS_URL carries REDIS_PASSWORD auth
 
 logger = logging.getLogger(__name__)
@@ -684,6 +685,7 @@ class _FsAccess:
                 return self._extract_image_file(rel_path, dest)
             src = self._mount_root / self._local_path(rel_path)
             if src.is_file() and src.stat().st_size > 0:
+                robustness.require_scratch(src.stat().st_size)
                 shutil.copy2(src, dest)
                 return True
             return False
@@ -711,6 +713,9 @@ class _FsAccess:
         size = f.info.meta.size if f.info.meta else 0
         if size <= 0:
             return False
+        # Skip a file that would overflow the scratch budget (e.g. a multi-GB
+        # pagefile/hiberfil carved from the image); raises, caught by extract_to.
+        robustness.require_scratch(size)
         CHUNK = 1024 * 1024
         with dest.open("wb") as fh:
             offset = 0
@@ -862,23 +867,28 @@ def _collect_category(
         nonlocal dispatched
         local_dest = work_dir / (local_name or original_filename)
         if fs.extract_to(rel_path, local_dest):
-            job = _upload_and_dispatch(
-                minio,
-                r,
-                local_dest,
-                case_id,
-                run_id,
-                original_filename,
-                category,
-                minio_name=minio_name or local_name,
-            )
-            if job:
-                dispatched += 1
+            try:
+                job = _upload_and_dispatch(
+                    minio,
+                    r,
+                    local_dest,
+                    case_id,
+                    run_id,
+                    original_filename,
+                    category,
+                    minio_name=minio_name or local_name,
+                )
+                if job:
+                    dispatched += 1
+                    return True
+            finally:
+                # Always drop the local copy — success or failure — so a failed
+                # upload doesn't leave extracted files piling up in /tmp for the
+                # whole run (accelerates emptyDir overflow → eviction).
                 try:
                     local_dest.unlink()
                 except Exception:
                     pass
-                return True
         return False
 
     # 1. Specific named paths
@@ -1059,6 +1069,14 @@ def run_harvest(
             image_name = Path(minio_object_key).name
             local_image = work_dir / image_name
             logger.info("[%s] Downloading image from MinIO: %s", run_id, minio_object_key)
+            # DISK GUARD: a raw disk image can be hundreds of GB — refuse it if it
+            # won't fit the /tmp scratch budget, so the harvest fails cleanly
+            # instead of overflowing the emptyDir and getting the pod evicted.
+            try:
+                _img_size = minio.stat_object(MINIO_BUCKET, minio_object_key).size or 0
+            except Exception:  # noqa: BLE001 - size is best-effort
+                _img_size = 0
+            robustness.require_scratch(_img_size)
             minio.fget_object(MINIO_BUCKET, minio_object_key, str(local_image))
             logger.info("[%s] Downloaded %d bytes", run_id, local_image.stat().st_size)
             source_path = str(local_image)
