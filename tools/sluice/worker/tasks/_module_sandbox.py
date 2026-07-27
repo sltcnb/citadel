@@ -43,22 +43,27 @@ os.environ["HOME"] = args.get("work_dir", "/tmp")
 try:
     import resource as _resource
 
-    _CPU_SEC = int(args.get("limit_cpu_seconds", 3600))  # 1 h wall CPU
-    _MEM_BYTES = int(args.get("limit_memory_bytes", 2 * 1024**3))  # 2 GB virtual
-    _FSIZE = int(args.get("limit_fsize_bytes", 500 * 1024**2))  # 500 MB writes
-    _NPROC = int(args.get("limit_nproc", 64))  # child processes
+    _CPU_SEC = int(args.get("limit_cpu_seconds", 3600))  # aggregate CPU; 0 = off
+    _MEM_BYTES = int(args.get("limit_memory_bytes", 8 * 1024**3))  # 8 GB virtual; 0 = off
+    _FSIZE = int(args.get("limit_fsize_bytes", 20 * 1024**3))  # 20 GB writes (was 500 MB)
 
-    _resource.setrlimit(_resource.RLIMIT_CPU, (_CPU_SEC, _CPU_SEC + 60))
-    _resource.setrlimit(_resource.RLIMIT_AS, (_MEM_BYTES, _MEM_BYTES))
-    _resource.setrlimit(_resource.RLIMIT_FSIZE, (_FSIZE, _FSIZE))
-    # RLIMIT_NPROC limits fork()/clone() — prevents fork-bombs
-    try:
-        _resource.setrlimit(_resource.RLIMIT_NPROC, (_NPROC, _NPROC))
-    except (ValueError, OSError):
-        pass  # may fail if current nproc already exceeds limit
+    # Each cap applied only when > 0. RLIMIT_NPROC is NOT applied: it caps
+    # processes for the whole shared UID (not this subtree), so in the multi-
+    # threaded worker container it made even a single result thread fail with
+    # "can't start new thread". Fork-bomb protection belongs at the pod cgroup
+    # (pids.max), not a per-UID rlimit.
+    if _CPU_SEC > 0:
+        _resource.setrlimit(_resource.RLIMIT_CPU, (_CPU_SEC, _CPU_SEC + 60))
+    if _MEM_BYTES > 0:
+        try:
+            _resource.setrlimit(_resource.RLIMIT_AS, (_MEM_BYTES, _MEM_BYTES))
+        except (ValueError, OSError):
+            pass
+    if _FSIZE > 0:
+        _resource.setrlimit(_resource.RLIMIT_FSIZE, (_FSIZE, _FSIZE))
     print(
         f"[sandbox] limits set: cpu={_CPU_SEC}s mem={_MEM_BYTES // 1024 // 1024}MB "
-        f"fsize={_FSIZE // 1024 // 1024}MB nproc={_NPROC}",
+        f"fsize={_FSIZE // 1024 // 1024}MB (nproc: cgroup-enforced)",
         file=sys.stderr,
     )
 except ImportError:
