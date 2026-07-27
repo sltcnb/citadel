@@ -134,6 +134,19 @@ spec:
               value: "4294967296"
             - name: SANDBOX_TIMEOUT_SEC
               value: "3600"
+            # PARSER_* govern the BUILT-IN tools (Hayabusa, Volatility 3, YARA,
+            # RegRipper, Windows Triage, Hindsight) via resource_limits.run_limited
+            # — distinct from SANDBOX_* above, which only govern custom Studio
+            # modules. PARSER_CPU_SECONDS=0 disables the aggregate-CPU cap (it
+            # SIGXCPU-kills multi-threaded tools); RAM is bounded by the pod
+            # memory limit + the 2 h wall timeout. Raise PARSER_MEMORY_BYTES for
+            # very large memory images (it caps VIRTUAL address space).
+            - name: PARSER_CPU_SECONDS
+              value: "0"
+            - name: PARSER_MEMORY_BYTES
+              value: "12884901888"  # 12 GiB virtual-address-space cap
+            - name: PARSER_WALL_TIMEOUT_SEC
+              value: "7200"  # 2 h
             - name: MODULES_DIR
               value: "/app/anvil"
             # Post-ingestion chain → API (CTI IOC match + AI risk).
