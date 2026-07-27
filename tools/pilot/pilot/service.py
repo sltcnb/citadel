@@ -3879,9 +3879,17 @@ def _parse_agent_step(raw: str) -> dict:
 # Absence of evidence is only evidence of absence where the field exists. These
 # helpers let every search say which it is.
 
+# `_auto_broaden` is re-exported even though this module no longer calls it:
+# api/routers/llm_config.py is a shim that mirrors this namespace, so every
+# private helper here is part of a public import contract
+# (`from routers.llm_config import _auto_broaden`) that api/routers/test_pilot_agent.py
+# and any operator script depend on. Dropping a name from here breaks them.
 try:  # package import (installed / normal runtime)
     from pilot.query_strategy import (
         USABLE_HIT_CEILING as _USABLE_HIT_CEILING,
+    )
+    from pilot.query_strategy import (
+        auto_broaden as _auto_broaden,  # noqa: F401 — re-exported via the shim
     )
     from pilot.query_strategy import (
         broaden_ladder as _broaden_ladder,
@@ -3895,6 +3903,9 @@ try:  # package import (installed / normal runtime)
 except ImportError:  # loaded as a bare module (dev tree / tests)
     from query_strategy import (  # type: ignore[no-redef]
         USABLE_HIT_CEILING as _USABLE_HIT_CEILING,
+    )
+    from query_strategy import (  # type: ignore[no-redef]
+        auto_broaden as _auto_broaden,  # noqa: F401 — re-exported via the shim
     )
     from query_strategy import (  # type: ignore[no-redef]
         broaden_ladder as _broaden_ladder,

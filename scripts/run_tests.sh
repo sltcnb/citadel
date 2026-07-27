@@ -22,6 +22,7 @@ SUITES=(
   "tools/rosetta/tests/test_daemon.py"
   "tools/augur/tests/test_phase2_close.py"
   "tools/pilot/tests/test_query_strategy.py"
+  "tools/pilot/tests/test_shim_contract.py"
   "tools/talon/tests/test_secure_upload.py"
   "tools/talon/tests/test_chunker.py"
   "tools/sluice/worker/tests/test_routing_coverage.py"
