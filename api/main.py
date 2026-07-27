@@ -18,8 +18,15 @@ _REQUEST_WINDOW: collections.deque = collections.deque(maxlen=2000)
 _REQUEST_TOTALS = {"count": 0, "errors": 0}  # monotonic counters, never reset
 
 import redis_keys as rk
-from auth.dependencies import require_admin, require_analyst_or_admin, require_developer_or_admin
+from auth import rbac
+from auth.dependencies import (
+    require_admin,
+    require_analyst_or_admin,
+    require_developer_or_admin,
+    require_permission,
+)
 from license.router import router as license_router
+from logging_config import configure_logging
 from routers import (
     admin_dead_letter,
     admin_logs,
@@ -64,16 +71,16 @@ from routers import (
     sigma_sync,
     sso,
     timeline_views,
-    tools as tools_router,
     watchlist,
     webhooks,
     yara_rules,
 )
 from routers import auth as auth_router
+from routers import (
+    tools as tools_router,
+)
 
 from config import settings
-
-from logging_config import configure_logging
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -499,8 +506,9 @@ async def _storage_reconcile_loop():
     while True:
         if settings.STORAGE_RECONCILE_SCHEDULE_ENABLED:
             try:
-                from config import get_redis
                 from services import storage_reconcile as _sr
+
+                from config import get_redis
 
                 r = get_redis()
                 # Single-flight across uvicorn workers / replicas: only the holder
@@ -520,6 +528,7 @@ async def _on_startup():
     # (citadel:logs:api). Best-effort — never block startup on it.
     try:
         from citadel_contracts import attach_redis_logs
+
         from config import get_redis
         attach_redis_logs("api", get_redis())
         # Dedicated "tools" stream — the tool↔Citadel orchestration choreography
@@ -595,8 +604,6 @@ async def _on_startup():
     # shows what each tool advertised when plugged in — live confirmation of the
     # declaration → UI contract.
     try:
-        from routers.tools import _aggregate
-
         # Seed Redis from the baked-in manifests. Only LOG an announce when a
         # tool's manifest is new or changed — otherwise every restart would
         # repeat the same announcements and spam the orchestration log.
@@ -604,7 +611,7 @@ async def _on_startup():
         import logging as _lg2
 
         from citadel_contracts import capabilities_redis_key, register_capability
-        from routers.tools import _from_filesystem
+        from routers.tools import _aggregate, _from_filesystem
 
         _tlog = _lg2.getLogger("citadel.tools")
         _r = get_redis()
@@ -652,6 +659,12 @@ async def _on_startup():
 _analyst_or_admin = [Depends(require_analyst_or_admin)]
 _developer_or_admin = [Depends(require_developer_or_admin)]
 _admin_only = [Depends(require_admin)]
+# Ingestion is gated by the fine-grained ``ingest.write`` PERMISSION rather than
+# a coarse role list, so it respects groups + per-user grants (finer RBAC). The
+# built-in roles that should ingest already carry it via their presets
+# (analyst + developer + admin); guests do not. Admins can now grant/revoke
+# ingest to any user or group without a code change.
+_can_ingest = [Depends(require_permission(rbac.INGEST_WRITE))]
 
 # ── Routers ────────────────────────────────────────────────────────────────────
 
@@ -668,7 +681,7 @@ app.include_router(groups.catalog_router, prefix="/api/v1")
 
 # Protected — analyst or admin
 app.include_router(cases.router, prefix="/api/v1", dependencies=_analyst_or_admin)
-app.include_router(ingest.router, prefix="/api/v1", dependencies=_analyst_or_admin)
+app.include_router(ingest.router, prefix="/api/v1", dependencies=_can_ingest)
 app.include_router(jobs.router, prefix="/api/v1", dependencies=_analyst_or_admin)
 app.include_router(search.router, prefix="/api/v1", dependencies=_analyst_or_admin)
 app.include_router(plugins.router, prefix="/api/v1", dependencies=_analyst_or_admin)
