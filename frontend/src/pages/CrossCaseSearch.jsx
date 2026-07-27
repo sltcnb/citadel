@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 import { Search, Loader2, ExternalLink, Database, Globe, FolderOpen } from 'lucide-react'
 import { api } from '../api/client'
 

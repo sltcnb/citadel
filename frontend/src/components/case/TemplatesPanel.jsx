@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 import {
   X, Loader2, Trash2, Plus, LayoutTemplate, ChevronRight, Copy, Pencil,
   ExternalLink, Play,

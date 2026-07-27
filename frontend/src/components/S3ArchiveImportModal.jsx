@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 import {
   X, RefreshCw, CloudDownload, Folder, FileArchive, ChevronLeft,
 } from 'lucide-react'

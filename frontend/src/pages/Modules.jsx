@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 import {
   Cpu, CheckCircle, XCircle, ChevronDown,
   Code2, AlertCircle, Search as SearchIcon, X, BookOpen,
