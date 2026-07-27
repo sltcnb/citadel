@@ -82,6 +82,9 @@ class JsonFilePlugin(BasePlugin):
         ".ini",
         ".toml",
         ".xml",
+        # .NET / IIS config (applicationHost.config, web.config) — XML by
+        # content, but the extension kept it out of reach and it fell to strings.
+        ".config",
         ".csv",
         ".ps1",
         ".psm1",

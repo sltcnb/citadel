@@ -7,6 +7,7 @@ Falls back to calling 'analyzeMFT.py' if available.
 from __future__ import annotations
 
 import csv
+import re
 import subprocess
 import tempfile
 import uuid
@@ -23,6 +24,11 @@ try:
 except ImportError:
     MFT_LIB_AVAILABLE = False
 
+# "$MFT", "MFT", "C_$MFT", "D_MFT.BAK", "E_$MFT.mirr" — a volume-prefixed table
+# with an optional backup/mirror suffix. Anchored so it cannot claim a file that
+# merely mentions MFT (e.g. "MFTECmd_output.csv").
+_MFT_NAME_RE = re.compile(r"^(?:[A-Za-z]_)?\$?MFT(?:\.(?:BAK|MIRR))?$", re.IGNORECASE)
+
 
 class MftPlugin(BasePlugin):
     PLUGIN_NAME = "mft"
@@ -35,6 +41,22 @@ class MftPlugin(BasePlugin):
     @classmethod
     def get_handled_filenames(cls) -> list[str]:
         return ["$MFT", "MFT", "C_MFT", "C_MFT.BAK", "D_MFT", "D_MFT.BAK"]
+
+    @classmethod
+    def can_handle(cls, file_path: Path, mime_type: str) -> bool:
+        """Claim any drive-prefixed $MFT, not just an enumerated few.
+
+        Talon names a collected table after its volume — ``C_$MFT``, ``D_$MFT``,
+        one per NTFS drive on the host (see tools/talon/collect.py). The static
+        filename list missed the ``$`` form entirely, so the single richest
+        artifact in a bundle fell through to the strings catch-all and the whole
+        filesystem timeline was lost. Match on shape instead: an optional
+        ``<LETTER>_`` volume prefix, ``$MFT`` or ``MFT``, and an optional
+        ``.BAK``/``.MIRR`` suffix.
+        """
+        if super().can_handle(file_path, mime_type):
+            return True
+        return bool(_MFT_NAME_RE.match(file_path.name))
 
     def __init__(self, context: PluginContext) -> None:
         super().__init__(context)
