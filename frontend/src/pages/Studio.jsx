@@ -40,6 +40,7 @@ import {
   LayoutTemplate,
 } from 'lucide-react'
 import Editor from '@monaco-editor/react'
+import '../lib/monacoLoader'
 import Modal from '../components/shared/Modal'
 import { api, getToken } from '../api/client'
 import RuleDrawer, {
