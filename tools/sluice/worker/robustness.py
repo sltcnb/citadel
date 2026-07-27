@@ -50,6 +50,29 @@ MAX_IN_FLIGHT = int(os.getenv("WORKER_MAX_IN_FLIGHT", "0"))
 # gate forever (matches the Celery hard time limit).
 INFLIGHT_TTL = int(os.getenv("WORKER_INFLIGHT_TTL", "7200"))
 
+# ── Scratch-disk guard ──────────────────────────────────────────────────────────
+# The worker stages downloads + tool output under /tmp, which in k8s is an
+# emptyDir with a hard sizeLimit. Exceeding it gets the whole pod EVICTED by the
+# kubelet — killing every concurrent task and, historically, wedging the ingest
+# Deployment in an eviction/crash loop that piled up 100+ dead pods. So refuse to
+# stage an artifact that would blow the budget and fail *that* task cleanly.
+# NB: the emptyDir quota is enforced by the kubelet, and shutil.disk_usage()
+# reports the *node* filesystem free space (not the quota) — so the guard budgets
+# against MEASURED /tmp usage, not fs-free.
+SCRATCH_PATH = os.getenv("WORKER_SCRATCH_PATH", "/tmp")
+# Default kept safely under the current 20Gi emptyDir sizeLimit even if the
+# deployment doesn't override it; the manifest sets a larger budget to match a
+# larger sizeLimit.
+SCRATCH_BUDGET_BYTES = int(os.getenv("WORKER_SCRATCH_BUDGET_BYTES", str(18 * 1024**3)))
+# Multiply an artifact's declared size to cover decompression + tool scratch.
+SCRATCH_MARGIN = float(os.getenv("WORKER_SCRATCH_MARGIN", "1.3"))
+
+
+class InsufficientScratchSpace(RuntimeError):
+    """Staging an artifact would exceed the scratch-disk budget. Raised so the
+    task fails cleanly instead of overflowing the emptyDir and getting the pod
+    evicted (which kills every concurrent task)."""
+
 # ── Redis keys ──────────────────────────────────────────────────────────────────
 DEAD_LETTER_KEY = "fo:worker:dead_letter"
 _INFLIGHT_KEY = "fo:worker:inflight"
@@ -180,3 +203,37 @@ def release_slot(r) -> None:
             r.set(_INFLIGHT_KEY, 0)
     except Exception:  # pragma: no cover
         pass
+
+
+def scratch_used_bytes(path: str = SCRATCH_PATH) -> int:
+    """Total bytes currently staged under `path` (the emptyDir scratch area).
+
+    Walks the tree because the kubelet enforces the emptyDir quota by summing
+    file sizes the same way — fs-free-space APIs report the node disk, not the
+    per-volume quota."""
+    total = 0
+    for root, _dirs, files in os.walk(path, onerror=lambda _e: None):
+        for name in files:
+            try:
+                total += os.lstat(os.path.join(root, name)).st_size
+            except OSError:
+                pass
+    return total
+
+
+def require_scratch(need_bytes: int, path: str = SCRATCH_PATH) -> None:
+    """Refuse to stage ``need_bytes`` if it would exceed the scratch budget.
+
+    Budgets against *measured* usage of ``path`` (see the module note): raises
+    :class:`InsufficientScratchSpace` when projected usage would exceed
+    ``SCRATCH_BUDGET_BYTES``. A no-op when the size is unknown/zero."""
+    if need_bytes <= 0:
+        return
+    need = int(need_bytes * SCRATCH_MARGIN)
+    used = scratch_used_bytes(path)
+    if used + need > SCRATCH_BUDGET_BYTES:
+        raise InsufficientScratchSpace(
+            f"scratch budget would be exceeded on {path}: {used // 1024 // 1024} MB used "
+            f"+ ~{need // 1024 // 1024} MB needed > {SCRATCH_BUDGET_BYTES // 1024 // 1024} MB "
+            f"budget — refusing to stage so the pod is not evicted"
+        )
