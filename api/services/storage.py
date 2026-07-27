@@ -44,8 +44,9 @@ class IntegrityError(StorageError):
     """A downloaded object failed size or checksum verification."""
 
 
-# Error substrings that indicate a transient connection problem worth retrying.
+# Error substrings that indicate a transient problem worth retrying.
 _CONN_ERRORS = (
+    # ── connectivity ──────────────────────────────────────────────────────────
     "connection refused",
     "max retries exceeded",
     "timeout",
@@ -58,6 +59,15 @@ _CONN_ERRORS = (
     "incomplete read",
     "econnreset",
     "epipe",
+    # ── server-side transients a clean re-send clears ─────────────────────────
+    # IncompleteBody = S3 received fewer bytes than the Content-Length we
+    # announced (truncated request body); the rest are MinIO under load or
+    # mid-restart. Mirrors tools/sluice/worker/s3_retry.TRANSIENT_MARKERS.
+    "incompletebody",
+    "slowdown",
+    "internalerror",
+    "service unavailable",
+    "requesttimeout",
 )
 
 # S3Error codes that map to "object does not exist".

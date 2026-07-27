@@ -23,6 +23,7 @@ handled by this plugin, not a generic log fallback.
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Generator
 from datetime import UTC, datetime
@@ -75,6 +76,46 @@ _FILENAME_HANDLERS: dict[str, str] = {
     "cron_jobs.log": "_parse_cron",
     "scheduled_jobs.log": "_parse_cron",
     "crontab.log": "_parse_cron",
+    # ── Names Talon actually writes ───────────────────────────────────────────
+    # Everything above follows a ".log" convention from fo-harvester-era scripts.
+    # Talon (tools/talon/collect.py) names its snapshots after the command that
+    # produced them and uses .txt/.json, so none of the rows above ever matched a
+    # real bundle: the whole live-Linux triage set was landing on the generic
+    # JSON/strings fallbacks. These entries close that gap.
+    "system_triage.txt": "_parse_sysinfo",
+    "ss_listening.txt": "_parse_listening",
+    "dpkg_list.txt": "_parse_packages",
+    "rpm_list.txt": "_parse_packages",
+    "snap_list.txt": "_parse_packages",
+    "flatpak_list.txt": "_parse_packages",
+    "pip_list.txt": "_parse_packages",
+    "pip3_list.txt": "_parse_packages",
+    "gem_list.txt": "_parse_packages",
+    "cargo_list.txt": "_parse_packages",
+    "npm_global.txt": "_parse_packages",
+    "recent_installs.txt": "_parse_dpkg_log",
+    "recent_rpm_installs.txt": "_parse_rpm_installs",
+    # /proc snapshots — Talon flattens the path, so /proc/net/arp → proc/net_arp.
+    "net_arp": "_parse_proc_arp",
+    "proc_net_arp": "_parse_proc_arp",
+    "modules": "_parse_lsmod",
+    "proc_modules": "_parse_lsmod",
+    # /proc/net/{tcp,udp,tcp6,udp6} — the kernel socket table. Talon collects it
+    # under network_config/proc_net/<proto>, so the name is the bare protocol.
+    "tcp": "_parse_proc_net_sock",
+    "tcp6": "_parse_proc_net_sock",
+    "udp": "_parse_proc_net_sock",
+    "udp6": "_parse_proc_net_sock",
+    "proc_net_tcp": "_parse_proc_net_sock",
+    "proc_net_udp": "_parse_proc_net_sock",
+    # `ip -j` JSON snapshots.
+    "ip_neigh.json": "_parse_ip_json_neigh",
+    "ip_route.json": "_parse_ip_json_route",
+    "ip_addr.json": "_parse_ip_json_addr",
+    # Login history + systemd unit inventories.
+    "lastlog.txt": "_parse_lastlog",
+    "enabled_services.txt": "_parse_enabled_units",
+    "enabled_timers.txt": "_parse_enabled_units",
 }
 
 # ── Regex patterns ─────────────────────────────────────────────────────────────
@@ -150,6 +191,70 @@ _DPKG_RE = re.compile(r"^(\S{2,3})\s+(\S+)\s+(\S+)\s+(\S+)\s+(.+)$")
 _DPKG_HDR = re.compile(r"^\+\+\+|^Desired=|^\|/")
 # rpm -qa:  "openssh-server-8.7p1-34.el9.x86_64"
 _RPM_RE = re.compile(r"^([\w.+-]+)-([^-]+-[^.]+)\.([^.]+)$")
+
+# /var/log/dpkg.log:
+#   "2026-01-15 10:00:01 install netcat-openbsd:amd64 <none> 1.206-1"
+#   "2026-01-15 10:00:04 upgrade curl:amd64 7.88.1-10 7.88.1-10+deb12u5"
+_DPKG_LOG_RE = re.compile(
+    r"^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})\s+"
+    r"(install|upgrade|remove|purge|configure|trigproc)\s+"
+    r"(\S+)\s+(\S+)\s+(\S+)$"
+)
+
+# /proc/net/tcp state column (net/tcp_states.h).
+_PROC_TCP_STATES = {
+    "01": "ESTABLISHED",
+    "02": "SYN_SENT",
+    "03": "SYN_RECV",
+    "04": "FIN_WAIT1",
+    "05": "FIN_WAIT2",
+    "06": "TIME_WAIT",
+    "07": "CLOSE",
+    "08": "CLOSE_WAIT",
+    "09": "LAST_ACK",
+    "0A": "LISTEN",
+    "0B": "CLOSING",
+}
+
+
+def _join_state(state: Any) -> str:
+    """`ip -j neigh` reports state as a list; older/other forms as a bare string."""
+    if isinstance(state, list):
+        return " ".join(str(s) for s in state)
+    return str(state) if state else ""
+
+
+def _decode_proc_addr(field: str) -> tuple[str | None, int | None]:
+    """Decode a /proc/net "ADDRESS:PORT" hex pair into (dotted/colon ip, port).
+
+    The address is host-byte-order hex in 32-bit groups — little-endian on every
+    architecture Linux forensics touches — while the port is big-endian. Getting
+    this backwards silently yields plausible-looking wrong IPs, so each 4-byte
+    group is reversed explicitly.
+    """
+    addr_hex, _, port_hex = field.partition(":")
+    try:
+        port = int(port_hex, 16)
+    except ValueError:
+        return None, None
+
+    if len(addr_hex) == 8:  # IPv4
+        try:
+            octets = [int(addr_hex[i : i + 2], 16) for i in range(0, 8, 2)]
+        except ValueError:
+            return None, None
+        return ".".join(str(o) for o in reversed(octets)), port
+
+    if len(addr_hex) == 32:  # IPv6 — four little-endian 32-bit words
+        try:
+            words = [addr_hex[i : i + 8] for i in range(0, 32, 8)]
+            raw = b"".join(bytes.fromhex(w)[::-1] for w in words)
+        except ValueError:
+            return None, None
+        groups = [f"{raw[i] << 8 | raw[i + 1]:x}" for i in range(0, 16, 2)]
+        return ":".join(groups), port
+
+    return None, None
 
 # lsmod:  "nfnetlink  20480  4 nft_compat,nf_tables"
 _LSMOD_RE = re.compile(r"^(\S+)\s+(\d+)\s+(\d+)\s*(.*)")
@@ -656,4 +761,311 @@ class LinuxTriagePlugin(BasePlugin):
                     "schedule": schedule,
                     "command": command,
                 },
+            }
+
+    # ── /proc/net/arp ─────────────────────────────────────────────────────────
+
+    def _parse_proc_arp(self, lines: list[str], ts: str) -> Generator[dict, None, None]:
+        """/proc/net/arp — the kernel's own ARP cache, not `arp -a` output.
+
+        Format differs from both existing ARP shapes (no parentheses, no `dev`
+        keyword), so it needs its own reader:
+
+            IP address  HW type  Flags  HW address         Mask  Device
+            10.0.0.9    0x1      0x2    de:ad:be:ef:00:01  *     eth0
+        """
+        for line in lines:
+            parts = line.split()
+            if len(parts) < 6 or parts[0].lower().startswith("ip"):
+                continue  # header
+            ip, hw_type, flags, mac, mask, iface = parts[:6]
+            # Incomplete entries (mac all-zero) mean an ARP probe went unanswered
+            # — useful as a scan signal, so they are kept and flagged.
+            incomplete = mac in ("00:00:00:00:00:00", "<incomplete>")
+            yield {
+                "timestamp": ts,
+                "timestamp_desc": "ARP Cache Snapshot",
+                "artifact_type": "arp_entry",
+                "message": f"{ip} → {mac}  [{iface}]" + ("  (incomplete)" if incomplete else ""),
+                "network": {"src_ip": ip},
+                "arp": {
+                    "ip": ip,
+                    "mac": mac.lower(),
+                    "iface": iface,
+                    "hw_type": hw_type,
+                    "flags": flags,
+                    "mask": mask,
+                    "incomplete": incomplete,
+                },
+                "raw": {"line": line.rstrip("\n")},
+            }
+
+    # ── ip -j addr / route / neigh (JSON) ─────────────────────────────────────
+
+    def _load_json(self, lines: list[str]) -> list[dict]:
+        """Decode an `ip -j` document; return [] rather than raising on garbage."""
+        try:
+            doc = json.loads("".join(lines))
+        except (json.JSONDecodeError, ValueError):
+            return []
+        if isinstance(doc, dict):
+            return [doc]
+        return [d for d in doc if isinstance(d, dict)] if isinstance(doc, list) else []
+
+    def _parse_ip_json_neigh(self, lines: list[str], ts: str) -> Generator[dict, None, None]:
+        for entry in self._load_json(lines):
+            ip = entry.get("dst", "")
+            mac = str(entry.get("lladdr", "")).lower()
+            if not ip:
+                continue
+            yield {
+                "timestamp": ts,
+                "timestamp_desc": "ARP Snapshot",
+                "artifact_type": "arp_entry",
+                "message": f"{ip} → {mac or '(unresolved)'}  [{entry.get('dev', '')}]",
+                "network": {"src_ip": ip},
+                "arp": {
+                    "ip": ip,
+                    "mac": mac,
+                    "iface": entry.get("dev", ""),
+                    "state": _join_state(entry.get("state")),
+                },
+                "raw": entry,
+            }
+
+    def _parse_ip_json_route(self, lines: list[str], ts: str) -> Generator[dict, None, None]:
+        for entry in self._load_json(lines):
+            dest = entry.get("dst", "")
+            if not dest:
+                continue
+            gateway = entry.get("gateway", "")
+            yield {
+                "timestamp": ts,
+                "timestamp_desc": "Route Snapshot",
+                "artifact_type": "route_entry",
+                "message": (
+                    f"{dest}" + (f" via {gateway}" if gateway else "")
+                    + f" dev {entry.get('dev', '')}"
+                ),
+                "route": {
+                    "destination": dest,
+                    "gateway": gateway,
+                    "iface": entry.get("dev", ""),
+                    "protocol": entry.get("protocol", ""),
+                    "metric": entry.get("metric"),
+                    "source": entry.get("prefsrc", ""),
+                },
+                "raw": entry,
+            }
+
+    def _parse_ip_json_addr(self, lines: list[str], ts: str) -> Generator[dict, None, None]:
+        """One event per configured address — establishes what the host *was*.
+
+        Host IP attribution is the anchor for correlating this bundle against
+        network telemetry, so each address is emitted with its interface and
+        link state rather than summarised.
+        """
+        for entry in self._load_json(lines):
+            iface = entry.get("ifname", "")
+            for addr in entry.get("addr_info") or []:
+                if not isinstance(addr, dict) or not addr.get("local"):
+                    continue
+                ip = addr["local"]
+                yield {
+                    "timestamp": ts,
+                    "timestamp_desc": "Interface Address Snapshot",
+                    "artifact_type": "interface_address",
+                    "message": (
+                        f"{iface}: {ip}/{addr.get('prefixlen', '')} "
+                        f"({addr.get('family', '')}, {entry.get('operstate', '')})"
+                    ),
+                    "network": {"src_ip": ip},
+                    "interface": {
+                        "name": iface,
+                        "address": ip,
+                        "prefix_length": addr.get("prefixlen"),
+                        "family": addr.get("family", ""),
+                        "mac": str(entry.get("address", "")).lower(),
+                        "operstate": entry.get("operstate", ""),
+                        "mtu": entry.get("mtu"),
+                        "scope": addr.get("scope", ""),
+                    },
+                    "raw": {
+                        "link": {k: v for k, v in entry.items() if k != "addr_info"},
+                        "addr": addr,
+                    },
+                }
+
+    # ── lastlog ───────────────────────────────────────────────────────────────
+
+    def _parse_lastlog(self, lines: list[str], ts: str) -> Generator[dict, None, None]:
+        """`lastlog` output — last login per account, including never-logged-in.
+
+        Distinct from `last` (which the existing _parse_last handles): lastlog is
+        one row per account, so it answers "which accounts have ever been used",
+        which is how a dormant service account suddenly logging in gets noticed.
+        """
+        for line in lines:
+            line = line.rstrip("\n")
+            parts = line.split()
+            if not parts or parts[0].lower() == "username":
+                continue
+            username = parts[0]
+            rest = line[len(username):].strip()
+            if rest.lower().startswith("**never logged in**"):
+                yield {
+                    "timestamp": ts,
+                    "timestamp_desc": "Account Never Used",
+                    "artifact_type": "login_event",
+                    "message": f"{username}: never logged in",
+                    "user": {"name": username},
+                    "login": {"username": username, "never_logged_in": True},
+                    "raw": {"line": line},
+                }
+                continue
+            yield {
+                "timestamp": ts,
+                "timestamp_desc": "Last Login Snapshot",
+                "artifact_type": "login_event",
+                "message": f"{username}: last login {rest}",
+                "user": {"name": username},
+                "login": {"username": username, "never_logged_in": False, "detail": rest},
+                "raw": {"line": line},
+            }
+
+    # ── systemctl list-unit-files --state=enabled ─────────────────────────────
+
+    def _parse_enabled_units(self, lines: list[str], ts: str) -> Generator[dict, None, None]:
+        """Enabled systemd units — the persistence inventory of a live host.
+
+        A unit enabled but absent from the on-disk unit files Talon also collects
+        is a strong tampering signal, so the pair is worth having in one timeline.
+        """
+        for line in lines:
+            line = line.rstrip("\n")
+            parts = line.split()
+            if len(parts) < 2 or not parts[0].count("."):
+                continue
+            if parts[0].lower() in ("unit", "unit_file", "unit-file"):
+                continue
+            unit, state = parts[0], parts[1]
+            yield {
+                "timestamp": ts,
+                "timestamp_desc": "Enabled Unit Snapshot",
+                "artifact_type": "systemd_unit",
+                "message": f"systemd unit {unit} is {state}",
+                "systemd_unit": {
+                    "name": unit,
+                    "unit_type": unit.rsplit(".", 1)[-1],
+                    "state": state,
+                    "enabled": state.lower() in ("enabled", "enabled-runtime", "static"),
+                },
+                "raw": {"line": line},
+            }
+
+    # ── dpkg.log / rpm install history ────────────────────────────────────────
+
+    def _parse_dpkg_log(self, lines: list[str], ts: str) -> Generator[dict, None, None]:
+        """Grepped /var/log/dpkg.log lines — timestamped package installs.
+
+        Unlike the `dpkg -l` inventory these carry a real timestamp, so they
+        place "attacker installed nmap" at a point on the timeline rather than
+        just asserting it is present.
+        """
+        for line in lines:
+            line = line.rstrip("\n")
+            m = _DPKG_LOG_RE.match(line.strip())
+            if not m:
+                continue
+            date, time_, action, pkg, old_ver, new_ver = m.groups()
+            yield {
+                "timestamp": f"{date}T{time_}Z",
+                "timestamp_desc": f"Package {action.title()}",
+                "artifact_type": "package_event",
+                "message": f"{action} {pkg} {old_ver} → {new_ver}".replace(" <none>", ""),
+                "package": {
+                    "name": pkg.split(":")[0],
+                    "arch": pkg.split(":")[1] if ":" in pkg else "",
+                    "action": action,
+                    "version_before": "" if old_ver == "<none>" else old_ver,
+                    "version": new_ver,
+                    "manager": "dpkg",
+                },
+                "raw": {"line": line},
+            }
+
+    def _parse_rpm_installs(self, lines: list[str], ts: str) -> Generator[dict, None, None]:
+        """`rpm -qa --qf '%{INSTALLTIME:date} %{NAME}'` — install time per package."""
+        for line in lines:
+            line = line.rstrip("\n").strip()
+            if not line:
+                continue
+            # "Mon 15 Jan 2026 10:00:01 AM UTC netcat" — split the trailing name.
+            parts = line.rsplit(None, 1)
+            if len(parts) != 2:
+                continue
+            when, pkg = parts
+            yield {
+                "timestamp": ts,
+                "timestamp_desc": "Package Install",
+                "artifact_type": "package_event",
+                "message": f"installed {pkg} at {when}",
+                "package": {"name": pkg, "action": "install", "manager": "rpm"},
+                "raw": {"line": line, "install_time": when},
+            }
+
+    # ── /proc/net/{tcp,udp,tcp6,udp6} ─────────────────────────────────────────
+
+    def _parse_proc_net_sock(self, lines: list[str], ts: str) -> Generator[dict, None, None]:
+        """Kernel socket table — the ground truth `ss`/`netstat` are rendered from.
+
+        Worth reading directly: a rootkit that hides connections usually hooks
+        the userland tools, not /proc, so an ESTABLISHED socket present here but
+        absent from the collected `ss` output is itself the finding.
+
+        Addresses are little-endian hex, ports big-endian hex:
+
+            sl  local_address rem_address   st tx_queue:rx_queue ... uid ... inode
+             0: 0500000A:AD31 0900000A:1160 01 00000000:00000000     0      12345
+        """
+        for line in lines:
+            parts = line.split()
+            if len(parts) < 10 or not parts[0].rstrip(":").isdigit():
+                continue  # header or truncated row
+            local, remote, state_hex = parts[1], parts[2], parts[3]
+            local_ip, local_port = _decode_proc_addr(local)
+            remote_ip, remote_port = _decode_proc_addr(remote)
+            if local_ip is None:
+                continue
+            state = _PROC_TCP_STATES.get(state_hex.upper(), f"UNKNOWN({state_hex})")
+            uid = parts[7] if len(parts) > 7 else ""
+            inode = parts[9] if len(parts) > 9 else ""
+            listening = state == "LISTEN"
+            yield {
+                "timestamp": ts,
+                "timestamp_desc": "Socket Table Snapshot",
+                "artifact_type": "listening_port" if listening else "network_conn",
+                "message": (
+                    f"{state} {local_ip}:{local_port}"
+                    + ("" if listening else f" → {remote_ip}:{remote_port}")
+                    + f"  uid={uid}"
+                ),
+                "network": {
+                    "src_ip": local_ip,
+                    "src_port": local_port,
+                    "dest_ip": None if listening else remote_ip,
+                    "dest_port": None if listening else remote_port,
+                },
+                "socket": {
+                    "state": state,
+                    "local_address": local_ip,
+                    "local_port": local_port,
+                    "remote_address": remote_ip,
+                    "remote_port": remote_port,
+                    "uid": uid,
+                    "inode": inode,
+                    "listening": listening,
+                },
+                "user": {"id": uid} if uid else {},
+                "raw": {"line": line.rstrip("\n")},
             }

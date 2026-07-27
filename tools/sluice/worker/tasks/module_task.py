@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import csv
 import importlib.util
-import io
 import json
 import logging
 import os
@@ -44,6 +43,7 @@ import redis
 import redis_keys as rk
 import resource_limits
 import robustness
+import s3_retry
 from celery_app import REDIS_URL, app  # REDIS_URL carries REDIS_PASSWORD auth
 from utils.es_auth import install_es_auth
 
@@ -304,41 +304,16 @@ def get_minio():
     return Minio(MINIO_ENDPOINT, access_key=MINIO_ACCESS, secret_key=MINIO_SECRET, secure=False)
 
 
-_CONN_ERRORS = (
-    "connection refused",
-    "max retries",
-    "timeout",
-    "connect",
-    "reset by peer",
-    "broken pipe",
-    "connection reset",
-    "econnrefused",
-)
+# Storage retry policy + byte-complete upload live in s3_retry so they are
+# shared, and unit-testable without Celery. Kept aliased under the original
+# private names so the rest of this module (and its tests) read unchanged.
+_CONN_ERRORS = s3_retry.TRANSIENT_MARKERS
+_minio_op = s3_retry.minio_op
 
 
-def _minio_op(fn, max_tries: int = 4, base_delay: float = 3.0):
-    """Execute fn(), retrying on transient MinIO connectivity errors with exponential backoff."""
-    last_exc = None
-    for attempt in range(max_tries):
-        try:
-            return fn()
-        except Exception as exc:  # noqa: BLE001 - retry dispatcher: transient errors retried, everything else re-raised below
-            msg = str(exc).lower()
-            if any(k in msg for k in _CONN_ERRORS):
-                last_exc = exc
-                if attempt < max_tries - 1:
-                    wait = base_delay * (2**attempt)
-                    logger.warning(
-                        "MinIO attempt %d/%d failed (%s). Retrying in %.0fs…",
-                        attempt + 1,
-                        max_tries,
-                        exc,
-                        wait,
-                    )
-                    time.sleep(wait)
-                    continue
-            raise
-    raise last_exc  # type: ignore[misc]
+def _put_bytes_verified(minio, key: str, payload: bytes, content_type: str) -> None:
+    """PUT *payload* under *key* into the case bucket, verifying the stored size."""
+    s3_retry.put_bytes_verified(minio, MINIO_BUCKET, key, payload, content_type)
 
 
 def _is_missing_object(exc: Exception) -> bool:
@@ -618,25 +593,39 @@ def run_module(
                 )
 
         # ── 3. Upload full results to MinIO ───────────────────────────────────
-        # Serialize once to UTF-8 bytes and upload from an in-memory buffer with
-        # an exact Content-Length. fput_object derived the length from the
-        # on-disk file, which could disagree with the bytes actually streamed
-        # (locale-dependent write encoding / stat race) and made S3 reject the
-        # PUT with "IncompleteBody". put_object from the exact bytes is precise.
+        # Serialize once to UTF-8 bytes and upload from an in-memory buffer, so
+        # Content-Length is measured on exactly the bytes sent, then verify the
+        # stored size (see s3_retry.put_bytes_verified). Both halves exist
+        # because S3 rejected this PUT with "IncompleteBody" in the field.
+        #
+        # This upload is the LAST step, and by now the hits are already indexed
+        # into Elasticsearch, written to the findings store, and about to be
+        # stored as a Redis preview. Letting a storage hiccup here raise would
+        # therefore throw away a run that actually succeeded — every analysis
+        # surface except the downloadable blob is already populated. So it is
+        # reported as a degraded COMPLETED, not a FAILED run.
         payload = json.dumps(results, ensure_ascii=False).encode("utf-8")
         results_json = work_dir / "results.json"
         results_json.write_bytes(payload)
         output_key = f"cases/{case_id}/modules/{run_id}/results.json"
-        _minio_op(
-            lambda: minio.put_object(
-                MINIO_BUCKET,
-                output_key,
-                io.BytesIO(payload),
-                length=len(payload),
-                content_type="application/json",
+        try:
+            _minio_op(
+                lambda: _put_bytes_verified(minio, output_key, payload, "application/json")
             )
-        )
-        logger.info("[%s] Uploaded %d hits to MinIO", run_id, len(results))
+            logger.info("[%s] Uploaded %d hits to MinIO", run_id, len(results))
+        except Exception as _up_exc:  # noqa: BLE001 - see comment above: hits are already persisted
+            logger.error(
+                "[%s] results.json upload failed after retries: %s", run_id, _up_exc, exc_info=True
+            )
+            output_key = ""
+            _warn = (
+                f"WARNING: the full results file could not be stored ({_up_exc}). "
+                f"All {len(results)} hit(s) are in Timeline and the findings store, "
+                "and the preview below is intact — but download and re-ingest of the "
+                "raw results are unavailable for this run. Re-run the module to retry."
+            )
+            tool_meta["log"] += f"\n[{_warn}]\n"
+            _push_log(r, run_id, _warn)
 
         # ── 4. Level summary ─────────────────────────────────────────────────
         hits_by_level: dict[str, int] = {}
@@ -3099,7 +3088,12 @@ def _run_volatility3(
     if not mem_files:
         all_files = [p for p in sources_dir.iterdir() if p.is_file()]
         if not all_files:
-            raise RuntimeError("No source files found for Volatility analysis.")
+            raise RuntimeError(
+                "No source files staged for Volatility analysis. Select a memory image "
+                f"({', '.join(sorted(_MEMORY_EXTS))}) as the source — Talon writes one under "
+                "memory/ when collected with '--collect memory'. If a source WAS selected, "
+                "the run log above shows which downloads were skipped as missing in storage."
+            )
         # Use the largest file as a heuristic for the memory image
         mem_files = sorted(all_files, key=lambda p: p.stat().st_size, reverse=True)[:1]
 

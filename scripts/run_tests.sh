@@ -24,8 +24,10 @@ SUITES=(
   "tools/talon/tests/test_secure_upload.py"
   "tools/talon/tests/test_chunker.py"
   "tools/sluice/worker/tests/test_routing_coverage.py"
+  "tools/sluice/worker/tests/test_collection_coverage.py"
   "tools/sluice/worker/tests/test_observability.py"
   "tools/sluice/worker/tests/test_parse_metrics.py"
+  "tools/sluice/worker/tests/test_module_results_upload.py"
   "tests/integration/test_pipeline_e2e.py"
 )
 
