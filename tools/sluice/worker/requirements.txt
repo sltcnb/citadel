@@ -11,7 +11,7 @@ python-magic==0.4.27
 pyhindsight>=20260600
 # ccl_chromium_reader is a pyhindsight dep not on PyPI — installed via git+https in Dockerfile:
 # pip install git+https://github.com/cclgroupltd/ccl_chromium_reader.git
-pefile>=2023.2.7
+pefile>=2024.8.26
 oletools>=0.60.2
 dpkt>=1.9.8
 # YARA — pattern-based malware detection (used by the yara module)
