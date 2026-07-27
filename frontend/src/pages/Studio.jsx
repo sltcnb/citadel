@@ -10,7 +10,7 @@
  * Alert Rules → stored in Redis / global alert-rule library (Sigma or custom YAML)
  */
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { useLocation } from 'react-router-dom'
+import { useLocation } from 'react-router'
 import {
   Code2,
   Plus,
@@ -40,6 +40,7 @@ import {
   LayoutTemplate,
 } from 'lucide-react'
 import Editor from '@monaco-editor/react'
+import '../lib/monacoLoader'
 import Modal from '../components/shared/Modal'
 import { api, getToken } from '../api/client'
 import RuleDrawer, {

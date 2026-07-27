@@ -13,7 +13,7 @@
  * Usage: mount once in App / Layout. Self-contained.
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 import { Search, ArrowRight } from 'lucide-react'
 import { api } from '../api/client'
 import { NAV_ITEMS, CASE_ICON } from '../nav'

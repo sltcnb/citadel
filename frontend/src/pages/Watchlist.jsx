@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 import {
   Plus, X, Eye, Loader2, AlertTriangle, ExternalLink, ListChecks,
   Info, Globe, Hash, Terminal, Code, Network, ShieldAlert, Check, ShieldCheck,

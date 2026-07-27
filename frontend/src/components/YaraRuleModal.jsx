@@ -3,6 +3,7 @@ import {
   FileCode, X, Upload, Check, Loader2, AlertTriangle, Sparkles, Building2,
 } from 'lucide-react'
 import Editor from '@monaco-editor/react'
+import '../lib/monacoLoader'
 import Modal from './shared/Modal'
 import { api } from '../api/client'
 import { useCompanies } from '../pages/UserManagement'
