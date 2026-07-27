@@ -440,6 +440,14 @@ def run_module(
                 _check_cancel(r, run_id)
                 dest = sources_dir / sf["filename"]
                 _push_log(r, run_id, f"Downloading {sf['filename']} …")
+                # DISK GUARD: refuse a source that would overflow the /tmp scratch
+                # budget (a big memory/disk image) — fail the module cleanly rather
+                # than fill the emptyDir and get the pod evicted mid-run.
+                try:
+                    _sz = minio.stat_object(MINIO_BUCKET, sf["minio_key"]).size or 0
+                except Exception:  # noqa: BLE001 - missing/size handled by the fetch below
+                    _sz = 0
+                robustness.require_scratch(_sz)
                 try:
                     _minio_op(lambda d=dest, k=sf["minio_key"]: minio.fget_object(MINIO_BUCKET, k, str(d)))
                 except Exception as exc:  # noqa: BLE001 - missing-object handled, rest re-raised
