@@ -104,3 +104,35 @@ LOW/MEDIUM severity findings and `pip-audit` stay informational
    allowlist file is the only sanctioned way to unblock a known, accepted CVE.
 
 See `.trivyignore` for the current allowlist and the expected entry format.
+
+### Frontend npm advisories (`npm audit`)
+
+Trivy's lockfile scan suppresses `devDependencies`, so the blocking gate says
+nothing about the frontend build toolchain. `npm audit` in `frontend/` is the
+tool that sees those, and it is not wired into CI — run it by hand when
+touching frontend deps.
+
+Anything that ships to a browser is treated like a runtime CVE: fix it, and
+check what the fix actually changes. Note that `@monaco-editor/react` fetches
+the editor from a CDN at runtime, so a lockfile bump alone does not change what
+users execute — see the version pin in `frontend/src/lib/monacoLoader.js`.
+
+**Currently accepted (dev-only, reviewed 2026-07-27):** a cluster of HIGH
+advisories against the eslint toolchain — `eslint`, `@eslint/config-array`,
+`@eslint/eslintrc`, `eslint-plugin-react`, `minimatch` — all of which trace to
+one root cause, `brace-expansion <= 5.0.7` reached through eslint's transitive
+`minimatch@3`. Accepted because:
+
+- It is a linter-only dependency. It never ships, and exploiting it requires
+  control over the glob patterns in our own eslint config.
+- The forward fix is blocked upstream. It needs eslint 10, and
+  `eslint-plugin-react` (7.37.5, the latest release) declares
+  `peer eslint@"^3 || … || ^9.7"` — so `npm ci` hard-fails with `ERESOLVE` on
+  eslint 10. This is why the Dependabot eslint-10 PRs cannot merge.
+- Overriding `brace-expansion` to a patched `^5.0.8` clears `npm audit` to zero
+  but **breaks linting** (`TypeError: expand is not a function`) — v5 is
+  ESM-only, so `minimatch@3`'s `require()` gets a namespace object instead of a
+  function. Do not "fix" it that way; it buys a green scanner and a dead linter.
+
+Re-check when `eslint-plugin-react` ships eslint 10 support, which resolves the
+whole cluster in one bump.
