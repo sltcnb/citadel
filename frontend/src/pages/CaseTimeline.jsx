@@ -1,5 +1,5 @@
 import { Fragment, Suspense, lazy, useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { useParams, useNavigate, useLocation, useSearchParams } from 'react-router-dom'
+import { useParams, useNavigate, useLocation, useSearchParams } from 'react-router'
 import {
   Upload,
   Search,
