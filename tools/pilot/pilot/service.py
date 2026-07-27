@@ -2363,6 +2363,42 @@ Artifact playbook — where evidence actually lives:
     CORRELATE ±a few minutes for what preceded it (the HTTP/2 traffic, the IP).
     Do NOT keep grepping `message:*segfault*` — Linux doesn't log it there.
 
+SEARCH STRATEGY — OPEN WIDE, THEN NARROW. Never open with your most specific
+guess. A narrow first query cannot distinguish "this did not happen" from "I
+asked the wrong field", and those lead to opposite conclusions.
+
+Work the funnel, one constraint at a time:
+
+  1. ESTABLISH THE GROUND. What artifact types and volumes exist for the entity
+     you care about? `aggregate` on artifact_type filtered to the host/user
+     answers this in one step and tells you which fields are even worth trying.
+  2. BROAD MATCH. Search the distinctive literal across `message:` first — every
+     event has `message`, so this crosses ALL artifact types. `message:*psexec*`
+     before `process.command_line:"psexec.exe"`.
+  3. ADD ONE CONSTRAINT AT A TIME, and only because the previous result was too
+     large to read — not pre-emptively. If a result drops to 0 after adding a
+     clause, THAT CLAUSE is your finding: the field is empty or wrong-valued for
+     this data, which is itself information.
+  4. NARROWEST LAST. Exact field:"value" matches are for confirming something you
+     have already located, not for finding it.
+
+FIELD COVERAGE IS A CEILING. Every field is populated by only some artifact
+types. `process.command_line` is essentially Sysmon-only; `registry.key_path`
+comes from hives; MFT records have no user; syslog has no evtx.* at all. ANDing
+such a field SILENTLY DISCARDS every artifact type that does not populate it —
+you get a plausible hit count computed over a fraction of the evidence.
+
+  • Read the "Field coverage" table above before choosing a field. Anything
+    marked SPARSE narrows your search space far more than you intend.
+  • A result carrying a `FIELD COVERAGE` warning is NOT a complete answer. Those
+    events were EXCLUDED, not shown to be absent.
+  • To assert something did NOT happen, the field must exist in the artifact
+    types that would have recorded it. Otherwise say "not visible in <types>,
+    untestable in <types>" and name the missing source.
+  • An AUTO-BROADENED result means your query was too narrow and the platform
+    walked it back for you. The clause that got dropped is the wrong one — do
+    not re-add it unchanged.
+
 RECOGNISE WHAT YOU FOUND: if a tool result already answers the question
 (an ANOM_ABEND for nginx, a `tar`/delete of logs, a CTI hit on a bad IP), STOP
 searching and pivot to CONFIRM/EXPLAIN it (inspect → correlate → conclude). The
@@ -3824,48 +3860,125 @@ def _parse_agent_step(raw: str) -> dict:
     }
 
 
-def _auto_broaden(query: str) -> str | None:
-    """Produce a broader version of `query` for the auto-retry on 0 hits.
-    Strategies, tried in order:
-      1. If the query has top-level AND clauses, drop the last (most-specific)
-         clause: `host.hostname:X AND message:Y AND artifact_type:Z` →
-         `host.hostname:X AND message:Y`.
-      2. If a clause uses an exact-string match (`field:"value"`), turn it
-         into a wildcard: `field:"value"` → `field:*value*`.
-      3. Otherwise return None — the original was already broad.
-    Heuristic; the agent is the actual decision-maker. This just covers the
-    "one extra clause" case that humans usually fix manually."""
-    if not query:
-        return None
-    q = query.strip()
-    # Strategy 1: drop last AND clause when there are 2+ top-level clauses
-    parts = []
-    depth = 0
-    buf = []
-    in_quote = False
-    for ch in q:
-        if ch == '"' and (not buf or buf[-1] != "\\"):
-            in_quote = not in_quote
-        if not in_quote:
-            if ch == "(":
-                depth += 1
-            elif ch == ")":
-                depth -= 1
-        buf.append(ch)
-        if not in_quote and depth == 0 and "".join(buf).endswith(" AND "):
-            parts.append("".join(buf)[:-5])
-            buf = []
-    parts.append("".join(buf))
-    parts = [p.strip() for p in parts if p.strip()]
-    if len(parts) >= 2:
-        return " AND ".join(parts[:-1])
-    # Strategy 2: turn `field:"value"` → `field:*value*`
-    import re as _re2
+# ─────────────────────────────────────────────────────────────────────────────
+# Field coverage — "0 hits" and "no such thing happened" are different claims
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# The failure this addresses is silent and produces WRONG CONCLUSIONS, not empty
+# ones. Forensic artifacts are structurally uneven: `process.command_line` is
+# populated by Sysmon EVTX and almost nothing else; `registry.key_path` only by
+# registry hives; MFT records carry no user at all. So a query like
+#
+#     host.hostname:WIN01 AND process.command_line:*psexec*
+#
+# does not search "the case" — it searches only the artifact types that populate
+# `process.command_line`, and silently discards every syslog, MFT, prefetch and
+# browser event. The agent sees a plausible hit count, concludes, and never
+# learns that most of the corpus was incapable of matching by construction.
+#
+# Absence of evidence is only evidence of absence where the field exists. These
+# helpers let every search say which it is.
 
-    broadened = _re2.sub(r'(\b[\w\.]+):"([^"]+)"', r"\1:*\2*", q)
-    if broadened != q:
-        return broadened
-    return None
+try:  # package import (installed / normal runtime)
+    from pilot.query_strategy import (
+        USABLE_HIT_CEILING as _USABLE_HIT_CEILING,
+    )
+    from pilot.query_strategy import (
+        broaden_ladder as _broaden_ladder,
+    )
+    from pilot.query_strategy import (
+        coverage_warning as _coverage_warning,
+    )
+    from pilot.query_strategy import (
+        query_fields as _query_fields,
+    )
+except ImportError:  # loaded as a bare module (dev tree / tests)
+    from query_strategy import (  # type: ignore[no-redef]
+        USABLE_HIT_CEILING as _USABLE_HIT_CEILING,
+    )
+    from query_strategy import (  # type: ignore[no-redef]
+        broaden_ladder as _broaden_ladder,
+    )
+    from query_strategy import (  # type: ignore[no-redef]
+        coverage_warning as _coverage_warning,
+    )
+    from query_strategy import (  # type: ignore[no-redef]
+        query_fields as _query_fields,
+    )
+
+# Fields whose sparseness is expected: the pivot keys an analyst narrows on.
+_COVERAGE_EXEMPT = frozenset({"artifact_type", "timestamp", "fo_id", "source_file", "os"})
+
+_coverage_cache: dict[str, dict] = {}
+
+
+def _field_coverage(case_id: str, fields: list[str]) -> dict:
+    """How much of the case each field actually covers, and where it is absent.
+
+    Returns ``{field: {"docs", "fraction", "types": [...], "missing_types": [...]}}``.
+    One ES round trip for all fields; cached per (case, field-set) because
+    mappings do not change inside a single investigation run.
+    """
+    if not fields:
+        return {}
+    probe = [f for f in fields if f.split(".")[0] not in _COVERAGE_EXEMPT][:12]
+    if not probe:
+        return {}
+    key = f"{case_id}|{','.join(sorted(probe))}"
+    if key in _coverage_cache:
+        return _coverage_cache[key]
+
+    try:
+        from services.elasticsearch import _request as _es_req
+
+        aggs: dict = {"all_types": {"terms": {"field": "artifact_type", "size": 100}}}
+        for i, fname in enumerate(probe):
+            aggs[f"c{i}"] = {
+                "filter": {"exists": {"field": fname}},
+                "aggs": {"types": {"terms": {"field": "artifact_type", "size": 100}}},
+            }
+        res = _es_req(
+            "POST",
+            f"/fo-case-{case_id}-*/_search",
+            {"size": 0, "track_total_hits": True, "aggs": aggs},
+        )
+    except Exception:  # noqa: BLE001 - coverage is advisory; never fail a search over it
+        return {}
+
+    total = int(((res.get("hits") or {}).get("total") or {}).get("value") or 0)
+    agg = res.get("aggregations") or {}
+    all_types = {
+        b["key"] for b in ((agg.get("all_types") or {}).get("buckets") or []) if b.get("key")
+    }
+
+    out: dict[str, dict] = {}
+    for i, fname in enumerate(probe):
+        node = agg.get(f"c{i}") or {}
+        docs = int(node.get("doc_count") or 0)
+        types = {
+            b["key"] for b in ((node.get("types") or {}).get("buckets") or []) if b.get("key")
+        }
+        out[fname] = {
+            "docs": docs,
+            "fraction": (docs / total) if total else 0.0,
+            "types": sorted(types),
+            "missing_types": sorted(all_types - types),
+        }
+    out["__total__"] = {"docs": total, "types": sorted(all_types)}
+    _coverage_cache[key] = out
+    return out
+
+
+def _coverage_note(case_id: str, step: dict) -> str | None:
+    """Coverage warning for the fields this step constrained, or None."""
+    fields = _query_fields(step.get("query", ""), step.get("agg_query", ""))
+    if not fields:
+        return None
+    cov = _field_coverage(case_id, fields)
+    if not cov:
+        return None
+    total = (cov.get("__total__") or {}).get("docs") or 0
+    return _coverage_warning(fields, cov, total)
 
 
 _INJECTION_RE = __import__("re").compile(
@@ -3963,6 +4076,21 @@ def _agent_step_history(transcript: list[dict]) -> str:
                 line += f"\n      {_sanitize_evidence(x, 160)}"
         if s.get("query_status") == "invalid":
             line += f"\n  ⚠ invalid: {s.get('query_error', '')[:140]}"
+        # Auto-broadening and field-coverage results were being computed and then
+        # never shown here, so the agent could not learn from either: it re-issued
+        # over-narrow queries and read structurally-blind results as answers.
+        if s.get("auto_broadened"):
+            line += (
+                f"\n  ↑ AUTO-BROADENED: your query '{str(s.get('broadened_from', ''))[:100]}' "
+                f"returned 0. The result above is the broader '{str(s.get('query', ''))[:100]}'. "
+                "The dropped clause is the one that was wrong — do not re-add it unchanged."
+            )
+            if s.get("broaden_path"):
+                line += f"\n    rungs tried: {'; '.join(s['broaden_path'][-3:])[:200]}"
+        if s.get("broaden_skipped"):
+            line += f"\n  ⚠ {str(s['broaden_skipped'])[:200]}"
+        if s.get("coverage_warning"):
+            line += f"\n  ⚠ {str(s['coverage_warning'])[:600]}"
         if s.get("note"):
             line += f"\n  ⚠ {s['note'][:180]}"
         parts.append(line)
@@ -4667,11 +4795,31 @@ def _agent_run(
     # Surface field density — the LLM should reach for *populated* fields
     # first instead of guessing from the flat schema list.
     density = ctx.get("field_density") or []
+    _total_ev = ctx.get("event_count") or 0
+
+    def _density_row(f: dict) -> str:
+        """Show coverage as a share of the case, not just a raw count.
+
+        "50,000 docs" reads like plenty; "50,000 docs (2% of case)" makes it
+        obvious that ANDing this field discards 98% of the evidence.
+        """
+        pct = (f["count"] / _total_ev * 100) if _total_ev else 0.0
+        flag = "  ← SPARSE: excludes most events" if pct < 25 else ""
+        return f"  {f['field']:40s} {f['count']:>10,} docs ({pct:5.1f}% of case){flag}"
+
     density_block = (
         (
-            "\nField density (use these first — fields with the most populated docs):\n"
-            + "\n".join(f"  {f['field']:40s} {f['count']:>10,} docs" for f in density[:15])
+            "\nField coverage (how much of the case each field can even see):\n"
+            + "\n".join(_density_row(f) for f in density[:15])
             + "\n"
+            "  A field's coverage is a CEILING on what a query using it can find. "
+            "Forensic artifacts are uneven: process.command_line comes from Sysmon "
+            "and little else, registry.key_path only from hives, MFT records carry "
+            "no user at all. ANDing a sparse field silently drops every artifact "
+            "type that does not populate it, so 0 hits means 'not in that subset', "
+            "NOT 'did not happen'. To claim something did NOT occur, verify with a "
+            "field the relevant artifact types actually populate — or with "
+            "`message:`, which every event has.\n"
         )
         if density
         else ""
@@ -5348,10 +5496,21 @@ def _agent_run(
             if action in _CACHEABLE and step.get("query_status") == "ok":
                 query_cache[sig] = {"step": step_no, "result": result}
 
-        # Auto-broaden: if a `search` returned 0 hits, try once more after
-        # dropping the most-specific clause (last AND term). Beats wasting a
-        # whole agent step waiting for the LLM to figure it out. Mark the
-        # step so the UI + LLM both know we tried.
+        # Field coverage: tell the agent when the fields it just constrained
+        # cannot see the whole case. This runs on hits AND on misses — a query
+        # returning 40 events that structurally ignored 95% of the corpus is
+        # more dangerous than one returning none, because it reads as an answer.
+        if action in ("search", "aggregate") and step.get("query_status") == "ok":
+            try:
+                note = _coverage_note(case_id, step)
+                if note:
+                    step["coverage_warning"] = note
+            except Exception:  # noqa: BLE001 - advisory only
+                pass
+
+        # Auto-broaden: if a `search` returned 0 hits, walk back up the funnel
+        # one rung at a time. Beats wasting a whole agent step waiting for the
+        # LLM to figure it out. Mark the step so the UI + LLM both know we tried.
         #
         # Quality gate: only broaden if the result is in a usable range
         # (1-5000 hits). Broadening to `host.hostname:X` returning 10k hits
@@ -5362,23 +5521,34 @@ def _agent_run(
             and step.get("query_status") == "ok"
             and step.get("result_count") == 0
         ):
-            broader = _auto_broaden(step.get("query", ""))
-            if broader and broader != step.get("query"):
-                broader_result = _tool_search(case_id, {**step, "query": broader})
-                broader_count = broader_result.get("result_count", 0) or 0
-                if broader_result.get("query_status") == "ok" and 0 < broader_count <= 5000:
+            # Walk back up the funnel instead of taking a single step. A query
+            # that was three clauses too narrow used to stay empty and cost a
+            # whole agent turn; now each rung is tried until one lands in the
+            # readable window, and the path taken is reported so the agent
+            # learns WHICH constraint was the wrong one.
+            attempted: list[str] = []
+            for rung in _broaden_ladder(step.get("query", "")):
+                r = _tool_search(case_id, {**step, "query": rung})
+                cnt = r.get("result_count", 0) or 0
+                if r.get("query_status") != "ok":
+                    continue
+                if 0 < cnt <= _USABLE_HIT_CEILING:
                     step["broadened_from"] = step.get("query")
-                    step["query"] = broader
-                    step["result_count"] = broader_count
-                    step["sample"] = broader_result.get("sample")
-                    step["sample_ids"] = broader_result.get("sample_ids")
+                    step["broaden_path"] = attempted + [rung]
+                    step["query"] = rung
+                    step["result_count"] = cnt
+                    step["sample"] = r.get("sample")
+                    step["sample_ids"] = r.get("sample_ids")
                     step["auto_broadened"] = True
-                elif broader_count > 5000:
-                    # Broadening hit the wildcard cap — note it, don't apply.
-                    # Keeps the 0-hit original visible so the LLM knows to
-                    # rethink rather than chase noise.
+                    break
+                attempted.append(f"{rung} → {cnt} hits")
+            else:
+                if attempted:
+                    # Every rung was empty or over the cap. Keep the 0-hit
+                    # original visible so the agent rethinks instead of
+                    # chasing noise, but show what was ruled out.
                     step["broaden_skipped"] = (
-                        f"would-be {broader_count} hits — too generic; rephrase"
+                        "auto-broaden exhausted: " + "; ".join(attempted[-3:])
                     )
 
         try:
