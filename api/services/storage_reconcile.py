@@ -118,6 +118,18 @@ def find_orphans(
     cap = settings.STORAGE_RECONCILE_MAX_OBJECTS if max_objects is None else max_objects
     cutoff = _grace_cutoff(grace_hours)
     known = known_object_keys()
+    # A live case's evidence stays legitimate even after its per-object job
+    # records TTL-expire — and job hashes are the ONLY source of `known` keys.
+    # So treat any object under a still-existing case as accounted-for; only
+    # objects whose case no longer exists in the DB are true orphans. This
+    # matches the per-case purge and, crucially, stops the report from listing
+    # active-case evidence as deletable orphans (it was mislabeling thousands).
+    from config import get_redis as _get_redis
+
+    live_case_ids = {
+        (c if isinstance(c, str) else c.decode())
+        for c in (_get_redis().smembers("cases:all") or set())
+    }
     prefix = f"{_CASE_PREFIX}{case_id}/" if case_id else _CASE_PREFIX
 
     report = OrphanReport(known_keys=len(known))
@@ -135,6 +147,9 @@ def find_orphans(
         seen_objects.add(key)
         if key in known:
             continue  # accounted for
+        parts = key.split("/")
+        if len(parts) > 2 and parts[0] == "cases" and parts[1] in live_case_ids:
+            continue  # evidence of a still-existing case — not an orphan
         lm = _last_modified(obj)
         if lm is not None and lm >= cutoff:
             report.skipped_recent.append(key)  # too new to judge — in-flight upload
