@@ -68,6 +68,7 @@ const MOD_CATEGORY_ORDER = [
 ]
 import { api, getToken } from '../api/client'
 import Timeline from './Timeline'
+import CaseActivityBar from '../components/case/CaseActivityBar'
 // Heavy, only-when-opened panels — split into their own chunks to lighten the
 // first paint of the case view (backed by Suspense boundaries at their sites).
 const IngestPanel = lazy(() => import('../components/IngestPanel'))
@@ -2446,6 +2447,9 @@ export default function CaseTimeline() {
           )}
         </div>
       </div>
+
+      {/* ── Live case activity (ingestion / modules / AI autorun) ──────────── */}
+      <CaseActivityBar caseId={caseId} />
 
       {/* ── Timeline ─────────────────────────────────────────────────────── */}
       <div className="flex-1 overflow-hidden">
