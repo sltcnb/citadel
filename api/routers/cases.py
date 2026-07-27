@@ -193,3 +193,90 @@ def delete_case(
     _check_company_access(case, get_company_filter(current_user))
     if not case_svc.delete_case(case_id, background=background):
         raise HTTPException(status_code=404, detail="Case not found")
+
+
+@router.get("/cases/{case_id}/activity")
+def case_activity(case_id: str, current_user: dict = Depends(get_current_user)):
+    """Live activity summary powering the timeline progress bar: ingestion job
+    counts, module-run counts, and whether an AI agent run is in flight. Redis-
+    only so the UI can poll it cheaply."""
+    case = case_svc.get_case(case_id)
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+    _check_company_access(case, get_company_filter(current_user))
+
+    import json as _json
+
+    from services import jobs as _job_svc
+    from services import module_runs as _run_svc
+
+    from config import get_redis as _get_redis
+
+    def _norm(counts: dict) -> dict:
+        c = {str(k).upper(): int(v) for k, v in (counts or {}).items()}
+        running = c.get("RUNNING", 0) + c.get("PROCESSING", 0) + c.get("UPLOADING", 0)
+        pending = c.get("PENDING", 0) + c.get("QUEUED", 0)
+        completed = c.get("COMPLETED", 0) + c.get("SKIPPED", 0)
+        failed = c.get("FAILED", 0) + c.get("ERROR", 0)
+        return {
+            "pending": pending,
+            "running": running,
+            "completed": completed,
+            "failed": failed,
+            "total": sum(c.values()),
+        }
+
+    ingestion = _norm(_job_svc.status_counts_for_case(case_id))
+
+    mod_counts: dict[str, int] = {}
+    try:
+        for run in _run_svc.list_case_module_runs(case_id) or []:
+            st = str(run.get("status") or "").upper()
+            mod_counts[st] = mod_counts.get(st, 0) + 1
+    except Exception:  # noqa: BLE001 - module counts are best-effort for the summary
+        pass
+    modules = _norm(mod_counts)
+
+    ai = {"active": False, "run_id": None, "step_count": 0, "max_steps": 0}
+    try:
+        from datetime import UTC, datetime
+
+        now = datetime.now(UTC)
+        raw = _get_redis().hgetall(f"case:{case_id}:ai:agent_active") or {}
+        for _rid, val in raw.items():
+            try:
+                d = _json.loads(val)
+            except Exception:  # noqa: BLE001
+                continue
+            if str(d.get("status", "running")).lower() != "running":
+                continue
+            # Ignore stale entries: a crashed run may leave a "running" record
+            # that was never cleared. Trust it only if its heartbeat is recent.
+            beat = d.get("last_beat") or d.get("started_at")
+            if beat:
+                try:
+                    ts = datetime.fromisoformat(beat)
+                    if ts.tzinfo is None:
+                        ts = ts.replace(tzinfo=UTC)
+                    if (now - ts).total_seconds() > 180:
+                        continue
+                except (ValueError, TypeError):
+                    pass
+            ai = {
+                "active": True,
+                "run_id": d.get("run_id"),
+                "step_count": int(d.get("step_count") or 0),
+                "max_steps": int(d.get("max_steps") or 0),
+            }
+            break
+    except Exception:  # noqa: BLE001 - AI activity is best-effort
+        pass
+
+    busy = bool(
+        ingestion["running"]
+        or ingestion["pending"]
+        or modules["running"]
+        or modules["pending"]
+        or ai["active"]
+    )
+    return {"case_id": case_id, "ingestion": ingestion, "modules": modules, "ai": ai, "busy": busy}

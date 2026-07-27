@@ -76,6 +76,7 @@ export const api = {
   cases: {
     list:        ()           => request('GET',    '/cases'),
     get:         (id)         => request('GET',    `/cases/${id}`),
+    activity:    (id)         => request('GET',    `/cases/${id}/activity`),
     create:      (data)       => request('POST',   '/cases', data),
     update:      (id, data)   => request('PUT',    `/cases/${id}`, data),
     delete:      (id)         => request('DELETE', `/cases/${id}`),
