@@ -147,6 +147,8 @@ default credentials, auth) lives in [`docs/DEPLOY.md`](docs/DEPLOY.md) and
 
 `./scripts/run_tests.sh` runs 16 suites + a real `access.log → Babel → Rosetta → Sigil` integration, stdlib-only (no pytest/ES/Redis), enforced in CI on Python 3.11 & 3.12. **Add a parser:** scaffold from `tools/babel/template` (cookiecutter), implement `parse()`, drop the package under `tools/babel/` — the loader discovers it. **Add a tool:** new `tools/<name>/` depending only on `citadel_contracts` + `contracts/`, ship a `brick.yaml`, emit `ForensicEvent`. **Rule:** never import another tool's internals — cross only via contracts. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
+Participation is governed by [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) — community standards, plus the obligations specific to forensics tooling: **never commit real evidence, case data, or identifiers**, and dual-use technique is discussed for defence.
+
 ## Licensing
 
 **Source-available, noncommercial.** Licensed under the **PolyForm Noncommercial License 1.0.0** ([`LICENSE`](LICENSE)) — run, modify, and self-host for any noncommercial purpose (personal, research, education, nonprofits, government). **Any commercial use requires prior written authorization signed by the copyright holder.** Premium runtime tiers (pro / enterprise / mssp) are unlocked by a license key; no key → Community tier. Detail: [`LICENSING.md`](LICENSING.md).
