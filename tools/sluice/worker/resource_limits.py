@@ -46,14 +46,29 @@ class ResourceLimitExceeded(RuntimeError):
 
 
 # ── Defaults (env-overridable) ────────────────────────────────────────────────
-# CPU-time cap (RLIMIT_CPU, seconds of actual CPU time consumed).
-DEFAULT_CPU_SECONDS = int(os.getenv("PARSER_CPU_SECONDS", "900"))  # 15 min
-# Virtual memory cap (RLIMIT_AS, bytes).
-DEFAULT_MEMORY_BYTES = int(os.getenv("PARSER_MEMORY_BYTES", str(2 * 1024**3)))  # 2 GB
-# Wall-clock cap for the whole parser invocation.
-DEFAULT_WALL_TIMEOUT_SEC = int(os.getenv("PARSER_WALL_TIMEOUT_SEC", "1200"))  # 20 min
-# Max child processes (RLIMIT_NPROC) — blunts fork-bomb style abuse.
-DEFAULT_NPROC = int(os.getenv("PARSER_NPROC", "32"))
+# CPU-time cap (RLIMIT_CPU). NB: this counts AGGREGATE user+sys CPU across ALL
+# threads — a multi-threaded tool (Hayabusa/rayon, vol3) on N cores burns N
+# CPU-seconds per wall-second, so a low value SIGXCPU-kills legit runs in
+# minutes. Default 0 = DISABLED; rely on the wall-clock timeout + the pod cgroup
+# CPU limit instead. Set PARSER_CPU_SECONDS>0 only if you really want an
+# aggregate-CPU cap.
+DEFAULT_CPU_SECONDS = int(os.getenv("PARSER_CPU_SECONDS", "0"))  # 0 = disabled
+# Virtual address-space cap (RLIMIT_AS). This bounds VIRTUAL memory, not RSS;
+# vol3/plaso/JVM/Go reserve large VA with modest RSS, so a tight cap yields
+# spurious MemoryError/SIGSEGV. Real RAM is already bounded by the pod cgroup
+# memory limit. Default 12 GiB (was 2 GB, which silently emptied memory
+# forensics); 0 = disabled.
+DEFAULT_MEMORY_BYTES = int(os.getenv("PARSER_MEMORY_BYTES", str(12 * 1024**3)))  # 12 GiB
+# Wall-clock cap for the whole parser invocation. Raised 20 min -> 2 h so large
+# EVTX corpora / multi-GB memory images finish; the built-in runners pass their
+# own (longer) per-tool timeouts through to run_limited.
+DEFAULT_WALL_TIMEOUT_SEC = int(os.getenv("PARSER_WALL_TIMEOUT_SEC", "7200"))  # 2 h
+# RLIMIT_NPROC is intentionally unused (see the note in _child_entrypoint): it
+# caps processes for the whole shared UID, not this child's subtree, so it made
+# even one result thread fail with "can't start new thread". Kept only as an
+# accepted-but-ignored kwarg for back-compat. Fork-bomb protection belongs at
+# the pod cgroup (pids.max).
+DEFAULT_NPROC = int(os.getenv("PARSER_NPROC", "0"))  # 0 = disabled (do not apply)
 
 # Signals that indicate a resource-limit kill rather than a normal crash.
 _LIMIT_SIGNALS = {
@@ -84,15 +99,20 @@ def preexec_limits(
         try:
             import resource
 
-            resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds + 30))
-            try:
-                resource.setrlimit(resource.RLIMIT_AS, (mem_bytes, mem_bytes))
-            except (ValueError, OSError):
-                pass  # some kernels/binaries misbehave with a hard AS cap
-            try:
-                resource.setrlimit(resource.RLIMIT_NPROC, (nproc, nproc))
-            except (ValueError, OSError):
-                pass
+            # Each cap applied only when > 0 (0 = disabled). RLIMIT_NPROC is never
+            # applied — per-UID semantics broke multi-threaded tools in the shared
+            # container; use the pod cgroup pids.max for fork-bomb protection.
+            if cpu_seconds and cpu_seconds > 0:
+                try:
+                    resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds + 30))
+                except (ValueError, OSError):
+                    pass
+            if mem_bytes and mem_bytes > 0:
+                try:
+                    resource.setrlimit(resource.RLIMIT_AS, (mem_bytes, mem_bytes))
+                except (ValueError, OSError):
+                    pass  # some kernels/binaries misbehave with a hard AS cap
+            _ = nproc  # accepted for back-compat; deliberately not applied
         except ImportError:
             pass  # non-POSIX platform — best effort only
         except Exception:  # noqa: BLE001 - must never prevent the child from execing
@@ -106,11 +126,20 @@ def _child_entrypoint(func, args, kwargs, queue, cpu_seconds, mem_bytes, nproc) 
     try:
         import resource
 
-        resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds + 5))
-        try:
-            resource.setrlimit(resource.RLIMIT_AS, (mem_bytes, mem_bytes))
-        except (ValueError, OSError):
-            pass
+        # Each cap applied only when > 0 (0 = disabled — see the module defaults;
+        # aggregate-CPU and virtual-AS caps kill legit multi-threaded / memory
+        # tools, so both default off and are bounded by the wall timeout + pod
+        # cgroup instead).
+        if cpu_seconds and cpu_seconds > 0:
+            try:
+                resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds + 5))
+            except (ValueError, OSError):
+                pass
+        if mem_bytes and mem_bytes > 0:
+            try:
+                resource.setrlimit(resource.RLIMIT_AS, (mem_bytes, mem_bytes))
+            except (ValueError, OSError):
+                pass
         # NB: RLIMIT_NPROC is intentionally NOT applied. It caps processes for
         # the whole real UID (not this child's subtree), and the worker
         # container already runs many threads/processes under the same uid
