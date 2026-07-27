@@ -17,7 +17,7 @@ For each row in :mod:`collection_inventory` this:
   2. asks the real :class:`PluginLoader` router which parser claims it;
   3. compares that against the parser the row declares.
 
-Three ways to fail, all genuine drift:
+Ways to fail, all genuine drift:
 
   * **misrouted** — a row declares parser X, the router picked Y (or nothing).
     Either the collector's arcname changed or a ``can_handle`` regressed.
@@ -25,6 +25,16 @@ Three ways to fail, all genuine drift:
     fallback. X no longer claims what Talon writes.
   * **stale gap** — a row declared ``parser=None`` now routes to a real parser.
     The debt was paid; close the ledger entry.
+  * **unknown parser** — a row names a parser Babel does not ship: a typo.
+  * **silent empty** — a parser claims an artifact and yields no events. Worse
+    than not claiming: the run reports success and the artifact never even
+    reaches the ``strings`` floor that would have surfaced its contents.
+
+One category is reported but is *not* a failure: **unverifiable here**. A parser
+whose optional dependency is absent in this environment (dd_image needs redis
+and minio, diskimage needs pytsk3) cannot be resolved by the router, but it does
+ship and does claim its artifacts in production. It is listed so coverage is
+never silently overstated — the same distinction routing_coverage.py draws.
 
     python3 tools/sluice/worker/collection_coverage.py [-v]
 """
@@ -52,6 +62,36 @@ GENERIC_PARSERS = frozenset(
 # extracting that pair is a complete parse, not a fallback.
 
 
+def shipped_parser_names() -> set[str]:
+    """Every ``PLUGIN_NAME`` declared in the Babel tree, read from source.
+
+    Deliberately import-free. It answers a different question from "which
+    plugins did the loader import": a parser whose optional dependency is
+    missing here (dd_image needs redis + minio, diskimage needs pytsk3) is still
+    a parser Babel ships, and in production it loads and claims its artifacts.
+    Conflating the two turned an environment limitation into a hard failure —
+    which is exactly what broke the first CI run of this checker.
+    """
+    names: set[str] = set()
+    for plugin_file in PLUGINS_DIR.rglob("*_plugin.py"):
+        if _is_template_source(plugin_file):
+            continue
+        for line in plugin_file.read_text(encoding="utf-8", errors="replace").splitlines():
+            stripped = line.strip()
+            if stripped.startswith("PLUGIN_NAME"):
+                _, _, value = stripped.partition("=")
+                name = value.strip().strip("\"'")
+                if name and name != "base":
+                    names.add(name)
+                break
+    return names
+
+
+def _is_template_source(path: Path) -> bool:
+    s = str(path)
+    return "{{" in s or "cookiecutter" in s or "/template/" in s
+
+
 def _materialise(root: Path, arcname: str, sample: bytes) -> Path:
     """Write *sample* at *arcname* under *root*, preserving the real basename.
 
@@ -67,7 +107,7 @@ def _materialise(root: Path, arcname: str, sample: bytes) -> Path:
     return dest
 
 
-def _parse_check(loader, artifacts) -> list[str]:
+def _parse_check(loader, artifacts, loaded_names: set[str]) -> list[str]:
     """Find parsers that claim an artifact and then yield nothing.
 
     Claiming and emitting zero events is worse than not claiming: the router
@@ -89,6 +129,8 @@ def _parse_check(loader, artifacts) -> list[str]:
         for art in artifacts:
             if art.parser is None or art.empty_ok:
                 continue
+            if art.parser not in loaded_names:
+                continue  # optional dependency missing in this environment
             path = _materialise(root, art.path, art.sample)
             try:
                 cls = loader.get_plugin(path, art.mime)
@@ -123,11 +165,13 @@ def build_report(verbose: bool = False) -> dict:
     loader = PluginLoader(plugins_dir=PLUGINS_DIR, ingester_dir=INGESTER_DIR)
     loader.load()
     loaded = {getattr(c, "PLUGIN_NAME", "") for c in loader._plugin_classes}
+    shipped = shipped_parser_names()
 
     misrouted: list[str] = []
     undeclared_gap: list[str] = []
     stale_gap: list[str] = []
     unknown_parser: list[str] = []
+    unverifiable: list[str] = []
     routed: list[tuple[str, str]] = []
     gaps: list[tuple[str, str]] = []
 
@@ -151,10 +195,18 @@ def build_report(verbose: bool = False) -> dict:
                     gaps.append((art.path, actual or "NONE"))
                 continue
 
-            # A declared parser that Babel does not ship at all is a typo in the
-            # ledger, not a routing result — surface it separately.
             if art.parser not in loaded:
-                unknown_parser.append(f"{art.path}: declares parser {art.parser!r}, not loaded")
+                # Two very different situations, only one of which is a defect.
+                if art.parser in shipped:
+                    # Ships, but its optional dependency is absent here, so the
+                    # router cannot resolve it in THIS environment. Recorded so
+                    # coverage is never overstated, but not a failure — same
+                    # distinction routing_coverage.py draws.
+                    unverifiable.append(f"{art.path}: {art.parser} not importable here")
+                else:
+                    unknown_parser.append(
+                        f"{art.path}: declares parser {art.parser!r}, which Babel does not ship"
+                    )
                 continue
 
             if actual == art.parser:
@@ -168,7 +220,7 @@ def build_report(verbose: bool = False) -> dict:
 
     categories = {a.category for a in ARTIFACTS}
     return {
-        "silent_empty": _parse_check(loader, ARTIFACTS),
+        "silent_empty": _parse_check(loader, ARTIFACTS, loaded),
         "artifacts": len(ARTIFACTS),
         "categories": len(categories),
         "plugins_loaded": len(loaded),
@@ -178,6 +230,7 @@ def build_report(verbose: bool = False) -> dict:
         "undeclared_gap": undeclared_gap,
         "stale_gap": stale_gap,
         "unknown_parser": unknown_parser,
+        "unverifiable_env": unverifiable,
         "verbose": verbose,
     }
 
@@ -194,6 +247,13 @@ def main() -> int:
     print(f"  parsers loaded            : {r['plugins_loaded']}")
     print(f"  routed to declared parser : {ok}/{total}")
     print(f"  declared open gaps        : {gaps}/{total}")
+    if r["unverifiable_env"]:
+        print(
+            f"  unverifiable here         : {len(r['unverifiable_env'])}"
+            " (parser ships but its optional dependency is absent)"
+        )
+        for line in r["unverifiable_env"]:
+            print(f"    {line}")
 
     if verbose and r["routed"]:
         print("\n  ROUTED:")
