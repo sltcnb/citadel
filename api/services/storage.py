@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import io
 import logging
+import os
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -163,6 +164,45 @@ def stat_object(object_key: str) -> ObjectStat:
         last_modified=getattr(st, "last_modified", None),
         content_type=getattr(st, "content_type", None),
     )
+
+
+# ── Scratch-disk guard (API /tmp emptyDir) ──────────────────────────────────────
+# The API pod's /tmp is a size-limited emptyDir; export/import/extract paths spool
+# whole archives there. Overflowing it gets the pod evicted by the kubelet (the
+# same failure mode the worker hit). Refuse an oversized spool up front so the
+# request fails cleanly (413) instead of taking the pod down. Budget defaults
+# safely under the 20Gi emptyDir and is env-tunable.
+SCRATCH_PATH = os.getenv("API_SCRATCH_PATH", "/tmp")
+SCRATCH_BUDGET_BYTES = int(os.getenv("API_SCRATCH_BUDGET_BYTES", str(16 * 1024**3)))  # 16 GiB
+SCRATCH_MARGIN = float(os.getenv("API_SCRATCH_MARGIN", "1.2"))
+
+
+def scratch_used_bytes(path: str = SCRATCH_PATH) -> int:
+    """Bytes currently staged under *path* (matches how the kubelet sums the
+    emptyDir quota — fs-free APIs report the node disk, not the quota)."""
+    total = 0
+    for root, _dirs, files in os.walk(path, onerror=lambda _e: None):
+        for name in files:
+            try:
+                total += os.lstat(os.path.join(root, name)).st_size
+            except OSError:
+                pass
+    return total
+
+
+def require_scratch(need_bytes: int, path: str = SCRATCH_PATH) -> None:
+    """Raise StorageError if staging *need_bytes* under *path* would exceed the
+    scratch budget. No-op for unknown/zero sizes."""
+    if need_bytes <= 0:
+        return
+    need = int(need_bytes * SCRATCH_MARGIN)
+    used = scratch_used_bytes(path)
+    if used + need > SCRATCH_BUDGET_BYTES:
+        raise StorageError(
+            f"scratch budget would be exceeded on {path}: {used // 1024 // 1024} MB used "
+            f"+ ~{need // 1024 // 1024} MB needed > {SCRATCH_BUDGET_BYTES // 1024 // 1024} MB "
+            f"budget — refusing to stage (would risk pod eviction)"
+        )
 
 
 # ── Uploads ─────────────────────────────────────────────────────────────────────
