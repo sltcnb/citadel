@@ -18,6 +18,7 @@ import io
 import sys
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -55,6 +56,13 @@ def wired(monkeypatch):
 
     Returns a setter: call ``set_archive(bytes)`` to control what the mocked
     ``storage.stream_object`` yields for the archive object.
+
+    ``stat_object``/``require_scratch`` (the /tmp scratch guard the endpoint runs
+    before spooling) are stubbed too: the real ``stat_object`` imports ``minio``,
+    which the fakeredis CI job deliberately does not install, and the real
+    ``require_scratch`` measures the *runner's* /tmp usage, which would make
+    these tests depend on ambient disk state. The guard's own 413 path is
+    exercised by ``test_scratch_guard_refusal_maps_to_413`` below.
     """
     state = {"archive": b""}
 
@@ -73,6 +81,12 @@ def wired(monkeypatch):
         yield state["archive"]
 
     monkeypatch.setattr(cf.storage, "stream_object", _stream, raising=True)
+
+    def _stat(_key):
+        return SimpleNamespace(size=len(state["archive"]))
+
+    monkeypatch.setattr(cf.storage, "stat_object", _stat, raising=True)
+    monkeypatch.setattr(cf.storage, "require_scratch", lambda _n: None, raising=True)
 
     def _set(data: bytes):
         state["archive"] = data
@@ -153,3 +167,23 @@ def test_missing_member_404(wired, monkeypatch):
     with pytest.raises(HTTPException) as ei:
         _call("absent.txt")
     assert ei.value.status_code == 404
+
+
+# ── (d) scratch guard refuses to spool → 413 ─────────────────────────────────
+
+
+def test_scratch_guard_refusal_maps_to_413(wired, monkeypatch):
+    """When the /tmp scratch budget can't fit the archive, the endpoint answers
+    413 instead of spooling it and getting the pod evicted."""
+    monkeypatch.setattr(cf, "_MAX_EXTRACT_MEMBER_BYTES", 1024 * 1024)
+    wired(_zip_bytes({"present.txt": b"x"}))
+
+    def _no_room(_need):
+        raise cf.storage.StorageError("scratch budget would be exceeded on /tmp")
+
+    monkeypatch.setattr(cf.storage, "require_scratch", _no_room, raising=True)
+
+    with pytest.raises(HTTPException) as ei:
+        _call("present.txt")
+    assert ei.value.status_code == 413
+    assert "scratch budget" in ei.value.detail.lower()
