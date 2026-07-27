@@ -32,7 +32,11 @@ except Exception:  # noqa: BLE001 - metrics must never block ingestion
 # Decompression-bomb cap for archive entries expanded into child jobs — an
 # entry with a lying/absent size header could otherwise be extracted (and
 # buffered) without bound. Mirrors MAX_ZIP_ENTRY_BYTES in api/routers/ingest.py.
-_MAX_ENTRY_BYTES = int(os.getenv("MAX_ZIP_ENTRY_BYTES", str(10 * 1024**3)))  # 10 GiB
+# Max declared size for a single archive entry. Entries now stream straight to
+# MinIO with an explicit length (MinIO reads exactly this many bytes, so a lying
+# header can't bomb us), so this only rejects absurd/corrupt declared sizes —
+# real forensic artifacts (multi-GB pagefile/hiberfil/memory images) must pass.
+_MAX_ENTRY_BYTES = int(os.getenv("MAX_ZIP_ENTRY_BYTES", str(512 * 1024**3)))  # 512 GiB
 
 
 def _spool_entry_to_temp(src, limit: int = _MAX_ENTRY_BYTES) -> tuple[str, int]:
@@ -83,6 +87,46 @@ def _put_file_with_retry(
                 "MinIO put attempt %d/%d failed (%s) — retry in %ds", attempt, attempts, exc, wait
             )
             time.sleep(wait)
+
+
+# Multipart part size for streaming large entries straight to MinIO. 16 MiB
+# keeps per-upload RAM tiny (one part in flight) while staying well under the
+# 10 000-part ceiling for very large objects (16 MiB × 10000 ≈ 156 GiB).
+_STREAM_PART_SIZE = 16 * 1024 * 1024
+
+
+def _put_stream_with_retry(
+    minio_client, bucket: str, key: str, open_fn, size: int, attempts: int = 3
+) -> None:
+    """Stream an archive entry of known length straight to MinIO (multipart),
+    never staging it on local disk.
+
+    ``open_fn()`` returns a FRESH readable stream positioned at the start — it
+    is called once per attempt so a retry re-reads from the beginning (archive
+    entry streams aren't seekable). Passing an explicit ``length`` makes MinIO
+    read exactly ``size`` bytes, which also bounds a lying/oversized entry
+    (decompression-bomb safe) without buffering the whole entry anywhere."""
+    for attempt in range(1, attempts + 1):
+        stream = open_fn()
+        try:
+            minio_client.put_object(
+                bucket, key, stream, length=size, part_size=_STREAM_PART_SIZE
+            )
+            return
+        except Exception as exc:
+            if attempt == attempts:
+                raise
+            wait = 2**attempt
+            logger.warning(
+                "MinIO stream-put attempt %d/%d failed (%s) — retry in %ds",
+                attempt, attempts, exc, wait,
+            )
+            time.sleep(wait)
+        finally:
+            try:
+                stream.close()
+            except Exception:
+                pass
 
 
 import bus_emit
@@ -449,17 +493,26 @@ def _expand_zip_into_child_jobs(
             # Streamed via a bounded local temp file — the entry is never
             # buffered whole in memory, so multi-GB embedded artifacts (e.g. a
             # disk image nested in a zip) don't blow up worker RSS.
-            tmp_path = None
             try:
-                # DISK GUARD: a single oversized entry (e.g. a multi-GB memory
-                # image nested in an fo-artifacts zip) spooled to /tmp while the
-                # archive is still resident is the classic pod-eviction trigger.
-                # Refuse it here — the per-entry except marks just this child
-                # FAILED and continues, so the pod and the rest of the zip survive.
-                robustness.require_scratch(info.file_size or info.compress_size or 0)
-                with zf.open(info) as src:
-                    tmp_path, size = _spool_entry_to_temp(src)
-                _put_file_with_retry(minio_client, MINIO_BUCKET, minio_key, tmp_path, size)
+                # Stream the entry STRAIGHT to MinIO — never staged on local
+                # disk. This is what lets a multi-GB memory artifact (pagefile /
+                # hiberfil nested in an fo-artifacts zip) ingest at all: it needs
+                # no /tmp scratch, so it can't overflow the emptyDir / evict the
+                # pod, and it doesn't hit the scratch-budget guard. MinIO reads
+                # exactly info.file_size bytes (bomb-safe). open_fn reopens the
+                # entry per attempt so a retry re-reads from the start.
+                size = info.file_size or 0
+                if size > _MAX_ENTRY_BYTES:
+                    raise ValueError(
+                        f"entry declares {size} bytes, over the {_MAX_ENTRY_BYTES}-byte cap"
+                    )
+                _put_stream_with_retry(
+                    minio_client,
+                    MINIO_BUCKET,
+                    minio_key,
+                    lambda inf=info: zf.open(inf),
+                    size,
+                )
                 r.hset(
                     f"job:{child_id}",
                     mapping={
@@ -484,12 +537,6 @@ def _expand_zip_into_child_jobs(
                     },
                 )
                 continue
-            finally:
-                if tmp_path:
-                    try:
-                        os.unlink(tmp_path)
-                    except OSError:
-                        pass
 
             # ── Dispatch child process_artifact task ──────────────────────────
             app.send_task(
@@ -580,14 +627,22 @@ def _expand_tar_into_child_jobs(
             r.zadd(f"case:{case_id}:jobs:zs", {child_id: time.time()})
             r.expire(f"case:{case_id}:jobs:zs", JOB_TTL)
 
-            # Streamed via a bounded local temp file — see _expand_zip_into_child_jobs.
-            tmp_path = None
+            # Stream straight to MinIO (no /tmp staging) — same as the zip path,
+            # so multi-GB TAR members ingest without scratch or eviction risk.
             try:
-                fobj = tf.extractfile(member)
-                if fobj is None:
-                    raise ValueError("extractfile returned None (symlink or special file)")
-                tmp_path, size = _spool_entry_to_temp(fobj)
-                _put_file_with_retry(minio_client, MINIO_BUCKET, minio_key, tmp_path, size)
+                size = member.size or 0
+                if size > _MAX_ENTRY_BYTES:
+                    raise ValueError(
+                        f"member declares {size} bytes, over the {_MAX_ENTRY_BYTES}-byte cap"
+                    )
+
+                def _open_member(mem=member):
+                    fo = tf.extractfile(mem)
+                    if fo is None:
+                        raise ValueError("extractfile returned None (symlink or special file)")
+                    return fo
+
+                _put_stream_with_retry(minio_client, MINIO_BUCKET, minio_key, _open_member, size)
                 r.hset(
                     f"job:{child_id}",
                     mapping={
@@ -612,12 +667,6 @@ def _expand_tar_into_child_jobs(
                     },
                 )
                 continue
-            finally:
-                if tmp_path:
-                    try:
-                        os.unlink(tmp_path)
-                    except OSError:
-                        pass
 
             app.send_task(
                 "ingest.process_artifact",
