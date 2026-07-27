@@ -117,6 +117,13 @@ spec:
             # Change here + redeploy; no image rebuild needed.
             - name: CELERY_CONCURRENCY
               value: "4"
+            # Scratch-disk budget for the worker's /tmp staging (robustness.py).
+            # Held a few GB under the tmp-storage emptyDir sizeLimit below so an
+            # oversized artifact fails that task cleanly instead of overflowing
+            # the volume and getting the whole pod evicted. Shared across the
+            # CELERY_CONCURRENCY workers (guard measures real /tmp usage).
+            - name: WORKER_SCRATCH_BUDGET_BYTES
+              value: "59055800320"  # 55 GiB (tmp-storage sizeLimit is 60Gi)
             # Sandbox limits for custom Python modules written in Studio.
             # SANDBOX_CPU_SECONDS  — max CPU time a custom module can consume
             # SANDBOX_MEMORY_BYTES — max RSS (bytes) — default 4 GB for large file analysis
@@ -191,4 +198,10 @@ spec:
             claimName: modules-pvc
         - name: tmp-storage
           emptyDir:
-            sizeLimit: 20Gi
+            # Forensic ingestion stages multi-GB archives + memory/disk images +
+            # tool scratch here. 20Gi was too small — a single large case
+            # overflowed it and the kubelet evicted the pod, wedging the ingest
+            # Deployment in an eviction loop (100+ dead pods). The node has ample
+            # disk; the worker's WORKER_SCRATCH_BUDGET_BYTES guard keeps usage
+            # safely under this hard cap so oversized cases fail cleanly instead.
+            sizeLimit: 60Gi

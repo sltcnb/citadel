@@ -451,6 +451,12 @@ def _expand_zip_into_child_jobs(
             # disk image nested in a zip) don't blow up worker RSS.
             tmp_path = None
             try:
+                # DISK GUARD: a single oversized entry (e.g. a multi-GB memory
+                # image nested in an fo-artifacts zip) spooled to /tmp while the
+                # archive is still resident is the classic pod-eviction trigger.
+                # Refuse it here — the per-entry except marks just this child
+                # FAILED and continues, so the pod and the rest of the zip survive.
+                robustness.require_scratch(info.file_size or info.compress_size or 0)
                 with zf.open(info) as src:
                     tmp_path, size = _spool_entry_to_temp(src)
                 _put_file_with_retry(minio_client, MINIO_BUCKET, minio_key, tmp_path, size)
@@ -852,6 +858,15 @@ def process_artifact(
         ):
             raise RuntimeError(f"Unsafe download path resolved outside work_dir: {local_file}")
         local_file.parent.mkdir(parents=True, exist_ok=True)
+        # DISK GUARD: don't stage an artifact that would overflow the /tmp scratch
+        # budget. Failing this job cleanly is far better than filling the emptyDir
+        # and getting the whole pod evicted (which kills every concurrent ingest
+        # and can wedge the Deployment in an eviction loop).
+        try:
+            _obj_size = minio.stat_object(MINIO_BUCKET, minio_object_key).size or 0
+        except Exception:  # noqa: BLE001 - size is best-effort; guard on what we know
+            _obj_size = 0
+        robustness.require_scratch(_obj_size)
         minio.fget_object(MINIO_BUCKET, minio_object_key, str(local_file))
         logger.info(
             "[%s] Downloaded to %s (%d bytes)", job_id, local_file, local_file.stat().st_size
