@@ -868,6 +868,8 @@ def purge_archive_case(case_id: str, _case: dict = Depends(require_case_access))
 @router.post("/cases/{case_id}/restore-archive")
 def restore_archive_case(case_id: str, _case: dict = Depends(require_case_access)):
     """Download .citadel from S3 and restore ES + notes into this case."""
+    from services import storage
+
     case = get_case(case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
@@ -891,6 +893,15 @@ def restore_archive_case(case_id: str, _case: dict = Depends(require_case_access
     os.close(tmp_fd)
     try:
         client = _make_minio(endpoint, access_key, secret_key, use_ssl, region)
+        # DISK GUARD: a restored case archive can be large — refuse it if it
+        # would overflow the API pod's /tmp emptyDir (→ kubelet eviction).
+        try:
+            _arc_sz = client.stat_object(bucket, key).size or 0
+            storage.require_scratch(_arc_sz)
+        except storage.StorageError as exc:
+            raise HTTPException(
+                status_code=413, detail=f"Archive too large to restore on the server now: {exc}"
+            ) from exc
         client.fget_object(bucket, key, tmp_path)
 
         try:

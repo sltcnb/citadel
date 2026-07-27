@@ -258,6 +258,16 @@ def extract_archive_member(
     # Stream the (potentially large) archive object to a temp file on disk rather
     # than buffering the whole thing in RAM. zipfile/tarfile both need random
     # access, so a disk-backed handle bounds memory while keeping seek support.
+    # DISK GUARD: refuse to spool an archive that would overflow the API pod's
+    # /tmp emptyDir (→ kubelet eviction). 413 is clearer than a killed pod.
+    try:
+        _arc_size = storage.stat_object(minio_key).size
+        storage.require_scratch(_arc_size)
+    except storage.StorageError as exc:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Archive too large to extract on the server right now: {exc}",
+        ) from exc
     try:
         archive_fd, archive_path = tempfile.mkstemp(prefix="fo_extract_arc_")
         try:
