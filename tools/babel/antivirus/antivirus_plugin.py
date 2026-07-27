@@ -59,6 +59,50 @@ def _extract_ts(line: str) -> str:
     return ""
 
 
+# Extensions found under a vendor's antivirus/ directory that are never logs.
+# Certificates and keys are the case seen in the field; the binaries and
+# signature databases are the same class of mistake waiting to happen.
+_NON_LOG_EXTS = frozenset(
+    {
+        # certificates / keys
+        ".cert", ".cer", ".crt", ".pem", ".der", ".key", ".p7b", ".p7c", ".pfx", ".p12",
+        # code / drivers
+        ".dll", ".exe", ".sys", ".so", ".dylib", ".ocx", ".msi", ".cat",
+        # signature + quarantine stores
+        ".vdb", ".vdf", ".sig", ".sdb", ".mdb", ".db", ".dat", ".bin", ".quarantine",
+        # archives / images
+        ".zip", ".gz", ".cab", ".7z", ".rar",
+    }
+)
+
+# Armor that positively identifies a non-log payload regardless of extension.
+_NON_LOG_MARKERS = (
+    "-----BEGIN CERTIFICATE-----",
+    "-----BEGIN PUBLIC KEY-----",
+    "-----BEGIN PRIVATE KEY-----",
+    "-----BEGIN RSA PRIVATE KEY-----",
+    "-----BEGIN PKCS7-----",
+)
+
+
+def _looks_like_text_log(path: Path) -> bool:
+    """True if *path* reads as a text log rather than a binary or PEM payload."""
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(4096)
+    except OSError:
+        return False
+    if not head:
+        return False
+    if b"\x00" in head:
+        return False  # binary
+    printable = sum(1 for b in head if 9 <= b <= 13 or 32 <= b <= 126)
+    if printable / len(head) < 0.90:
+        return False
+    text = head.decode("utf-8", errors="replace")
+    return not any(marker in text for marker in _NON_LOG_MARKERS)
+
+
 def _vendor_from_path(fp: Path) -> str:
     parts = [p.lower() for p in fp.parts]
     if "antivirus" in parts:
@@ -79,6 +123,30 @@ class AntivirusPlugin(BasePlugin):
     @classmethod
     def get_handled_filenames(cls) -> list[str]:
         return list(_HANDLED)
+
+    @classmethod
+    def can_handle(cls, file_path: Path, mime_type: str) -> bool:
+        """Claim AV *logs*, not everything that happens to live under antivirus/.
+
+        The ``text/x-antivirus`` MIME is assigned by path component
+        (utils/file_type.py ``_PATH_PART_MIME_MAP``), and Talon copies the whole
+        vendor directory — ``antivirus/<vendor>/...`` contains certificates,
+        DLLs, drivers, signature databases and configs alongside the logs. With
+        only the MIME as a signal this plugin claimed all of it and emitted each
+        line as a detection, so a Trend Micro root CA turned into
+        "[trendmicro] DigiCert Assured ID Root CA" followed by its base64 body,
+        one bogus timeline event per line.
+
+        A known log filename is always accepted. Otherwise the file has to look
+        like a text log and not like one of the non-log payloads.
+        """
+        if file_path.name.upper() in _HANDLED:
+            return True
+        if mime_type not in cls.SUPPORTED_MIME_TYPES:
+            return False
+        if file_path.suffix.lower() in _NON_LOG_EXTS:
+            return False
+        return _looks_like_text_log(file_path)
 
     def _looks_binary(self, sample: bytes) -> bool:
         if b"\x00" in sample:

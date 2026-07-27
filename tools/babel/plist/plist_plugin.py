@@ -22,6 +22,29 @@ from typing import Any
 from babel.base_plugin import BasePlugin, PluginFatalError
 
 
+def _looks_like_plist(path: Path) -> bool:
+    """True for a binary or XML Apple property list, by content.
+
+    Cheap and byte-based: a bplist announces itself in the first 8 bytes, and an
+    XML plist names ``<plist`` in its prologue (after the declaration and the
+    Apple DOCTYPE). Reading a small head is enough and keeps a foreign XML
+    dialect — Windows WER reports, scheduled tasks, IIS config — out.
+    """
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(2048)
+    except OSError:
+        return False
+    if head.startswith(b"bplist0"):
+        return True
+    # UTF-16 XML plists exist (rare); decode leniently before matching.
+    if head[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        text = head.decode("utf-16", errors="replace")
+    else:
+        text = head.decode("utf-8", errors="replace")
+    return "<plist" in text.lower()
+
+
 def _file_mtime_iso(p: Path) -> str:
     try:
         return datetime.fromtimestamp(p.stat().st_mtime, tz=UTC).isoformat()
@@ -95,8 +118,26 @@ class PlistPlugin(BasePlugin):
     DEFAULT_ARTIFACT_TYPE = "plist"
     SUPPORTED_EXTENSIONS = [".plist"]
     # Apple property list — binary (bplist) or XML variants.
-    SUPPORTED_MIME_TYPES = ["application/x-plist", "text/xml"]
+    #
+    # "text/xml" is deliberately NOT listed. It made this plugin claim *every*
+    # XML file in a bundle: a Windows WER crash report (WER.<guid>.tmp.xml) was
+    # being routed here, and because plistlib.load() returns None on non-plist
+    # XML instead of raising, it emitted one junk "<null>" event per file and the
+    # real WER report never reached the wer parser.
+    SUPPORTED_MIME_TYPES = ["application/x-plist"]
     PLUGIN_PRIORITY = 20
+
+    @classmethod
+    def can_handle(cls, file_path: Path, mime_type: str) -> bool:
+        """Claim only files that really are property lists.
+
+        An Apple plist is either binary (``bplist00`` magic) or an XML document
+        with a ``<plist>`` root. Checking for one of those is what keeps a
+        foreign XML dialect from being silently mis-parsed into null events.
+        """
+        if super().can_handle(file_path, mime_type):
+            return True
+        return _looks_like_plist(file_path)
 
     def parse(self) -> Generator[dict[str, Any], None, None]:
         fp = self.ctx.source_file_path
@@ -105,6 +146,15 @@ class PlistPlugin(BasePlugin):
                 data = plistlib.load(f)
         except Exception as exc:
             raise PluginFatalError(f"Cannot parse plist: {exc}")
+
+        # plistlib.load() does not raise on XML that parses but is not a plist —
+        # it returns None. Emitting an event for that produces a timeline entry
+        # whose only content is "<null>", so refuse it as a parse failure and let
+        # the router's next candidate (or the strings floor) have the file.
+        if data is None:
+            raise PluginFatalError(
+                f"'{fp.name}' parsed as XML but yielded no property list — not a plist"
+            )
 
         filename = fp.name
         mtime = _file_mtime_iso(fp)

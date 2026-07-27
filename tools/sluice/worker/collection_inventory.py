@@ -180,6 +180,9 @@ CLOUD_TRAIL = (
     b'"userIdentity":{"type":"IAMUser","userName":"jdoe"}}]}\n'
 )
 
+# Two real WER shapes. Archived reports are INI-like key=value (.wer); queued
+# reports are XML named WER.<guid>.tmp.xml. Both are collected verbatim from
+# ReportQueue/ReportArchive, and the XML one is what a real bundle mostly holds.
 WER_REPORT = (
     b"Version=1\r\n"
     b"EventType=APPCRASH\r\n"
@@ -188,6 +191,22 @@ WER_REPORT = (
     b"AppPath=C:\\Windows\\System32\\svchost.exe\r\n"
     b"Sig[0].Name=Application Name\r\n"
     b"Sig[0].Value=svchost.exe\r\n"
+)
+
+WER_REPORT_XML = (
+    b'<?xml version="1.0" encoding="UTF-8"?>\n'
+    b"<WERReportMetadata>\n"
+    b"  <WERSystemMetadata><MachineName>WIN01</MachineName>"
+    b"<OSVersion>10.0.19045</OSVersion></WERSystemMetadata>\n"
+    b"  <WERProcessInformation><AppName>svchost.exe</AppName>"
+    b"<AppPath>C:\\Windows\\System32\\svchost.exe</AppPath>"
+    b"<ProcessId>4321</ProcessId></WERProcessInformation>\n"
+    b"  <WERReportInformation><EventName>APPCRASH</EventName>"
+    b"<FriendlyEventName>Stopped responding and was closed</FriendlyEventName>"
+    b"<EventTime>133500000000000000</EventTime>"
+    b"<ReportIdentifier>5381ec19-85a9-48cf-9e64-4355dc75239a</ReportIdentifier>"
+    b"</WERReportInformation>\n"
+    b"</WERReportMetadata>\n"
 )
 
 NETSTAT = (
@@ -232,6 +251,14 @@ MDATP_THREATS = (
 )
 
 MARKOFWEB = b"[ZoneTransfer]\r\nZoneId=3\r\nReferrerUrl=https://evil.example/dl\r\n"
+
+# A PEM certificate, as shipped inside a vendor's antivirus/ directory.
+PEM_CERT = (
+    b"-----BEGIN CERTIFICATE-----\n"
+    b"MIIDtzCCAp+gAwIBAgIQDOfg5RfYRv6P5WD8G/AwIjANBgkqhkiG9w0BAQUFADBl\n"
+    b"IgYDVQQDExtEaWdpQ2VydCBBc3N1cmVkIElEIFJvb3QgQ0EwHhcNMDYxMTEwMDAw\n"
+    b"-----END CERTIFICATE-----\n"
+)
 
 K8S_YAML = (
     b"apiVersion: v1\nkind: Pod\nmetadata:\n  name: web\n  namespace: default\n"
@@ -476,6 +503,20 @@ ARTIFACTS: list[Artifact] = [
         "the user's key; only inventory events are feasible",
     ),
     _a("antivirus", "antivirus/mdatp/mdatp_threats.txt", MDATP_THREATS, "syslog"),
+    _a("antivirus", "antivirus/defender/MPLOG.LOG", MDATP_THREATS, "antivirus"),
+    # Talon copies the vendor directory wholesale, so it holds certificates,
+    # drivers and signature stores next to the logs. These must NOT reach the
+    # antivirus parser: it emits one event per line, so a root CA became
+    # "[trendmicro] DigiCert Assured ID Root CA" plus its base64 body.
+    _a(
+        "antivirus",
+        "antivirus/trend/response_ca.cert",
+        PEM_CERT,
+        None,
+        gap="a vendor/root certificate is real evidence (a rogue root CA is a "
+        "MITM indicator) but there is no certificate parser; strings is the "
+        "correct floor until one exists",
+    ),
     _a(
         "antivirus",
         "antivirus/defender/DetectionHistory/01/ABC123",
@@ -502,6 +543,21 @@ ARTIFACTS: list[Artifact] = [
     _a("sysmon", "sysmon/sysmon_events.log", TIMESTAMPED_LOG, "timestamped_log"),
     _a("file_search", "file_search/Users/jdoe/note.txt", TIMESTAMPED_LOG, "timestamped_log"),
     _a("wer_crashes", "wer_crashes/ReportArchive/Report.wer", WER_REPORT, "wer"),
+    # The shape Windows actually queues, and the one seen in a real bundle: an
+    # XML report, not a .wer file. The ledger originally had only the .wer row,
+    # which is why the checker did not catch this landing on the plist parser.
+    _a(
+        "wer_crashes",
+        "wer_crashes/ReportQueue/WER.5381ec19-85a9-48cf-9e64-4355dc75239a.tmp.xml",
+        WER_REPORT_XML,
+        "wer",
+    ),
+    _a(
+        "wer_crashes",
+        "wer_crashes/ReportQueue/Report.wer",
+        WER_REPORT,
+        "wer",
+    ),
     _a("filesystem", "filesystem/$MFT", b"FILE0\x00\x03\x00" + b"\x00" * 1017, "mft"),
     _a(
         "filesystem",
