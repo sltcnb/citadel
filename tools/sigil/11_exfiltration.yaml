@@ -25,7 +25,7 @@ rules:
       Suricata recorded a large outbound transfer (bytes_toserver > 10MB).
       Potentially sensitive data being uploaded to an external destination.
     artifact_type: suricata
-    query: "suricata.event_type:flow AND suricata.flow.bytes_toserver:>10000000"
+    query: "suricata.event_type:flow AND network.bytes_out:>10000000"
     threshold: 1
     mitre: [T1048]
     level: medium
@@ -45,7 +45,7 @@ rules:
       Outbound FTP (port 21) or SCP/SFTP (port 22) transfer detected.
       File transfer protocols are commonly abused for data exfiltration.
     artifact_type: suricata
-    query: "suricata.event_type:flow AND (suricata.dest_port:21 OR suricata.dest_port:22)"
+    query: "suricata.event_type:flow AND (network.dst_port:21 OR network.dst_port:22)"
     threshold: 1
     mitre: [T1048.003]
     level: medium
