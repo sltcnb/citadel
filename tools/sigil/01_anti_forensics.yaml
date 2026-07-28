@@ -54,7 +54,7 @@ rules:
     artifact_type: evtx
     query: >-
       evtx.event_id:4688 AND (message:del OR message.ci:*remove-item* OR
-      message.ci:*rd\ \/s* OR message.ci:*rmdir*)
+      message.ci:*rd\*\/s* OR message.ci:*rmdir*)
     threshold: 1
     mitre: [T1070.004]
     level: medium
