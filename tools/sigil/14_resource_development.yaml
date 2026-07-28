@@ -26,7 +26,7 @@ rules:
       Network traffic to or from TOR network nodes.
       TOR is commonly used for anonymous C2 communication.
     artifact_type: suricata
-    query: "suricata.event_type:flow AND (suricata.dest_port:9001 OR suricata.dest_port:9030 OR suricata.dest_port:9150)"
+    query: "suricata.event_type:flow AND (network.dst_port:9001 OR network.dst_port:9030 OR network.dst_port:9150)"
     threshold: 1
     mitre: [T1090.003]
     level: high
