@@ -1,5 +1,6 @@
 """Celery application factory."""
 
+import logging
 import os
 
 from celery import Celery
@@ -9,6 +10,8 @@ from kombu import Exchange, Queue
 # Fold REDIS_PASSWORD into the URL so the Celery broker/backend and every
 # from_url() client authenticates against a --requirepass Redis.
 REDIS_URL = redis_url_with_auth(os.getenv("REDIS_URL", "redis://redis-service:6379/0"))
+
+logger = logging.getLogger(__name__)
 
 # Observability: structured JSON logs to stdout + a capped Redis stream the
 # admin log viewer reads (citadel:logs:processor). Best-effort — never fatal.
@@ -75,8 +78,16 @@ app.conf.update(
     # fleet-wide in-flight cap enforced inside the ingest task itself.
     worker_prefetch_multiplier=int(os.getenv("WORKER_PREFETCH_MULTIPLIER", "1")),
     # ── Time limits ────────────────────────────────────────────────────────
-    task_soft_time_limit=3600,  # raise SoftTimeLimitExceeded at 1 h
-    task_time_limit=7200,  # SIGKILL at 2 h
+    # These bound the WHOLE task and must stay above the per-parser wall-clock
+    # budget (resource_limits.DEFAULT_WALL_TIMEOUT_SEC, default 2 h) — otherwise
+    # Celery kills a parser the resource limiter was still happy to run, and the
+    # analyst gets a bare "SoftTimeLimitExceeded()" instead of a result. That is
+    # exactly what happened with Hayabusa over a large EVTX corpus: the soft limit
+    # was 1 h while the parser budget was 2 h, so any run past an hour could only
+    # ever fail. Defaults now leave headroom over the parser budget for the
+    # download/index phases either side of it, and both are env-tunable.
+    task_soft_time_limit=int(os.getenv("CELERY_SOFT_TIME_LIMIT", "10800")),  # 3 h
+    task_time_limit=int(os.getenv("CELERY_TIME_LIMIT", "12600")),  # SIGKILL at 3.5 h
     result_expires=604800,  # keep results 7 days
     # ── Memory / stability ─────────────────────────────────────────────────
     # Recycle worker processes after N tasks to prevent memory bloat from
@@ -103,7 +114,9 @@ app.conf.update(
     },
     # ── Broker connection tuning ───────────────────────────────────────────
     broker_transport_options={
-        "visibility_timeout": 7200,  # match hard time limit
+        # Must not be below the hard time limit, or the broker redelivers a task
+        # that is still legitimately running and it gets executed twice.
+        "visibility_timeout": int(os.getenv("CELERY_TIME_LIMIT", "12600")),
         "socket_keepalive": True,
         "retry_policy": {
             "timeout": 5.0,
@@ -111,6 +124,49 @@ app.conf.update(
     },
     broker_connection_retry_on_startup=True,
 )
+
+
+def _check_time_limits() -> list[str]:
+    """Return a warning per time-limit inversion in the current configuration.
+
+    The task limits, the per-parser wall-clock budget, and the broker visibility
+    timeout are three independent knobs that must stay ordered:
+
+        parser wall budget  <  soft task limit  <  hard task limit  <=  visibility
+
+    When they invert, the symptom is a module run that could never have
+    succeeded — a bare ``SoftTimeLimitExceeded()`` with no output — rather than
+    an obvious misconfiguration. Checked at import so it shows up in the worker's
+    startup log instead of being discovered by a failed 2-hour Hayabusa run.
+    """
+    warnings: list[str] = []
+    soft = int(app.conf.task_soft_time_limit or 0)
+    hard = int(app.conf.task_time_limit or 0)
+    vis = int((app.conf.broker_transport_options or {}).get("visibility_timeout") or 0)
+    parser = int(os.getenv("PARSER_WALL_TIMEOUT_SEC", "7200"))
+
+    if soft and parser >= soft:
+        warnings.append(
+            f"PARSER_WALL_TIMEOUT_SEC ({parser}s) >= task_soft_time_limit ({soft}s): "
+            "a parser allowed to run that long will always be killed by Celery first. "
+            "Raise CELERY_SOFT_TIME_LIMIT or lower PARSER_WALL_TIMEOUT_SEC."
+        )
+    if soft and hard and soft >= hard:
+        warnings.append(
+            f"task_soft_time_limit ({soft}s) >= task_time_limit ({hard}s): "
+            "tasks are SIGKILLed with no chance to record why they stopped."
+        )
+    if hard and vis and vis < hard:
+        warnings.append(
+            f"broker visibility_timeout ({vis}s) < task_time_limit ({hard}s): "
+            "the broker will redeliver still-running tasks, executing them twice."
+        )
+    return warnings
+
+
+for _w in _check_time_limits():
+    logger.warning("Celery time-limit misconfiguration: %s", _w)
+
 
 if __name__ == "__main__":
     app.start()

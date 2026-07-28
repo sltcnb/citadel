@@ -5939,9 +5939,17 @@ def _load_agent_run(case_id: str, run_idx: int) -> dict | None:
         return None
 
 
+# Upper bound on how many ids one flag action will touch. They now go out as a
+# single terms query (ES allows ~65k clauses), so this is a sanity bound on the
+# request size rather than the old per-id round-trip budget.
+_MAX_FLAG_IDS = 2000
+
+
 def _ids_surfaced_in_run(run: dict) -> list[str]:
-    """Every fo_id the agent saw (sample_ids from search/time_window/correlate,
-    plus inspect's fo_id). De-duplicated, capped at 200."""
+    """Every DISTINCT fo_id the agent saw, in first-seen order (sample_ids from
+    search/time_window/correlate, plus inspect's fo_id). Not capped — callers
+    cap and report the truncation, so a silent cut can't be mistaken for the
+    real total."""
     seen: list[str] = []
     sset: set[str] = set()
     for s in run.get("steps", []) or []:
@@ -5952,7 +5960,7 @@ def _ids_surfaced_in_run(run: dict) -> list[str]:
             if i and i not in sset:
                 sset.add(i)
                 seen.append(i)
-    return seen[:200]
+    return seen
 
 
 @router.post(
@@ -5970,50 +5978,77 @@ def ai_agent_flag_evidence(case_id: str, run_idx: int):
     run = _load_agent_run(case_id, run_idx)
     if not run:
         raise HTTPException(404, "Agent run not found")
-    fo_ids = _ids_surfaced_in_run(run)
-    if not fo_ids:
-        return {"flagged": 0, "skipped": 0, "note": "no fo_ids surfaced in this run"}
+    distinct = _ids_surfaced_in_run(run)
+    if not distinct:
+        return {
+            "flagged": 0,
+            "skipped": 0,
+            "requested": 0,
+            "note": "no fo_ids surfaced in this run",
+        }
+    fo_ids = distinct[:_MAX_FLAG_IDS]
 
     from services.elasticsearch import _request as _es_req
 
     index = f"fo-case-{case_id}-*"
-    flagged = skipped = 0
-    last_err = None
     note = f"AI agent run #{run_idx} — {(run.get('circumstance') or '')[:120]}"
-    for fo_id in fo_ids:
-        try:
-            _es_req(
-                "POST",
-                f"/{index}/_update_by_query?refresh=false&conflicts=proceed",
-                {
-                    "query": {
-                        "bool": {
-                            "should": [
-                                {"term": {"fo_id": fo_id}},
-                                {"term": {"_id": fo_id}},
-                            ],
-                            "minimum_should_match": 1,
-                        }
-                    },
-                    "script": {
-                        "source": "ctx._source.is_flagged = true; ctx._source.flag_note = params.note;",
-                        "lang": "painless",
-                        "params": {"note": note},
-                    },
+    # ONE _update_by_query for the whole id set. Issuing a request per id meant
+    # ~N cluster round-trips against a wildcard index pattern, and any that hit
+    # a timeout was counted as "skipped" with its reason discarded — which is how
+    # a run reported "flagged 26 · skipped 67" with no way to tell why. The
+    # counts below now come from Elasticsearch's own accounting.
+    try:
+        resp = _es_req(
+            "POST",
+            f"/{index}/_update_by_query"
+            "?refresh=true&conflicts=proceed&ignore_unavailable=true&allow_no_indices=true",
+            {
+                "query": {
+                    "bool": {
+                        "should": [
+                            {"terms": {"fo_id": fo_ids}},
+                            {"ids": {"values": fo_ids}},
+                        ],
+                        "minimum_should_match": 1,
+                    }
                 },
-            )
-            flagged += 1
-        except Exception as exc:  # noqa: BLE001 - collected and surfaced below
-            last_err = exc
-            skipped += 1
-    # Don't silently return "flagged: 0" when every update failed (e.g. an
-    # Elasticsearch auth/connection error): that reads to the user as a no-op.
-    # Surface the real reason so the failure is actionable.
-    if flagged == 0 and skipped:
-        raise HTTPException(
-            502, f"could not flag events — Elasticsearch update failed: {last_err}"
+                "script": {
+                    "source": "ctx._source.is_flagged = true; ctx._source.flag_note = params.note;",
+                    "lang": "painless",
+                    "params": {"note": note},
+                },
+            },
         )
-    return {"flagged": flagged, "skipped": skipped, "fo_ids": fo_ids}
+    except Exception as exc:  # noqa: BLE001 - surfaced verbatim; the reason is the point
+        raise HTTPException(
+            502, f"could not flag events — Elasticsearch update failed: {exc}"
+        ) from exc
+
+    resp = resp or {}
+    matched = int(resp.get("total") or 0)
+    # A doc already carrying this exact flag+note is a noop, not a failure — it
+    # is still flagged, so it counts.
+    flagged = int(resp.get("updated") or 0) + int(resp.get("noops") or 0)
+    failures = resp.get("failures") or []
+    out: dict = {
+        "flagged": flagged,
+        # Ids the agent surfaced that no longer resolve to a document (index
+        # rotated, events deleted with their job, a re-run reindexed them).
+        "skipped": max(0, len(fo_ids) - matched),
+        "requested": len(fo_ids),
+        "matched": matched,
+        "fo_ids": fo_ids,
+    }
+    notes = []
+    if len(distinct) > len(fo_ids):
+        notes.append(f"{len(distinct)} events surfaced; flagged the first {len(fo_ids)}")
+    if failures:
+        # Partial failures used to be invisible unless everything failed.
+        notes.append(f"{len(failures)} document(s) failed to update: {str(failures[0])[:200]}")
+        out["failed"] = len(failures)
+    if notes:
+        out["note"] = "; ".join(notes)
+    return out
 
 
 # Keep the old route alive but route it to flag — clients/tests calling
