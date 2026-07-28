@@ -7,6 +7,8 @@ rules:
     artifact_type: registry
     query: "registry.key_path.ci:*\\\\AppPatch\\\\Custom*"
     threshold: 1
+    mitre: [T1546.011]
+    level: high
 
   - name: Sticky Keys Backdoor
     description: >-
@@ -15,6 +17,8 @@ rules:
     artifact_type: registry
     query: "registry.key_path.ci:*\\\\Image File Execution Options* AND (registry.matched_value:*sethc* OR registry.matched_value:*utilman* OR registry.matched_value:*osk* OR registry.matched_value:*magnify*)"
     threshold: 1
+    mitre: [T1546.008]
+    level: critical
 
   - name: Winlogon Helper Modified
     description: >-
@@ -23,6 +27,8 @@ rules:
     artifact_type: registry
     query: "registry.key_path.ci:*\\\\Winlogon* AND (registry.matched_value:*GPExtensions* OR registry.matched_value:*Task* OR registry.matched_value:*System*)"
     threshold: 1
+    mitre: [T1547.004]
+    level: high
 
   - name: LSA Security Package Modified
     description: >-
@@ -31,6 +37,8 @@ rules:
     artifact_type: registry
     query: "registry.key_path.ci:*\\\\LSA* AND (registry.matched_value:*Security Packages* OR registry.matched_value:*Authentication Packages*)"
     threshold: 1
+    mitre: [T1547.005]
+    level: critical
 
   - name: COM Hijacking
     description: >-
@@ -39,6 +47,8 @@ rules:
     artifact_type: registry
     query: "registry.key_path.ci:*\\\\CLSID*\\\\InProcServer32* AND NOT registry.matched_value:*System32*"
     threshold: 1
+    mitre: [T1546.015]
+    level: high
 
   - name: Silent Process Exit Monitoring
     description: >-
@@ -47,3 +57,5 @@ rules:
     artifact_type: registry
     query: "registry.key_path.ci:*\\\\SilentProcessExit*"
     threshold: 1
+    mitre: [T1546.012]
+    level: high
