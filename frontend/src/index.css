@@ -372,177 +372,189 @@
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   Dark theme — slate palette, layered surfaces, visible borders
+   Dark theme — GitHub-dark-inspired neutral slate. Near-black canvas with
+   crisp layer separation, visible borders, and status hues tuned to stay
+   legible on dark surfaces (replaces the old murky navy layers).
    Layer model:
-     base    #0B1220
-     surface #131A2A
-     raised  #1F2A3B
-     border  #1F2A3B (faint) / #334155 (visible)
+     base    #0D1117   surface #161B22   raised #21262D
+     border  #21262D (faint) / #30363D (visible)
+     text    #E6EDF3   muted   #9198A1   faint  #7D8590
+     accent  #6366F1 (primary) / #A5B4FC (links & text accents)
+   Status: ok #3FB950  warn #D29922  crit #F85149  info #58A6FF
    ══════════════════════════════════════════════════════════════════════════ */
 
 .dark {
   color-scheme: dark;
   /* Dark values for the canonical tokens — one place drives every surface. */
-  --ct-surface: #131A2A;
-  --ct-surface-alt: #0B1220;
-  --ct-raised: #1F2A3B;
-  --ct-border: #1F2A3B;
-  --ct-border-strong: #334155;
-  --ct-text: #F1F5F9;
-  --ct-text-muted: #A8B3CF;
+  --ct-surface: #161B22;
+  --ct-surface-alt: #0D1117;
+  --ct-raised: #21262D;
+  --ct-border: #21262D;
+  --ct-border-strong: #30363D;
+  --ct-text: #E6EDF3;
+  --ct-text-muted: #9198A1;
   /* entity-graph palette — brighter strokes, deep fills for dark surfaces */
-  --ct-graph-host: #60a5fa;       /* blue-400 */
-  --ct-graph-host-fill: #1e3a5f;
-  --ct-graph-user: #a78bfa;       /* violet-400 */
-  --ct-graph-user-fill: #3b2e63;
-  --ct-graph-ip: #fbbf24;         /* amber-400 */
-  --ct-graph-ip-fill: #533f14;
-  --ct-graph-edge: #334155;       /* slate-700 */
-  /* chart accents — one step brighter for dark surfaces */
-  --ct-chart-sky: #38bdf8;        /* sky-400 */
-  --ct-chart-amber: #fbbf24;      /* amber-400 */
+  --ct-graph-host: #58A6FF;
+  --ct-graph-host-fill: #12283F;
+  --ct-graph-user: #BC8CFF;
+  --ct-graph-user-fill: #2A2340;
+  --ct-graph-ip: #E3B341;
+  --ct-graph-ip-fill: #3A2E12;
+  --ct-graph-edge: #30363D;
+  /* chart accents */
+  --ct-chart-sky: #39C5CF;
+  --ct-chart-amber: #E3B341;
 }
 
-.dark body { background-color: #0B1220; color: #F1F5F9; }
+.dark body { background-color: #0D1117; color: #E6EDF3; }
 
-.dark ::-webkit-scrollbar-thumb { background: #334155; }
-.dark ::-webkit-scrollbar-thumb:hover { background: #475569; }
+.dark ::-webkit-scrollbar-thumb { background: #30363D; }
+.dark ::-webkit-scrollbar-thumb:hover { background: #484F58; }
 
 .dark .card,
-.dark .card-hover { background-color: #131A2A; border-color: #1F2A3B; }
-.dark .card-hover:hover { border-color: #334155; }
+.dark .card-hover { background-color: #161B22; border-color: #30363D; }
+.dark .card-hover:hover { border-color: #484F58; }
 
-.dark .btn-ghost { color: #94A3B8; }
-.dark .btn-ghost:hover { background-color: #1F2A3B; color: #F1F5F9; }
+.dark .btn-ghost { color: #9198A1; }
+.dark .btn-ghost:hover { background-color: #21262D; color: #E6EDF3; }
 .dark .btn-secondary {
-  background-color: #1F2A3B;
-  color: #E2E8F0;
-  border-color: #334155;
+  background-color: #21262D;
+  color: #E6EDF3;
+  border-color: #30363D;
 }
-.dark .btn-secondary:hover { background-color: #273449; }
+.dark .btn-secondary:hover { background-color: #292E36; border-color: #3D444D; }
 .dark .btn-outline {
-  background-color: #131A2A; border-color: #1F2A3B; color: #E2E8F0;
+  background-color: #161B22; border-color: #30363D; color: #E6EDF3;
 }
-.dark .btn-outline:hover { background-color: #1F2A3B; }
-.dark .btn-danger { color: #F87171; }
-.dark .btn-danger:hover { background-color: rgba(239,68,68,0.12); }
-.dark .btn-success { color: #86EFAC; }
-.dark .btn-success:hover { background-color: rgba(34,197,94,0.12); }
-.dark .btn-primary { background-color: #F1F5F9; color: #0B1220; }
-.dark .btn-primary:hover { background-color: #FFFFFF; }
+.dark .btn-outline:hover { background-color: #21262D; }
+.dark .btn-danger { color: #F85149; }
+.dark .btn-danger:hover { background-color: rgba(248,81,73,0.12); }
+.dark .btn-success { color: #3FB950; }
+.dark .btn-success:hover { background-color: rgba(63,185,80,0.12); }
+.dark .btn-primary { background-color: #6366F1; color: #FFFFFF; }
+.dark .btn-primary:hover { background-color: #4F46E5; }
 
 .dark .input,
 .dark .input-lg {
-  background-color: #0B1220; border-color: #1F2A3B; color: #E2E8F0;
+  background-color: #0D1117; border-color: #30363D; color: #E6EDF3;
 }
 .dark .input::placeholder,
-.dark .input-lg::placeholder { color: #4B5563; }
+.dark .input-lg::placeholder { color: #6E7681; }
 .dark .input:focus,
 .dark .input-lg:focus {
-  border-color: #475569;
-  box-shadow: 0 0 0 2px rgba(71,85,105,0.30);
+  border-color: #6366F1;
+  box-shadow: 0 0 0 2px rgba(99,102,241,0.32);
 }
 
-.dark .skeleton { background-color: #1F2A3B; }
+.dark .skeleton { background-color: #21262D; }
 
-.dark .text-brand-text { color: #F8FAFC; }
-.dark .text-gray-900   { color: #F8FAFC; }
-.dark .text-gray-800   { color: #F1F5F9; }
-.dark .text-gray-700   { color: #E2E8F0; }
-.dark .text-gray-600   { color: #CBD5E1; }
-.dark .text-gray-500   { color: #A8B3CF; }
-.dark .text-gray-400   { color: #7A8499; }
+.dark .text-brand-text { color: #E6EDF3; }
+.dark .text-gray-900   { color: #E6EDF3; }
+.dark .text-gray-800   { color: #E6EDF3; }
+.dark .text-gray-700   { color: #C9D1D9; }
+.dark .text-gray-600   { color: #A9B3BE; }
+.dark .text-gray-500   { color: #9198A1; }
+.dark .text-gray-400   { color: #7D8590; }
 
-.dark .bg-white     { background-color: #131A2A; }
-.dark .bg-gray-50   { background-color: #0B1220; }
-.dark .bg-gray-100  { background-color: #1F2A3B; }
-.dark .bg-gray-200  { background-color: #334155; }
+.dark .bg-white     { background-color: #161B22; }
+.dark .bg-gray-50   { background-color: #0D1117; }
+.dark .bg-gray-100  { background-color: #21262D; }
+.dark .bg-gray-200  { background-color: #30363D; }
 
 /* Opacity variants — Tailwind's slash notation produces literal rgba(white,…),
    so .dark .bg-white overrides above don't apply. Re-target the generated class. */
-.dark .bg-white\/85 { background-color: rgba(19, 26, 42, 0.92); }
-.dark .bg-white\/80 { background-color: rgba(19, 26, 42, 0.88); }
-.dark .bg-white\/70 { background-color: rgba(19, 26, 42, 0.82); }
-.dark .bg-white\/50 { background-color: rgba(19, 26, 42, 0.70); }
+.dark .bg-white\/85 { background-color: rgba(22, 27, 34, 0.92); }
+.dark .bg-white\/80 { background-color: rgba(22, 27, 34, 0.88); }
+.dark .bg-white\/70 { background-color: rgba(22, 27, 34, 0.82); }
+.dark .bg-white\/50 { background-color: rgba(22, 27, 34, 0.70); }
 
-.dark .bg-green-50  { background-color: rgba(34,197,94,0.10); }
-.dark .bg-green-100 { background-color: rgba(34,197,94,0.16); }
-.dark .bg-amber-50  { background-color: rgba(245,158,11,0.10); }
-.dark .bg-amber-100 { background-color: rgba(245,158,11,0.16); }
-.dark .bg-red-50    { background-color: rgba(239,68,68,0.10); }
-.dark .bg-red-100   { background-color: rgba(239,68,68,0.16); }
-.dark .bg-blue-50   { background-color: rgba(59,130,246,0.10); }
-.dark .bg-blue-100  { background-color: rgba(59,130,246,0.16); }
-.dark .bg-orange-50 { background-color: rgba(249,115,22,0.10); }
-.dark .bg-indigo-50 { background-color: rgba(99,102,241,0.10); }
-.dark .bg-rose-50   { background-color: rgba(244,63,94,0.10); }
-.dark .bg-teal-50   { background-color: rgba(20,184,166,0.10); }
-.dark .bg-purple-50 { background-color: rgba(168,85,247,0.10); }
+.dark .bg-green-50  { background-color: rgba(63,185,80,0.10); }
+.dark .bg-green-100 { background-color: rgba(63,185,80,0.16); }
+.dark .bg-amber-50  { background-color: rgba(210,153,34,0.12); }
+.dark .bg-amber-100 { background-color: rgba(210,153,34,0.18); }
+.dark .bg-red-50    { background-color: rgba(248,81,73,0.10); }
+.dark .bg-red-100   { background-color: rgba(248,81,73,0.16); }
+.dark .bg-blue-50   { background-color: rgba(88,166,255,0.10); }
+.dark .bg-blue-100  { background-color: rgba(88,166,255,0.16); }
+.dark .bg-orange-50 { background-color: rgba(240,136,62,0.12); }
+.dark .bg-indigo-50 { background-color: rgba(99,102,241,0.14); }
+.dark .bg-rose-50   { background-color: rgba(247,120,186,0.12); }
+.dark .bg-teal-50   { background-color: rgba(57,197,207,0.12); }
+.dark .bg-purple-50 { background-color: rgba(188,140,255,0.12); }
 
-.dark .border-green-200 { border-color: rgba(34,197,94,0.28); }
-.dark .border-amber-200 { border-color: rgba(245,158,11,0.28); }
-.dark .border-red-200   { border-color: rgba(239,68,68,0.28); }
-.dark .border-blue-200  { border-color: rgba(59,130,246,0.28); }
+.dark .border-green-200 { border-color: rgba(63,185,80,0.30); }
+.dark .border-amber-200 { border-color: rgba(210,153,34,0.30); }
+.dark .border-red-200   { border-color: rgba(248,81,73,0.30); }
+.dark .border-blue-200  { border-color: rgba(88,166,255,0.30); }
 
-.dark .text-green-700 { color: #4ADE80; }
-.dark .text-green-600 { color: #4ADE80; }
-.dark .text-amber-700 { color: #FBBF24; }
-.dark .text-amber-600 { color: #FBBF24; }
-.dark .text-red-700   { color: #F87171; }
-.dark .text-red-600   { color: #F87171; }
-.dark .text-blue-700  { color: #60A5FA; }
-.dark .text-blue-600  { color: #60A5FA; }
-.dark .text-orange-700{ color: #FB923C; }
+.dark .text-green-700 { color: #3FB950; }
+.dark .text-green-600 { color: #3FB950; }
+.dark .text-amber-700 { color: #D29922; }
+.dark .text-amber-600 { color: #D29922; }
+.dark .text-red-700   { color: #F85149; }
+.dark .text-red-600   { color: #F85149; }
+.dark .text-blue-700  { color: #58A6FF; }
+.dark .text-blue-600  { color: #58A6FF; }
+.dark .text-orange-700{ color: #F0883E; }
 .dark .text-indigo-700{ color: #A5B4FC; }
-.dark .text-rose-700  { color: #FB7185; }
-.dark .text-teal-700  { color: #2DD4BF; }
-.dark .text-purple-700{ color: #C084FC; }
+.dark .text-rose-700  { color: #F778BA; }
+.dark .text-teal-700  { color: #39C5CF; }
+.dark .text-purple-700{ color: #BC8CFF; }
 
-.dark .border-gray-100 { border-color: #1B2433; }
-.dark .border-gray-200 { border-color: #2A3650; }
-.dark .border-gray-300 { border-color: #475569; }
+.dark .border-gray-100 { border-color: #21262D; }
+.dark .border-gray-200 { border-color: #30363D; }
+.dark .border-gray-300 { border-color: #3D444D; }
 
-.dark .panel-slide { background-color: #131A2A; border-color: #1F2A3B; }
+.dark .panel-slide { background-color: #161B22; border-color: #30363D; }
 /* .panel-drawer is now token-driven (var(--ct-surface/border)) — no override. */
 .dark .panel-backdrop { background-color: rgba(0, 0, 0, 0.55); }
-.dark .modal-box   { background-color: #131A2A; }
-.dark .modal-header { border-color: #1F2A3B; }
+.dark .modal-box   { background-color: #161B22; }
+.dark .modal-header { border-color: #21262D; }
 .dark .modal-overlay { background-color: rgba(0, 0, 0, 0.6); }
 
-.dark .data-table tr            { border-color: #1B2433; }
-.dark .table-row-hover:hover    { background-color: #1F2A3B; }
-.dark .table-row-selected       { background-color: #1F2A3B; }
+.dark .data-table tr            { border-color: #21262D; }
+.dark .table-row-hover:hover    { background-color: #21262D; }
+.dark .table-row-selected       { background-color: #292E36; }
 
-.dark code:not(.code-block code) { background-color: #1F2A3B; color: #93C5FD; }
+.dark code:not(.code-block code) { background-color: #21262D; color: #A5D6FF; }
 
-.dark .drop-zone-inactive { border-color: #1F2A3B; background-color: #0B1220; }
+.dark .drop-zone-inactive { border-color: #30363D; background-color: #0D1117; }
 
-.dark select { background-color: #0B1220; border-color: #1F2A3B; color: #E2E8F0; }
-.dark select option { background-color: #131A2A; color: #E2E8F0; }
+.dark select { background-color: #0D1117; border-color: #30363D; color: #E6EDF3; }
+.dark select option { background-color: #161B22; color: #E6EDF3; }
 .dark input:not([type="checkbox"]):not([type="radio"]):not([type="range"]) {
-  background-color: #0B1220; border-color: #1F2A3B; color: #E2E8F0;
+  background-color: #0D1117; border-color: #30363D; color: #E6EDF3;
 }
-.dark input:not([type="checkbox"]):not([type="radio"]):not([type="range"])::placeholder { color: #4B5563; }
-.dark textarea { background-color: #0B1220; border-color: #1F2A3B; color: #E2E8F0; }
-.dark textarea::placeholder { color: #4B5563; }
+.dark input:not([type="checkbox"]):not([type="radio"]):not([type="range"])::placeholder { color: #6E7681; }
+.dark textarea { background-color: #0D1117; border-color: #30363D; color: #E6EDF3; }
+.dark textarea::placeholder { color: #6E7681; }
 
-.dark .bg-brand-accentlight { background-color: rgba(241,245,249,0.08); }
+.dark .bg-brand-accentlight { background-color: rgba(99,102,241,0.14); }
 
-.dark .hover\:bg-white:hover    { background-color: #1F2A3B; }
-.dark .hover\:bg-gray-50:hover  { background-color: #1F2A3B; }
-.dark .hover\:bg-gray-100:hover { background-color: #334155; }
+/* Translucent light-gray panels (bg-gray-50/60 etc.) would otherwise render as
+   pale patches on the dark canvas — remap them to subtle raised tints so
+   tinted section backgrounds stay cohesive. */
+.dark .bg-gray-50\/30,
+.dark .bg-gray-50\/50,
+.dark .bg-gray-50\/60,
+.dark .bg-gray-50\/80 { background-color: rgba(33, 38, 45, 0.40); }
+.dark .bg-gray-100\/30,
+.dark .bg-gray-100\/50 { background-color: rgba(33, 38, 45, 0.50); }
+.dark .bg-gray-200\/60 { background-color: rgba(48, 54, 61, 0.55); }
 
-.dark .divide-gray-100 > :not([hidden]) ~ :not([hidden]) { border-color: #1B2433; }
-.dark .divide-gray-200 > :not([hidden]) ~ :not([hidden]) { border-color: #1F2A3B; }
+.dark .hover\:bg-white:hover    { background-color: #21262D; }
+.dark .hover\:bg-gray-50:hover  { background-color: #21262D; }
+.dark .hover\:bg-gray-100:hover { background-color: #30363D; }
+
+.dark .divide-gray-100 > :not([hidden]) ~ :not([hidden]) { border-color: #21262D; }
+.dark .divide-gray-200 > :not([hidden]) ~ :not([hidden]) { border-color: #30363D; }
 
 .dark .text-brand-link  { color: #A5B4FC; }
 .dark .text-brand-accent { color: #A5B4FC; }
 .dark .bg-brand-accent   { background-color: #6366F1; color: #FFFFFF; }
 .dark .border-brand-accent { border-color: #6366F1; }
-.dark .btn-primary { background-color: #6366F1; color: #FFFFFF; }
-.dark .btn-primary:hover { background-color: #4F46E5; }
 
-.dark .kbd { background-color: #1F2A3B; border-color: #334155; color: #E2E8F0; }
+.dark .kbd { background-color: #21262D; border-color: #30363D; color: #E6EDF3; }
 
 /* ── Find-in-panel highlights ─────────────────────────────────────────────── */
 mark[data-match]              { background: #FEF9C3; color: inherit; border-radius: 2px; }
@@ -563,25 +575,26 @@ mark[data-match][data-active] { background: #C7D2FE; color: #312E81; }
 .notes-editor strong { font-weight: 600; }
 .notes-editor em     { font-style: italic; }
 
-.dark .notes-editor { color: #E5E7EB; }
-.dark .notes-editor h1 { border-bottom-color: #1F2A3B; }
-.dark .notes-editor blockquote { border-left-color: #334155; color: #94A3B8; background: #1F2A3B; }
-.dark .notes-editor hr { border-top-color: #1F2A3B; }
-.dark .notes-editor a  { color: #60A5FA; }
-.dark .notes-editor code { background: #1F2A3B; color: #93C5FD; }
-.dark .notes-editor pre  { background: #0B1220; border-color: #1F2A3B; color: #D1D5DB; }
+.dark .notes-editor { color: #C9D1D9; }
+.dark .notes-editor h1 { border-bottom-color: #21262D; }
+.dark .notes-editor blockquote { border-left-color: #30363D; color: #9198A1; background: #21262D; }
+.dark .notes-editor hr { border-top-color: #21262D; }
+.dark .notes-editor a  { color: #58A6FF; }
+.dark .notes-editor code { background: #21262D; color: #A5D6FF; }
+.dark .notes-editor pre  { background: #0D1117; border-color: #21262D; color: #C9D1D9; }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   Nord theme — muted arctic-slate palette. Low saturation, flat, minimal glow.
-   Mirrors the .dark override model so the whole app rethemes cohesively: the
-   canonical --ct-* tokens drive token-aware surfaces, and the Tailwind-utility
-   overrides below catch the hardcoded gray, bg-white and text-gray classes.
+   Nord theme — arctic palette, reworked for contrast. Canonical nord0–nord3
+   surfaces stay, but the classic flat Nord failings are fixed: the washed-out
+   pastel-frost button becomes a deep polar-night primary, and aurora accents
+   are brightened so status colors stay legible on the slate canvas.
    Layer model (Nord):
      bg      #2E3440 (nord0)   surface #3B4252 (nord1)
-     raised  #434C5E (nord2)   border  #434C5E / #4C566A (nord3, strong)
+     raised  #434C5E (nord2)   border  #4C566A (nord3)
      text    #ECEFF4 (nord6)   muted   #A9B1C0
-     accent  #88C0D0 (frost, desaturated)
-   Status: ok #A3BE8C  warn #EBCB8B  crit #BF616A  info #81A1C1
+     accent  #88C0D0 (frost — links, focus rings)
+     primary #5E81AC (nord10) — buttons, active accents
+   Status: ok #A3BE8C  warn #EBCB8B  crit #E08790  info #81A1C1
    ══════════════════════════════════════════════════════════════════════════ */
 
 .nord {
@@ -613,8 +626,8 @@ mark[data-match][data-active] { background: #C7D2FE; color: #312E81; }
 .nord ::-webkit-scrollbar-thumb:hover { background: #5A6478; }
 
 .nord .card,
-.nord .card-hover { background-color: #3B4252; border-color: #434C5E; }
-.nord .card-hover:hover { border-color: #4C566A; }
+.nord .card-hover { background-color: #3B4252; border-color: #4C566A; }
+.nord .card-hover:hover { border-color: #5A6478; }
 
 .nord .btn-ghost { color: #A9B1C0; }
 .nord .btn-ghost:hover { background-color: #434C5E; color: #ECEFF4; }
@@ -625,19 +638,19 @@ mark[data-match][data-active] { background: #C7D2FE; color: #312E81; }
 }
 .nord .btn-secondary:hover { background-color: #4C566A; }
 .nord .btn-outline {
-  background-color: #3B4252; border-color: #434C5E; color: #E5E9F0;
+  background-color: #3B4252; border-color: #4C566A; color: #E5E9F0;
 }
 .nord .btn-outline:hover { background-color: #434C5E; }
-.nord .btn-danger { color: #BF616A; }
-.nord .btn-danger:hover { background-color: rgba(191,97,106,0.14); }
+.nord .btn-danger { color: #E08790; }
+.nord .btn-danger:hover { background-color: rgba(224,135,144,0.12); }
 .nord .btn-success { color: #A3BE8C; }
 .nord .btn-success:hover { background-color: rgba(163,190,140,0.14); }
-.nord .btn-primary { background-color: #88C0D0; color: #2E3440; }
-.nord .btn-primary:hover { background-color: #8FBCBB; }
+.nord .btn-primary { background-color: #5E81AC; color: #ECEFF4; }
+.nord .btn-primary:hover { background-color: #4C6B92; }
 
 .nord .input,
 .nord .input-lg {
-  background-color: #2E3440; border-color: #434C5E; color: #E5E9F0;
+  background-color: #2E3440; border-color: #4C566A; color: #E5E9F0;
 }
 .nord .input::placeholder,
 .nord .input-lg::placeholder { color: #6B7285; }
@@ -655,7 +668,7 @@ mark[data-match][data-active] { background: #C7D2FE; color: #312E81; }
 .nord .text-gray-700   { color: #D8DEE9; }
 .nord .text-gray-600   { color: #C0C7D4; }
 .nord .text-gray-500   { color: #A9B1C0; }
-.nord .text-gray-400   { color: #8B93A5; }
+.nord .text-gray-400   { color: #9AA3B5; }
 
 .nord .bg-white     { background-color: #3B4252; }
 .nord .bg-gray-50   { background-color: #2E3440; }
@@ -671,32 +684,32 @@ mark[data-match][data-active] { background: #C7D2FE; color: #312E81; }
 .nord .bg-green-100 { background-color: rgba(163,190,140,0.20); }
 .nord .bg-amber-50  { background-color: rgba(235,203,139,0.12); }
 .nord .bg-amber-100 { background-color: rgba(235,203,139,0.20); }
-.nord .bg-red-50    { background-color: rgba(191,97,106,0.12); }
-.nord .bg-red-100   { background-color: rgba(191,97,106,0.20); }
+.nord .bg-red-50    { background-color: rgba(224,135,144,0.12); }
+.nord .bg-red-100   { background-color: rgba(224,135,144,0.18); }
 .nord .bg-blue-50   { background-color: rgba(129,161,193,0.12); }
 .nord .bg-blue-100  { background-color: rgba(129,161,193,0.20); }
 .nord .bg-orange-50 { background-color: rgba(208,135,112,0.12); }
 .nord .bg-indigo-50 { background-color: rgba(136,192,208,0.12); }
-.nord .bg-rose-50   { background-color: rgba(191,97,106,0.12); }
+.nord .bg-rose-50   { background-color: rgba(224,135,144,0.12); }
 .nord .bg-teal-50   { background-color: rgba(143,188,187,0.12); }
 .nord .bg-purple-50 { background-color: rgba(180,142,173,0.12); }
 
 .nord .border-green-200 { border-color: rgba(163,190,140,0.35); }
 .nord .border-amber-200 { border-color: rgba(235,203,139,0.35); }
-.nord .border-red-200   { border-color: rgba(191,97,106,0.35); }
+.nord .border-red-200   { border-color: rgba(224,135,144,0.35); }
 .nord .border-blue-200  { border-color: rgba(129,161,193,0.35); }
 
 .nord .text-green-700 { color: #A3BE8C; }
 .nord .text-green-600 { color: #A3BE8C; }
 .nord .text-amber-700 { color: #EBCB8B; }
 .nord .text-amber-600 { color: #EBCB8B; }
-.nord .text-red-700   { color: #BF616A; }
-.nord .text-red-600   { color: #BF616A; }
+.nord .text-red-700   { color: #E08790; }
+.nord .text-red-600   { color: #E08790; }
 .nord .text-blue-700  { color: #81A1C1; }
 .nord .text-blue-600  { color: #81A1C1; }
 .nord .text-orange-700{ color: #D08770; }
 .nord .text-indigo-700{ color: #88C0D0; }
-.nord .text-rose-700  { color: #BF616A; }
+.nord .text-rose-700  { color: #E08790; }
 .nord .text-teal-700  { color: #8FBCBB; }
 .nord .text-purple-700{ color: #B48EAD; }
 
@@ -704,7 +717,7 @@ mark[data-match][data-active] { background: #C7D2FE; color: #312E81; }
 .nord .border-gray-200 { border-color: #434C5E; }
 .nord .border-gray-300 { border-color: #4C566A; }
 
-.nord .panel-slide { background-color: #3B4252; border-color: #434C5E; }
+.nord .panel-slide { background-color: #3B4252; border-color: #4C566A; }
 .nord .panel-backdrop { background-color: rgba(30, 34, 42, 0.55); }
 .nord .modal-box   { background-color: #3B4252; }
 .nord .modal-header { border-color: #434C5E; }
@@ -712,22 +725,22 @@ mark[data-match][data-active] { background: #C7D2FE; color: #312E81; }
 
 .nord .data-table tr            { border-color: #3B4252; }
 .nord .table-row-hover:hover    { background-color: #434C5E; }
-.nord .table-row-selected       { background-color: #434C5E; }
+.nord .table-row-selected       { background-color: #4C566A; }
 
 .nord code:not(.code-block code) { background-color: #434C5E; color: #8FBCBB; }
 
-.nord .drop-zone-inactive { border-color: #434C5E; background-color: #2E3440; }
+.nord .drop-zone-inactive { border-color: #4C566A; background-color: #2E3440; }
 
-.nord select { background-color: #2E3440; border-color: #434C5E; color: #E5E9F0; }
+.nord select { background-color: #2E3440; border-color: #4C566A; color: #E5E9F0; }
 .nord select option { background-color: #3B4252; color: #E5E9F0; }
 .nord input:not([type="checkbox"]):not([type="radio"]):not([type="range"]) {
-  background-color: #2E3440; border-color: #434C5E; color: #E5E9F0;
+  background-color: #2E3440; border-color: #4C566A; color: #E5E9F0;
 }
 .nord input:not([type="checkbox"]):not([type="radio"]):not([type="range"])::placeholder { color: #6B7285; }
-.nord textarea { background-color: #2E3440; border-color: #434C5E; color: #E5E9F0; }
+.nord textarea { background-color: #2E3440; border-color: #4C566A; color: #E5E9F0; }
 .nord textarea::placeholder { color: #6B7285; }
 
-.nord .bg-brand-accentlight { background-color: rgba(136,192,208,0.12); }
+.nord .bg-brand-accentlight { background-color: rgba(94,129,172,0.18); }
 
 /* Translucent light-gray panels (bg-gray-50/60 etc.) would otherwise render as
    pale patches on the dark Nord canvas — remap them to subtle raised tints so
@@ -749,10 +762,8 @@ mark[data-match][data-active] { background: #C7D2FE; color: #312E81; }
 
 .nord .text-brand-link   { color: #88C0D0; }
 .nord .text-brand-accent { color: #88C0D0; }
-.nord .bg-brand-accent   { background-color: #88C0D0; color: #2E3440; }
-.nord .border-brand-accent { border-color: #88C0D0; }
-.nord .btn-primary { background-color: #88C0D0; color: #2E3440; }
-.nord .btn-primary:hover { background-color: #8FBCBB; }
+.nord .bg-brand-accent   { background-color: #5E81AC; color: #ECEFF4; }
+.nord .border-brand-accent { border-color: #5E81AC; }
 
 .nord .kbd { background-color: #434C5E; border-color: #4C566A; color: #E5E9F0; }
 

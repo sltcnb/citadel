@@ -170,6 +170,39 @@ class SourceFileRef(BaseModel):
         extra = "ignore"  # frontend sometimes adds derived fields; don't 422 on them
 
 
+def _validate_source_filename(filename: str) -> str:
+    """Module-run sources are staged on the worker as <sources_dir>/<filename>.
+    An unchecked value is an arbitrary file write via path traversal
+    (``../../../../app/anvil/capa_module.py``) — historically a route to RCE on
+    the processor with storage credentials. Subpaths stay allowed (zip entries
+    keep their relative structure); traversal, absolute paths, drive letters
+    and NULs are rejected outright."""
+    name = (filename or "").replace("\\", "/")
+    parts = [p for p in name.split("/") if p not in ("", ".")]
+    if (
+        not filename
+        or not parts
+        or name.startswith("/")
+        or (len(name) >= 2 and name[1] == ":")
+        or any(p == ".." for p in parts)
+        or "\x00" in name
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid source filename: {filename!r} (path traversal is not allowed)",
+        )
+    return "/".join(parts)
+
+
+def _check_source_key(minio_key: str, case_id: str) -> str:
+    """Module sources must live under the requesting case's object prefix.
+    Without this, a caller who learns another case's object key has the worker
+    fetch it into their own run — a cross-tenant evidence read."""
+    if minio_key and not minio_key.startswith(f"cases/{case_id}/"):
+        raise HTTPException(status_code=403, detail="Source object does not belong to this case")
+    return minio_key
+
+
 class CreateModuleRunRequest(BaseModel):
     module_id: str
     job_ids: list[str] = []  # legacy: bare IDs resolved via Redis
@@ -299,7 +332,7 @@ _SOURCES_MAX = 5_000  # cap for Redis fallback path
 
 
 @router.get("/cases/{case_id}/sources")
-def list_case_sources(case_id: str):
+def list_case_sources(case_id: str, _acl: dict = Depends(require_case_access)):
     """Return completed ingest jobs for a case (usable as module inputs)."""
     from services.elasticsearch import list_case_artifacts
 
@@ -374,7 +407,7 @@ def list_case_sources(case_id: str):
 
 
 @router.get("/cases/{case_id}/recommended-modules")
-def recommend_modules(case_id: str):
+def recommend_modules(case_id: str, _acl: dict = Depends(require_case_access)):
     """Rank modules by how many of the case's ingested files they can consume.
 
     Matching mirrors the source-file filter used at run creation:
@@ -430,7 +463,9 @@ def recommend_modules(case_id: str):
 
 
 @router.post("/cases/{case_id}/module-runs", status_code=201)
-def create_module_run(case_id: str, req: CreateModuleRunRequest):
+def create_module_run(
+    case_id: str, req: CreateModuleRunRequest, _acl: dict = Depends(require_case_access)
+):
     case = get_case(case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
@@ -458,15 +493,16 @@ def create_module_run(case_id: str, req: CreateModuleRunRequest):
             source_files.append(
                 {
                     "job_id": sf.job_id,
-                    "filename": sf.filename,
-                    "minio_key": sf.minio_key,
+                    "filename": _validate_source_filename(sf.filename),
+                    "minio_key": _check_source_key(sf.minio_key, case_id),
                 }
             )
     else:
         # Legacy path: bare job_ids — look up Redis. Fails if TTL expired.
         for job_id in req.job_ids:
             job = get_job(job_id)
-            if not job:
+            if not job or job.get("case_id") != case_id:
+                # Jobs are case-scoped — another tenant's job must never feed a run.
                 raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
             if job.get("status") not in ("COMPLETED", "SKIPPED"):
                 raise HTTPException(
@@ -476,8 +512,8 @@ def create_module_run(case_id: str, req: CreateModuleRunRequest):
             source_files.append(
                 {
                     "job_id": job_id,
-                    "filename": job.get("original_filename", ""),
-                    "minio_key": job.get("minio_object_key", ""),
+                    "filename": _validate_source_filename(job.get("original_filename", "")),
+                    "minio_key": _check_source_key(job.get("minio_object_key", ""), case_id),
                 }
             )
 
@@ -536,7 +572,7 @@ def create_module_run(case_id: str, req: CreateModuleRunRequest):
 
 
 @router.get("/cases/{case_id}/module-runs")
-def list_module_runs(case_id: str):
+def list_module_runs(case_id: str, _acl: dict = Depends(require_case_access)):
     case = get_case(case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
@@ -544,19 +580,21 @@ def list_module_runs(case_id: str):
 
 
 @router.get("/module-runs/{run_id}")
-def get_module_run(run_id: str):
+def get_module_run(run_id: str, current_user: dict = Depends(get_current_user)):
     run = run_svc.get_module_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Module run not found")
+    _check_run_case_access(run, current_user)
     return run
 
 
 @router.post("/module-runs/{run_id}/retry")
-def retry_module_run(run_id: str):
+def retry_module_run(run_id: str, current_user: dict = Depends(get_current_user)):
     """Re-dispatch a FAILED or stuck PENDING module run."""
     run = run_svc.get_module_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Module run not found")
+    _check_run_case_access(run, current_user)
     if run.get("status") not in ("FAILED", "PENDING"):
         raise HTTPException(
             status_code=409,
@@ -598,7 +636,7 @@ def retry_module_run(run_id: str):
 
 
 @router.post("/module-runs/{run_id}/cancel")
-def cancel_module_run(run_id: str):
+def cancel_module_run(run_id: str, current_user: dict = Depends(get_current_user)):
     """Co-operative cancel — sets a flag the worker honours at phase
     boundaries (queue pickup, between file downloads, before indexing).
     A module binary mid-execution finishes first; its output is then
@@ -606,6 +644,7 @@ def cancel_module_run(run_id: str):
     run = run_svc.get_module_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Module run not found")
+    _check_run_case_access(run, current_user)
     if run.get("status") not in ("PENDING", "RUNNING"):
         raise HTTPException(
             status_code=409,
@@ -909,7 +948,11 @@ def create_standalone_run(req: StandaloneRunRequest):
         raise HTTPException(status_code=400, detail="At least one file is required")
 
     source_files = [
-        {"job_id": "", "filename": f.get("filename", ""), "minio_key": f.get("minio_key", "")}
+        {
+            "job_id": "",
+            "filename": _validate_source_filename(f.get("filename", "")),
+            "minio_key": f.get("minio_key", ""),
+        }
         for f in req.files
     ]
 

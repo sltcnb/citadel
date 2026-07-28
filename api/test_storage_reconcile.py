@@ -115,6 +115,9 @@ class _FakeRedis:
     def get(self, k):
         return self.kv.get(k)
 
+    def smembers(self, k):
+        return set()
+
 
 def test_scheduled_reconcile_disabled_returns_none(monkeypatch):
     monkeypatch.setattr(sr.settings, "STORAGE_RECONCILE_SCHEDULE_ENABLED", False)

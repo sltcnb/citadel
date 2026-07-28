@@ -25,12 +25,31 @@ from datetime import date as _date
 from pathlib import Path
 
 import redis_keys as rk
-from auth.dependencies import require_admin, require_analyst_or_admin
+from auth.dependencies import get_current_user, require_admin, require_analyst_or_admin
+from services.upload_tokens import create_upload_token
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["collector"])
+
+
+def _script_safe(value: str | None) -> str:
+    """Sanitize free text (case name) baked into generated shell/PowerShell
+    collector scripts.
+
+    Templates substitute into double-quoted assignments (``CASE_NAME="..."``
+    and ``$CASE_NAME = "..."``) AND into comment lines (``# Case: ...``), so
+    no single quoting scheme covers both contexts: strip CR/LF (comment
+    breakout) plus the characters that stay live inside double quotes in
+    either shell — ``"`` ends the string, ``$`` expands, `` ` `` executes or
+    escapes, ``\\`` escapes. Scripts built here are meant to run as
+    root/Administrator, so injection is code execution on evidence endpoints.
+    """
+    v = re.sub(r"[\r\n]+", " ", value or "")
+    v = re.sub(r'["`$\\]', "_", v)
+    return v.strip()[:200]
 
 # ── Script discovery ──────────────────────────────────────────────────────────
 # Order matters: check Docker-mounted path first, then local dev fallback.
@@ -186,7 +205,7 @@ def list_python_embeds():
     }
 
 
-@router.post("/collector/python-embeds/warm")
+@router.post("/collector/python-embeds/warm", dependencies=[Depends(require_admin)])
 def warm_python_embeds(targets: list[str] | None = None):
     """Pre-fetch one or more embed archives to the cache. Admin only."""
     from services.python_embeds import warm_cache
@@ -201,8 +220,9 @@ def download_collector(
     api_url: str | None = Query(default=None),
     collect: str | None = Query(default=None),
     api_token: str | None = Query(
-        default=None, description="JWT bearer token embedded in the script"
+        default=None, description="Presence embeds a server-minted scoped upload token"
     ),
+    current_user: dict = Depends(get_current_user),
 ):
     """Return a configured collect.py script as a file download."""
     platform = platform.lower()
@@ -226,7 +246,9 @@ def download_collector(
     if collect:
         config["collect"] = [k.strip() for k in collect.split(",") if k.strip()]
     if api_token:
-        config["api_token"] = api_token
+        # Never embed a caller-supplied (session) token — the script lives on
+        # the target. Mint a scoped, short-lived upload token instead.
+        config["api_token"] = create_upload_token(current_user["username"])
 
     return Response(
         content=_inject_config(source, config).encode("utf-8"),
@@ -528,6 +550,7 @@ def download_harvester_package(
     api_url: str | None = Query(default=None),
     case_id: str | None = Query(default=None),
     api_token: str | None = Query(default=None),
+    current_user: dict = Depends(get_current_user),
     platform: str | None = Query(
         default=None, description="Target OS label: win, linux, deadbox, etc."
     ),
@@ -582,7 +605,9 @@ def download_harvester_package(
     if case_id:
         config["case_id"] = case_id.strip()
     if api_token:
-        config["api_token"] = api_token.strip()
+        # Never embed a caller-supplied (session) token — the package lives on
+        # the target. Mint a scoped, short-lived upload token instead.
+        config["api_token"] = create_upload_token(current_user["username"])
 
     # Generate and bake a presigned S3 PUT URL when requested
     if upload_mode == "s3_presigned":
@@ -1232,31 +1257,24 @@ _BOOTSTRAP_PS1 = _BOOTSTRAP_PS1.replace("# @@PROVISION_PS1@@", _PROVISION_PS1)
 _BOOTSTRAP_SH = _BOOTSTRAP_SH.replace("# @@PROVISION_SH@@", _PROVISION_SH)
 
 
-@router.get("/collector/s3-bootstrap", dependencies=[Depends(require_analyst_or_admin)])
+class S3BootstrapRequest(BaseModel):
+    categories: str | None = None  # comma-separated artifact categories; all enabled if omitted
+    case_name: str | None = None
+    case_id: str | None = None
+    api_url: str | None = None
+    api_token: bool = False  # flag only: embed a server-minted scoped upload token
+    expires_hours: int = 24  # URL expiry in hours (1-168)
+    platform: str = "zip"  # ps1 | sh | zip (both)
+    path_arg: str | None = None  # dead-box mount path injected into SH script
+    disk_arg: str | None = None  # raw disk/image path injected into SH script
+    bitlocker_key: str | None = None  # recovery key baked into SH script
+    fetch_patterns: str | None = None
+
+
+@router.post("/collector/s3-bootstrap", dependencies=[Depends(require_analyst_or_admin)])
 def download_s3_bootstrap(
-    categories: str | None = Query(
-        default=None, description="Comma-separated artifact categories. All enabled if omitted."
-    ),
-    case_name: str | None = Query(default=None),
-    case_id: str | None = Query(default=None),
-    api_url: str | None = Query(default=None),
-    api_token: str | None = Query(default=None),
-    expires_hours: int = Query(default=24, description="URL expiry in hours (1-168)"),
-    platform: str = Query(default="zip", description="ps1 | sh | zip (both)"),
-    path_arg: str | None = Query(
-        default=None, description="Dead-box mount path injected into SH script (e.g. /mnt/windows)"
-    ),
-    disk_arg: str | None = Query(
-        default=None, description="Raw disk/image path injected into SH script (e.g. /dev/sdb)"
-    ),
-    bitlocker_key: str | None = Query(
-        default=None,
-        description="BitLocker recovery key — baked into SH script, passed to fo-harvester",
-    ),
-    fetch_patterns: str | None = Query(
-        default=None,
-        description="file_search patterns, newline- or comma-separated ('name' / glob / 're:<regex>').",
-    ),
+    req: S3BootstrapRequest,
+    current_user: dict = Depends(get_current_user),
 ):
     """
     Upload a pre-configured collector package to the S3 triage bucket, then return
@@ -1267,10 +1285,24 @@ def download_s3_bootstrap(
       4. Deletes the collector zip from S3 (so it cannot be replayed)
 
     Requires the S3 triage config to be saved in Admin → S3 Triage Upload.
+
+    POST with a JSON body (was GET): the BitLocker recovery key and token flag
+    no longer ride in a URL query string, which access logs capture.
     """
     import re as _re
     import uuid as _uuid
     from datetime import datetime, timedelta
+
+    categories = req.categories
+    case_name = req.case_name
+    case_id = req.case_id
+    api_url = req.api_url
+    expires_hours = req.expires_hours
+    platform = req.platform
+    path_arg = req.path_arg
+    disk_arg = req.disk_arg
+    bitlocker_key = req.bitlocker_key
+    fetch_patterns = req.fetch_patterns
 
     platform = platform.lower()
     if platform not in ("ps1", "sh", "zip"):
@@ -1303,8 +1335,10 @@ def download_s3_bootstrap(
         config["api_url"] = api_url.strip()
     if case_id:
         config["case_id"] = case_id.strip()
-    if api_token:
-        config["api_token"] = api_token.strip()
+    if req.api_token:
+        # Never embed a caller-supplied (session) token — the script lives on
+        # the target. Mint a scoped, short-lived upload token instead.
+        config["api_token"] = create_upload_token(current_user["username"])
     if path_arg:
         config["path"] = path_arg.strip()
     if disk_arg:
@@ -1386,7 +1420,7 @@ def download_s3_bootstrap(
 
     expires_at = (now + expires).isoformat()
     now_str = now.strftime("%Y-%m-%dT%H:%M:%SZ")
-    cn = case_name or ""
+    cn = _script_safe(case_name)
 
     def _fill(template: str) -> bytes:
         return (
@@ -1837,7 +1871,7 @@ def download_bundle(
         logger.warning("Could not generate presigned URL for bundle: %s", exc)
 
     now_str = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-    cn = case_name or ""
+    cn = _script_safe(case_name)
 
     def _ps1() -> bytes:
         return (

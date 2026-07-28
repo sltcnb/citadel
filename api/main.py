@@ -117,22 +117,31 @@ def _bootstrap_admin() -> None:
 
         # ── Step 2: seed default admin if no users exist ───────────────────────
         if user_count() == 0:
-            try:
-                create_user(settings.ADMIN_USERNAME, settings.ADMIN_PASSWORD, role="admin")
-                # If the bootstrap admin still uses the shipped default password,
-                # force a change on first login — a full token is withheld until
-                # the password is rotated (see /auth/login + /auth/login/change-password).
-                if settings.ADMIN_PASSWORD == "CitadelAdmin1!":
-                    from auth.service import set_must_change_password
-
-                    set_must_change_password(settings.ADMIN_USERNAME, True)
-                logger.info(
-                    "Bootstrap: created default admin user '%s'. "
-                    "Change the password immediately after first login.",
-                    settings.ADMIN_USERNAME,
+            # Never bootstrap an empty-password admin (an unconfigured deploy
+            # would otherwise allow unauthenticated admin login over the ingress).
+            if not settings.ADMIN_PASSWORD or not settings.ADMIN_PASSWORD.strip():
+                logger.critical(
+                    "Bootstrap: ADMIN_PASSWORD is empty — refusing to create the "
+                    "default admin. Set ADMIN_PASSWORD (or run ./foctl deploy, "
+                    "which generates one) and restart."
                 )
-            except ValueError:
-                pass  # Already exists (race between replicas)
+            else:
+                try:
+                    create_user(settings.ADMIN_USERNAME, settings.ADMIN_PASSWORD, role="admin")
+                    # If the bootstrap admin still uses the shipped default password,
+                    # force a change on first login — a full token is withheld until
+                    # the password is rotated (see /auth/login + /auth/login/change-password).
+                    if settings.ADMIN_PASSWORD == "CitadelAdmin1!":
+                        from auth.service import set_must_change_password
+
+                        set_must_change_password(settings.ADMIN_USERNAME, True)
+                    logger.info(
+                        "Bootstrap: created default admin user '%s'. "
+                        "Change the password immediately after first login.",
+                        settings.ADMIN_USERNAME,
+                    )
+                except ValueError:
+                    pass  # Already exists (race between replicas)
     except Exception as exc:
         # Redis may not be reachable during very early startup; the readinessProbe
         # ensures requests only arrive after Redis is up, so this is non-fatal.

@@ -17,7 +17,7 @@ import uuid
 from datetime import UTC, datetime
 
 import redis
-from auth.dependencies import require_case_access
+from auth.dependencies import get_company_filter, get_current_user, require_case_access
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
@@ -31,6 +31,24 @@ RUN_TTL = 7 * 24 * 3600
 
 def _get_redis() -> redis.Redis:
     return redis.Redis.from_url(REDIS_URL, decode_responses=True)
+
+
+def _check_harvest_run_access(raw: dict, current_user: dict) -> None:
+    """Enforce the caller's company restriction for a run reached by run_id only
+    (no case_id path param). Mirrors jobs.py::_check_job_case_access: 404 if the
+    run's case is missing, 403 if it belongs to another company."""
+    from services.cases import get_case as _get_case
+
+    run_case_id = raw.get("case_id")
+    case = _get_case(run_case_id) if run_case_id else None
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+    flt = get_company_filter(current_user)
+    if flt is not None and case.get("company", "") not in flt:
+        raise HTTPException(
+            status_code=403,
+            detail="Access denied: case belongs to a different company",
+        )
 
 
 # ── category / level metadata (mirrors harvest_task constants) ────────────────
@@ -366,12 +384,13 @@ def start_harvest(case_id: str, req: HarvestRequest, _case: dict = Depends(requi
 
 
 @router.get("/harvest/runs/{run_id}", response_model=HarvestRunStatus)
-def get_run_status(run_id: str):
+def get_run_status(run_id: str, current_user: dict = Depends(get_current_user)):
     """Return the current status of a harvest run."""
     r = _get_redis()
     raw = r.hgetall(f"harvest_run:{run_id}")
     if not raw:
         raise HTTPException(status_code=404, detail=f"Harvest run {run_id!r} not found")
+    _check_harvest_run_access(raw, current_user)
 
     # Parse categories JSON string back to list
     cats_raw = raw.get("categories", "[]")
@@ -397,7 +416,7 @@ def get_run_status(run_id: str):
 
 
 @router.delete("/harvest/runs/{run_id}")
-def cancel_run(run_id: str):
+def cancel_run(run_id: str, current_user: dict = Depends(get_current_user)):
     """
     Cancel a harvest run (best-effort — revokes the Celery task if still queued).
     """
@@ -405,6 +424,7 @@ def cancel_run(run_id: str):
     raw = r.hgetall(f"harvest_run:{run_id}")
     if not raw:
         raise HTTPException(status_code=404, detail=f"Harvest run {run_id!r} not found")
+    _check_harvest_run_access(raw, current_user)
 
     # Only cancel runs that are still in flight — never clobber a terminal state
     # (COMPLETED / FAILED / already CANCELLED).

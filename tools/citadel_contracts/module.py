@@ -352,10 +352,24 @@ def wrap_legacy(
         # analyze defined in-body so ABCMeta sees the override and the class
         # is concrete (assigning analyze after creation leaves it abstract).
         def analyze(self, ctx: RunContext) -> Result:
+            # Legacy analyzers stage sources as ``tmp_dir / filename`` without
+            # checking it — sanitize centrally so a crafted filename can never
+            # escape tmp_dir (defense in depth: the API and the worker staging
+            # reject traversal before it gets here).
+            safe_sources = [
+                {
+                    **sf,
+                    "filename": safe_source_filename(
+                        sf.get("filename", ""),
+                        (sf.get("minio_key") or "file").split("/")[-1] or "file",
+                    ),
+                }
+                for sf in ctx.source_files
+            ]
             out = legacy_run(
                 ctx.run_id,
                 ctx.case_id,
-                ctx.source_files,
+                safe_sources,
                 ctx.params,
                 ctx.minio_client,
                 ctx.redis_client,
@@ -372,6 +386,21 @@ def wrap_legacy(
     return _LegacyAdapter
 
 
+def safe_source_filename(filename: str, fallback: str = "file") -> str:
+    """Return ``filename`` reduced to a safe relative path for on-disk staging.
+
+    Module-run filenames are caller-controlled and several staging sites write
+    ``tmp_dir / filename`` verbatim — path traversal there is an arbitrary
+    file write on the processor. Unsafe values (absolute paths, ``..``
+    components, NULs, empties) collapse to ``fallback``; pass the MinIO key's
+    basename for a meaningful name."""
+    name = (filename or "").replace("\\", "/")
+    parts = [p for p in name.split("/") if p not in ("", ".")]
+    if not parts or name.startswith("/") or any(p == ".." for p in parts) or "\x00" in name:
+        return fallback
+    return "/".join(parts)
+
+
 def iter_local_files(ctx: RunContext, *, bucket: str) -> Iterable[tuple[str, Path, dict]]:
     """Yield ``(filename, local_path, source_file)`` for each downloadable input.
 
@@ -384,7 +413,10 @@ def iter_local_files(ctx: RunContext, *, bucket: str) -> Iterable[tuple[str, Pat
         minio_key = sf.get("minio_key", "")
         if not minio_key:
             continue
-        local_path = ctx.tmp_dir / filename
+        # ``filename`` is caller-controlled (module-run request) — confine
+        # staging to ctx.tmp_dir. Unsafe names collapse to the key basename.
+        safe_name = safe_source_filename(filename, (minio_key or "file").split("/")[-1] or "file")
+        local_path = ctx.tmp_dir / safe_name
         if ctx.minio_client is not None:
             try:
                 ctx.minio_client.fget_object(bucket, minio_key, str(local_path))

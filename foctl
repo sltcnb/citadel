@@ -198,6 +198,8 @@ def ensure_secrets():
         with open(path, "w") as f:
             json.dump(raw, f, indent=2)
             f.write("\n")
+        # config.json holds every platform secret — never leave it group/world-readable.
+        os.chmod(path, 0o600)
         step("Generated secrets → saved to config.json (stable across redeploys)")
         for k in sorted(generated):
             if k == "admin_password":
@@ -1162,6 +1164,8 @@ def ensure_env_file():
         ok(".env found")
     elif (ROOT / ".env.example").exists():
         shutil.copy(ROOT / ".env.example", ENV_FILE)
+        # .env will hold generated secrets — restrict it to the owner.
+        os.chmod(ENV_FILE, 0o600)
         warn(".env was not found — created from .env.example")
         warn("Review settings and update secrets before production use.")
         input("\n     Press Enter to continue with defaults, or Ctrl-C to edit .env first...")
@@ -1440,6 +1444,13 @@ def _menu():
 
 def _deploy_k8s_flow(cfg, no_build=False, no_cache=False, restart=False,
                      setup_traefik=False):
+    # Secret generation lives at this single choke point — every k8s path
+    # (deploy, update, and the interactive menu) funnels through here, so no
+    # caller can skip it. Deploying with empty secrets previously produced an
+    # empty-password admin account and an unauthenticated Redis. cfg may have
+    # been loaded with placeholder secrets, so reload after generating.
+    ensure_secrets()
+    cfg = load_config()
     if restart:
         no_build = True
 

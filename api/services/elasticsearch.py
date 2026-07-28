@@ -379,6 +379,31 @@ def _looks_like_bare_ioc(q: str) -> bool:
     return any(c in q for c in ".-/_")
 
 
+_ARTIFACT_TYPE_RE = re.compile(r"[a-z0-9_]+")
+
+
+def build_index_expression(case_id: str, artifact_type: str | None) -> str:
+    """ES index expression for event reads, confined to ``case_id``.
+
+    ``artifact_type`` may be a comma-separated list (same convention as
+    rule_eval.index_for). Every part is validated and re-anchored with the
+    case prefix: ES treats a comma in the request path as a multi-index list,
+    so interpolating the raw value would let a caller search ANY case's
+    indices (``artifact_type="x,fo-case-<victim>-*"``) — a cross-tenant read.
+    """
+    if not artifact_type:
+        return f"fo-case-{case_id}-*"
+    parts = [p.strip() for p in str(artifact_type).split(",") if p.strip()]
+    if parts == ["*"]:
+        return f"fo-case-{case_id}-*"
+    if not parts or any(_ARTIFACT_TYPE_RE.fullmatch(p) is None for p in parts):
+        raise ValueError(
+            f"Invalid artifact_type {artifact_type!r}: expected comma-separated "
+            "artifact types (lowercase letters, digits, underscores)"
+        )
+    return ",".join(f"fo-case-{case_id}-{p}" for p in parts)
+
+
 def search_events(
     case_id: str,
     query: str = "",
@@ -397,7 +422,7 @@ def search_events(
     Search events in a case with full-text query and field filters.
     Returns ES hits response dict.
     """
-    index = f"fo-case-{case_id}-{artifact_type}" if artifact_type else f"fo-case-{case_id}-*"
+    index = build_index_expression(case_id, artifact_type)
 
     must_clauses: list[dict] = []
     filter_clauses: list[dict] = []
@@ -517,7 +542,7 @@ def get_search_facets(
         so the bars fill the selection edge-to-edge (including empty buckets)
         instead of only where data happens to land.
     """
-    index = f"fo-case-{case_id}-{artifact_type}" if artifact_type else f"fo-case-{case_id}-*"
+    index = build_index_expression(case_id, artifact_type)
 
     must = (
         [{"query_string": {"query": query, "fields": _SEARCH_FIELDS}}]

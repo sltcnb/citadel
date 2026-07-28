@@ -306,6 +306,8 @@ def create_user(
 ) -> dict:
     if role not in VALID_ROLES:
         raise ValueError(f"Invalid role '{role}'. Must be one of: {', '.join(VALID_ROLES)}")
+    if not password or not password.strip():
+        raise ValueError("Password must not be empty")
     r = _redis()
     key = rk.user_key(username)
     if r.exists(key):

@@ -15,11 +15,24 @@ from services.cases import get_case
 router = APIRouter(tags=["search"])
 
 
+def _checked_artifact_type(case_id: str, artifact_type: str | None = None) -> str | None:
+    """FastAPI dependency: reject artifact_type values that aren't plain
+    comma-separated artifact types. The value becomes an ES index expression,
+    so unvalidated input could smuggle in other cases' indices (multi-index
+    path injection). Validation lives in services.elasticsearch; here we only
+    translate the failure into a 400."""
+    try:
+        es.build_index_expression(case_id, artifact_type)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return artifact_type
+
+
 @router.get("/cases/{case_id}/timeline")
 def get_timeline(
     case_id: str,
     _acl: dict = Depends(require_case_access),
-    artifact_type: str | None = None,
+    artifact_type: str | None = Depends(_checked_artifact_type),
     from_ts: str | None = Query(None, alias="from"),
     to_ts: str | None = Query(None, alias="to"),
     sort_field: str = "timestamp",
@@ -78,7 +91,7 @@ def search(
     case_id: str,
     _acl: dict = Depends(require_case_access),
     q: str = "",
-    artifact_type: str | None = None,
+    artifact_type: str | None = Depends(_checked_artifact_type),
     from_ts: str | None = Query(None, alias="from"),
     to_ts: str | None = Query(None, alias="to"),
     hostname: str | None = None,
@@ -184,7 +197,7 @@ def get_facets(
     case_id: str,
     _acl: dict = Depends(require_case_access),
     q: str = "",
-    artifact_type: str | None = None,
+    artifact_type: str | None = Depends(_checked_artifact_type),
     from_ts: str | None = None,
     to_ts: str | None = None,
 ):
