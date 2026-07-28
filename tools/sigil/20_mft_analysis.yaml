@@ -1,51 +1,78 @@
 category: MFT Analysis
+# Every rule in this pack referenced invented field names and so could never
+# match. The MFT parser (tools/babel/mft/mft_plugin.py) emits exactly:
+#   filename, filepath, file_size, is_deleted, is_directory, parent_ref,
+#   mft_record_number, created_at, modified_at, accessed_at, mft_modified_at,
+#   fn_created_at, fn_modified_at
+# Note filepath/filename, NOT file_path/file_name — an earlier pass here
+# "corrected" mft.full_path to mft.file_path, which was equally non-existent.
 rules:
   - name: File Created in System Directory
     description: >-
-      A file was created in a protected Windows directory.
-      Malware often drops files in system locations.
+      A file was created in a protected Windows directory — malware commonly
+      drops payloads in system locations to blend in.
     artifact_type: mft
-    query: "mft.file_path.ci:*\\\\Windows\\\\* OR mft.file_path.ci:*\\\\Program Files\\\\*"
+    query: "mft.filepath.ci:*\\\\Windows\\\\* OR mft.filepath.ci:*\\\\Program*Files\\\\*"
     threshold: 1
     mitre: [T1036.005]
     level: medium
 
-  - name: File with Multiple Names ADS
+  - name: Deleted Files Present in the MFT
     description: >-
-      A file has multiple names or alternate data streams.
-      Used by malware to hide payloads.
-    artifact_type: mft
-    query: "mft.file_name_attributes:*multiple* OR mft.ads_count:>1"
-    threshold: 1
-    mitre: [T1564.004]
-    level: high
+      MFT records flagged deleted. The MFT retains an entry after deletion, so
+      these are recoverable traces of files removed from the volume — payload
+      cleanup or anti-forensics when clustered in time or location.
 
-  - name: File Created and Deleted Rapidly
-    description: >-
-      A file was created and deleted within seconds.
-      Indicates temporary payload execution or staging.
+      Replaces a "File Created and Deleted Rapidly" rule that keyed off
+      mft.crtime / mft.sequence_number / mft.fn_deleted, none of which the parser
+      emits. Correlating creation and deletion *within seconds* needs a
+      field-to-field time comparison, which a Lucene query cannot express — so
+      this reports the deletions and leaves the timing to timeline triage rather
+      than pretending to a precision it does not have.
     artifact_type: mft
-    query: "mft.crtime:* AND mft.mtime:* AND (mft.sequence_number:* OR mft.fn_deleted:*)"
+    query: "mft.is_deleted:true"
     threshold: 5
     mitre: [T1070.004]
-    level: medium
+    level: low
 
-  - name: File with Suspicious Extension
+  - name: Executable or Script in a User-Writable Path
     description: >-
-      A file with an extension commonly associated with malware.
-      Includes script, executable, and archive extensions.
+      An executable or script recorded in a location any user can write (Temp,
+      AppData, Downloads, ProgramData, or a public share). Legitimate software
+      installs to Program Files; a dropped payload usually cannot.
+
+      Narrowed from a bare "suspicious extension" match, which would fire on
+      every .exe and .dll on the volume — tens of thousands of Windows' own
+      files. Pairing the extension with a user-writable path is what makes it a
+      signal rather than an inventory.
     artifact_type: mft
-    query: "(mft.name:*.exe* OR mft.name:*.dll* OR mft.name:*.ps1* OR mft.name:*.vbs* OR mft.name:*.js* OR mft.name:*.hta*)"
+    query: >-
+      (mft.filename.ci:*.exe OR mft.filename.ci:*.dll OR mft.filename.ci:*.ps1
+      OR mft.filename.ci:*.vbs OR mft.filename.ci:*.js OR mft.filename.ci:*.hta
+      OR mft.filename.ci:*.scr OR mft.filename.ci:*.bat) AND
+      (mft.filepath.ci:*\\Temp\\* OR mft.filepath.ci:*\\AppData\\*
+      OR mft.filepath.ci:*\\Downloads\\* OR mft.filepath.ci:*\\ProgramData\\*
+      OR mft.filepath.ci:*\\Users\\Public\\*)
     threshold: 1
     mitre: [T1036.008]
     level: medium
 
-  - name: File Timestamp Anomaly
-    description: >-
-      File timestamps are inconsistent or timestomped.
-      Attackers modify timestamps to evade detection.
-    artifact_type: mft
-    query: "mft.crtime:>mft.mtime OR mft.mtime:>mft.a_time"
-    threshold: 1
-    mitre: [T1070.006]
-    level: high
+# ── Two rules removed rather than left unmatchable ────────────────────────────
+#
+# "File with Multiple Names ADS" (T1564.004)
+#   Queried mft.file_name_attributes and mft.ads_count. The parser emits neither
+#   and does not surface $DATA attribute names, so alternate data streams are not
+#   in the indexed data at all — there is no field to rewrite this against.
+#   Detecting ADS requires the parser to emit named $DATA streams first.
+#
+# "File Timestamp Anomaly" (T1070.006)
+#   Queried `mft.crtime:>mft.mtime`, comparing one field to another. query_string
+#   cannot do that — the right-hand side is parsed as a literal — so the clause
+#   was meaningless independently of the non-existent field names. Real timestomp
+#   detection compares $STANDARD_INFORMATION against $FILE_NAME timestamps (the
+#   parser does emit both, as created_at/modified_at and
+#   fn_created_at/fn_modified_at) and needs a script or runtime-field query,
+#   which the rule engine does not support yet.
+#
+# A rule that cannot match reads as coverage that does not exist, which is worse
+# than an acknowledged gap.

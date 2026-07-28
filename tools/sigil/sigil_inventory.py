@@ -70,11 +70,26 @@ def _brace_block(text: str, start: int) -> str:
 
 
 def _subobject_keys(text: str, name: str) -> set[str]:
-    """Keys written inside every ``"<name>": { ... }`` literal in *text*."""
+    """Keys written inside every ``"<name>": { ... }`` literal in *text*.
+
+    Also follows one level of indirection — ``"mft": mft_record`` where
+    ``mft_record = { ... }`` is built earlier. Without that, a parser using the
+    variable form looks like it emits nothing, the index template's (possibly
+    stale) declaration is left standing as the only source, and rules get written
+    against field names nothing ever populates. That is exactly what happened
+    with the MFT pack: the template declares file_path/file_name/created while
+    the parser writes filepath/filename/created_at.
+    """
     keys: set[str] = set()
     for m in re.finditer(rf'"{re.escape(name)}":\s*\{{', text):
         block = _brace_block(text, m.end() - 1)
         keys |= set(re.findall(r'"([a-zA-Z_][a-zA-Z0-9_]*)"\s*:', block))
+    # Variable form: "<name>": some_var  →  some_var = { ... }
+    for m in re.finditer(rf'"{re.escape(name)}":\s*(\*\*)?([a-z_][a-z0-9_]*)\s*[,}}]', text):
+        var = m.group(2)
+        for a in re.finditer(rf"\b{re.escape(var)}\s*=\s*\{{", text):
+            block = _brace_block(text, a.end() - 1)
+            keys |= set(re.findall(r'"([a-zA-Z_][a-zA-Z0-9_]*)"\s*:', block))
     return keys
 
 
@@ -89,17 +104,33 @@ def build() -> dict:
             fields.setdefault(name, set()).update(spec["properties"].keys())
 
     # ── Babel python plugins ──
+    # Sub-object keys are attributed ONLY to the plugin that owns the artifact
+    # type, and the owning plugin REPLACES rather than extends the inventory for
+    # its own namespace. Unioning across every file that happened to contain a
+    # `"mft": {` literal is how this tool once reported mft.file_path / file_name
+    # (picked up from an unrelated module) when the parser actually emits
+    # filepath / filename — and a rule was "fixed" onto the wrong name as a
+    # result. A wrong name is worse than a missing entry: it looks authoritative.
+    owned: dict[str, set[str]] = {}
     for path in sorted(BABEL.glob("*/*_plugin.py")):
         text = path.read_text(errors="replace")
-        artifact_types |= set(re.findall(r'DEFAULT_ARTIFACT_TYPE\s*=\s*"([a-z0-9_]+)"', text))
-        artifact_types |= set(re.findall(r'"artifact_type":\s*"([a-z0-9_]+)"', text))
-        artifact_types |= set(re.findall(r'artifact_type=["\']([a-z0-9_]+)', text))
-        # Sub-objects named after any artifact type this plugin emits, plus the
-        # shared ECS ones it populates.
-        for name in set(re.findall(r'"([a-z][a-z0-9_]*)":\s*\{', text)):
+        own_types = set(re.findall(r'DEFAULT_ARTIFACT_TYPE\s*=\s*"([a-z0-9_]+)"', text))
+        own_types |= set(re.findall(r'"artifact_type":\s*"([a-z0-9_]+)"', text))
+        own_types |= set(re.findall(r'artifact_type=["\']([a-z0-9_]+)', text))
+        artifact_types |= own_types
+        # Only namespaces this plugin actually emits, and only from this plugin.
+        for name in own_types | {path.parent.name}:
+            keys = _subobject_keys(text, name)
+            if keys:
+                owned.setdefault(name, set()).update(keys)
+        # Shared ECS sub-objects the plugin populates: additive, since several
+        # parsers legitimately contribute to host/user/process/network.
+        for name in ("host", "user", "process", "network", "file", "http", "registry"):
             keys = _subobject_keys(text, name)
             if keys:
                 fields.setdefault(name, set()).update(keys)
+    for name, keys in owned.items():
+        fields[name] = keys  # authoritative: the owning plugin wins outright
 
     # ── Declarative cloud/identity mapping specs ──
     specs_dir = BABEL / "cloud_audit" / "specs"

@@ -65,7 +65,7 @@ rules:
       A file was written to a Windows Startup folder. Executables and LNK shortcuts
       placed here run at every user logon — a reliable persistence location.
     artifact_type: evtx
-    query: "evtx.event_id:4663 AND (message.ci:*\\\\Start Menu\\\\Programs\\\\Startup* OR message.ci:*\\\\AppData\\\\Roaming\\\\Microsoft\\\\Windows\\\\Start Menu*)"
+    query: "evtx.event_id:4663 AND (message.ci:*\\\\Start*Menu\\\\Programs\\\\Startup* OR message.ci:*\\\\AppData\\\\Roaming\\\\Microsoft\\\\Windows\\\\Start*Menu*)"
     threshold: 1
     mitre: [T1547.001]
     level: medium

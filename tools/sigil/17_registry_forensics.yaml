@@ -15,7 +15,7 @@ rules:
       Sticky Keys or other accessibility executables were modified.
       Common backdoor technique for persistence.
     artifact_type: registry
-    query: "registry.key_path.ci:*\\\\Image File Execution Options* AND (registry.matched_value:*sethc* OR registry.matched_value:*utilman* OR registry.matched_value:*osk* OR registry.matched_value:*magnify*)"
+    query: "registry.key_path.ci:*\\\\Image*File*Execution*Options* AND (registry.matched_value:*sethc* OR registry.matched_value:*utilman* OR registry.matched_value:*osk* OR registry.matched_value:*magnify*)"
     threshold: 1
     mitre: [T1546.008]
     level: critical
