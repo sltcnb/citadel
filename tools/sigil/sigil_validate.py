@@ -59,8 +59,86 @@ SIGMA_RECOMMENDED = ("artifact_type",)
 
 # A SigmaHQ import line embedding the upstream UUID as a comment.
 _SIGMA_ID_RE = re.compile(r"#\s*sigma_id:\s*([0-9a-fA-F-]{36})")
+# Severity vocabulary the UI/report/triage rank on (LEVEL_INT in module_task).
+_LEVELS = {"critical", "high", "medium", "low", "informational"}
+
 # Lucene field tokens we expect rule queries to reference.
 _FIELD_RE = re.compile(r"\b([a-zA-Z_][\w.]*)\s*:")
+
+# ── Unmatchable-wildcard lint ────────────────────────────────────────────────
+# A native rule's query runs as an Elasticsearch ``query_string`` against the
+# case indices. On an ANALYZED (``text``) field, each wildcard term is matched
+# against ONE indexed token — and the standard analyzer has already split the
+# original value on punctuation. So a pattern whose inner text straddles a token
+# boundary can never match, however well-formed the rule looks:
+#
+#     message:*LogonType\:10*       → tokens are [logontype, 10]      → 0 hits, always
+#     message:*-EncodedCommand*     → token is  [encodedcommand]      → 0 hits, always
+#     process.path:*\\Temp\\*       → tokens are [c, windows, temp]   → 0 hits, always
+#
+# Verified against Elasticsearch 8.13 (the version docker-compose pins) with the
+# real fo-cases index template: the separator set below is measured, not guessed,
+# by indexing "aaa<ch>bbb" and asking whether *aaa<ch>bbb* matches.
+#
+# Case is NOT part of this problem — ES lowercases wildcard terms for the field's
+# analyzer, so ``*NTLM*`` matches ``ntlm`` fine.
+#
+# The fix is one of:
+#   * query the structured field the parser already emits
+#     (``evtx.event_data.LogonType:10`` rather than a message wildcard), or
+#   * wildcard the ``.keyword`` subfield, which is not analyzed
+#     (``process.command_line.keyword:*-EncodedCommand*``) — but mind
+#     ``ignore_above`` (``message.keyword`` drops values over 1024 chars), or
+#   * drop the wildcards and match analyzed terms/phrases
+#     (``message:"-EncodedCommand"``).
+_TOKEN_SEPARATORS = set("-\\/$=@#%+&|,;!?()[]{}<>~^\"'")
+
+# Fields known to be ``keyword`` (not analyzed) — a wildcard over raw punctuation
+# is correct there. Anything ending in ``.keyword`` is handled generically.
+_KEYWORD_FIELDS = {
+    "artifact_type", "os", "source_file", "ingest_job_id", "fo_id", "case_id",
+    "tags", "timestamp_desc", "user.domain", "user.sid", "user.type", "user.id",
+    "host.os", "host.os_version", "host.domain", "host.timezone", "host.ip",
+    "network.protocol", "network.action", "network.direction", "network.dst_host",
+    "file.sha256", "file.sha1", "file.md5", "file.mime_type", "file.extension",
+    "registry.value_type", "registry.hive", "evtx.level", "evtx.level_name",
+    "evtx.channel", "evtx.provider_name", "evtx.correlation_activity_id",
+}
+
+# field:*pattern* / field:pat* / field:*pat — the wildcard term, unquoted.
+_WILDCARD_TERM_RE = re.compile(r"([a-zA-Z_][\w.]*)\s*:\s*((?:[^\s()\"]*\*)[^\s()\"]*)")
+
+
+def _unmatchable_wildcards(query: str) -> list[str]:
+    """Return a message per wildcard term that can never match its field.
+
+    Only flags ANALYZED fields: ``.keyword`` subfields and known keyword fields
+    are exact-value, so punctuation in their wildcards is legitimate.
+    """
+    problems: list[str] = []
+    for field, term in _WILDCARD_TERM_RE.findall(query):
+        if field.endswith(".keyword") or field in _KEYWORD_FIELDS:
+            continue
+        # Strip the Lucene escapes so we judge the literal the user meant.
+        literal = re.sub(r"\\(.)", r"\1", term).replace("*", "").replace("?", "")
+        if not literal:
+            continue
+        hits = sorted({c for c in literal if c in _TOKEN_SEPARATORS})
+        if hits:
+            problems.append(
+                f"wildcard {field}:{term} can never match — {''.join(hits)!r} "
+                f"splits the value into separate tokens on an analyzed field; "
+                f"use the structured field, {field}.keyword, or a non-wildcard term"
+            )
+        # A ':' joins letters but splits letter/digit (UAX#29 MidLetter), so
+        # 'LogonType:10' tokenises as [logontype, 10] while 'aaa:bbb' does not.
+        elif re.search(r"[A-Za-z]:\d|\d:[A-Za-z]", literal):
+            problems.append(
+                f"wildcard {field}:{term} can never match — ':' between a letter "
+                f"and a digit splits the value into separate tokens; use the "
+                f"structured field or {field}.keyword"
+            )
+    return problems
 
 
 class Finding:
@@ -183,6 +261,23 @@ def validate_file(path: Path) -> tuple[list[Finding], int, dict[str, str]]:
                         Finding("warn", rel, label, f"missing recommended field {field!r}")
                     )
 
+        # Severity lint (native rules). Without a level the UI cannot rank a
+        # detection, the report cannot order findings, and auto-triage has no
+        # basis to prioritise — the rule fires into an undifferentiated pile.
+        if not is_sigma:
+            lvl = rule.get("level")
+            if lvl in (None, ""):
+                findings.append(
+                    Finding("warn", rel, label, "missing 'level' — detection cannot be ranked")
+                )
+            elif str(lvl).lower() not in _LEVELS:
+                findings.append(
+                    Finding(
+                        "error", rel, label,
+                        f"level {lvl!r} is not one of {'/'.join(sorted(_LEVELS))}",
+                    )
+                )
+
         # threshold lint (native rules)
         if "threshold" in rule:
             thr = rule["threshold"]
@@ -200,6 +295,10 @@ def validate_file(path: Path) -> tuple[list[Finding], int, dict[str, str]]:
                 findings.append(
                     Finding("warn", rel, label, "query references no field:value token")
                 )
+            # A rule that cannot fire is worse than a missing rule: it reads as
+            # coverage. Hard error so CI blocks it.
+            for msg in _unmatchable_wildcards(rule["query"]):
+                findings.append(Finding("error", rel, label, msg))
 
         # sigma_detection lint
         if is_sigma and isinstance(rule.get("sigma_detection"), str):

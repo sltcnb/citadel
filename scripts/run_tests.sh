@@ -30,6 +30,8 @@ SUITES=(
   "tools/sluice/worker/tests/test_observability.py"
   "tools/sluice/worker/tests/test_parse_metrics.py"
   "tools/sluice/worker/tests/test_module_results_upload.py"
+  "tools/sluice/worker/tests/test_time_limits.py"
+  "tools/sluice/worker/tests/test_thread_budget.py"
   "tests/integration/test_pipeline_e2e.py"
 )
 
