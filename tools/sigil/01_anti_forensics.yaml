@@ -42,10 +42,19 @@ rules:
 
   - name: File Deletion via Cmd / PowerShell
     description: >-
-      del, Remove-Item, or rd commands executed via cmd or PowerShell (EID 4688).
-      May indicate evidence removal or payload cleanup.
+      del, Remove-Item, or rd commands executed via cmd or PowerShell (EID 4688) —
+      evidence removal or payload cleanup.
+
+      ``del`` is matched as an analyzed TERM rather than a wildcard: a wildcard
+      cannot contain a space (the space ends the term, and the previous
+      ``*" del "*`` spelling put a quote inside a wildcard, which Elasticsearch
+      rejects outright — the whole rule 400'd and therefore never fired). A term
+      match is also the more accurate tool here, since it matches the standalone
+      word and not ``delete`` or ``model``.
     artifact_type: evtx
-    query: "evtx.event_id:4688 AND (message:*\" del \"* OR message:*Remove-Item* OR message:*rd /s*)"
+    query: >-
+      evtx.event_id:4688 AND (message:del OR message.ci:*remove-item* OR
+      message.ci:*rd\ \/s* OR message.ci:*rmdir*)
     threshold: 1
     mitre: [T1070.004]
     level: medium

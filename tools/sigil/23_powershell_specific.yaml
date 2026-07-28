@@ -5,7 +5,7 @@ rules:
       PowerShell version 2 was explicitly requested.
       Version 2 lacks security features and is used by malware.
     artifact_type: evtx
-    query: "evtx.event_id:4688 AND message:*powershell* AND message:*-version 2*"
+    query: "evtx.event_id:4688 AND message:*powershell* AND message.ci:*-version 2*"
     threshold: 1
 
   - name: PowerShell Bypass Execution Policy
@@ -13,7 +13,7 @@ rules:
       PowerShell was launched with -ExecutionPolicy Bypass.
       Used to run scripts despite restrictive policies.
     artifact_type: evtx
-    query: "evtx.event_id:4688 AND message:*powershell* AND message:*-ExecutionPolicy* AND (message:*Bypass* OR message:*Unrestricted*)"
+    query: "evtx.event_id:4688 AND message:*powershell* AND message.ci:*-ExecutionPolicy* AND (message:*Bypass* OR message:*Unrestricted*)"
     threshold: 1
 
   - name: PowerShell Download Cradle
@@ -21,7 +21,7 @@ rules:
       PowerShell downloaded and executed a script in one command.
       Common malware delivery technique.
     artifact_type: evtx
-    query: "evtx.event_id:4104 AND (message:*IEX* OR message:*Invoke-Expression* OR message:*Invoke-WebRequest* OR message:*DownloadString*)"
+    query: "evtx.event_id:4104 AND (message:*IEX* OR message.ci:*Invoke-Expression* OR message.ci:*Invoke-WebRequest* OR message:*DownloadString*)"
     threshold: 1
 
   - name: PowerShell Reflection Usage
@@ -29,21 +29,36 @@ rules:
       PowerShell loaded a .NET assembly via reflection.
       Used by fileless malware to avoid writing to disk.
     artifact_type: evtx
-    query: "evtx.event_id:4104 AND (message:*[Reflection.Assembly]* OR message:*LoadFromByteArray* OR message::*Assembly.Load*)"
+    query: >-
+      evtx.event_id:4104 AND (message.ci:*\[reflection.assembly\]* OR
+      message:*LoadFromByteArray* OR message.ci:*assembly.load*)
     threshold: 1
+    mitre: [T1620]
+    level: high
 
-  - name: PowerShell Web Request to IP Address
+  - name: PowerShell Web Request to a URL
     description: >-
-      PowerShell made a web request directly to an IP.
-      Malware often uses IPs instead of domains to evade detection.
+      PowerShell fetched a remote URL (Invoke-WebRequest / DownloadFile) — a
+      download cradle.
+
+      Scope note: this previously tried to require an IP-literal host via
+      ``*http\://[0-9]``, but ``query_string`` wildcards have no character
+      classes — ``[0-9]`` is matched literally, so the clause could never be
+      true and the rule never fired. The URL scheme is matched instead; to
+      isolate IP-literal destinations, pivot on ``network.dst_ip`` (or the
+      Rare-Process / Network-Summary modules), which hold the parsed value.
     artifact_type: evtx
-    query: "evtx.event_id:4104 AND (message:*Invoke-WebRequest* OR message:*DownloadFile*) AND message:*http://[0-9]"
+    query: >-
+      evtx.event_id:4104 AND (message.ci:*invoke-webrequest* OR
+      message.ci:*downloadfile*) AND message.ci:*http\:\/\/*
     threshold: 1
+    mitre: [T1105]
+    level: medium
 
   - name: PowerShell Module Import from Remote Path
     description: >-
       PowerShell imported a module from a UNC path.
       May indicate lateral movement or payload staging.
     artifact_type: evtx
-    query: "evtx.event_id:4104 AND (message:*Import-Module* OR message:*.psm1*) AND message:*\\\\\\\\*"
+    query: "evtx.event_id:4104 AND (message.ci:*Import-Module* OR message:*.psm1*) AND message.ci:*\\\\\\\\*"
     threshold: 1

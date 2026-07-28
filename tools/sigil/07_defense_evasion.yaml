@@ -55,7 +55,7 @@ rules:
       An executable loaded a DLL from the same directory as the process (EID 7 Sysmon).
       Common DLL hijacking indicator when the directory is user-writable.
     artifact_type: evtx
-    query: "evtx.event_id:7 AND message:*\\\\Temp\\\\* AND message:*.dll*"
+    query: "evtx.event_id:7 AND message.ci:*\\\\Temp\\\\* AND message:*.dll*"
     threshold: 1
     mitre: [T1574.002]
     level: high

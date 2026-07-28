@@ -13,7 +13,7 @@ rules:
       A program was executed from a temporary directory.
       Malware often runs from temp to avoid detection.
     artifact_type: prefetch
-    query: "prefetch.path:*\\\\TEMP\\\\* OR prefetch.path:*\\\\AppData\\\\Local\\\\Temp\\\\*"
+    query: "prefetch.executable_name.ci:*\\\\TEMP\\\\* OR prefetch.executable_name.ci:*\\\\AppData\\\\Local\\\\Temp\\\\*"
     threshold: 1
 
   - name: LOLBin Execution

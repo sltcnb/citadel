@@ -8,7 +8,7 @@ rules:
       Multiple files matching common ransom-note naming (README, DECRYPT,
       RECOVER, HOW-TO) were written. A high-confidence encryption indicator.
     artifact_type: evtx
-    query: 'evtx.event_id:4663 AND (message:*readme* OR message:*decrypt* OR message:*recover* OR message:*restore-my-files* OR message:*how_to*)'
+    query: 'evtx.event_id:4663 AND (message:*readme* OR message:*decrypt* OR message:*recover* OR message.ci:*restore-my-files* OR message:*how_to*)'
     threshold: 3
     mitre: [T1486]
     level: high
@@ -28,7 +28,7 @@ rules:
       wbadmin was used to delete the Windows backup catalog before encryption,
       a common step to block recovery.
     artifact_type: evtx
-    query: 'evtx.event_id:4688 AND message:*wbadmin* AND message:*delete* AND message:*catalog*'
+    query: 'evtx.event_id:4688 AND message:*wbadmin* AND message:*delete* AND message.ci:*catalog*'
     threshold: 1
     mitre: [T1490]
     level: critical
@@ -48,7 +48,7 @@ rules:
       cipher.exe /w was run to wipe unallocated space, destroying recoverable
       remnants of deleted files.
     artifact_type: evtx
-    query: 'evtx.event_id:4688 AND message:*cipher* AND message:*/w*'
+    query: 'evtx.event_id:4688 AND message:*cipher* AND message.ci:*\/w*'
     threshold: 1
     mitre: [T1485]
     level: medium
@@ -78,7 +78,7 @@ rules:
       A very high number of file-write operations from a single host in a short
       window — the tell-tale I/O signature of bulk encryption.
     artifact_type: evtx
-    query: 'evtx.event_id:4663 AND message:*WriteData*'
+    query: 'evtx.event_id:4663 AND message.ci:*WriteData*'
     threshold: 200
     mitre: [T1486]
     level: high
