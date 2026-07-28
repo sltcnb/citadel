@@ -20,14 +20,27 @@ rules:
     mitre: [T1204.001]
     level: high
 
-  - name: LNK with Hidden Window
+  - name: LNK with Suspicious Arguments
     description: >-
-      A shortcut was configured to run with a hidden window.
-      Used to execute malware without user awareness.
+      A shortcut's target arguments contain execution or download markers
+      (encoded commands, hidden-window flags, download cradles). Weaponised LNK
+      files carry the payload in the argument string rather than the target,
+      which is usually a legitimate signed binary.
+
+      Replaces a "LNK with Hidden Window" rule that queried
+      ``lnk.show_command``. The parser exposes no window-state field at all — it
+      emits target_path, local_path, arguments, working_directory, machine_id,
+      description, lnk_filename and the four timestamps — so that rule could
+      never match. The ``-w hidden`` / ``-windowstyle`` flags in the argument
+      string are the reachable evidence for the same technique.
     artifact_type: lnk
-    query: "lnk.show_command:SW_SHOWMINNOACTIVE OR lnk.show_command:SW_HIDE"
+    query: >-
+      lnk.arguments.ci:*-w*hidden* OR lnk.arguments.ci:*-windowstyle*
+      OR lnk.arguments.ci:*-enc* OR lnk.arguments.ci:*downloadstring*
+      OR lnk.arguments.ci:*invoke-* OR lnk.arguments.ci:*frombase64string*
+      OR lnk.arguments.ci:*-nop*
     threshold: 1
-    mitre: [T1564.003]
+    mitre: [T1564.003, T1059.001]
     level: high
 
   - name: LNK Targeting Remote Path
@@ -45,6 +58,6 @@ rules:
       Multiple shortcut files were created in a short time.
       Could indicate worm propagation or mass infection.
     artifact_type: lnk
-    query: "lnk.created:*"
+    query: "lnk.created_at:*"
     threshold: 10
     level: low

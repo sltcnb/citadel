@@ -46,6 +46,32 @@ def _looks_like_suricata(path: Path) -> bool:
     return False
 
 
+def _flow_bytes(obj: dict) -> dict:
+    """Byte counters from an EVE ``flow`` block, as queryable numeric fields.
+
+    ``network.bytes`` is the template's declared home for a transfer volume and
+    is what a volumetric rule can threshold on. ``bytes_out``/``bytes_in`` keep
+    the direction, which matters for telling exfiltration from a download.
+    Absent or non-numeric values are omitted rather than coerced to 0, so
+    ``network.bytes:*`` still means "Suricata reported a volume".
+    """
+    flow = obj.get("flow")
+    if not isinstance(flow, dict):
+        return {}
+    out: dict = {}
+    to_server = flow.get("bytes_toserver")
+    to_client = flow.get("bytes_toclient")
+    total = 0
+    for key, value in (("bytes_out", to_server), ("bytes_in", to_client)):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        out[key] = int(value)
+        total += int(value)
+    if out:
+        out["bytes"] = total
+    return out
+
+
 class SuricataPlugin(BasePlugin):
     """Parses Suricata EVE JSON log output."""
 
@@ -206,6 +232,13 @@ class SuricataPlugin(BasePlugin):
                 "dst_port": obj.get("dest_port"),
                 "protocol": proto,
                 "flow_id": str(flow_id) if flow_id else "",
+                # Byte counters were only ever rendered into `message`, so no
+                # numeric comparison was possible: `network.bytes` is declared in
+                # the index template but nothing populated it, and `raw` is
+                # mapped `enabled: false` (stored, never indexed) so
+                # `raw.flow.bytes_toserver` is unqueryable too. A volumetric
+                # exfiltration rule had no field it could threshold against.
+                **_flow_bytes(obj),
             },
             "suricata": {
                 "event_type": event_type,

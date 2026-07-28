@@ -55,7 +55,7 @@ rules:
       A process established a connection to an unusual port (not 80/443/53).
       Malware commonly uses high ports or non-standard services for C2.
     artifact_type: suricata
-    query: "suricata.event_type:flow AND NOT (suricata.dest_port:80 OR suricata.dest_port:443 OR suricata.dest_port:53)"
+    query: "suricata.event_type:flow AND NOT (network.dst_port:80 OR network.dst_port:443 OR network.dst_port:53)"
     threshold: 10
     mitre: [T1571]
     level: medium
