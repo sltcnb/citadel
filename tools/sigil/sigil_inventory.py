@@ -180,13 +180,38 @@ def build() -> dict:
     artifact_types |= {"finding", "detection"}
     artifact_types |= set(fields)
 
+    # Namespaces whose sub-object is built by splatting a source record
+    # (`{"zeek": {"log_type": …, **row}}`), so the field set is DATA-DRIVEN and
+    # cannot be enumerated from source. For these, absence from `fields` proves
+    # nothing — zeek.query, zeek.rcode_name and zeek.validation_status are all
+    # real columns that this tool can never list, and an audit that treats a
+    # missing entry as "field does not exist" would delete working rules.
+    splat = sorted(_splat_namespaces())
+
     return {
         "_generated_by": "tools/sigil/sigil_inventory.py",
         "_note": "Do not hand-edit; regenerate when a parser's output changes.",
+        "_dynamic_namespaces_note": (
+            "Sub-objects listed in dynamic_namespaces are populated by splatting a "
+            "source record, so their field list is incomplete BY CONSTRUCTION. "
+            "Absence of a field there is not evidence that it does not exist — "
+            "verify against a real document instead."
+        ),
         "artifact_types": sorted(artifact_types),
+        "dynamic_namespaces": splat,
         "always_present": sorted(_ALWAYS),
         "fields": {k: sorted(v) for k, v in sorted(fields.items()) if v},
     }
+
+
+def _splat_namespaces() -> set[str]:
+    """Sub-objects a plugin fills with ``**<record>`` rather than named keys."""
+    found: set[str] = set()
+    for path in sorted(BABEL.glob("*/*_plugin.py")):
+        text = path.read_text(errors="replace")
+        for m in re.finditer(r'"([a-z][a-z0-9_]*)":\s*\{[^{}]*\*\*', text):
+            found.add(m.group(1))
+    return found
 
 
 def main(argv: list[str] | None = None) -> int:

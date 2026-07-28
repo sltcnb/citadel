@@ -1,6 +1,7 @@
 {
   "_generated_by": "tools/sigil/sigil_inventory.py",
   "_note": "Do not hand-edit; regenerate when a parser's output changes.",
+  "_dynamic_namespaces_note": "Sub-objects listed in dynamic_namespaces are populated by splatting a source record, so their field list is incomplete BY CONSTRUCTION. Absence of a field there is not evidence that it does not exist \u2014 verify against a real document instead.",
   "artifact_types": [
     "access_log",
     "android",
@@ -117,6 +118,15 @@
     "wintriage",
     "wlan_profile",
     "yara",
+    "zeek"
+  ],
+  "dynamic_namespaces": [
+    "docker",
+    "iptables",
+    "kubernetes",
+    "network",
+    "raw",
+    "registry",
     "zeek"
   ],
   "always_present": [
