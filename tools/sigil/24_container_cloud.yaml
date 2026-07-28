@@ -5,7 +5,7 @@ rules:
       A Docker container was started with --privileged flag.
       Grants full host access and bypasses container isolation.
     artifact_type: syslog
-    query: "syslog.message:*docker* AND syslog.message:*--privileged*"
+    query: "syslog.raw_message:*docker* AND syslog.raw_message.ci:*--privileged*"
     threshold: 1
 
   - name: Kubernetes Pod with Host Network
@@ -13,7 +13,7 @@ rules:
       A Kubernetes pod was created with hostNetwork: true.
       Allows pod to access host network interfaces.
     artifact_type: syslog
-    query: "syslog.message:*kubernetes* AND syslog.message:*hostNetwork*"
+    query: "syslog.raw_message:*kubernetes* AND syslog.raw_message:*hostNetwork*"
     threshold: 1
 
   - name: AWS CLI Assume Role from Unusual IP
@@ -21,7 +21,7 @@ rules:
       AWS STS AssumeRole called from an unusual source IP.
       May indicate credential compromise or lateral movement.
     artifact_type: syslog
-    query: "syslog.message:*aws* AND syslog.message:*sts:AssumeRole*"
+    query: "syslog.raw_message:*aws* AND syslog.raw_message.ci:*sts\\:assumerole*"
     threshold: 1
 
   - name: Azure AD Privileged Role Assigned
@@ -29,7 +29,7 @@ rules:
       A privileged Azure AD role was assigned to a user.
       Review for unauthorized privilege escalation.
     artifact_type: syslog
-    query: "syslog.message:*AzureAD* AND (syslog.message:*Global Administrator* OR syslog.message:*Privileged Role Administrator*)"
+    query: "syslog.raw_message:*AzureAD* AND (syslog.raw_message:*Global Administrator* OR syslog.raw_message:*Privileged Role Administrator*)"
     threshold: 1
 
   - name: GCP Service Account Key Created
@@ -37,7 +37,7 @@ rules:
       A new service account key was generated.
       Keys can be exfiltrated for persistent access.
     artifact_type: syslog
-    query: "syslog.message:*gcloud* AND syslog.message:*create-key*"
+    query: "syslog.raw_message:*gcloud* AND syslog.raw_message.ci:*create-key*"
     threshold: 1
 
   - name: S3 Bucket Made Public
@@ -45,5 +45,5 @@ rules:
       An S3 bucket policy was changed to allow public access.
       May lead to data exposure or unauthorized access.
     artifact_type: syslog
-    query: "syslog.message:*s3:PutBucketPolicy* OR syslog.message:*s3:PutBucketAcl*"
+    query: "syslog.raw_message.ci:*s3\\:PutBucketPolicy* OR syslog.raw_message.ci:*s3\\:PutBucketAcl*"
     threshold: 1

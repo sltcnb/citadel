@@ -89,10 +89,15 @@ _FIELD_RE = re.compile(r"\b([a-zA-Z_][\w.]*)\s*:")
 #
 # The fix is one of:
 #   * query the structured field the parser already emits
-#     (``evtx.event_data.LogonType:10`` rather than a message wildcard), or
-#   * wildcard the ``.keyword`` subfield, which is not analyzed
-#     (``process.command_line.keyword:*-EncodedCommand*``) — but mind
-#     ``ignore_above`` (``message.keyword`` drops values over 1024 chars), or
+#     (``evtx.event_data.LogonType:10`` rather than a message wildcard) — best,
+#     because it says what is actually meant; or
+#   * wildcard the ``.ci`` subfield, which the index template maps as a
+#     lowercase-normalized keyword: punctuation survives AND the pattern stays
+#     case-insensitive, because Elasticsearch applies the normalizer to the query
+#     term as well as the indexed value (``process.command_line.ci:*-EncodedCommand*``); or
+#   * wildcard ``.keyword``, which is exact but CASE-SENSITIVE (``*union*`` will
+#     not match ``UNION``) and subject to ``ignore_above`` — ``message.keyword``
+#     silently drops values over 1024 chars, which real EVTX messages exceed; or
 #   * drop the wildcards and match analyzed terms/phrases
 #     (``message:"-EncodedCommand"``).
 _TOKEN_SEPARATORS = set("-\\/$=@#%+&|,;!?()[]{}<>~^\"'")
@@ -121,7 +126,9 @@ def _unmatchable_wildcards(query: str) -> list[str]:
     """
     problems: list[str] = []
     for field, term in _WILDCARD_TERM_RE.findall(query):
-        if field.endswith(".keyword") or field in _KEYWORD_FIELDS:
+        # .ci and .keyword are exact-value subfields, so punctuation in their
+        # wildcards is legitimate (.ci additionally stays case-insensitive).
+        if field.endswith((".ci", ".keyword")) or field in _KEYWORD_FIELDS:
             continue
         # Strip the Lucene escapes so we judge the literal the user meant.
         literal = re.sub(r"\\(.)", r"\1", term).replace("*", "").replace("?", "")

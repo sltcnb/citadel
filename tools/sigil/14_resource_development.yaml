@@ -16,7 +16,7 @@ rules:
       scripting runtime, or with no User-Agent at all. Malware frequently uses
       custom, empty, or default library User-Agent headers for C2 beacons.
     artifact_type: suricata
-    query: "suricata.event_type:http AND (NOT suricata.http.http_user_agent:* OR suricata.http.http_user_agent:*curl* OR suricata.http.http_user_agent:*wget* OR suricata.http.http_user_agent:*python-requests* OR suricata.http.http_user_agent:*powershell* OR suricata.http.http_user_agent:*Go-http-client*)"
+    query: "suricata.event_type:http AND (NOT suricata.http.http_user_agent:* OR suricata.http.http_user_agent:*curl* OR suricata.http.http_user_agent:*wget* OR suricata.http.http_user_agent.ci:*python-requests* OR suricata.http.http_user_agent:*powershell* OR suricata.http.http_user_agent.ci:*Go-http-client*)"
     threshold: 1
     mitre: [T1071.001]
     level: low

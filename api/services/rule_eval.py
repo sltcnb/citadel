@@ -120,14 +120,32 @@ def evaluate(case_id: str, rule: dict, sample_size: int = 5) -> dict | None:
 
 
 def _search(index: str, body: dict) -> dict | None:
-    """POST a search; None when the index/query means "nothing to match"."""
+    """POST a search. None means "legitimately nothing to match".
+
+    A 404 (or a missing-index 400) is normal: a case simply may not hold that
+    artifact type. A query Elasticsearch REJECTS is not — it is a broken rule,
+    and reporting it as "no match" is how a rule that 400s on every run stays
+    indistinguishable from one that found nothing. Several rules had been dead
+    that way for a long time (an unescaped ``/`` makes query_string read
+    ``/.../`` as a regex; an unescaped ``:`` is the field separator; a quote or
+    bracket inside a wildcard is rejected outright), so a malformed query now
+    raises instead of vanishing.
+    """
     try:
         return es_req("POST", f"/{index}/_search", body)
-    except Exception as exc:  # noqa: BLE001 - see docstring on evaluate()
+    except Exception as exc:  # noqa: BLE001 - classified below
         code = getattr(exc, "code", None)
-        if code in (400, 404):
-            logger.debug("rule search returned %s for %s (treated as no match)", code, index)
+        text = str(exc)
+        if code == 404 or "index_not_found" in text:
+            logger.debug("rule search: no index %s (no match)", index)
             return None
+        if code == 400:
+            if "no such index" in text or "index_not_found" in text:
+                return None
+            raise RuleEvalError(
+                f"Elasticsearch rejected the rule query — the rule cannot ever "
+                f"match and needs fixing: {text[:300]}"
+            ) from exc
         logger.warning("rule search failed on %s: %s", index, exc)
         return None
 

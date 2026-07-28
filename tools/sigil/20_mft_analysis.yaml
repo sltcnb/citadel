@@ -5,7 +5,7 @@ rules:
       A file was created in a protected Windows directory.
       Malware often drops files in system locations.
     artifact_type: mft
-    query: "mft.full_path:*\\\\Windows\\\\* OR mft.full_path:*\\\\Program Files\\\\*"
+    query: "mft.file_path.ci:*\\\\Windows\\\\* OR mft.file_path.ci:*\\\\Program Files\\\\*"
     threshold: 1
 
   - name: File with Multiple Names ADS

@@ -55,7 +55,7 @@ rules:
       A common autorun registry key was modified (HKLM/HKCU Run, RunOnce).
       One of the oldest and most reliable Windows persistence techniques.
     artifact_type: evtx
-    query: "evtx.event_id:4657 AND (message:*\\\\Run* OR message:*\\\\RunOnce*) AND (message:*HKLM* OR message:*HKCU* OR message:*Software\\\\Microsoft\\\\Windows*)"
+    query: "evtx.event_id:4657 AND (message.ci:*\\\\Run* OR message.ci:*\\\\RunOnce*) AND (message:*HKLM* OR message:*HKCU* OR message.ci:*Software\\\\Microsoft\\\\Windows*)"
     threshold: 1
     mitre: [T1547.001]
     level: medium
@@ -65,7 +65,7 @@ rules:
       A file was written to a Windows Startup folder. Executables and LNK shortcuts
       placed here run at every user logon — a reliable persistence location.
     artifact_type: evtx
-    query: "evtx.event_id:4663 AND (message:*\\\\Start Menu\\\\Programs\\\\Startup* OR message:*\\\\AppData\\\\Roaming\\\\Microsoft\\\\Windows\\\\Start Menu*)"
+    query: "evtx.event_id:4663 AND (message.ci:*\\\\Start Menu\\\\Programs\\\\Startup* OR message.ci:*\\\\AppData\\\\Roaming\\\\Microsoft\\\\Windows\\\\Start Menu*)"
     threshold: 1
     mitre: [T1547.001]
     level: medium

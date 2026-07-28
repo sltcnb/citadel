@@ -10,7 +10,7 @@ rules:
       A request path contains directory-traversal sequences (../, ..%2f, %2e%2e).
       Used to escape the web root and read arbitrary files (e.g. /etc/passwd).
     artifact_type: access_log
-    query: 'http.request_path:*..%2f* OR http.request_path:*../* OR http.request_path:*..%5c* OR http.request_path:*%2e%2e%2f* OR http.request_path:*etc%2fpasswd* OR http.request_path:*etc/passwd*'
+    query: 'http.request_path.ci:*..%2f* OR http.request_path.ci:*..\/* OR http.request_path.ci:*..%5c* OR http.request_path.ci:*%2e%2e%2f* OR http.request_path.ci:*etc%2fpasswd* OR http.request_path.ci:*etc\/passwd*'
     threshold: 1
 
   - name: Web — SQL Injection Attempt
@@ -19,7 +19,7 @@ rules:
       1=1, time-based sleep/benchmark/waitfor). Indicates probing or exploitation
       of a database-backed endpoint.
     artifact_type: access_log
-    query: 'http.request_path:*union*select* OR http.request_path:*information_schema* OR http.request_path:*1=1* OR http.request_path:*sleep* OR http.request_path:*benchmark* OR http.request_path:*waitfor*delay* OR message:*union%20select*'
+    query: 'http.request_path:*union*select* OR http.request_path:*information_schema* OR http.request_path.ci:*1=1* OR http.request_path:*sleep* OR http.request_path:*benchmark* OR http.request_path:*waitfor*delay* OR message.ci:*union%20select*'
     threshold: 1
 
   - name: Web — Cross-Site Scripting (XSS) Attempt
@@ -27,7 +27,7 @@ rules:
       Request contains script-injection markers (<script>, %3cscript, javascript:,
       onerror=). Reflected/stored XSS probing.
     artifact_type: access_log
-    query: 'http.request_path:*%3cscript* OR http.request_path:*<script* OR http.request_path:*javascript%3a* OR http.request_path:*onerror=* OR http.request_path:*onload=*'
+    query: 'http.request_path.ci:*%3cscript* OR http.request_path.ci:*<script* OR http.request_path.ci:*javascript%3a* OR http.request_path.ci:*onerror=* OR http.request_path.ci:*onload=*'
     threshold: 1
 
   - name: Web — Command Injection Attempt
@@ -35,7 +35,7 @@ rules:
       Request contains OS-command-injection markers (;, |, backtick-encoded,
       wget/curl pulls). Attempts to run shell commands via a vulnerable parameter.
     artifact_type: access_log
-    query: 'http.request_path:*%3bcat* OR http.request_path:*;cat* OR http.request_path:*%7cwhoami* OR http.request_path:*;id* OR http.request_path:*wget%20* OR http.request_path:*curl%20* OR http.request_path:*%24%28*'
+    query: 'http.request_path.ci:*%3bcat* OR http.request_path.ci:*;cat* OR http.request_path.ci:*%7cwhoami* OR http.request_path.ci:*;id* OR http.request_path.ci:*wget%20* OR http.request_path.ci:*curl%20* OR http.request_path.ci:*%24%28*'
     threshold: 1
 
   - name: Web — Local/Remote File Inclusion (LFI/RFI)
@@ -43,7 +43,7 @@ rules:
       Request includes PHP wrappers (php://, data://) or a remote URL passed as a
       parameter (=http://) — local or remote file inclusion.
     artifact_type: access_log
-    query: 'http.request_path:*php%3a%2f%2f* OR http.request_path:*php://* OR http.request_path:*data%3a%2f%2f* OR http.request_path:*=http%3a%2f%2f* OR http.request_path:*=http://* OR http.request_path:*=https://*'
+    query: 'http.request_path.ci:*php%3a%2f%2f* OR http.request_path.ci:*php\:\/\/* OR http.request_path.ci:*data%3a%2f%2f* OR http.request_path.ci:*=http%3a%2f%2f* OR http.request_path.ci:*=http\:\/\/* OR http.request_path.ci:*=https\:\/\/*'
     threshold: 1
 
   - name: Web — Log4Shell (JNDI) Exploitation Attempt
@@ -51,7 +51,7 @@ rules:
       A JNDI lookup string (jndi:ldap, jndi:rmi) appears in the request or
       user-agent — CVE-2021-44228 (Log4Shell) exploitation attempt.
     artifact_type: access_log
-    query: 'http.request_path:*jndi%3a* OR http.request_path:*jndi:* OR http.user_agent:*jndi:* OR message:*jndi%3a* OR message:*jndi:ldap*'
+    query: 'http.request_path.ci:*jndi%3a* OR http.request_path.ci:*jndi\:* OR http.user_agent.ci:*jndi\:* OR message.ci:*jndi%3a* OR message.ci:*jndi\:ldap*'
     threshold: 1
 
   - name: Web — Sensitive File / Path Access
@@ -60,7 +60,7 @@ rules:
       wp-config, phpMyAdmin, .ssh, backup files). Often reconnaissance for
       credentials or source disclosure.
     artifact_type: access_log
-    query: 'http.request_path:*.git%2f* OR http.request_path:*/.git* OR http.request_path:*/.env* OR http.request_path:*wp-config* OR http.request_path:*phpmyadmin* OR http.request_path:*/.ssh* OR http.request_path:*.bak* OR http.request_path:*.sql*'
+    query: 'http.request_path.ci:*.git%2f* OR http.request_path.ci:*\/.git* OR http.request_path.ci:*\/.env* OR http.request_path.ci:*wp-config* OR http.request_path:*phpmyadmin* OR http.request_path.ci:*\/.ssh* OR http.request_path:*.bak* OR http.request_path.ci:*.sql*'
     threshold: 1
 
   - name: Web — Webshell Access
@@ -69,7 +69,7 @@ rules:
       shell.php, cmd.php) or generic command parameters. Suggests an uploaded
       backdoor is being used.
     artifact_type: access_log
-    query: 'http.request_path:*shell.php* OR http.request_path:*cmd.php* OR http.request_path:*c99* OR http.request_path:*r57* OR http.request_path:*wso* OR http.request_path:*eval-stdin* OR http.request_path:*=whoami*'
+    query: 'http.request_path:*shell.php* OR http.request_path:*cmd.php* OR http.request_path:*c99* OR http.request_path:*r57* OR http.request_path:*wso* OR http.request_path.ci:*eval-stdin* OR http.request_path.ci:*=whoami*'
     threshold: 1
 
   - name: Web — Scanner / Recon Tool User-Agent
@@ -78,7 +78,7 @@ rules:
       (sqlmap, nikto, nmap, masscan, acunetix, nuclei, gobuster, dirbuster,
       wpscan). Active scanning of the host.
     artifact_type: access_log
-    query: 'http.user_agent:*sqlmap* OR http.user_agent:*nikto* OR http.user_agent:*nmap* OR http.user_agent:*masscan* OR http.user_agent:*acunetix* OR http.user_agent:*nuclei* OR http.user_agent:*gobuster* OR http.user_agent:*dirbuster* OR http.user_agent:*wpscan* OR http.user_agent:*zgrab*'
+    query: 'http.user_agent:*sqlmap* OR http.user_agent:*nikto* OR http.user_agent:*nmap* OR http.user_agent:*masscan* OR http.user_agent:*acunetix* OR http.user_agent:*nuclei* OR http.user_agent:*gobuster* OR http.user_agent:*dirbuster* OR http.user_agent:*wpscan* OR http.user_agent.ci:*zgrab*'
     threshold: 1
 
   - name: Web — Suspicious HTTP Method

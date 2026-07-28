@@ -5,7 +5,7 @@ rules:
       Suricata fired an INFO or POLICY alert related to data upload.
       May indicate files being sent outside the network.
     artifact_type: suricata
-    query: "suricata.event_type:alert AND (message:*ET\\ INFO* OR message:*ET\\ POLICY*) AND message:*upload*"
+    query: "suricata.event_type:alert AND (message.ci:*ET\\ INFO* OR message.ci:*ET\\ POLICY*) AND message:*upload*"
     threshold: 1
     mitre: [T1048]
     level: medium
@@ -15,7 +15,7 @@ rules:
       A compressed archive (.zip, .7z, .rar) was created in a temp or public directory.
       Indicates data being staged before exfiltration.
     artifact_type: evtx
-    query: "evtx.event_id:4663 AND (message:*.zip* OR message:*.7z* OR message:*.rar*) AND (message:*\\\\Temp\\\\* OR message:*\\\\Public\\\\*)"
+    query: "evtx.event_id:4663 AND (message:*.zip* OR message:*.7z* OR message:*.rar*) AND (message.ci:*\\\\Temp\\\\* OR message.ci:*\\\\Public\\\\*)"
     threshold: 1
     mitre: [T1560.001]
     level: medium

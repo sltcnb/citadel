@@ -15,7 +15,7 @@ rules:
       CloudTrail was stopped or deleted (StopLogging, DeleteTrail, UpdateTrail) —
       a classic defense-evasion move to blind logging before further activity.
     artifact_type: aws_cloudtrail
-    query: 'message:*StopLogging* OR message:*DeleteTrail* OR message:*UpdateTrail*'
+    query: 'message:*StopLogging* OR message:*DeleteTrail* OR message.ci:*UpdateTrail*'
     threshold: 1
 
   - name: AWS — IAM Credential / User Creation
@@ -23,7 +23,7 @@ rules:
       New IAM user, access key, or login profile created, or a policy attached —
       persistence / privilege escalation in the account.
     artifact_type: aws_cloudtrail
-    query: 'message:*CreateUser* OR message:*CreateAccessKey* OR message:*CreateLoginProfile* OR message:*AttachUserPolicy* OR message:*PutUserPolicy*'
+    query: 'message:*CreateUser* OR message:*CreateAccessKey* OR message:*CreateLoginProfile* OR message:*AttachUserPolicy* OR message.ci:*PutUserPolicy*'
     threshold: 1
 
   - name: AWS — Security Group Opened to the Internet
@@ -39,7 +39,7 @@ rules:
       Bucket ACL or policy modified (PutBucketAcl, PutBucketPolicy,
       PutBucketPublicAccessBlock) — potential data-exposure path.
     artifact_type: aws_cloudtrail
-    query: 'message:*PutBucketPolicy* OR message:*PutBucketAcl* OR message:*PutBucketPublicAccessBlock* OR message:*DeleteBucketPolicy*'
+    query: 'message:*PutBucketPolicy* OR message:*PutBucketAcl* OR message:*PutBucketPublicAccessBlock* OR message.ci:*DeleteBucketPolicy*'
     threshold: 1
 
   - name: AWS — Detective Controls Disabled
@@ -47,7 +47,7 @@ rules:
       GuardDuty, Config or CloudWatch detective controls disabled
       (DeleteDetector, StopConfigurationRecorder, DeleteFlowLogs).
     artifact_type: aws_cloudtrail
-    query: 'message:*DeleteDetector* OR message:*StopConfigurationRecorder* OR message:*DeleteFlowLogs* OR message:*DeleteTrail*'
+    query: 'message:*DeleteDetector* OR message:*StopConfigurationRecorder* OR message:*DeleteFlowLogs* OR message.ci:*DeleteTrail*'
     threshold: 1
 
   # ── Microsoft 365 ───────────────────────────────────────────────────────────
@@ -56,7 +56,7 @@ rules:
       A mailbox/inbox rule was created or modified (New-InboxRule, Set-InboxRule)
       — frequently used in BEC to auto-forward or hide attacker replies.
     artifact_type: o365_audit
-    query: 'message:*New-InboxRule* OR message:*Set-InboxRule* OR message:*New-TransportRule*'
+    query: 'message.ci:*New-InboxRule* OR message.ci:*Set-InboxRule* OR message.ci:*New-TransportRule*'
     threshold: 1
 
   - name: M365 — Mailbox Delegation / Permission Added
@@ -64,7 +64,7 @@ rules:
       Mailbox permissions granted (Add-MailboxPermission, Add-RecipientPermission)
       — potential mailbox takeover / persistence.
     artifact_type: o365_audit
-    query: 'message:*Add-MailboxPermission* OR message:*Add-RecipientPermission*'
+    query: 'message.ci:*Add-MailboxPermission* OR message.ci:*Add-RecipientPermission*'
     threshold: 1
 
   - name: M365 — Audit Logging Changed
@@ -72,7 +72,7 @@ rules:
       Tenant or mailbox audit configuration changed (Set-AdminAuditLogConfig,
       Set-MailboxAuditBypassAssociation) — defense evasion.
     artifact_type: o365_audit
-    query: 'message:*Set-AdminAuditLogConfig* OR message:*MailboxAuditBypass*'
+    query: 'message.ci:*Set-AdminAuditLogConfig* OR message.ci:*MailboxAuditBypass*'
     threshold: 1
 
   # ── Microsoft Entra / Azure AD ──────────────────────────────────────────────
@@ -81,7 +81,7 @@ rules:
       A burst of failed Entra ID sign-ins (the message carries the failureReason)
       — password spray / brute force against cloud identities.
     artifact_type: azure_signin
-    query: 'message:*Sign-in* AND (message:*Invalid* OR message:*failed* OR message:*denied* OR message:*blocked*)'
+    query: 'message.ci:*Sign-in* AND (message:*Invalid* OR message:*failed* OR message:*denied* OR message:*blocked*)'
     threshold: 10
 
   # ── Google Cloud ────────────────────────────────────────────────────────────
@@ -90,7 +90,7 @@ rules:
       A service-account key was created (CreateServiceAccountKey) — long-lived
       credential often used for persistence / exfiltration.
     artifact_type: gcp_audit
-    query: 'message:*CreateServiceAccountKey* OR message:*CreateServiceAccount*'
+    query: 'message:*CreateServiceAccountKey* OR message.ci:*CreateServiceAccount*'
     threshold: 1
 
   - name: GCP — IAM Policy or Firewall Changed
@@ -98,7 +98,7 @@ rules:
       IAM policy binding or firewall rule modified (SetIamPolicy,
       firewalls.insert) — privilege grant or network exposure.
     artifact_type: gcp_audit
-    query: 'message:*SetIamPolicy* OR message:*firewalls.insert* OR message:*firewalls.patch*'
+    query: 'message:*SetIamPolicy* OR message:*firewalls.insert* OR message.ci:*firewalls.patch*'
     threshold: 1
 
   # ── Okta ────────────────────────────────────────────────────────────────────
@@ -115,5 +115,5 @@ rules:
       Repeated failed Okta authentication outcomes — credential stuffing /
       spraying against the IdP.
     artifact_type: okta_system_log
-    query: 'message:*FAILURE* OR message:*DENIED*'
+    query: 'message:*FAILURE* OR message.ci:*DENIED*'
     threshold: 10
