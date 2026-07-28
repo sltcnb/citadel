@@ -1245,7 +1245,7 @@ function LLMAnalysisPanel({ analysis }) {
 }
 
 function ModuleRunCard({
-  run, caseId, navigate, onClose, onRunOptimistic, onRefreshRuns,
+  run, caseId, navigate, onClose, onRunOptimistic, onRefreshRuns, onRunDeleted,
   // Hit-level filters (all optional — undefined = no filtering)
   activeLevels, activeComputers, activeChannels, activeTags, ruleSearch,
 }) {
@@ -1257,6 +1257,7 @@ function ModuleRunCard({
   const [retrying,   setRetrying]   = useState(false)
   const [retryErr,   setRetryErr]   = useState('')
   const [cancelling, setCancelling] = useState(false)
+  const [deleting,   setDeleting]   = useState(false)
 
   async function retryRun() {
     setRetrying(true)
@@ -1289,6 +1290,25 @@ function ModuleRunCard({
     }
   }
 
+  async function deleteRun() {
+    if (!confirm(
+      `Delete this ${moduleName} run?\n\n` +
+      'Its detections are removed from the timeline and findings, and its results ' +
+      'file and artifacts are deleted from storage. This cannot be undone.'
+    )) return
+    setDeleting(true)
+    setRetryErr('')
+    try {
+      await api.modules.deleteRun(run.run_id)
+      // Drop the card immediately, then re-sync so counts/filters follow.
+      onRunDeleted?.(run.run_id)
+      onRefreshRuns?.()
+    } catch (err) {
+      setRetryErr(err.message)
+      setDeleting(false)
+    }
+  }
+
   async function runAnalysis() {
     setAnalyzing(true)
     setAnalyzeErr('')
@@ -1308,9 +1328,13 @@ function ModuleRunCard({
 
   const statusCls = statusStyle(run.status).cls
 
-  const ts = run.completed_at || run.started_at
+  // created_at is the fallback: a run that failed at dispatch never got a
+  // started_at, and without it the card showed no time at all. Seconds are
+  // included because a batch of modules launched together otherwise renders
+  // the identical minute on every card.
+  const ts = run.completed_at || run.started_at || run.created_at
   const tsDisplay = ts
-    ? new Date(ts).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })
+    ? new Date(ts).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'medium' })
     : null
 
   // Strip residual ANSI codes
@@ -1430,33 +1454,44 @@ function ModuleRunCard({
         />
       </button>
 
-      {(run.status === 'FAILED' || run.status === 'PENDING' || run.status === 'RUNNING') && (
-        <div className="px-3 pb-2 flex items-center gap-2">
-          {(run.status === 'FAILED' || run.status === 'PENDING') && (
-            <button
-              onClick={retryRun}
-              disabled={retrying}
-              className="btn-ghost text-xs px-1.5 py-0.5 text-brand-accent hover:text-brand-accenthover flex items-center gap-1"
-              title={run.status === 'PENDING' ? 'Re-dispatch stuck run' : 'Retry this module run'}
-            >
-              <RefreshCw size={11} className={retrying ? 'animate-spin' : ''} />
-              {retrying ? '' : (run.status === 'PENDING' ? 'Re-queue' : 'Retry')}
-            </button>
-          )}
-          {(run.status === 'PENDING' || run.status === 'RUNNING') && (
-            <button
-              onClick={cancelRun}
-              disabled={cancelling}
-              className="btn-ghost text-xs px-1.5 py-0.5 text-red-500 hover:text-red-600 flex items-center gap-1"
-              title="Cancel this module run"
-            >
-              <X size={11} />
-              {cancelling ? 'Cancelling…' : 'Cancel'}
-            </button>
-          )}
-          {retryErr && <span className="text-[10px] text-red-500">{retryErr}</span>}
-        </div>
-      )}
+      {/* Action row — retry/cancel while the run is in flight or failed, and
+        delete for any run the worker is no longer touching. */}
+      <div className="px-3 pb-2 flex items-center gap-2">
+        {(run.status === 'FAILED' || run.status === 'PENDING') && (
+          <button
+            onClick={retryRun}
+            disabled={retrying}
+            className="btn-ghost text-xs px-1.5 py-0.5 text-brand-accent hover:text-brand-accenthover flex items-center gap-1"
+            title={run.status === 'PENDING' ? 'Re-dispatch stuck run' : 'Retry this module run'}
+          >
+            <RefreshCw size={11} className={retrying ? 'animate-spin' : ''} />
+            {retrying ? '' : (run.status === 'PENDING' ? 'Re-queue' : 'Retry')}
+          </button>
+        )}
+        {(run.status === 'PENDING' || run.status === 'RUNNING') && (
+          <button
+            onClick={cancelRun}
+            disabled={cancelling}
+            className="btn-ghost text-xs px-1.5 py-0.5 text-red-500 hover:text-red-600 flex items-center gap-1"
+            title="Cancel this module run"
+          >
+            <X size={11} />
+            {cancelling ? 'Cancelling…' : 'Cancel'}
+          </button>
+        )}
+        {run.status !== 'PENDING' && run.status !== 'RUNNING' && (
+          <button
+            onClick={deleteRun}
+            disabled={deleting}
+            className="btn-ghost text-xs px-1.5 py-0.5 text-gray-500 hover:text-red-600 flex items-center gap-1"
+            title="Delete this run and its results (timeline detections, findings, stored output)"
+          >
+            <Trash2 size={11} />
+            {deleting ? 'Deleting…' : 'Delete'}
+          </button>
+        )}
+        {retryErr && <span className="text-[10px] text-red-500">{retryErr}</span>}
+      </div>
 
       {/* ── Expanded body ─────────────────────────────────────── */}
       {open && (
@@ -1591,11 +1626,33 @@ function ModuleRunsPanel({ caseId, onClose, embedded = false }) {
   const [activeChannels,  setActiveChannels]  = useState(new Set())
   const [activeTags,      setActiveTags]      = useState(new Set())
 
+  const [deletingFailed, setDeletingFailed] = useState(false)
+
   const fetchRuns = useCallback(() => {
     api.modules.listRuns(caseId)
       .then(r => { setRuns(r.runs || []); setLoadError(null); setLoading(false) })
       .catch(e => { setLoadError(e.message); setLoading(false) })
   }, [caseId])
+
+  const failedCount = useMemo(() => runs.filter(r => r.status === 'FAILED').length, [runs])
+
+  async function deleteFailedRuns() {
+    if (!confirm(
+      `Delete all ${failedCount} failed run(s)?\n\n` +
+      'Their results are removed from the timeline, findings and storage. ' +
+      'Runs still pending or running are left alone. This cannot be undone.'
+    )) return
+    setDeletingFailed(true)
+    setLoadError(null)
+    try {
+      await api.modules.deleteRuns(caseId, 'FAILED')
+      fetchRuns()
+    } catch (e) {
+      setLoadError(e.message)
+    } finally {
+      setDeletingFailed(false)
+    }
+  }
 
   useEffect(() => { fetchRuns() }, [fetchRuns])
 
@@ -1617,7 +1674,7 @@ function ModuleRunsPanel({ caseId, onClose, embedded = false }) {
   const filteredRuns = useMemo(() => runs.filter(run => {
     if (moduleFilter && run.module_id !== moduleFilter) return false
 
-    const runDate = run.completed_at || run.started_at
+    const runDate = run.completed_at || run.started_at || run.created_at
     if (runDate) {
       const d = new Date(runDate)
       if (dateFrom && d < new Date(dateFrom))               return false
@@ -1672,6 +1729,17 @@ function ModuleRunsPanel({ caseId, onClose, embedded = false }) {
             )}
           </div>
           <div className="flex items-center gap-1.5">
+            {failedCount > 0 && (
+              <button
+                onClick={deleteFailedRuns}
+                disabled={deletingFailed}
+                className="btn-ghost px-2 py-1 rounded-lg flex items-center gap-1 text-xs text-gray-500 hover:text-red-600"
+                title={`Delete all ${failedCount} failed run(s) and their results`}
+              >
+                <Trash2 size={13} />
+                {deletingFailed ? 'Deleting…' : `Delete ${failedCount} failed`}
+              </button>
+            )}
             <button onClick={fetchRuns} className="btn-ghost p-1.5 rounded-lg" title="Refresh run list">
               <RefreshCw size={14} />
             </button>
@@ -2004,6 +2072,7 @@ function ModuleRunsPanel({ caseId, onClose, embedded = false }) {
                 onClose={onClose}
                 onRunOptimistic={(runId, status) =>
                   setRuns(prev => prev.map(r => r.run_id === runId ? { ...r, status } : r))}
+                onRunDeleted={runId => setRuns(prev => prev.filter(r => r.run_id !== runId))}
                 onRefreshRuns={fetchRuns}
                 activeLevels={activeLevels}
                 activeComputers={activeComputers}

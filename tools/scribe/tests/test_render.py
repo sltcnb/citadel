@@ -56,3 +56,29 @@ def test_section_toggle_off():
 
 def test_defaults_constant_stable():
     assert "overview" in TEMPLATE_DEFAULTS["sections"]
+
+
+# ── Manifest AI bullet: three states, not two ────────────────────────────────
+# A case with AI analysis but no *written* AI report used to print "No AI
+# narrative", so the deliverable claimed no AI work had been done at all.
+
+def _manifest_md(manifest):
+    data = dict(_DATA, manifest=manifest)
+    return render_markdown(data, merge_template(None))
+
+
+def test_manifest_states_written_ai_report():
+    md = _manifest_md({"has_ai": True, "ai_model": "qwen"})
+    assert "AI narrative summary included (qwen)" in md
+
+
+def test_manifest_states_derived_ai_assessment():
+    md = _manifest_md({"has_ai": True, "ai_model": "qwen", "ai_source": "derived"})
+    assert "AI assessment included (qwen)" in md
+    assert "no final AI report was generated" in md
+    assert "No AI narrative" not in md
+
+
+def test_manifest_states_absent_ai():
+    md = _manifest_md({"has_ai": False})
+    assert "No AI narrative" in md

@@ -159,6 +159,18 @@ def _agg_rows_md(title: str, items: list[dict], unit: str = "events") -> list[st
     return out
 
 
+def _manifest_ai_line(L: Labels, manifest: dict) -> str:
+    """The manifest's AI bullet. Three states, not two: a written AI report, an
+    assessment derived from the case's AI analysis when no report was generated,
+    and no AI at all. Collapsing the middle state into "No AI narrative" made a
+    case full of AI analysis read as though none had been done."""
+    if not manifest.get("has_ai"):
+        return L("m_ai_no")
+    model = manifest.get("ai_model") or "?"
+    key = "m_ai_derived" if manifest.get("ai_source") == "derived" else "m_ai_yes"
+    return L(key, model=model)
+
+
 def render_markdown(data: dict, tpl: dict | None = None, language: str | None = None) -> str:
     tpl = tpl or dict(TEMPLATE_DEFAULTS)
     L = Labels(language)
@@ -206,7 +218,7 @@ def render_markdown(data: dict, tpl: dict | None = None, language: str | None = 
             out.append(f"- {L('m_saved', n=manifest['saved_search_count'])}")
         if manifest.get("killchain_count"):
             out.append(f"- {L('m_killchains', n=manifest['killchain_count'])}")
-        out.append(f"- {L('m_ai_yes', model=manifest.get('ai_model') or '?') if manifest.get('has_ai') else L('m_ai_no')}")
+        out.append(f"- {_manifest_ai_line(L, manifest)}")
         out.append("")
 
     if sections.get("exec_summary", True):
@@ -697,7 +709,7 @@ def render_html(data: dict, tpl: dict | None = None, language: str | None = None
             items.append(_e(L("m_saved", n=manifest["saved_search_count"])))
         if manifest.get("killchain_count"):
             items.append(_e(L("m_killchains", n=manifest["killchain_count"])))
-        items.append(_e(L("m_ai_yes", model=manifest.get("ai_model") or "?")) if manifest.get("has_ai") else _e(L("m_ai_no")))
+        items.append(_e(_manifest_ai_line(L, manifest)))
         b.append("<ul>" + "".join(f"<li>{x}</li>" for x in items) + "</ul>")
 
     cti = agg.get("cti") or []

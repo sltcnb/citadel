@@ -6430,7 +6430,14 @@ def generate_final_report(case_id: str, body: FinalReportRequest = None):
         from services import jobs as job_svc
 
         jobs_list = job_svc.list_case_jobs(case_id, limit=50)
-        done = [j for j in jobs_list if j.get("status") == "DONE"]
+        # Ingest jobs finish as COMPLETED (or SKIPPED for a no-op). Matching on
+        # "DONE" — a status the pipeline never writes — silently emptied this
+        # section, so every report claimed no data sources had been ingested.
+        done = [
+            j
+            for j in jobs_list
+            if str(j.get("status", "")).upper() in ("COMPLETED", "DONE", "SKIPPED")
+        ]
         module_results = (
             "\n".join(
                 f"- {j.get('original_filename', '?')} ({j.get('plugin_used', '?')}): "
@@ -6447,11 +6454,13 @@ def generate_final_report(case_id: str, body: FinalReportRequest = None):
     # to every completed run that found something; an explicit run_ids selection
     # narrows to just those. Clean (0-hit) runs are noted as "ran, nothing found".
     module_analysis_text = ""
+    module_detection_runs = 0  # runs contributing actual detections (for the manifest)
     try:
         from services.module_runs import list_case_module_runs
 
+        every_run = list_case_module_runs(case_id)
         all_runs = [
-            r for r in list_case_module_runs(case_id)
+            r for r in every_run
             if str(r.get("status", "")).upper() in ("COMPLETED", "DONE")
         ]
         if body.run_ids:
@@ -6459,6 +6468,7 @@ def generate_final_report(case_id: str, body: FinalReportRequest = None):
             chosen = [r for r in all_runs if r.get("run_id") in sel]
         else:
             chosen = [r for r in all_runs if int(r.get("total_hits") or 0) > 0]
+        module_detection_runs = len(chosen)
         parts = []
         for run in chosen:
             mid = run.get("module_id", run.get("run_id", "?"))
@@ -6469,7 +6479,16 @@ def generate_final_report(case_id: str, body: FinalReportRequest = None):
                 line += " (" + ", ".join(f"{lvl}: {cnt}" for lvl, cnt in hits.items() if cnt) + ")"
             for p in (run.get("results_preview") or [])[:8]:
                 if isinstance(p, dict):
-                    rule_n = p.get("rule_name") or p.get("title") or p.get("name") or ""
+                    # rule_title is the field module hits actually carry; the old
+                    # rule_name/title/name lookup always missed, so every
+                    # detection reached the model as an unnamed "[level] : msg".
+                    rule_n = (
+                        p.get("rule_title")
+                        or p.get("rule_name")
+                        or p.get("title")
+                        or p.get("name")
+                        or ""
+                    )
                     level = p.get("level") or p.get("severity") or ""
                     msg = p.get("message") or p.get("description") or ""
                     line += f"\n    [{level}] {rule_n}: {msg}"[:160]
@@ -6479,6 +6498,21 @@ def generate_final_report(case_id: str, body: FinalReportRequest = None):
         clean = [r.get("module_id", "?") for r in all_runs if int(r.get("total_hits") or 0) == 0]
         if not body.run_ids and clean:
             parts.append(f"- Ran with no findings: {', '.join(sorted(set(clean)))}")
+        # Runs that did NOT complete are stated explicitly. Omitting them let the
+        # report imply full scanner coverage when a module had actually errored
+        # out, so "nothing found" read as "nothing there".
+        broken = [
+            f"{r.get('module_id', '?')} ({str(r.get('status', '?')).lower()}"
+            + (f": {str(r.get('error') or '')[:120]}" if r.get("error") else "")
+            + ")"
+            for r in every_run
+            if str(r.get("status", "")).upper() not in ("COMPLETED", "DONE")
+        ]
+        if broken:
+            parts.append(
+                "- Did NOT complete (no coverage from these — do not treat their "
+                f"absence of findings as evidence): {', '.join(broken[:10])}"
+            )
         module_analysis_text = "\n".join(parts) or "No analysis modules have run."
     except Exception:
         module_analysis_text = "No analysis modules have run."
@@ -6586,7 +6620,7 @@ def generate_final_report(case_id: str, body: FinalReportRequest = None):
         # "based on X" instead of leaving the analyst guessing.
         "manifest": {
             "flagged_count": len(flagged_events),
-            "module_detections": module_analysis_text.count("\n-") + (1 if module_analysis_text.startswith("-") else 0),
+            "module_detections": module_detection_runs,
             "ioc_lines": ioc_text.count("\n") + 1 if ioc_text and ioc_text != "None." else 0,
             "investigations": investigations_text != "None.",
             "notes": bool(notes_body),

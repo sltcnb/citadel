@@ -39,7 +39,13 @@ try:
 except ImportError:
     _YAML_AVAILABLE = False
 
-from auth.dependencies import require_admin
+from auth.dependencies import (
+    get_company_filter,
+    get_current_user,
+    require_admin,
+    require_case_access,
+)
+from services import elasticsearch as es
 from services import module_runs as run_svc
 from services import storage
 from services.cases import get_case
@@ -614,6 +620,198 @@ def cancel_module_run(run_id: str):
         run_svc.update_module_run(run_id, status="CANCELLED", error="Cancelled before execution")
         return {"run_id": run_id, "status": "CANCELLED"}
     return {"run_id": run_id, "status": "CANCELLING"}
+
+
+# ── Deleting module runs and their results ────────────────────────────────────
+
+# A run in one of these states is still owned by a Celery worker: deleting its
+# record would leave the worker writing hits back under a run_id that no longer
+# exists. Cancel first, then delete.
+_ACTIVE_RUN_STATES = ("PENDING", "RUNNING")
+
+
+def _check_run_case_access(run: dict, current_user: dict) -> None:
+    """Enforce the caller's company restriction for a run reached by run_id only
+    (no case_id path param to hang require_case_access off). Mirrors
+    jobs.py::_check_job_case_access. Standalone malware runs have no case
+    record, so they are scoped by authentication alone — as everywhere else."""
+    case_id = run.get("case_id")
+    if case_id == MALWARE_CASE_ID:
+        return
+    case = get_case(case_id) if case_id else None
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+    flt = get_company_filter(current_user)
+    if flt is not None and case.get("company", "") not in flt:
+        raise HTTPException(
+            status_code=403, detail="Access denied: case belongs to a different company"
+        )
+
+
+def _purge_module_run(run: dict) -> dict:
+    """Delete every trace of one module run: its indexed hits in Elasticsearch,
+    its output + artifacts in MinIO, and its Redis state.
+
+    Storage and ES cleanup are best-effort — a missing object or an ES outage
+    must not leave the run record behind (the analyst asked for it gone), so
+    failures are logged and counted, not raised.
+    """
+    run_id = run["run_id"]
+    case_id = run.get("case_id") or ""
+    report: dict = {"es_deleted": 0, "objects_deleted": 0, "warnings": []}
+
+    # ── Elasticsearch: the module's own artifact-type docs carry the run_id in
+    # ingest_job_id; the standardized findings carry it in finding.provenance.
+    # Both live under fo-case-{case_id}-*, so one delete_by_query covers them.
+    if case_id:
+        try:
+            resp = es._request(
+                "POST",
+                f"/fo-case-{case_id}-*/_delete_by_query"
+                "?conflicts=proceed&ignore_unavailable=true&allow_no_indices=true",
+                {
+                    "query": {
+                        "bool": {
+                            "should": [
+                                {"term": {"ingest_job_id": run_id}},
+                                {"term": {"finding.provenance.run_id.keyword": run_id}},
+                            ],
+                            "minimum_should_match": 1,
+                        }
+                    }
+                },
+            )
+            report["es_deleted"] = int((resp or {}).get("deleted") or 0)
+        except Exception as exc:  # noqa: BLE001 - best effort, see docstring
+            logger.warning("ES delete_by_query skipped for module run %s: %s", run_id, exc)
+            report["warnings"].append(f"indexed results may remain: {exc}")
+
+    # ── MinIO: the full results JSON plus any artifacts the module produced.
+    keys = [run["output_minio_key"]] if run.get("output_minio_key") else []
+    if case_id:
+        prefix = f"cases/{case_id}/modules/{run_id}/"
+        try:
+            keys += [obj.object_name for obj in storage.list_objects(prefix)]
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("MinIO list skipped for module run %s: %s", run_id, exc)
+            report["warnings"].append(f"module artifacts may remain: {exc}")
+    for key in dict.fromkeys(keys):  # de-dup, preserve order
+        try:
+            storage.delete_object(key)
+            report["objects_deleted"] += 1
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("MinIO delete skipped for %s: %s", key, exc)
+
+    run_svc.delete_module_run(run_id, case_id)
+    return report
+
+
+@router.delete("/module-runs/{run_id}")
+def delete_module_run(run_id: str, current_user: dict = Depends(get_current_user)):
+    """Permanently delete one module run and everything it produced: the run
+    record and its logs in Redis, its results file + artifacts in MinIO, and
+    the hits it indexed into Elasticsearch (they disappear from the timeline).
+
+    PENDING / RUNNING runs are refused — cancel them first.
+    """
+    run = run_svc.get_module_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Module run not found")
+    _check_run_case_access(run, current_user)
+
+    status = run.get("status")
+    if status in _ACTIVE_RUN_STATES:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot delete an active run (status: {status}). Cancel it first.",
+        )
+
+    report = _purge_module_run(run)
+    logger.info(
+        "Deleted module run %s (%s) — %d ES doc(s), %d object(s)",
+        run_id,
+        run.get("module_id"),
+        report["es_deleted"],
+        report["objects_deleted"],
+    )
+    return {"run_id": run_id, "deleted": True, **report}
+
+
+@router.delete("/cases/{case_id}/module-runs")
+def delete_case_module_runs(
+    case_id: str,
+    status: str = "FAILED",
+    module_id: str = "",
+    _case: dict = Depends(require_case_access),
+):
+    """Bulk-delete this case's module runs and their results.
+
+    ``status`` is a comma-separated list of run states to delete (default
+    ``FAILED`` — the "clear out the failures" action), or ``all`` for every
+    finished run. PENDING / RUNNING runs are always skipped, never deleted.
+    ``module_id`` optionally narrows the sweep to a single module.
+    """
+    wanted = {s.strip().upper() for s in status.split(",") if s.strip()}
+    if not wanted:
+        raise HTTPException(status_code=400, detail="status must name at least one run state")
+    delete_all = "ALL" in wanted
+
+    deleted, skipped_active, warnings = [], 0, []
+    es_deleted = objects_deleted = 0
+    for run in run_svc.list_case_module_runs(case_id):
+        run_status = run.get("status") or ""
+        if module_id and run.get("module_id") != module_id:
+            continue
+        if run_status in _ACTIVE_RUN_STATES:
+            skipped_active += 1
+            continue
+        if not delete_all and run_status not in wanted:
+            continue
+        report = _purge_module_run(run)
+        es_deleted += report["es_deleted"]
+        objects_deleted += report["objects_deleted"]
+        warnings += report["warnings"]
+        deleted.append(run["run_id"])
+
+    logger.info(
+        "Bulk delete on case %s (status=%s): %d run(s) deleted, %d skipped (active)",
+        case_id,
+        status,
+        len(deleted),
+        skipped_active,
+    )
+    return {
+        "deleted": len(deleted),
+        "run_ids": deleted,
+        "skipped_active": skipped_active,
+        "es_deleted": es_deleted,
+        "objects_deleted": objects_deleted,
+        "warnings": warnings[:10],
+    }
+
+
+@router.delete("/malware-analysis/runs")
+def delete_standalone_runs(status: str = "FAILED", _user: dict = Depends(get_current_user)):
+    """Bulk-delete standalone malware analysis runs (same semantics as the
+    case-scoped sweep: ``status`` filter, active runs always skipped)."""
+    wanted = {s.strip().upper() for s in status.split(",") if s.strip()}
+    if not wanted:
+        raise HTTPException(status_code=400, detail="status must name at least one run state")
+    delete_all = "ALL" in wanted
+
+    deleted, skipped_active = [], 0
+    for run in run_svc.list_malware_runs():
+        run_status = run.get("status") or ""
+        if run_status in _ACTIVE_RUN_STATES:
+            skipped_active += 1
+            continue
+        if not delete_all and run_status not in wanted:
+            continue
+        _purge_module_run(run)
+        deleted.append(run["run_id"])
+
+    logger.info("Bulk delete on malware runs (status=%s): %d deleted", status, len(deleted))
+    return {"deleted": len(deleted), "run_ids": deleted, "skipped_active": skipped_active}
 
 
 # ── Standalone malware analysis (no case required) ────────────────────────────
