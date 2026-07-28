@@ -2,7 +2,6 @@
 
 import json
 import logging
-import urllib.error
 import uuid
 from datetime import UTC, datetime
 
@@ -15,7 +14,7 @@ from auth.dependencies import require_case_access
 logger = logging.getLogger(__name__)
 
 import redis_keys as rk
-from services.elasticsearch import _request as es_req
+from services import rule_eval
 from services.redis_mutate import mutate_json
 
 from config import get_redis as _r
@@ -103,38 +102,14 @@ def run_single_rule(case_id: str, rule_id: str, _acl: dict = Depends(require_cas
     if rule is None:
         raise HTTPException(status_code=404, detail="Rule not found")
 
-    idx = (
-        f"fo-case-{case_id}-{rule['artifact_type']}"
-        if rule.get("artifact_type")
-        else f"fo-case-{case_id}-*"
-    )
-    body = {
-        "query": {"query_string": {"query": rule["query"], "default_operator": "AND"}},
-        "size": 5,
-        "track_total_hits": True,
-        "_source": ["timestamp", "message", "host", "fo_id", "artifact_type"],
-        "sort": [{"timestamp": {"order": "desc"}}],
-    }
     try:
-        resp = es_req("POST", f"/{idx}/_search", body)
-        count = resp["hits"]["total"]["value"]
-        match = (
-            {
-                "rule": rule,
-                "match_count": count,
-                "sample_events": [h["_source"] for h in resp["hits"]["hits"]],
-            }
-            if count >= int(rule.get("threshold", 1))
-            else None
-        )
-    except urllib.error.HTTPError as exc:
-        if exc.code in (400, 404):
-            # Index doesn't exist or query is invalid — treat as zero matches
-            match = None
-        else:
-            raise HTTPException(status_code=500, detail=str(exc))
+        # Shared evaluator: plain threshold or a correlation block, and the same
+        # "missing index / rejected query == no match" handling this route had.
+        match = rule_eval.evaluate(case_id, rule)
+    except rule_eval.RuleEvalError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     return {"match": match, "rules_checked": 1, "fired": match is not None}
 
@@ -182,25 +157,14 @@ def analyze_run_match(case_id: str, rule_id: str, _acl: dict = Depends(require_c
         if not rule:
             raise HTTPException(status_code=404, detail=f"Rule {rule_id} not found")
 
-        idx = (
-            f"fo-case-{case_id}-{rule['artifact_type']}"
-            if rule.get("artifact_type")
-            else f"fo-case-{case_id}-*"
-        )
-        es_body = {
-            "query": {"query_string": {"query": rule["query"], "default_operator": "AND"}},
-            "size": 5,
-            "_source": ["timestamp", "message", "host", "fo_id", "artifact_type"],
-            "sort": [{"timestamp": {"order": "desc"}}],
-        }
+        # The LLM is asked to explain the rule whether or not it fired, so an
+        # unfired rule still needs a match-shaped payload.
         try:
-            resp = es_req("POST", f"/{idx}/_search", es_body)
-            count = resp["hits"]["total"]["value"]
-            sample_events = [h["_source"] for h in resp["hits"]["hits"]]
-        except (urllib.error.HTTPError, Exception):
-            count, sample_events = 0, []
-
-        match = {"rule": rule, "match_count": count, "sample_events": sample_events}
+            match = rule_eval.evaluate(case_id, rule)
+        except Exception:  # noqa: BLE001 - explanation must not 500 on a bad rule
+            match = None
+        if match is None:
+            match = {"rule": rule, "match_count": 0, "sample_events": []}
 
     analysis = _llm_analyze_match(match["rule"], match["match_count"], match["sample_events"])
     if analysis is None:
@@ -232,29 +196,11 @@ def check_rules(case_id: str, _acl: dict = Depends(require_case_access)):
 
     matches = []
     for rule in rules:
-        idx = (
-            f"fo-case-{case_id}-{rule['artifact_type']}"
-            if rule.get("artifact_type")
-            else f"fo-case-{case_id}-*"
-        )
-        body = {
-            "query": {"query_string": {"query": rule["query"], "default_operator": "AND"}},
-            "size": 3,
-            "track_total_hits": True,
-            "_source": ["timestamp", "message", "host", "fo_id"],
-        }
         try:
-            resp = es_req("POST", f"/{idx}/_search", body)
-            count = resp["hits"]["total"]["value"]
-            if count >= rule["threshold"]:
-                matches.append(
-                    {
-                        "rule": rule,
-                        "match_count": count,
-                        "sample_events": [h["_source"] for h in resp["hits"]["hits"]],
-                    }
-                )
-        except Exception as exc:
+            match = rule_eval.evaluate(case_id, rule, sample_size=3)
+            if match:
+                matches.append(match)
+        except Exception as exc:  # noqa: BLE001 - one bad rule must not stop the sweep
             logger.warning(
                 "Alert rule %r check failed on case %s: %s", rule.get("name"), case_id, exc
             )
