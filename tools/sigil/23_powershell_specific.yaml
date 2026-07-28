@@ -5,7 +5,7 @@ rules:
       PowerShell version 2 was explicitly requested.
       Version 2 lacks security features and is used by malware.
     artifact_type: evtx
-    query: "evtx.event_id:4688 AND message:*powershell* AND message.ci:*-version 2*"
+    query: "evtx.event_id:4688 AND message:*powershell* AND message.ci:*-version*2*"
     threshold: 1
     mitre: [T1059.001, T1562.010]
     level: high

@@ -15,7 +15,7 @@ rules:
       Suricata detected traffic matching a known malware signature (ET MALWARE).
       Indicates active infection or C2 communication.
     artifact_type: suricata
-    query: "suricata.event_type:alert AND message.ci:*ET\\ MALWARE*"
+    query: "suricata.event_type:alert AND message.ci:*ET\\*MALWARE*"
     threshold: 1
     mitre: [T1071]
     level: high
@@ -25,7 +25,7 @@ rules:
       Suricata matched a Trojan or Exploit Kit signature (ET TROJAN / ET EXPLOIT).
       High-confidence malicious activity requiring immediate triage.
     artifact_type: suricata
-    query: "suricata.event_type:alert AND (message.ci:*ET\\ TROJAN* OR message.ci:*ET\\ EXPLOIT*)"
+    query: "suricata.event_type:alert AND (message.ci:*ET\\*TROJAN* OR message.ci:*ET\\*EXPLOIT*)"
     threshold: 1
     mitre: [T1071]
     level: critical
@@ -35,7 +35,7 @@ rules:
       Suricata detected network scanning (ET SCAN).
       May indicate an attacker probing hosts and open ports.
     artifact_type: suricata
-    query: "suricata.event_type:alert AND message.ci:*ET\\ SCAN*"
+    query: "suricata.event_type:alert AND message.ci:*ET\\*SCAN*"
     threshold: 5
     mitre: [T1046]
     level: medium
@@ -45,7 +45,7 @@ rules:
       Suricata detected abnormal DNS traffic (ET DNS).
       DNS tunneling is a common covert channel for C2 and data exfiltration.
     artifact_type: suricata
-    query: "suricata.event_type:alert AND message.ci:*ET\\ DNS*"
+    query: "suricata.event_type:alert AND message.ci:*ET\\*DNS*"
     threshold: 1
     mitre: [T1071.004, T1048]
     level: high

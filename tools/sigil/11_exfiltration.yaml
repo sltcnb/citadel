@@ -5,7 +5,7 @@ rules:
       Suricata fired an INFO or POLICY alert related to data upload.
       May indicate files being sent outside the network.
     artifact_type: suricata
-    query: "suricata.event_type:alert AND (message.ci:*ET\\ INFO* OR message.ci:*ET\\ POLICY*) AND message:*upload*"
+    query: "suricata.event_type:alert AND (message.ci:*ET\\*INFO* OR message.ci:*ET\\*POLICY*) AND message:*upload*"
     threshold: 1
     mitre: [T1048]
     level: medium

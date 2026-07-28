@@ -15,7 +15,7 @@ rules:
       PowerShell was launched with -EncodedCommand or -enc.
       Base64-encoded commands are a common obfuscation technique.
     artifact_type: evtx
-    query: "evtx.event_id:4688 AND message:*powershell* AND (message.ci:*-EncodedCommand* OR message.ci:*-enc* OR message.ci:*-e *)"
+    query: "evtx.event_id:4688 AND message:*powershell* AND (message.ci:*-EncodedCommand* OR message.ci:*-enc* OR message.ci:*-e**)"
     threshold: 1
     mitre: [T1059.001, T1027]
     level: high

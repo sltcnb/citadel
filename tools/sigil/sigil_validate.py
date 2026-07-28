@@ -118,6 +118,29 @@ _KEYWORD_FIELDS = {
 _WILDCARD_TERM_RE = re.compile(r"([a-zA-Z_][\w.]*)\s*:\s*((?:[^\s()\"]*\*)[^\s()\"]*)")
 
 
+# A wildcard term on an EXACT subfield that contains a space. The space ends the
+# term, so the remainder becomes a bare term against the default field — and
+# because query_string runs with default_operator=AND, that fragment is ANDed at
+# the TOP level and takes every other clause down with it. One space made a
+# six-clause OR return zero hits. Escaping the space does not help; `*` spans it.
+_SPACED_EXACT_WILDCARD_RE = re.compile(
+    r'([a-zA-Z_][\w.]*\.(?:ci|keyword))\s*:\s*(\*[^\s()"\']*)[ ]+(?!(?:AND|OR|NOT)[\s)])([^\s()"\']+)'
+)
+
+
+def _spaced_exact_wildcards(query: str) -> list[str]:
+    """Return a message per exact-subfield wildcard broken by a space."""
+    out = []
+    for field, head, tail in _SPACED_EXACT_WILDCARD_RE.findall(" ".join(query.split())):
+        out.append(
+            f"wildcard {field}:{head} … {tail} contains a space — the term ends at "
+            f"the space, and the remainder is ANDed against the default field, so "
+            f"the WHOLE query returns nothing. Use '*' to span the space "
+            f"({head}*{tail})."
+        )
+    return out
+
+
 def _unmatchable_wildcards(query: str) -> list[str]:
     """Return a message per wildcard term that can never match its field.
 
@@ -351,6 +374,8 @@ def validate_file(path: Path) -> tuple[list[Finding], int, dict[str, str]]:
             # A rule that cannot fire is worse than a missing rule: it reads as
             # coverage. Hard error so CI blocks it.
             for msg in _unmatchable_wildcards(rule["query"]):
+                findings.append(Finding("error", rel, label, msg))
+            for msg in _spaced_exact_wildcards(rule["query"]):
                 findings.append(Finding("error", rel, label, msg))
 
         # sigma_detection lint
