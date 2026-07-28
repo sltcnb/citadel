@@ -17,6 +17,8 @@ rules:
     artifact_type: aws_cloudtrail
     query: 'message:*StopLogging* OR message:*DeleteTrail* OR message.ci:*UpdateTrail*'
     threshold: 1
+    mitre: [T1562.008]
+    level: critical
 
   - name: AWS — IAM Credential / User Creation
     description: >-
@@ -25,6 +27,8 @@ rules:
     artifact_type: aws_cloudtrail
     query: 'message:*CreateUser* OR message:*CreateAccessKey* OR message:*CreateLoginProfile* OR message:*AttachUserPolicy* OR message.ci:*PutUserPolicy*'
     threshold: 1
+    mitre: [T1136.003]
+    level: medium
 
   - name: AWS — Security Group Opened to the Internet
     description: >-
@@ -33,6 +37,8 @@ rules:
     artifact_type: aws_cloudtrail
     query: 'message:*AuthorizeSecurityGroupIngress*'
     threshold: 1
+    mitre: [T1562.007]
+    level: high
 
   - name: AWS — S3 Bucket Made Public / Policy Changed
     description: >-
@@ -41,6 +47,8 @@ rules:
     artifact_type: aws_cloudtrail
     query: 'message:*PutBucketPolicy* OR message:*PutBucketAcl* OR message:*PutBucketPublicAccessBlock* OR message.ci:*DeleteBucketPolicy*'
     threshold: 1
+    mitre: [T1567.002]
+    level: critical
 
   - name: AWS — Detective Controls Disabled
     description: >-
@@ -49,6 +57,8 @@ rules:
     artifact_type: aws_cloudtrail
     query: 'message:*DeleteDetector* OR message:*StopConfigurationRecorder* OR message:*DeleteFlowLogs* OR message.ci:*DeleteTrail*'
     threshold: 1
+    mitre: [T1562.008]
+    level: critical
 
   # ── Microsoft 365 ───────────────────────────────────────────────────────────
   - name: M365 — Suspicious Inbox Rule Created
@@ -58,6 +68,8 @@ rules:
     artifact_type: o365_audit
     query: 'message.ci:*New-InboxRule* OR message.ci:*Set-InboxRule* OR message.ci:*New-TransportRule*'
     threshold: 1
+    mitre: [T1114.003]
+    level: high
 
   - name: M365 — Mailbox Delegation / Permission Added
     description: >-
@@ -66,6 +78,8 @@ rules:
     artifact_type: o365_audit
     query: 'message.ci:*Add-MailboxPermission* OR message.ci:*Add-RecipientPermission*'
     threshold: 1
+    mitre: [T1098.002]
+    level: high
 
   - name: M365 — Audit Logging Changed
     description: >-
@@ -74,6 +88,8 @@ rules:
     artifact_type: o365_audit
     query: 'message.ci:*Set-AdminAuditLogConfig* OR message.ci:*MailboxAuditBypass*'
     threshold: 1
+    mitre: [T1562.008]
+    level: critical
 
   # ── Microsoft Entra / Azure AD ──────────────────────────────────────────────
   - name: Azure — Sign-in Failure Burst
@@ -83,6 +99,8 @@ rules:
     artifact_type: azure_signin
     query: 'message.ci:*Sign-in* AND (message:*Invalid* OR message:*failed* OR message:*denied* OR message:*blocked*)'
     threshold: 10
+    mitre: [T1110]
+    level: medium
 
   # ── Google Cloud ────────────────────────────────────────────────────────────
   - name: GCP — Service Account Key Created
@@ -92,6 +110,8 @@ rules:
     artifact_type: gcp_audit
     query: 'message:*CreateServiceAccountKey* OR message.ci:*CreateServiceAccount*'
     threshold: 1
+    mitre: [T1098.001]
+    level: medium
 
   - name: GCP — IAM Policy or Firewall Changed
     description: >-
@@ -100,6 +120,8 @@ rules:
     artifact_type: gcp_audit
     query: 'message:*SetIamPolicy* OR message:*firewalls.insert* OR message.ci:*firewalls.patch*'
     threshold: 1
+    mitre: [T1098]
+    level: medium
 
   # ── Okta ────────────────────────────────────────────────────────────────────
   - name: Okta — MFA Factor Reset or Deactivated
@@ -109,6 +131,8 @@ rules:
     artifact_type: okta_system_log
     query: 'message:*factor* AND (message:*reset* OR message:*deactivate* OR message:*deactivated*)'
     threshold: 1
+    mitre: [T1556.006]
+    level: high
 
   - name: Okta — Authentication Failure Burst
     description: >-
@@ -117,3 +141,5 @@ rules:
     artifact_type: okta_system_log
     query: 'message:*FAILURE* OR message.ci:*DENIED*'
     threshold: 10
+    mitre: [T1110]
+    level: medium

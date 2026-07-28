@@ -7,6 +7,8 @@ rules:
     artifact_type: hindsight
     query: "hindsight.record_type:extension AND hindsight.extension.event:install"
     threshold: 1
+    mitre: [T1176]
+    level: medium
 
   - name: Download from Unusual Domain
     description: >-
@@ -15,6 +17,8 @@ rules:
     artifact_type: hindsight
     query: "hindsight.record_type:download AND NOT (hindsight.download.host:*google* OR hindsight.download.host:*microsoft* OR hindsight.download.host:*github*)"
     threshold: 1
+    mitre: [T1105]
+    level: medium
 
   - name: InPrivate Incognito Mode Usage
     description: >-
@@ -23,6 +27,8 @@ rules:
     artifact_type: hindsight
     query: "hindsight.record_type:startup AND (hindsight.browser.mode:incognito OR hindsight.browser.mode:private)"
     threshold: 1
+    mitre: [T1070]
+    level: low
 
   - name: Credential Form Submission to Rare Domain
     description: >-
@@ -31,6 +37,8 @@ rules:
     artifact_type: hindsight
     query: "hindsight.record_type:form_and_field_data AND hindsight.form.action:submit AND NOT (hindsight.form.domain:*google* OR hindsight.form.domain:*microsoft* OR hindsight.form.domain:*facebook*)"
     threshold: 1
+    mitre: [T1056.003]
+    level: high
 
   - name: Multiple Failed Login Attempts
     description: >-
@@ -39,6 +47,8 @@ rules:
     artifact_type: hindsight
     query: "hindsight.record_type:form_and_field_data AND hindsight.form.result:failure"
     threshold: 5
+    mitre: [T1110]
+    level: medium
 
   - name: Browser Visited Known Malicious Domain
     description: >-
@@ -47,3 +57,5 @@ rules:
     artifact_type: hindsight
     query: "hindsight.record_type:visit AND (hindsight.visit.domain:*malware* OR hindsight.visit.domain:*phishing* OR hindsight.visit.domain:*evil*)"
     threshold: 1
+    mitre: [T1189]
+    level: high

@@ -7,6 +7,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4672 AND message:*SeDelegateRemoteAccessPrivilege*"
     threshold: 1
+    mitre: [T1550.003]
+    level: medium
 
   - name: Smart Card Logon from Unknown Workstation
     description: >-
@@ -15,6 +17,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4624 AND message.ci:*LogonType\\:2* AND message:*SmartCard*"
     threshold: 1
+    mitre: [T1078]
+    level: medium
 
   - name: WDigest Authentication Enabled
     description: >-
@@ -23,6 +27,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4624 AND message:*WDigest*"
     threshold: 1
+    mitre: [T1112, T1003.001]
+    level: high
 
   - name: Network Logon with Blank Password
     description: >-
@@ -31,6 +37,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4624 AND message.ci:*LogonType\\:3* AND message:*NULL SID*"
     threshold: 1
+    mitre: [T1078.001]
+    level: high
 
   - name: Service Account Used Interactively
     description: >-
@@ -39,3 +47,5 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4624 AND (message:*svc* OR message:*service* OR message:*gmsa*) AND (message.ci:*LogonType\\:2* OR message.ci:*LogonType\\:10*)"
     threshold: 1
+    mitre: [T1078.003]
+    level: high

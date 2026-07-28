@@ -12,6 +12,8 @@ rules:
     artifact_type: syslog
     query: 'message:*Failed*password* OR message.ci:*authentication*failure*'
     threshold: 10
+    mitre: [T1110.001]
+    level: medium
 
   - name: Linux — SSH Login From Many Invalid Users
     description: >-
@@ -19,6 +21,8 @@ rules:
     artifact_type: syslog
     query: 'message:*invalid*user*'
     threshold: 10
+    mitre: [T1110.001]
+    level: high
 
   - name: Linux — Sudo Authentication Failure
     description: >-
@@ -27,6 +31,8 @@ rules:
     artifact_type: syslog
     query: 'message:*sudo* AND message.ci:*authentication*failure*'
     threshold: 3
+    mitre: [T1548.003]
+    level: low
 
   - name: Linux — Reverse Shell Indicator
     description: >-
@@ -35,6 +41,8 @@ rules:
     artifact_type: syslog
     query: 'process.command_line.ci:*\/dev\/tcp\/* OR process.command_line.ci:*\/dev\/udp\/* OR process.command_line:*mkfifo* OR process.command_line:*pty.spawn* OR message.ci:*\/dev\/tcp\/*'
     threshold: 1
+    mitre: [T1059.004, T1071]
+    level: critical
 
   - name: Linux — Download and Execute (curl/wget piped to shell)
     description: >-
@@ -43,6 +51,8 @@ rules:
     artifact_type: syslog
     query: 'process.command_line.ci:*|sh* OR process.command_line.ci:*|bash* OR process.command_line.ci:*curl*|* OR process.command_line.ci:*wget*|*'
     threshold: 1
+    mitre: [T1059.004, T1105]
+    level: high
 
   - name: Linux — Shell History Tampering
     description: >-
@@ -51,6 +61,8 @@ rules:
     artifact_type: syslog
     query: 'process.command_line.ci:*history*-c* OR process.command_line:*HISTFILE* OR process.command_line:*.bash_history* OR message.ci:*.bash_history*'
     threshold: 1
+    mitre: [T1070.003]
+    level: high
 
   - name: Linux — Security Tooling Disabled
     description: >-
@@ -59,6 +71,8 @@ rules:
     artifact_type: syslog
     query: 'process.command_line:*setenforce*0* OR process.command_line:*ufw*disable* OR process.command_line.ci:*iptables*-F* OR process.command_line:*auditd*stop* OR process.command_line.ci:*firewalld*stop*'
     threshold: 1
+    mitre: [T1562.001]
+    level: high
 
   - name: Linux — SUID Privilege Escalation
     description: >-
@@ -67,6 +81,8 @@ rules:
     artifact_type: syslog
     query: 'process.command_line:*chmod*4755* OR process.command_line:*chmod*6755* OR process.command_line:*chmod*4777* OR process.command_line.ci:*chmod*2755*'
     threshold: 1
+    mitre: [T1548.001]
+    level: high
 
   - name: Linux — Sensitive Credential File Access
     description: >-
@@ -74,6 +90,8 @@ rules:
     artifact_type: syslog
     query: 'process.command_line.ci:*\/etc\/shadow* OR process.command_line:*id_rsa* OR process.command_line.ci:*\/.ssh\/* OR message.ci:*\/etc\/shadow*'
     threshold: 1
+    mitre: [T1003.008]
+    level: high
 
   - name: Linux — Cron / Scheduled Task Persistence
     description: >-
@@ -82,6 +100,8 @@ rules:
     artifact_type: syslog
     query: 'process.command_line:*crontab* OR process.command_line.ci:*\/etc\/cron* OR process.command_line.ci:*\/var\/spool\/cron* OR message.ci:*\/etc\/cron.d\/*'
     threshold: 1
+    mitre: [T1053.003]
+    level: high
 
   - name: Linux — User or Group Account Created
     description: >-
@@ -90,6 +110,8 @@ rules:
     artifact_type: syslog
     query: 'process.command_line:*useradd* OR process.command_line:*adduser* OR process.command_line:*groupadd* OR message:*new*user* OR message.ci:*useradd*'
     threshold: 1
+    mitre: [T1136.001]
+    level: medium
 
   - name: Linux — Kernel Module Loaded
     description: >-
@@ -98,3 +120,5 @@ rules:
     artifact_type: syslog
     query: 'process.command_line:*insmod* OR process.command_line:*modprobe* OR message.ci:*insmod*'
     threshold: 1
+    mitre: [T1547.006]
+    level: medium
