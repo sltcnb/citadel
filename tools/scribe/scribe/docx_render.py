@@ -16,6 +16,7 @@ from .labels import Labels
 from .render import (
     TEMPLATE_DEFAULTS,
     _ev_fields,
+    _manifest_ai_line,
     _ts,
 )
 
@@ -70,7 +71,7 @@ def render_docx(data: dict, tpl: dict | None = None, language: str | None = None
             bullet(L("m_saved", n=manifest["saved_search_count"]))
         if manifest.get("killchain_count"):
             bullet(L("m_killchains", n=manifest["killchain_count"]))
-        bullet(L("m_ai_yes", model=manifest.get("ai_model") or "?") if manifest.get("has_ai") else L("m_ai_no"))
+        bullet(_manifest_ai_line(L, manifest))
 
     # ── Executive summary
     agg = data.get("aggregates") or {}

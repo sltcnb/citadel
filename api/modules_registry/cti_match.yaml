@@ -1,6 +1,12 @@
 id: cti_match
 name: CTI IOC Matching
-description: "Scan case events against the CTI indicator database (hashes, IPs, domains, URLs)"
+description: >-
+  Scan case events against the CTI indicator database (hashes, IPs, domains, URLs).
+  One aggregated detection per matched indicator, with the event count and a pivot
+  query into the underlying events. Internal / non-routable indicators (RFC1918,
+  loopback, link-local, CGNAT, .local/.corp hostnames), your configured own
+  networks, and allowlisted values are suppressed — they are your estate, not a
+  threat. Pass include_internal=true to list them too (tagged, at info level).
 input_extensions: ["*"]
 available: true
 run_on_events: true

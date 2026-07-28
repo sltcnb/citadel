@@ -360,6 +360,11 @@ export const api = {
     analyze:          (runId)                   => request('POST', `/module-runs/${runId}/analyze`),
     retryRun:         (runId)                   => request('POST', `/module-runs/${runId}/retry`),
     cancelRun:        (runId)                   => request('POST', `/module-runs/${runId}/cancel`),
+    deleteRun:        (runId)                   => request('DELETE', `/module-runs/${runId}`),
+    // status: comma-separated run states, or 'all' for every finished run.
+    // Active runs (PENDING/RUNNING) are never deleted — cancel them first.
+    deleteRuns:       (caseId, status = 'FAILED') =>
+      request('DELETE', `/cases/${caseId}/module-runs?status=${encodeURIComponent(status)}`),
     reingestArtifact: (caseId, runId, filename) => request('POST', `/cases/${caseId}/modules/${runId}/artifacts/${encodeURIComponent(filename)}/reingest`),
     logStreamUrl:     (runId)                   => `${BASE}/module-runs/${runId}/log-stream`,
   },
@@ -517,6 +522,9 @@ export const api = {
     uploadFile: (formData) => request('POST', '/malware-analysis/upload', formData),
     createRun:  (data)     => request('POST', '/malware-analysis/runs', data),
     listRuns:   ()         => request('GET',  '/malware-analysis/runs'),
+    deleteRun:  (runId)    => request('DELETE', `/module-runs/${runId}`),
+    deleteRuns: (status = 'FAILED') =>
+      request('DELETE', `/malware-analysis/runs?status=${encodeURIComponent(status)}`),
   },
 
   cuckooConfig: {
