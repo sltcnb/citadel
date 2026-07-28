@@ -12,11 +12,22 @@ rules:
 
   - name: Explicit Credential Use (Pass-the-Hash / RunAs)
     description: >-
-      A process authenticated using explicitly supplied credentials (EID 4648).
-      Common during lateral movement, pass-the-hash, or RunAs abuse.
+      A process authenticated using explicitly supplied credentials (EID 4648) —
+      lateral movement, pass-the-hash, or RunAs abuse.
+
+      Tuning: a bare 4648 match fires on routine activity (every scheduled task
+      with stored credentials, every mapped drive, every service logon), which
+      buried the real cases. Machine accounts (``*$``) and ANONYMOUS LOGON are
+      excluded, and a single occurrence is no longer enough — credential-hopping
+      shows up as repetition, not one event. The ``*$`` suffix test runs on the
+      keyword subfield because ``$`` is a token separator on the analyzed field;
+      it is case-safe as the pattern contains no letters.
     artifact_type: evtx
-    query: "evtx.event_id:4648"
-    threshold: 1
+    query: >-
+      evtx.event_id:4648 AND NOT (evtx.event_data.TargetUserName.keyword:*$ OR
+      evtx.event_data.SubjectUserName.keyword:*$ OR
+      evtx.event_data.TargetUserName:"ANONYMOUS LOGON")
+    threshold: 5
     mitre: [T1550.002]
     level: medium
 

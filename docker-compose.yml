@@ -4,10 +4,25 @@ version: "3.9"
 # ES_HEAP_SIZE        — Elasticsearch JVM heap (default 1g, raise for big servers)
 # API_WORKERS         — Uvicorn worker processes (default 4)
 # INGEST_CONCURRENCY  — Celery ingest-worker concurrency (default 4, I/O-bound)
-# MODULE_CONCURRENCY  — Celery module-worker concurrency (default 2, CPU-bound)
+# MODULE_CONCURRENCY  — Celery module-worker concurrency (default 1, CPU-bound)
 # WORKER_MAX_TASKS    — Tasks per child before process recycle (default 50)
 # BULK_SIZE           — ES bulk indexing batch size (default 1000)
 # JWT_SECRET          — REQUIRED: set a strong random secret for JWT signing
+#
+# ── Module-worker compute ─────────────────────────────────────────────────────
+# MODULE_CPU_LIMIT    — CPUs for the module worker (default 4). Hayabusa/vol3 are
+#                       the platform's heaviest consumers; a Sigma sweep over a
+#                       multi-GB EVTX corpus is CPU-bound end to end, so this is
+#                       the single knob with the most effect on module runtime.
+# MODULE_MEM_LIMIT    — Memory for the module worker (default 8g). Memory-image
+#                       analysis and large EVTX sets are the drivers.
+# PARSER_THREADS      — Override the per-parser thread pool. By default it is
+#                       derived as (cgroup CPU quota / MODULE_CONCURRENCY), because
+#                       Rust/Go tools otherwise size their pools from the HOST's
+#                       core count and oversubscribe the container's quota.
+# MODULE_CONCURRENCY defaults to 1, not 2: two heavy binaries splitting the same
+# quota finish no sooner in aggregate and double the peak memory. Raise it only
+# when you also raise MODULE_CPU_LIMIT.
 
 services:
   elasticsearch:
@@ -212,6 +227,10 @@ services:
       - INGESTER_DIR=/app/sluice
       - MODULES_DIR=/app/anvil
       - WORKER_MAX_TASKS=${WORKER_MAX_TASKS:-50}
+      # Read back by resource_limits.parser_thread_budget() to size each parser's
+      # thread pool to (cgroup quota / concurrency) instead of the host's cores.
+      - MODULE_CONCURRENCY=${MODULE_CONCURRENCY:-1}
+      - PARSER_THREADS=${PARSER_THREADS:-}
     volumes:
       - ./tools/babel:/app/babel
       - ./tools/sluice:/app/sluice
@@ -221,16 +240,18 @@ services:
       - redis
       - elasticsearch
       - minio
-    # Dedicated to the modules queue; lower concurrency for CPU-bound binaries
+    # Dedicated to the modules queue. Concurrency 1 by default: Hayabusa/vol3 are
+    # internally parallel, so one task using the whole quota beats two splitting
+    # it, and peak memory stays predictable.
     command: >
       celery -A celery_app worker
       --loglevel=info
       --queues=modules
-      --concurrency=${MODULE_CONCURRENCY:-2}
+      --concurrency=${MODULE_CONCURRENCY:-1}
       --hostname=modules@%h
       --max-tasks-per-child=${WORKER_MAX_TASKS:-50}
-    mem_limit: ${WORKER_MEM_LIMIT:-4g}
-    cpus: ${WORKER_CPU_LIMIT:-2}
+    mem_limit: ${MODULE_MEM_LIMIT:-8g}
+    cpus: ${MODULE_CPU_LIMIT:-4}
     restart: unless-stopped
     # ── Container hardening ─────────────────────────────────────────────────
     # See worker-ingest above — this queue runs the same untrusted-input
