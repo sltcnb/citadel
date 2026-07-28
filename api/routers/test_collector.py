@@ -104,11 +104,26 @@ def test_zwrite_preserves_unix_permission_bits():
         assert zf.read("pkg/config.json") == b"{}"
 
 
-# ── /collector/download ───────────────────────────────────────────────────────
+# ── /collector/download ───────────────────────────────────────────────────
+
+
+def _decode(token):
+    from jose import jwt as _jwt
+
+    from config import settings as _settings
+
+    return _jwt.decode(token, _settings.JWT_SECRET, algorithms=[_settings.JWT_ALGORITHM])
 
 
 def _download(**kw):
-    args = dict(platform="py", case_id=None, api_url=None, collect=None, api_token=None)
+    args = dict(
+        platform="py",
+        case_id=None,
+        api_url=None,
+        collect=None,
+        api_token=None,
+        current_user={"username": "tester", "role": "analyst"},
+    )
     args.update(kw)
     return co.download_collector(**args)
 
@@ -129,11 +144,14 @@ def test_download_collector_injects_exactly_the_requested_config(fake_collect):
     )
     body = resp.body.decode("utf-8")
     cfg = _extract_config(body)
+    # The caller-supplied session token is NEVER embedded — a scoped upload
+    # token (upl claim, bound to the requesting user) is minted instead.
+    assert cfg.pop("api_token") != "jwt.token.here"
+    assert "jwt.token.here" not in body
     assert cfg == {
         "case_id": "case-42",
         "api_url": "http://192.168.1.10:8000/api/v1",
         "collect": ["evtx", "mft", "prefetch"],
-        "api_token": "jwt.token.here",
     }
     assert resp.headers["content-disposition"] == 'attachment; filename="fo-collector.py"'
     assert resp.headers["cache-control"] == "no-store"
@@ -169,6 +187,7 @@ _PKG_DEFAULTS = dict(
 def _package(**kw):
     args = dict(_PKG_DEFAULTS)
     args.update(kw)
+    args.setdefault("current_user", {"username": "tester", "role": "analyst"})
     return co.download_harvester_package(**args)
 
 
@@ -198,14 +217,18 @@ def test_package_zip_has_exact_members_and_faithful_config(fake_collect):
         # Script is byte-identical to the source (no silent mutation).
         assert zf.read(f"{folder}/fo-harvester.py") == fake_collect.read_bytes()
         # config.json carries exactly what was requested — nothing more.
+        # api_token is the server-minted scoped upload token, never "tok".
         cfg = json.loads(zf.read(f"{folder}/config.json"))
+        embedded = cfg.pop("api_token")
+        assert embedded != "tok"
+        payload = _decode(embedded)
+        assert payload["upl"] is True and payload["sub"] == "tester"
         assert cfg == {
             "collect": ["evtx", "mft"],
             "output_dir": "./output",
             "case_name": "Acme",
             "api_url": "http://1.2.3.4:8000/api/v1",
             "case_id": "c9",
-            "api_token": "tok",
         }
         # run.sh must survive unzip on unix with its +x bit.
         assert (zf.getinfo(f"{folder}/run.sh").external_attr >> 16) & 0o777 == 0o755
@@ -236,17 +259,20 @@ def test_package_fetch_patterns_enable_file_search(fake_collect):
 
 
 def test_package_token_lands_only_in_config_json(fake_collect):
-    """Secret containment: the JWT is baked into config.json by design, and must
-    not bleed into any other member of the zip."""
+    """Secret containment: a caller-supplied session token is never embedded
+    (a server-minted scoped upload token takes its place in config.json), and
+    the minted token must not bleed into any other member of the zip."""
     token = "SECRET-JWT-XYZ"
     resp = _package(case_id="c1", api_token=token)
     with _open_zip(resp) as zf:
         for name in zf.namelist():
             data = zf.read(name)
+            assert token.encode() not in data, f"session token leaked into {name}"
             if name.endswith("config.json"):
-                assert token.encode() in data
+                embedded = json.loads(data)["api_token"]
+                assert _decode(embedded)["upl"] is True
             else:
-                assert token.encode() not in data, f"token leaked into {name}"
+                assert b'"upl"' not in data
 
 
 # ── fo-uploader config injection ──────────────────────────────────────────────

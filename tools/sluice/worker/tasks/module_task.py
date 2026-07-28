@@ -363,6 +363,25 @@ def _check_cancel(r: redis.Redis, run_id: str) -> None:
 # ── Celery task ────────────────────────────────────────────────────────────────
 
 
+def _safe_source_dest(sources_dir: Path, filename: str) -> Path:
+    """Resolve the staging path for a source file, refusing anything that would
+    land outside ``sources_dir``.
+
+    ``filename`` is caller-controlled (module-run request / job metadata). The
+    API validates it too, but the worker is the hard backstop: without this, a
+    value like ``../../../../app/anvil/capa_module.py`` is an arbitrary file
+    write on the processor — and code execution as soon as the overwritten
+    module is run.
+    """
+    name = (filename or "").replace("\\", "/")
+    parts = [p for p in name.split("/") if p not in ("", ".")]
+    if not parts or name.startswith("/") or any(p == ".." for p in parts) or "\x00" in name:
+        raise ValueError(f"unsafe source filename: {filename!r}")
+    dest = (sources_dir / Path(*parts)).resolve()
+    dest.relative_to(sources_dir.resolve())  # raises ValueError if it escapes
+    return dest
+
+
 @app.task(bind=True, name="module.run", queue="modules")
 def run_module(
     self,
@@ -414,7 +433,7 @@ def run_module(
         else:
             for sf in source_files:
                 _check_cancel(r, run_id)
-                dest = sources_dir / sf["filename"]
+                dest = _safe_source_dest(sources_dir, sf["filename"])
                 _push_log(r, run_id, f"Downloading {sf['filename']} …")
                 # DISK GUARD: refuse a source that would overflow the /tmp scratch
                 # budget (a big memory/disk image) — fail the module cleanly rather

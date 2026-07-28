@@ -75,7 +75,18 @@ async def get_current_user(
         # Still enforce revocation on a cache hit so logout/revoke takes effect
         # immediately (one cheap Redis EXISTS; the user lookup stays cached).
         try:
-            if is_token_revoked(decode_token(effective_token)):
+            payload = decode_token(effective_token)
+            # MFA / password-change challenge tokens and scoped upload tokens
+            # are not access tokens. They can never be in the cache post-fix,
+            # but reject them here too so a cache populated before this guard
+            # existed can't linger.
+            if payload.get("mfa") or payload.get("pwc") or payload.get("upl"):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Scoped tokens are not valid for API access",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            if is_token_revoked(payload):
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Token has been revoked",
@@ -86,6 +97,19 @@ async def get_current_user(
         return cached
     try:
         payload = decode_token(effective_token)
+        # Scoped tokens must never act as access tokens. MFA and
+        # forced-password-change challenges prove one login step passed;
+        # upload tokens (upl) authorize evidence upload only. All are signed
+        # with the same secret as access tokens, so they MUST be rejected here
+        # explicitly — otherwise a stolen password alone bypasses TOTP, the
+        # default admin's forced password change can be skipped, and a
+        # collector script left on a target is a full session takeover.
+        if payload.get("mfa") or payload.get("pwc") or payload.get("upl"):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Scoped tokens are not valid for API access",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
         if is_token_revoked(payload):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -251,6 +275,60 @@ def require_case_access(
             detail="Access denied: case belongs to a different company",
         )
     return case
+
+
+def require_upload_access(
+    case_id: str,
+    request: Request,
+    token: str | None = Depends(_oauth2),
+) -> dict:
+    """Case access for evidence-upload endpoints (``/cases/{id}/ingest``).
+
+    Accepts EITHER a normal access token (analyst uploading from the UI) OR a
+    scoped upload token (``upl`` claim) — the credential baked into collector
+    packages left on target machines. Upload tokens are honoured ONLY here;
+    get_current_user rejects them everywhere else. SYNC like
+    require_case_access (threadpool, off the event loop).
+    """
+    if not settings.AUTH_ENABLED:
+        return {"username": "local", "role": "admin", "companies": []}
+    effective = token or request.query_params.get("_token")
+    if not effective:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    try:
+        payload = decode_token(effective)
+    except JWTError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    # Login challenge tokens are never acceptable, even here.
+    if payload.get("mfa") or payload.get("pwc"):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Challenge tokens are not valid for API access",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if is_token_revoked(payload):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been revoked",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    username = payload.get("sub")
+    if not username:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    user = get_user(username)
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+    if not user.get("role"):
+        user["role"] = "guest"  # least privilege — no admin backfill on this path
+    return require_case_access(case_id, user)
 
 
 def get_company_filter(user: dict) -> list[str] | None:

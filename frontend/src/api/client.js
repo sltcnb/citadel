@@ -583,12 +583,17 @@ export const api = {
       if (apiUrl)  params.set('api_url',  apiUrl)
       if (collect && collect.length > 0) params.set('collect', collect.join(','))
       const token = getToken()
-      if (token) { params.set('_token', token); params.set('api_token', token) }
+      // NB: only _token (request auth) goes in the URL — never api_token.
+      // The server embeds a scoped upload token of its own when asked.
+      if (token) params.set('_token', token)
       return `/api/v1/collector/download?${params.toString()}`
     },
     // New: fo-harvester ZIP — config.json has true/false per artifact category.
     // Input source (--path/--disk) and BitLocker key are CLI args on the target.
-    packageUrl: ({ categories = [], caseName, platform, path, disk, skipProblematic, fetchPatterns, outputDir, apiUrl, caseId, apiToken, uploadMode, includePython } = {}) => {
+    // Fetched with the Authorization header (not a _token URL) so the session
+    // JWT never lands in access logs; apiToken=true asks the server to embed a
+    // scoped upload token it mints itself.
+    fetchPackage: async ({ categories = [], caseName, platform, path, disk, skipProblematic, fetchPatterns, outputDir, apiUrl, caseId, apiToken, uploadMode, includePython } = {}) => {
       const params = new URLSearchParams()
       if (categories.length > 0) params.set('categories',        categories.join(','))
       if (caseName)               params.set('case_name',         caseName)
@@ -601,13 +606,20 @@ export const api = {
       if (outputDir)              params.set('output_dir',        outputDir)
       if (apiUrl)                 params.set('api_url',           apiUrl)
       if (caseId)                 params.set('case_id',           caseId)
-      if (apiToken)               params.set('api_token',         apiToken)
+      if (apiToken)               params.set('api_token',         '1')
       if (uploadMode)             params.set('upload_mode',       uploadMode)
       if (includePython)          params.set('include_python',    includePython)
-      const token = getToken()
-      if (token) params.set('_token', token)
       const qs = params.toString()
-      return `/api/v1/collector/package${qs ? '?' + qs : ''}`
+      const token = getToken()
+      const res = await fetch(`/api/v1/collector/package${qs ? '?' + qs : ''}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+      if (res.status === 401) { _handle401(); return new Promise(() => {}) }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }))
+        throw new Error(err.detail || `HTTP ${res.status}`)
+      }
+      return res.blob()
     },
     categories: () => request('GET', '/collector/categories'),
     pythonEmbeds: () => request('GET', '/collector/python-embeds'),
@@ -631,23 +643,30 @@ export const api = {
     },
     // Admin-only: uploads collector zip to S3, returns a tiny PS1/SH bootstrap script
     // that downloads, runs, deletes local temp, then deletes the zip from S3.
+    // POST + JSON body: the BitLocker recovery key and token flag must not ride
+    // in a URL query string (access logs capture those).
     s3Bootstrap: async ({ categories = [], caseName, caseId, apiUrl, apiToken, expiresHours = 24, platform = 'ps1', pathArg, diskArg, bitlockerKey, fetchPatterns } = {}) => {
-      const params = new URLSearchParams()
-      if (categories.length > 0) params.set('categories',    categories.join(','))
-      if (caseName)               params.set('case_name',    caseName)
-      if (caseId)                 params.set('case_id',      caseId)
-      if (fetchPatterns && fetchPatterns.length > 0)
-        params.set('fetch_patterns', fetchPatterns.join('\n'))
-      if (apiUrl)                 params.set('api_url',      apiUrl)
-      if (apiToken)               params.set('api_token',    apiToken)
-      if (pathArg)                params.set('path_arg',     pathArg)
-      if (diskArg)                params.set('disk_arg',     diskArg)
-      if (bitlockerKey)           params.set('bitlocker_key', bitlockerKey)
-      params.set('expires_hours', String(expiresHours))
-      params.set('platform',      platform)
+      const body = {
+        categories:  categories.length > 0 ? categories.join(',') : undefined,
+        case_name:   caseName,
+        case_id:     caseId,
+        fetch_patterns: fetchPatterns && fetchPatterns.length > 0 ? fetchPatterns.join('\n') : undefined,
+        api_url:     apiUrl,
+        api_token:   apiToken === true,   // flag only — the server mints the token
+        expires_hours: expiresHours,
+        platform:    platform,
+        path_arg:    pathArg,
+        disk_arg:    diskArg,
+        bitlocker_key: bitlockerKey,
+      }
       const token = getToken()
-      const res = await fetch(`${BASE}/collector/s3-bootstrap?${params}`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      const res = await fetch(`${BASE}/collector/s3-bootstrap`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(body),
       })
       if (res.status === 401) { _handle401(); return new Promise(() => {}) }
       if (!res.ok) {

@@ -27,7 +27,7 @@ from typing import Any
 
 import redis
 import redis_keys as rk
-from auth.dependencies import require_admin, require_case_access
+from auth.dependencies import get_company_filter, get_current_user, require_admin, require_case_access
 from fastapi import APIRouter, Body, Depends, HTTPException
 from license.gate import require_feature
 from pydantic import BaseModel
@@ -746,8 +746,26 @@ def analyze_alert_rule_result(req: AlertAnalyzeRequest) -> Any:
     return {"analysis": analysis}
 
 
+def _check_run_company(run: dict, current_user: dict) -> None:
+    """Company-scope guard for run-scoped AI routes (no case_id path param to
+    hang require_case_access off). Mirrors modules.py::_check_run_case_access:
+    404 if the run's case is missing, 403 if it belongs to another company.
+    Standalone malware runs have no case record — scoped by auth alone."""
+    from services.cases import get_case
+
+    case_id = run.get("case_id")
+    if case_id == run_svc.MALWARE_CASE_ID:
+        return
+    case = get_case(case_id) if case_id else None
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+    flt = get_company_filter(current_user)
+    if flt is not None and case.get("company", "") not in flt:
+        raise HTTPException(status_code=403, detail="Access denied: case belongs to a different company")
+
+
 @router.post("/module-runs/{run_id}/analyze")
-def analyze_module_run(run_id: str) -> Any:
+def analyze_module_run(run_id: str, current_user: dict = Depends(get_current_user)) -> Any:
     """
     Run AI analysis on a completed module run.
 
@@ -772,6 +790,7 @@ def analyze_module_run(run_id: str) -> Any:
     run = run_svc.get_module_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Module run not found")
+    _check_run_company(run, current_user)
     if run.get("status") != "COMPLETED":
         raise HTTPException(
             status_code=400,
@@ -1842,7 +1861,7 @@ def _build_case_investigate_prompt(ctx: dict, circumstance: str) -> str:
 
 
 @router.post("/cases/{case_id}/ai/analyze", dependencies=[Depends(require_feature("ai_assist"))])
-def ai_analyze_case(case_id: str):
+def ai_analyze_case(case_id: str, case: dict = Depends(require_case_access)):
     r = _redis()
     cfg = _get_config(r)
     if not cfg or not cfg.get("enabled"):
@@ -1983,7 +2002,7 @@ class CaseInvestigateRequest(BaseModel):
 @router.post(
     "/cases/{case_id}/ai/investigate", dependencies=[Depends(require_feature("ai_assist"))]
 )
-def ai_investigate_case(case_id: str, req: CaseInvestigateRequest):
+def ai_investigate_case(case_id: str, req: CaseInvestigateRequest, case: dict = Depends(require_case_access)):
     r = _redis()
     cfg = _get_config(r)
     if not cfg or not cfg.get("enabled"):
@@ -5731,7 +5750,7 @@ def _parent_transcript_or_none(case_id: str, parent_run_idx: int | None) -> list
 
 
 @router.post("/cases/{case_id}/ai/agent", dependencies=[Depends(require_feature("ai_assist"))])
-def ai_agent_case(case_id: str, req: CaseAgentRequest):
+def ai_agent_case(case_id: str, req: CaseAgentRequest, case: dict = Depends(require_case_access)):
     """Run the agent and return the full transcript at the end (non-streaming).
     Kept for backwards compatibility + clients that don't want SSE."""
     r = _redis()
@@ -5754,7 +5773,7 @@ def ai_agent_case(case_id: str, req: CaseAgentRequest):
 @router.post(
     "/cases/{case_id}/ai/agent/stream", dependencies=[Depends(require_feature("ai_assist"))]
 )
-def ai_agent_case_stream(case_id: str, req: CaseAgentRequest):
+def ai_agent_case_stream(case_id: str, req: CaseAgentRequest, case: dict = Depends(require_case_access)):
     """Server-Sent Events stream of agent steps. Frontend reads each step
     as it lands instead of waiting 30-60s for the full transcript.
 
@@ -6210,7 +6229,7 @@ def _save_report_with_history(case_id: str, doc: dict) -> None:
 
 
 @router.get("/cases/{case_id}/ai/report_history")
-def get_report_history(case_id: str):
+def get_report_history(case_id: str, case: dict = Depends(require_case_access)):
     """Metadata for past generated reports (newest first) — ts, model, language,
     manifest, source. Content included so the UI can re-open without another call."""
     r = _redis()
@@ -6224,7 +6243,7 @@ def get_report_history(case_id: str):
 
 
 @router.delete("/cases/{case_id}/ai/report_history/{idx}")
-def delete_report_history(case_id: str, idx: int):
+def delete_report_history(case_id: str, idx: int, case: dict = Depends(require_case_access)):
     """Remove one history entry by index (0 = newest)."""
     r = _redis()
     key = f"case:{case_id}:ai:report_history"
@@ -6235,7 +6254,7 @@ def delete_report_history(case_id: str, idx: int):
 
 
 @router.get("/cases/{case_id}/ai/results")
-def get_ai_results(case_id: str):
+def get_ai_results(case_id: str, case: dict = Depends(require_case_access)):
     r = _redis()
     analysis = None
     raw_a = r.get(f"case:{case_id}:ai:analysis")
@@ -6290,7 +6309,7 @@ def get_ai_results(case_id: str):
 
 
 @router.delete("/cases/{case_id}/ai/results")
-def delete_ai_results(case_id: str, include_report: bool = False):
+def delete_ai_results(case_id: str, include_report: bool = False, case: dict = Depends(require_case_access)):
     """Wipe AI state on a case.
 
     By default clears analysis + investigations + agent runs but NOT the
@@ -6307,7 +6326,7 @@ def delete_ai_results(case_id: str, include_report: bool = False):
 
 
 @router.delete("/cases/{case_id}/ai/report")
-def delete_ai_report(case_id: str):
+def delete_ai_report(case_id: str, case: dict = Depends(require_case_access)):
     """Drop just the AI Investigation Report (`case:{id}:ai:report`).
     Leaves analysis / investigations / agent_runs intact."""
     _redis().delete(f"case:{case_id}:ai:report")
@@ -6315,14 +6334,14 @@ def delete_ai_report(case_id: str):
 
 
 @router.delete("/cases/{case_id}/ai/agent_runs")
-def delete_agent_runs(case_id: str):
+def delete_agent_runs(case_id: str, case: dict = Depends(require_case_access)):
     """Clear the agent-runs history only."""
     _redis().delete(f"case:{case_id}:ai:agent_runs")
     return {"ok": True}
 
 
 @router.delete("/cases/{case_id}/ai/investigation/{idx}")
-def delete_ai_investigation(case_id: str, idx: int):
+def delete_ai_investigation(case_id: str, idx: int, case: dict = Depends(require_case_access)):
     """Remove one investigation session by index (0 = most recent)."""
     r = _redis()
     key = f"case:{case_id}:ai:investigations"
@@ -6367,7 +6386,7 @@ class FinalReportRequest(BaseModel):
 
 
 @router.post("/cases/{case_id}/ai/report", dependencies=[Depends(require_feature("ai_assist"))])
-def generate_final_report(case_id: str, body: FinalReportRequest = None):
+def generate_final_report(case_id: str, body: FinalReportRequest = None, case: dict = Depends(require_case_access)):
     if body is None:
         body = FinalReportRequest()
     r = _redis()

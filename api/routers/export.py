@@ -17,14 +17,16 @@ import uuid
 from datetime import UTC, datetime
 
 import redis_keys as rk
-from auth.dependencies import require_admin, require_case_access
+from auth.dependencies import get_current_user, require_admin, require_case_access
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from license.gate import require_feature
 from pydantic import BaseModel
 from services import jobs as job_svc
+from services import storage
 from services.cases import get_case, update_case
 from services.elasticsearch import _request as es_req
+from services.elasticsearch import build_index_expression
 
 from config import get_redis
 
@@ -290,7 +292,10 @@ def export_csv(
     """Stream the events MATCHING THE CURRENT SEARCH as CSV — same query + time
     range the analyst sees in the timeline, no 10k cap, every populated column
     (nested fields flattened to dotted keys; stragglers in `_extra`)."""
-    idx = f"fo-case-{case_id}-{artifact_type}" if artifact_type else f"fo-case-{case_id}-*"
+    try:
+        idx = build_index_expression(case_id, artifact_type)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     must: list[dict] = []
     filt: list[dict] = []
     if q:
@@ -550,9 +555,23 @@ def export_archive(case_id: str):
 # ── Full archive import ───────────────────────────────────────────────────────
 
 
-def _bulk_index_events(case_id: str, events_gz: bytes) -> int:
-    """Bulk-index events from gzip-compressed NDJSON into Elasticsearch."""
+_MAX_IMPORT_EVENTS_BYTES = 20 * 1024**3  # 20 GiB decompressed — gz-bomb ceiling
+_ARTIFACT_TYPE_SAFE_RE = re.compile(r"[a-z0-9_]+")
+
+
+def _bulk_index_events(case_id: str, events_stream) -> int:
+    """Bulk-index events from gzip-compressed NDJSON into Elasticsearch.
+
+    ``events_stream`` is a binary file-like object positioned at the gzip
+    member. The archive is streamed line-by-line — never slurped fully into
+    memory — because a crafted .citadel whose events.ndjson.gz inflates to
+    tens of GB would otherwise OOM the API pod. A hard decompressed-byte
+    ceiling stops truly abusive archives even with streaming. Raw gzipped
+    bytes are also accepted (small in-memory producers/tests)."""
     from config import settings
+
+    if isinstance(events_stream, (bytes, bytearray)):
+        events_stream = io.BytesIO(events_stream)
 
     es_url = settings.ELASTICSEARCH_URL
     count = 0          # docs actually indexed (excludes per-item failures)
@@ -594,8 +613,16 @@ def _bulk_index_events(case_id: str, events_gz: bytes) -> int:
         lines.clear()
         pending = 0
 
-    with gzip.GzipFile(fileobj=io.BytesIO(events_gz)) as gz:
+    read_bytes = 0
+    with gzip.GzipFile(fileobj=events_stream) as gz:
         for raw in gz:
+            read_bytes += len(raw)
+            if read_bytes > _MAX_IMPORT_EVENTS_BYTES:
+                raise HTTPException(
+                    status_code=413,
+                    detail="Archive events exceed the maximum import size "
+                    f"({_MAX_IMPORT_EVENTS_BYTES // 1024**3} GiB decompressed)",
+                )
             raw = raw.strip()
             if not raw:
                 continue
@@ -605,6 +632,10 @@ def _bulk_index_events(case_id: str, events_gz: bytes) -> int:
                 continue
             ev["case_id"] = case_id
             artifact_type = ev.get("artifact_type", "unknown")
+            # Bulk _index names must be valid ES index names — a crafted
+            # archive event must not turn into an indexing error (or worse).
+            if not _ARTIFACT_TYPE_SAFE_RE.fullmatch(str(artifact_type)):
+                artifact_type = "unknown"
             idx = f"fo-case-{case_id}-{artifact_type}"
             lines.append(json.dumps({"index": {"_index": idx}}))
             lines.append(json.dumps(ev, separators=(",", ":")))
@@ -618,6 +649,29 @@ def _bulk_index_events(case_id: str, events_gz: bytes) -> int:
     return count
 
 
+_MAX_IMPORT_MEMBER_BYTES = 64 * 1024**2  # JSON metadata members are tiny; 64 MiB is generous
+
+
+def _read_archive_member(tf: tarfile.TarFile, name: str, limit: int | None = None) -> bytes:
+    """Read a tar member with a hard size cap. Archive contents are
+    attacker-controlled — never slurp an unbounded decompressed member into
+    memory (a crafted .citadel is otherwise an API-pod OOM)."""
+    limit = _MAX_IMPORT_MEMBER_BYTES if limit is None else limit
+    try:
+        f = tf.extractfile(name)
+    except KeyError:
+        return b""
+    if f is None:
+        return b""
+    data = f.read(limit + 1)
+    if len(data) > limit:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Archive member '{name}' exceeds the {limit // 1024 // 1024} MB limit",
+        )
+    return data
+
+
 def _import_archive_file(tmp_path: str) -> dict:
     """Parse a .citadel tar.gz at tmp_path, create a new case, and return result dict."""
     try:
@@ -625,16 +679,8 @@ def _import_archive_file(tmp_path: str) -> dict:
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Invalid archive: {exc}")
 
-    def _read(name: str) -> bytes:
-        try:
-            m = tf.getmember(name)
-            f = tf.extractfile(m)
-            return f.read() if f else b""
-        except KeyError:
-            return b""
-
     with tf:
-        manifest_raw = _read("manifest.json")
+        manifest_raw = _read_archive_member(tf, "manifest.json")
         if not manifest_raw:
             raise HTTPException(
                 status_code=400, detail="Not a valid .citadel archive (missing manifest.json)"
@@ -645,76 +691,108 @@ def _import_archive_file(tmp_path: str) -> dict:
                 status_code=400,
                 detail=f"Unsupported archive format: {manifest.get('format')}",
             )
-        case_data = json.loads(_read("case.json") or b"{}")
-        jobs_data = json.loads(_read("jobs.json") or b"[]")
-        notes_data = json.loads(_read("notes.json") or b"{}")
-        alert_rules = json.loads(_read("alert_rules.json") or b"[]")
-        saved_searches = json.loads(_read("saved_searches.json") or b"[]")
-        events_gz = _read("events.ndjson.gz")
+        case_data = json.loads(_read_archive_member(tf, "case.json") or b"{}")
+        jobs_data = json.loads(_read_archive_member(tf, "jobs.json") or b"[]")
+        notes_data = json.loads(_read_archive_member(tf, "notes.json") or b"{}")
+        alert_rules = json.loads(_read_archive_member(tf, "alert_rules.json") or b"[]")
+        saved_searches = json.loads(_read_archive_member(tf, "saved_searches.json") or b"[]")
 
-    r = get_redis()
-    new_case_id = uuid.uuid4().hex[:12]
-    now = datetime.now(UTC).isoformat()
+        r = get_redis()
+        new_case_id = uuid.uuid4().hex[:12]
+        now = datetime.now(UTC).isoformat()
 
-    r.hset(
-        f"case:{new_case_id}",
-        mapping={
-            "case_id": new_case_id,
-            "name": case_data.get("name", f"Imported {now[:10]}"),
-            "description": case_data.get("description", ""),
-            "analyst": case_data.get("analyst", ""),
-            "status": case_data.get("status", "active"),
-            "created_at": now,
-            "updated_at": now,
-            "tags": json.dumps(case_data.get("tags") or []),
-        },
-    )
-    r.sadd("cases:all", new_case_id)
+        r.hset(
+            f"case:{new_case_id}",
+            mapping={
+                "case_id": new_case_id,
+                "name": case_data.get("name", f"Imported {now[:10]}"),
+                "description": case_data.get("description", ""),
+                "analyst": case_data.get("analyst", ""),
+                "status": case_data.get("status", "active"),
+                "created_at": now,
+                "updated_at": now,
+                "tags": json.dumps(case_data.get("tags") or []),
+            },
+        )
+        r.sadd("cases:all", new_case_id)
 
-    if notes_data.get("body"):
-        r.hset(rk.case_notes(new_case_id), mapping={"body": notes_data["body"], "updated_at": now})
-    if alert_rules:
-        r.set(rk.case_alert_rules(new_case_id), json.dumps(alert_rules))
-    if saved_searches:
-        r.set(rk.case_saved_searches(new_case_id), json.dumps(saved_searches))
+        if notes_data.get("body"):
+            r.hset(rk.case_notes(new_case_id), mapping={"body": notes_data["body"], "updated_at": now})
+        if alert_rules:
+            r.set(rk.case_alert_rules(new_case_id), json.dumps(alert_rules))
+        if saved_searches:
+            r.set(rk.case_saved_searches(new_case_id), json.dumps(saved_searches))
 
-    for job in jobs_data:
-        jid = job.get("job_id")
-        if not jid:
-            continue
-        job_copy = {k: str(v) for k, v in job.items()}
-        job_copy["case_id"] = new_case_id
-        r.hset(f"job:{jid}", mapping=job_copy)
-        r.expire(f"job:{jid}", job_svc.JOB_TTL)
-        r.sadd(f"case:{new_case_id}:jobs", jid)
-        r.zadd(f"case:{new_case_id}:jobs:zs", {jid: time.time()})
+        for job in jobs_data:
+            # The archive's job_id is attacker-controlled and NOT namespaced to
+            # the new case — honoring it lets a crafted archive overwrite a
+            # victim case's job:{id} record (chain-of-custody tampering).
+            # Mint fresh ids and keep the original as provenance.
+            old_jid = job.get("job_id")
+            if not old_jid:
+                continue
+            jid = uuid.uuid4().hex
+            job_copy = {k: str(v) for k, v in job.items()}
+            job_copy["job_id"] = jid
+            job_copy["prior_job_id"] = str(old_jid)
+            job_copy["case_id"] = new_case_id
+            r.hset(f"job:{jid}", mapping=job_copy)
+            r.expire(f"job:{jid}", job_svc.JOB_TTL)
+            r.sadd(f"case:{new_case_id}:jobs", jid)
+            r.zadd(f"case:{new_case_id}:jobs:zs", {jid: time.time()})
 
-    event_count = 0
-    if events_gz:
+        # Events are streamed from the open tar member straight into the bulk
+        # indexer — the archive is never fully decompressed into memory.
         try:
-            event_count = _bulk_index_events(new_case_id, events_gz)
-        except Exception as exc:
-            logger.error("Event re-indexing failed for import: %s", exc)
+            events_stream = tf.extractfile("events.ndjson.gz")
+        except KeyError:
+            events_stream = None
+        event_count = 0
+        if events_stream is not None:
+            try:
+                event_count = _bulk_index_events(new_case_id, events_stream)
+            except HTTPException:
+                raise
+            except Exception as exc:
+                logger.error("Event re-indexing failed for import: %s", exc)
 
-    return {
-        "case_id": new_case_id,
-        "case_name": case_data.get("name", ""),
-        "events_imported": event_count,
-        "jobs_restored": len(jobs_data),
-        "original_case_id": manifest.get("case_id"),
-        "original_exported": manifest.get("exported_at"),
-    }
+        return {
+            "case_id": new_case_id,
+            "case_name": case_data.get("name", ""),
+            "events_imported": event_count,
+            "jobs_restored": len(jobs_data),
+            "original_case_id": manifest.get("case_id"),
+            "original_exported": manifest.get("exported_at"),
+        }
 
 
 @router.post("/cases/import/archive")
-async def import_archive(file: UploadFile = File(...)):
+async def import_archive(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
     """Import a .citadel archive uploaded from the browser."""
+    # Archive import creates a case and bulk-writes state — analysts and above
+    # only. The guest write middleware allows POSTs under /cases/, so the role
+    # check must be explicit here.
+    if current_user.get("role") == "guest":
+        raise HTTPException(status_code=403, detail="Guests cannot import cases")
     tmp_fd, tmp_path = tempfile.mkstemp(suffix=".citadel.tar.gz")
     os.close(tmp_fd)
     try:
+        written = 0
         with open(tmp_path, "wb") as out:
             while chunk := await file.read(4 * 1024 * 1024):
                 out.write(chunk)
+                written += len(chunk)
+                # DISK GUARD: bound the spool to the scratch budget (the upload
+                # otherwise fills the API pod's /tmp emptyDir → eviction).
+                # Checked at coarse intervals — require_scratch walks /tmp.
+                if written % (256 * 1024 * 1024) < 4 * 1024 * 1024:
+                    try:
+                        storage.require_scratch(written)
+                    except storage.StorageError as exc:
+                        raise HTTPException(
+                            status_code=413,
+                            detail=f"Archive too large to import on the server right now: {exc}",
+                        ) from exc
         return _import_archive_file(tmp_path)
     finally:
         try:
@@ -736,22 +814,18 @@ def _restore_archive_into_case(case_id: str, tf: tarfile.TarFile, pre_index_hook
     unreadable archive can never wipe an existing case.
     """
 
-    def _read(name):
-        try:
-            m = tf.getmember(name)
-            f = tf.extractfile(m)
-            return f.read() if f else b""
-        except KeyError:
-            return b""
-
     r = get_redis()
     now = datetime.now(UTC).isoformat()
     # Read + parse everything first; a parse error here raises before we touch
-    # (or delete) any existing case data.
-    notes_data = json.loads(_read("notes.json") or b"{}")
-    alert_rules = json.loads(_read("alert_rules.json") or b"[]")
-    saved_searches = json.loads(_read("saved_searches.json") or b"[]")
-    events_gz = _read("events.ndjson.gz")
+    # (or delete) any existing case data. Reads are size-capped — archive
+    # contents are attacker-controlled.
+    notes_data = json.loads(_read_archive_member(tf, "notes.json") or b"{}")
+    alert_rules = json.loads(_read_archive_member(tf, "alert_rules.json") or b"[]")
+    saved_searches = json.loads(_read_archive_member(tf, "saved_searches.json") or b"[]")
+    try:
+        events_stream = tf.extractfile("events.ndjson.gz")
+    except KeyError:
+        events_stream = None
 
     # Archive validated/extracted — now safe to drop the old indices.
     if pre_index_hook is not None:
@@ -763,7 +837,7 @@ def _restore_archive_into_case(case_id: str, tf: tarfile.TarFile, pre_index_hook
         r.set(rk.case_alert_rules(case_id), json.dumps(alert_rules))
     if saved_searches:
         r.set(rk.case_saved_searches(case_id), json.dumps(saved_searches))
-    event_count = _bulk_index_events(case_id, events_gz) if events_gz else 0
+    event_count = _bulk_index_events(case_id, events_stream) if events_stream is not None else 0
     return {"event_count": event_count}
 
 

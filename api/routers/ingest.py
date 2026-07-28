@@ -27,7 +27,7 @@ import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
 
-from auth.dependencies import require_case_access
+from auth.dependencies import require_case_access, require_upload_access
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -414,7 +414,7 @@ async def ingest_chunk(
     chunk: UploadFile = File(...),
     keep_raw: bool = Form(False),
     background_tasks: BackgroundTasks = None,
-    _case: dict = Depends(require_case_access),
+    _case: dict = Depends(require_upload_access),
 ):
     """
     Receive one chunk of a large file upload.
@@ -505,7 +505,7 @@ async def ingest_files(
     files: list[UploadFile] = File(...),
     keep_raw: bool = Form(False),
     background_tasks: BackgroundTasks = None,
-    _case: dict = Depends(require_case_access),
+    _case: dict = Depends(require_upload_access),
 ):
     """
     Upload one or more forensics files (or zip archives) to a case and enqueue processing.
