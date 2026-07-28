@@ -62,6 +62,10 @@ _SIGMA_ID_RE = re.compile(r"#\s*sigma_id:\s*([0-9a-fA-F-]{36})")
 # Severity vocabulary the UI/report/triage rank on (LEVEL_INT in module_task).
 _LEVELS = {"critical", "high", "medium", "low", "informational"}
 
+# Keys accepted inside a rule's `correlation:` block (services/rule_eval.py).
+_CORRELATION_KEYS = {"group_by", "distinct", "min_distinct", "window"}
+_WINDOW_RE = re.compile(r"^\d+[smhd]$")
+
 # Lucene field tokens we expect rule queries to reference.
 _FIELD_RE = re.compile(r"\b([a-zA-Z_][\w.]*)\s*:")
 
@@ -277,6 +281,44 @@ def validate_file(path: Path) -> tuple[list[Finding], int, dict[str, str]]:
                         f"level {lvl!r} is not one of {'/'.join(sorted(_LEVELS))}",
                     )
                 )
+
+        # Correlation lint (native rules). See services/rule_eval.py — a
+        # correlation block replaces count>=threshold with "one entity showed an
+        # unusual amount of variety", which is what separates a password spray
+        # from every failed login in the case.
+        if not is_sigma and rule.get("correlation") is not None:
+            corr = rule["correlation"]
+            if not isinstance(corr, dict):
+                findings.append(Finding("error", rel, label, "correlation must be a mapping"))
+            else:
+                unknown = set(corr) - _CORRELATION_KEYS
+                if unknown:
+                    findings.append(
+                        Finding("error", rel, label,
+                                f"unknown correlation key(s): {', '.join(sorted(unknown))}")
+                    )
+                if not str(corr.get("distinct") or "").strip():
+                    findings.append(
+                        Finding("error", rel, label, "correlation requires 'distinct'")
+                    )
+                md = corr.get("min_distinct")
+                if not isinstance(md, int) or isinstance(md, bool) or md < 1:
+                    findings.append(
+                        Finding("error", rel, label,
+                                f"correlation min_distinct must be a positive int, got {md!r}")
+                    )
+                elif md == 1:
+                    findings.append(
+                        Finding("warn", rel, label,
+                                "correlation min_distinct of 1 is equivalent to a plain "
+                                "threshold — it adds no discrimination")
+                    )
+                win = corr.get("window")
+                if win is not None and not _WINDOW_RE.match(str(win).strip()):
+                    findings.append(
+                        Finding("error", rel, label,
+                                f"correlation window {win!r} must look like 30s/15m/6h/7d")
+                    )
 
         # threshold lint (native rules)
         if "threshold" in rule:
