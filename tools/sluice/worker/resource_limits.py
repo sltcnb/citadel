@@ -79,6 +79,76 @@ _LIMIT_SIGNALS = {
 }
 
 
+def cgroup_cpu_quota() -> float | None:
+    """CPU cores this container may actually use, from its cgroup. None = unlimited.
+
+    ``os.cpu_count()`` reports the HOST's cores, not the cgroup quota — a
+    ``cpus: 2`` container on a 16-core host still sees 16. Rust/Go tools size
+    their worker pools from that number, so Hayabusa (rayon) spawns 16 threads
+    to share 2 cores' worth of quota: the scheduler then throttles the whole
+    group every period, and the run takes far longer than a correctly-sized one
+    while looking CPU-starved. Reading the real quota is what lets us size pools
+    to the compute we were actually given.
+    """
+    # cgroup v2: "<quota> <period>" or "max <period>"
+    try:
+        raw = open("/sys/fs/cgroup/cpu.max").read().split()
+        if raw and raw[0] != "max":
+            return int(raw[0]) / int(raw[1])
+        if raw:
+            return None
+    except (OSError, ValueError, IndexError):
+        pass
+    # cgroup v1
+    try:
+        quota = int(open("/sys/fs/cgroup/cpu/cpu.cfs_quota_us").read().strip())
+        period = int(open("/sys/fs/cgroup/cpu/cpu.cfs_period_us").read().strip())
+        if quota > 0 and period > 0:
+            return quota / period
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def parser_thread_budget(concurrency: int | None = None) -> int:
+    """Threads a single parser should use: the cgroup quota split across the
+    worker slots that can run in parallel, floored at 1.
+
+    ``PARSER_THREADS`` overrides it outright for operators who have measured
+    something better for their hardware.
+    """
+    override = os.getenv("PARSER_THREADS", "").strip()
+    if override.isdigit() and int(override) > 0:
+        return int(override)
+
+    if concurrency is None:
+        # Mirrors the worker's --concurrency. Must match the default in
+        # docker-compose.yml (MODULE_CONCURRENCY), or the budget is computed
+        # against a slot count the worker does not actually use.
+        raw = os.getenv("MODULE_CONCURRENCY", "1").strip()
+        concurrency = int(raw) if raw.isdigit() and int(raw) > 0 else 1
+
+    quota = cgroup_cpu_quota()
+    cores = quota if quota is not None else float(os.cpu_count() or 1)
+    return max(1, int(cores / max(1, concurrency)))
+
+
+def thread_capped_env(base: dict[str, str] | None = None) -> dict[str, str]:
+    """An environment for a parser subprocess with its thread pools capped to
+    :func:`parser_thread_budget`.
+
+    ``RAYON_NUM_THREADS`` is what Rust tools (Hayabusa) honour; the others cover
+    OpenMP/BLAS-backed Python parsers. Set only when absent so an explicit
+    per-deployment value always wins.
+    """
+    env = dict(base if base is not None else os.environ)
+    threads = str(parser_thread_budget())
+    for var in ("RAYON_NUM_THREADS", "OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS",
+                "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+        env.setdefault(var, threads)
+    return env
+
+
 def preexec_limits(
     cpu_seconds: int | None = None,
     mem_bytes: int | None = None,

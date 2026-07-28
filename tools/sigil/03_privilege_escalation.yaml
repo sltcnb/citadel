@@ -22,10 +22,20 @@ rules:
 
   - name: Special Privileges Assigned to New Logon
     description: >-
-      An administrator or high-privilege account logged on (EID 4672).
-      Sensitive privilege assignments should always be reviewed.
+      A high-privilege logon was granted sensitive privileges (EID 4672).
+
+      Tuning: 4672 is emitted for SYSTEM at every boot and for the built-in
+      service principals continuously, so a bare match is pure noise. The
+      well-known principals and machine accounts (``*$``) are excluded, leaving
+      interactive administrative logons — the ones worth reviewing. This stays
+      ``low`` because a legitimate admin logon also matches; it is context for
+      correlation, not a finding on its own.
     artifact_type: evtx
-    query: "evtx.event_id:4672"
+    query: >-
+      evtx.event_id:4672 AND NOT (evtx.event_data.SubjectUserName:"SYSTEM" OR
+      evtx.event_data.SubjectUserName:"LOCAL SERVICE" OR
+      evtx.event_data.SubjectUserName:"NETWORK SERVICE" OR
+      evtx.event_data.SubjectUserName.keyword:*$)
     threshold: 1
     mitre: [T1078]
     level: low

@@ -714,12 +714,28 @@ def run_module(
 
     except Exception as exc:
         logger.exception("[%s] Module run failed: %s", run_id, exc)
-        _push_log(r, run_id, f"ERROR: {exc}")
+        # Celery's SoftTimeLimitExceeded carries NO message, so str(exc) is "" and
+        # the run showed a bare "SoftTimeLimitExceeded()" with nothing actionable.
+        # Say what the limit was and what to do about it. Any other
+        # message-less exception at least gets its class name.
+        detail = str(exc)
+        if type(exc).__name__ == "SoftTimeLimitExceeded":
+            _soft = os.getenv("CELERY_SOFT_TIME_LIMIT", "10800")
+            detail = (
+                f"the module exceeded the worker's overall task time limit "
+                f"({_soft}s) and was stopped. Large corpora (many/large EVTX, "
+                f"multi-GB memory images) can legitimately need longer: raise "
+                f"CELERY_SOFT_TIME_LIMIT (and CELERY_TIME_LIMIT above it) on the "
+                f"worker, or run the module over fewer source files at a time."
+            )
+        elif not detail:
+            detail = f"{type(exc).__name__} (no message)"
+        _push_log(r, run_id, f"ERROR: {detail}")
         _update(
             r,
             run_id,
             status="FAILED",
-            error=str(exc),
+            error=detail,
             tool_stdout=tool_meta.get("stdout", "")[:8000] if "tool_meta" in dir() else "",
             tool_stderr=tool_meta.get("stderr", "")[:4000] if "tool_meta" in dir() else "",
             completed_at=datetime.now(UTC).isoformat(),
@@ -776,6 +792,12 @@ def _find_hayabusa_rules() -> Path | None:
     return None
 
 
+# Wall-clock budget for the hayabusa binary itself. Kept strictly below Celery's
+# task_soft_time_limit so a slow run fails with hayabusa's own explanatory error
+# rather than an anonymous SoftTimeLimitExceeded.
+_HAYABUSA_TIMEOUT = int(os.getenv("HAYABUSA_TIMEOUT_SEC", "3600"))
+
+
 def _run_hayabusa(
     run_id: str,
     work_dir: Path,
@@ -823,17 +845,33 @@ def _run_hayabusa(
         min_level,
     ]
 
-    logger.info("[%s] Running: %s", run_id, " ".join(cmd))
+    # Hayabusa is Rust/rayon and sizes its pool from the HOST's core count, which
+    # ignores this container's CPU quota — 16 threads fighting over 2 cores' worth
+    # of quota is slower than 2 threads using it, and looks like CPU starvation.
+    # Cap the pool to the quota we actually have, split across worker slots.
+    _env = resource_limits.thread_capped_env()
+    _threads = _env.get("RAYON_NUM_THREADS", "?")
+    tool_meta["log"] += f"Thread budget: {_threads} (from cgroup CPU quota / worker concurrency)\n"
+    logger.info("[%s] Running (RAYON_NUM_THREADS=%s): %s", run_id, _threads, " ".join(cmd))
     try:
         proc = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
             stdin=subprocess.DEVNULL,  # prevent any interactive prompts
-            timeout=3600,
+            timeout=_HAYABUSA_TIMEOUT,
+            env=_env,
         )
     except subprocess.TimeoutExpired:
-        raise RuntimeError("Hayabusa timed out after 1 hour")
+        # Raised as a normal module failure so the run records WHY it stopped.
+        # This must stay below Celery's task_soft_time_limit, otherwise the soft
+        # limit fires first and the analyst sees a bare "SoftTimeLimitExceeded()"
+        # instead of this message (they were both 3600s, so it was a coin flip).
+        raise RuntimeError(
+            f"Hayabusa timed out after {_HAYABUSA_TIMEOUT}s. A large EVTX corpus can "
+            f"legitimately need longer — raise HAYABUSA_TIMEOUT_SEC (keeping it below "
+            f"CELERY_SOFT_TIME_LIMIT), or run it over fewer source files at a time."
+        ) from None
 
     # Strip ANSI escape codes before storing in Redis / displaying in UI
     stdout_str = _strip_ansi((proc.stdout or "").strip())

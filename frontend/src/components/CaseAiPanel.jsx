@@ -493,10 +493,18 @@ function AgentRunBlock({ run, idx, onDelete, onSearchQuery, caseId, onFollowup, 
   const concluded = run.stopped_reason === 'concluded'
   const final = run.final || {}
   const hasIndicators = (final.indicators || []).length > 0
-  const eventCount = (run.steps || []).reduce(
-    (n, s) => n + (s.sample_ids?.length || 0) + (s.action === 'inspect' && s.fo_id ? 1 : 0),
-    0,
-  )
+  // DISTINCT events surfaced by the run — the same set the flag endpoint acts on.
+  // Summing sample_ids.length across steps counted the same event once per step
+  // that returned it, so the button promised to flag ~4x what actually existed
+  // ("Flag 338" → "Flagged 26 · skipped 67").
+  const eventCount = (() => {
+    const ids = new Set()
+    for (const s of run.steps || []) {
+      for (const id of s.sample_ids || []) if (id) ids.add(id)
+      if (s.action === 'inspect' && s.fo_id) ids.add(s.fo_id)
+    }
+    return ids.size
+  })()
 
   const [flagging,   setFlagging]   = useState(false)
   const [flagResult, setFlagResult] = useState(null)
@@ -523,7 +531,7 @@ function AgentRunBlock({ run, idx, onDelete, onSearchQuery, caseId, onFollowup, 
   }
 
   async function flagEvidence() {
-    if (!confirm(`Flag all ${eventCount} event(s) surfaced during this run? They'll appear in the case's flagged filter.`)) return
+    if (!confirm(`Flag the ${eventCount} distinct event(s) surfaced during this run? They'll appear in the case's flagged filter.`)) return
     setFlagging(true); setActionErr(null)
     try {
       const r = await api.cases.aiAgentFlag(caseId, idx)
@@ -670,7 +678,11 @@ function AgentRunBlock({ run, idx, onDelete, onSearchQuery, caseId, onFollowup, 
 
             {flagResult && (
               <p className="text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-2 py-1">
-                Flagged {flagResult.flagged} · skipped {flagResult.skipped}
+                Flagged {flagResult.flagged} of {flagResult.requested ?? flagResult.flagged}
+                {/* "skipped" means the id no longer resolves to a document — say
+                    so, rather than leaving a bare number to be read as an error. */}
+                {flagResult.skipped > 0 && <> · {flagResult.skipped} no longer in the index</>}
+                {flagResult.note && <> · {flagResult.note}</>}
               </p>
             )}
             {promoteResult && (
