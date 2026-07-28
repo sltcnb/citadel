@@ -18,9 +18,11 @@ import-guarded test here would skip everywhere and gate nothing.
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
 
-import pytest
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _no_pytest import pytest  # noqa: E402 — works under pytest AND standalone
 
 _WORKER_ROOT = Path(__file__).resolve().parents[1]
 _CELERY_APP = _WORKER_ROOT / "celery_app.py"
