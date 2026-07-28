@@ -7,6 +7,8 @@ rules:
     artifact_type: zeek
     query: "zeek.log_type:dns AND (zeek.dns.qname:*.xyz* OR zeek.dns.qname:*.top* OR zeek.dns.qname:*.club*)"
     threshold: 5
+    mitre: [T1071.004]
+    level: low
 
   - name: Long DNS Query
     description: >-
@@ -15,6 +17,8 @@ rules:
     artifact_type: zeek
     query: "zeek.log_type:dns AND zeek.dns.qname_length:>50"
     threshold: 1
+    mitre: [T1071.004]
+    level: medium
 
   - name: SSL Certificate with Self-Signed
     description: >-
@@ -23,6 +27,8 @@ rules:
     artifact_type: zeek
     query: "zeek.log_type:ssl AND (zeek.ssl.cert_subject:*self* OR zeek.ssl.cert_issuer:*self*)"
     threshold: 1
+    mitre: [T1587.003]
+    level: low
 
   - name: HTTP Download of Executable
     description: >-
@@ -31,6 +37,8 @@ rules:
     artifact_type: zeek
     query: "zeek.log_type:http AND (zeek.http.uri:*.exe* OR zeek.http.uri:*.dll*)"
     threshold: 1
+    mitre: [T1105]
+    level: medium
 
   - name: Connection to Non-Standard Port
     description: >-
@@ -39,6 +47,8 @@ rules:
     artifact_type: zeek
     query: "zeek.log_type:conn AND NOT (zeek.conn.dst_port:80 OR zeek.conn.dst_port:443 OR zeek.conn.dst_port:53 OR zeek.conn.dst_port:25)"
     threshold: 10
+    mitre: [T1571]
+    level: low
 
   - name: Beaconing Behavior
     description: >-
@@ -47,3 +57,5 @@ rules:
     artifact_type: zeek
     query: "zeek.log_type:conn AND zeek.conn.duration:>0"
     threshold: 20
+    mitre: [T1071.001]
+    level: high

@@ -7,6 +7,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4688 AND message:*powershell* AND message.ci:*-version 2*"
     threshold: 1
+    mitre: [T1059.001, T1562.010]
+    level: high
 
   - name: PowerShell Bypass Execution Policy
     description: >-
@@ -15,6 +17,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4688 AND message:*powershell* AND message.ci:*-ExecutionPolicy* AND (message:*Bypass* OR message:*Unrestricted*)"
     threshold: 1
+    mitre: [T1059.001]
+    level: medium
 
   - name: PowerShell Download Cradle
     description: >-
@@ -23,6 +27,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4104 AND (message:*IEX* OR message.ci:*Invoke-Expression* OR message.ci:*Invoke-WebRequest* OR message:*DownloadString*)"
     threshold: 1
+    mitre: [T1059.001, T1105]
+    level: high
 
   - name: PowerShell Reflection Usage
     description: >-
@@ -62,3 +68,5 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:4104 AND (message.ci:*Import-Module* OR message:*.psm1*) AND message.ci:*\\\\\\\\*"
     threshold: 1
+    mitre: [T1059.001]
+    level: high

@@ -7,6 +7,8 @@ rules:
     artifact_type: mft
     query: "mft.file_path.ci:*\\\\Windows\\\\* OR mft.file_path.ci:*\\\\Program Files\\\\*"
     threshold: 1
+    mitre: [T1036.005]
+    level: medium
 
   - name: File with Multiple Names ADS
     description: >-
@@ -15,6 +17,8 @@ rules:
     artifact_type: mft
     query: "mft.file_name_attributes:*multiple* OR mft.ads_count:>1"
     threshold: 1
+    mitre: [T1564.004]
+    level: high
 
   - name: File Created and Deleted Rapidly
     description: >-
@@ -23,6 +27,8 @@ rules:
     artifact_type: mft
     query: "mft.crtime:* AND mft.mtime:* AND (mft.sequence_number:* OR mft.fn_deleted:*)"
     threshold: 5
+    mitre: [T1070.004]
+    level: medium
 
   - name: File with Suspicious Extension
     description: >-
@@ -31,6 +37,8 @@ rules:
     artifact_type: mft
     query: "(mft.name:*.exe* OR mft.name:*.dll* OR mft.name:*.ps1* OR mft.name:*.vbs* OR mft.name:*.js* OR mft.name:*.hta*)"
     threshold: 1
+    mitre: [T1036.008]
+    level: medium
 
   - name: File Timestamp Anomaly
     description: >-
@@ -39,3 +47,5 @@ rules:
     artifact_type: mft
     query: "mft.crtime:>mft.mtime OR mft.mtime:>mft.a_time"
     threshold: 1
+    mitre: [T1070.006]
+    level: high

@@ -7,6 +7,8 @@ rules:
     artifact_type: syslog
     query: "syslog.raw_message:*docker* AND syslog.raw_message.ci:*--privileged*"
     threshold: 1
+    mitre: [T1610]
+    level: high
 
   - name: Kubernetes Pod with Host Network
     description: >-
@@ -15,6 +17,8 @@ rules:
     artifact_type: syslog
     query: "syslog.raw_message:*kubernetes* AND syslog.raw_message:*hostNetwork*"
     threshold: 1
+    mitre: [T1610]
+    level: high
 
   - name: AWS CLI Assume Role from Unusual IP
     description: >-
@@ -23,6 +27,8 @@ rules:
     artifact_type: syslog
     query: "syslog.raw_message:*aws* AND syslog.raw_message.ci:*sts\\:assumerole*"
     threshold: 1
+    mitre: [T1078.004]
+    level: medium
 
   - name: Azure AD Privileged Role Assigned
     description: >-
@@ -31,6 +37,8 @@ rules:
     artifact_type: syslog
     query: "syslog.raw_message:*AzureAD* AND (syslog.raw_message:*Global Administrator* OR syslog.raw_message:*Privileged Role Administrator*)"
     threshold: 1
+    mitre: [T1098.003]
+    level: high
 
   - name: GCP Service Account Key Created
     description: >-
@@ -39,6 +47,8 @@ rules:
     artifact_type: syslog
     query: "syslog.raw_message:*gcloud* AND syslog.raw_message.ci:*create-key*"
     threshold: 1
+    mitre: [T1098.001]
+    level: medium
 
   - name: S3 Bucket Made Public
     description: >-
@@ -47,3 +57,5 @@ rules:
     artifact_type: syslog
     query: "syslog.raw_message.ci:*s3\\:PutBucketPolicy* OR syslog.raw_message.ci:*s3\\:PutBucketAcl*"
     threshold: 1
+    mitre: [T1567.002]
+    level: critical

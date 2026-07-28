@@ -14,6 +14,7 @@ SUITES=(
   "tools/citadel_contracts/test_validator.py"
   "api/test_agg_rules.py"
   "tools/sigil/test_sigil_tools.py"
+  "tools/sigil/sigil_validate.py"
   "tools/babel/tests/test_routing_fixes.py"
   "tools/babel/tests/test_sdk_template.py"
   "tools/babel/tests/test_golden_binary.py"

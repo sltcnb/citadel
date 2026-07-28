@@ -12,6 +12,8 @@ rules:
     artifact_type: access_log
     query: 'http.request_path.ci:*..%2f* OR http.request_path.ci:*..\/* OR http.request_path.ci:*..%5c* OR http.request_path.ci:*%2e%2e%2f* OR http.request_path.ci:*etc%2fpasswd* OR http.request_path.ci:*etc\/passwd*'
     threshold: 1
+    mitre: [T1083, T1190]
+    level: high
 
   - name: Web — SQL Injection Attempt
     description: >-
@@ -21,6 +23,8 @@ rules:
     artifact_type: access_log
     query: 'http.request_path:*union*select* OR http.request_path:*information_schema* OR http.request_path.ci:*1=1* OR http.request_path:*sleep* OR http.request_path:*benchmark* OR http.request_path:*waitfor*delay* OR message.ci:*union%20select*'
     threshold: 1
+    mitre: [T1190]
+    level: high
 
   - name: Web — Cross-Site Scripting (XSS) Attempt
     description: >-
@@ -29,6 +33,8 @@ rules:
     artifact_type: access_log
     query: 'http.request_path.ci:*%3cscript* OR http.request_path.ci:*<script* OR http.request_path.ci:*javascript%3a* OR http.request_path.ci:*onerror=* OR http.request_path.ci:*onload=*'
     threshold: 1
+    mitre: [T1189]
+    level: medium
 
   - name: Web — Command Injection Attempt
     description: >-
@@ -37,6 +43,8 @@ rules:
     artifact_type: access_log
     query: 'http.request_path.ci:*%3bcat* OR http.request_path.ci:*;cat* OR http.request_path.ci:*%7cwhoami* OR http.request_path.ci:*;id* OR http.request_path.ci:*wget%20* OR http.request_path.ci:*curl%20* OR http.request_path.ci:*%24%28*'
     threshold: 1
+    mitre: [T1190, T1059]
+    level: high
 
   - name: Web — Local/Remote File Inclusion (LFI/RFI)
     description: >-
@@ -45,6 +53,8 @@ rules:
     artifact_type: access_log
     query: 'http.request_path.ci:*php%3a%2f%2f* OR http.request_path.ci:*php\:\/\/* OR http.request_path.ci:*data%3a%2f%2f* OR http.request_path.ci:*=http%3a%2f%2f* OR http.request_path.ci:*=http\:\/\/* OR http.request_path.ci:*=https\:\/\/*'
     threshold: 1
+    mitre: [T1190]
+    level: high
 
   - name: Web — Log4Shell (JNDI) Exploitation Attempt
     description: >-
@@ -53,6 +63,8 @@ rules:
     artifact_type: access_log
     query: 'http.request_path.ci:*jndi%3a* OR http.request_path.ci:*jndi\:* OR http.user_agent.ci:*jndi\:* OR message.ci:*jndi%3a* OR message.ci:*jndi\:ldap*'
     threshold: 1
+    mitre: [T1190]
+    level: high
 
   - name: Web — Sensitive File / Path Access
     description: >-
@@ -62,6 +74,8 @@ rules:
     artifact_type: access_log
     query: 'http.request_path.ci:*.git%2f* OR http.request_path.ci:*\/.git* OR http.request_path.ci:*\/.env* OR http.request_path.ci:*wp-config* OR http.request_path:*phpmyadmin* OR http.request_path.ci:*\/.ssh* OR http.request_path:*.bak* OR http.request_path.ci:*.sql*'
     threshold: 1
+    mitre: [T1083]
+    level: medium
 
   - name: Web — Webshell Access
     description: >-
@@ -71,6 +85,8 @@ rules:
     artifact_type: access_log
     query: 'http.request_path:*shell.php* OR http.request_path:*cmd.php* OR http.request_path:*c99* OR http.request_path:*r57* OR http.request_path:*wso* OR http.request_path.ci:*eval-stdin* OR http.request_path.ci:*=whoami*'
     threshold: 1
+    mitre: [T1505.003]
+    level: critical
 
   - name: Web — Scanner / Recon Tool User-Agent
     description: >-
@@ -80,6 +96,8 @@ rules:
     artifact_type: access_log
     query: 'http.user_agent:*sqlmap* OR http.user_agent:*nikto* OR http.user_agent:*nmap* OR http.user_agent:*masscan* OR http.user_agent:*acunetix* OR http.user_agent:*nuclei* OR http.user_agent:*gobuster* OR http.user_agent:*dirbuster* OR http.user_agent:*wpscan* OR http.user_agent.ci:*zgrab*'
     threshold: 1
+    mitre: [T1595.002]
+    level: medium
 
   - name: Web — Suspicious HTTP Method
     description: >-
@@ -88,6 +106,8 @@ rules:
     artifact_type: access_log
     query: 'http.method:TRACE OR http.method:TRACK OR http.method:CONNECT'
     threshold: 1
+    mitre: [T1190]
+    level: medium
 
   - name: Web — High Volume of 404s (Directory/Content Scanning)
     description: >-
@@ -96,6 +116,8 @@ rules:
     artifact_type: access_log
     query: 'http.status_code:404'
     threshold: 100
+    mitre: [T1595.003]
+    level: low
 
   - name: Web — Repeated Authentication Failures (401)
     description: >-
@@ -104,6 +126,8 @@ rules:
     artifact_type: access_log
     query: 'http.status_code:401'
     threshold: 20
+    mitre: [T1110]
+    level: medium
 
   - name: Web — Server Error Burst (5xx)
     description: >-
@@ -113,3 +137,4 @@ rules:
     artifact_type: access_log
     query: 'http.status_code:500 OR http.status_code:502 OR http.status_code:503'
     threshold: 50
+    level: low

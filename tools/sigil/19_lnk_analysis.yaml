@@ -7,6 +7,8 @@ rules:
     artifact_type: lnk
     query: "lnk.local_path.ci:*\\\\Temp\\\\* OR lnk.local_path.ci:*\\\\AppData\\\\* OR lnk.local_path.ci:*\\\\Public\\\\*"
     threshold: 1
+    mitre: [T1204.001]
+    level: medium
 
   - name: LNK Targeting Script File
     description: >-
@@ -15,6 +17,8 @@ rules:
     artifact_type: lnk
     query: "lnk.target_path.ci:*\\\\*.ps1* OR lnk.target_path.ci:*\\\\*.vbs* OR lnk.target_path.ci:*\\\\*.bat* OR lnk.target_path.ci:*\\\\*.cmd*"
     threshold: 1
+    mitre: [T1204.001]
+    level: high
 
   - name: LNK with Hidden Window
     description: >-
@@ -23,6 +27,8 @@ rules:
     artifact_type: lnk
     query: "lnk.show_command:SW_SHOWMINNOACTIVE OR lnk.show_command:SW_HIDE"
     threshold: 1
+    mitre: [T1564.003]
+    level: high
 
   - name: LNK Targeting Remote Path
     description: >-
@@ -31,6 +37,8 @@ rules:
     artifact_type: lnk
     query: 'lnk.target_path.ci:*\\\\*\\* OR lnk.target_path.ci:*\\\\*\$*'
     threshold: 1
+    mitre: [T1204.001]
+    level: high
 
   - name: Multiple LNK Files Created Rapidly
     description: >-
@@ -39,3 +47,4 @@ rules:
     artifact_type: lnk
     query: "lnk.created:*"
     threshold: 10
+    level: low

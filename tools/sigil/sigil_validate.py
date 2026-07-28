@@ -278,8 +278,12 @@ def validate_file(path: Path) -> tuple[list[Finding], int, dict[str, str]]:
         if not is_sigma:
             lvl = rule.get("level")
             if lvl in (None, ""):
+                # Hard error: the whole native corpus now carries a level, so a
+                # new rule without one is an omission, not a legacy gap. Without
+                # it the UI cannot rank the detection, the report cannot order
+                # findings, and auto-triage has no basis to prioritise.
                 findings.append(
-                    Finding("warn", rel, label, "missing 'level' — detection cannot be ranked")
+                    Finding("error", rel, label, "missing 'level' — detection cannot be ranked")
                 )
             elif str(lvl).lower() not in _LEVELS:
                 findings.append(

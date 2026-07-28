@@ -7,6 +7,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:7036 AND message:*Sysmon*"
     threshold: 1
+    mitre: [T1562.001]
+    level: high
 
   - name: Process Created with Hidden Window
     description: >-
@@ -15,6 +17,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:1 AND message.ci:*HiddenWindow=true*"
     threshold: 1
+    mitre: [T1564.003]
+    level: medium
 
   - name: Network Connection by System Process
     description: >-
@@ -23,6 +27,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:3 AND (message:*System* OR message:*svchost*) AND NOT (network.dest_port:53 OR network.dest_port:80 OR network.dest_port:443)"
     threshold: 1
+    mitre: [T1055]
+    level: medium
 
   - name: File Created in System Directory
     description: >-
@@ -31,6 +37,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:11 AND (message.ci:*\\\\Windows\\\\* OR message.ci:*\\\\System32\\\\* OR message.ci:*\\\\SysWOW64\\\\*)"
     threshold: 1
+    mitre: [T1036.005]
+    level: medium
 
   - name: Registry Persistence Key Created
     description: >-
@@ -39,6 +47,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:13 AND (message.ci:*\\\\CurrentVersion\\\\Run* OR message.ci:*\\\\CurrentVersion\\\\RunOnce* OR message.ci:*\\\\Control\\\\Services*)"
     threshold: 1
+    mitre: [T1547.001]
+    level: medium
 
   - name: Process Access to Sensitive Process
     description: >-
@@ -47,6 +57,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:10 AND (message:*lsass* OR message:*sam* OR message:*ntds*)"
     threshold: 1
+    mitre: [T1003.001]
+    level: high
 
   - name: DNS Query to Rare TLD
     description: >-
@@ -55,6 +67,8 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:22 AND (message:*.xyz* OR message:*.top* OR message:*.club* OR message:*.work* OR message:*.click*)"
     threshold: 5
+    mitre: [T1071.004]
+    level: medium
 
   - name: File Hash Match Known Malware
     description: >-
@@ -63,3 +77,5 @@ rules:
     artifact_type: evtx
     query: "evtx.event_id:11 AND message.ci:*Hash=*"
     threshold: 1
+    mitre: [T1204.002]
+    level: critical
