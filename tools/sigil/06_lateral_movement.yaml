@@ -5,7 +5,7 @@ rules:
       Access to an administrative share was recorded (EID 5140).
       Lateral movement tools (PsExec, CrackMapExec) rely on these shares.
     artifact_type: evtx
-    query: "evtx.event_id:5140 AND (message:*ADMIN$* OR message:*C$* OR message:*IPC$*)"
+    query: "evtx.event_id:5140 AND (message.ci:*ADMIN$* OR message.ci:*C$* OR message.ci:*IPC$*)"
     threshold: 1
     mitre: [T1021.002]
     level: medium
@@ -35,7 +35,7 @@ rules:
       A service was installed remotely via Service Control Manager (EID 7045 with UNC path).
       Indicates remote service deployment for code execution.
     artifact_type: evtx
-    query: "evtx.event_id:7045 AND message:*\\\\\\\\*"
+    query: "evtx.event_id:7045 AND message.ci:*\\\\\\\\*"
     threshold: 1
     mitre: [T1543.003, T1021.002]
     level: high

@@ -45,7 +45,7 @@ rules:
       LDAP directory queries executed via net.exe or PowerShell (EID 4688).
       Attackers query AD for user, computer, and group objects before moving laterally.
     artifact_type: evtx
-    query: "evtx.event_id:4688 AND (message:*ldap* OR message:*\"net group\"* OR message:*\"net user\"* OR message:*Get-ADUser*)"
+    query: "evtx.event_id:4688 AND (message:*ldap* OR message.ci:*\"net group\"* OR message.ci:*\"net user\"* OR message.ci:*Get-ADUser*)"
     threshold: 1
     mitre: [T1087.002]
     level: medium

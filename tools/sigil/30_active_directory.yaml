@@ -8,7 +8,7 @@ rules:
       A Kerberos service ticket (EID 4769) was requested with RC4 encryption
       (0x17) — the signature of kerberoasting to crack service-account hashes.
     artifact_type: evtx
-    query: 'evtx.event_id:4769 AND message:*0x17*'
+    query: 'evtx.event_id:4769 AND message.ci:*0x17*'
     threshold: 5
     mitre: [T1558.003]
     level: high
@@ -28,7 +28,7 @@ rules:
       The AdminSDHolder object was modified (EID 4662). Attackers alter it to
       re-stamp privileged-group ACLs and regain rights persistently.
     artifact_type: evtx
-    query: 'evtx.event_id:4662 AND message:*AdminSDHolder*'
+    query: 'evtx.event_id:4662 AND message.ci:*AdminSDHolder*'
     threshold: 1
     mitre: [T1098]
     level: high
@@ -78,7 +78,7 @@ rules:
       The LAPS ms-Mcs-AdmPwd attribute was read (EID 4662). Bulk reads harvest
       local administrator passwords across the fleet.
     artifact_type: evtx
-    query: 'evtx.event_id:4662 AND message:*ms-Mcs-AdmPwd*'
+    query: 'evtx.event_id:4662 AND message.ci:*ms-Mcs-AdmPwd*'
     threshold: 1
     mitre: [T1555]
     level: high

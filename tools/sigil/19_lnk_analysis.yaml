@@ -5,7 +5,7 @@ rules:
       A shortcut file was found in a non-standard directory.
       LNK files in temp or user directories may indicate malware.
     artifact_type: lnk
-    query: "lnk.path:*\\\\Temp\\\\* OR lnk.path:*\\\\AppData\\\\* OR lnk.path:*\\\\Public\\\\*"
+    query: "lnk.local_path.ci:*\\\\Temp\\\\* OR lnk.local_path.ci:*\\\\AppData\\\\* OR lnk.local_path.ci:*\\\\Public\\\\*"
     threshold: 1
 
   - name: LNK Targeting Script File
@@ -13,7 +13,7 @@ rules:
       A shortcut points to a script file (PS1, VBS, BAT, CMD).
       Common technique for executing malicious scripts.
     artifact_type: lnk
-    query: "lnk.target:*\\\\*.ps1* OR lnk.target:*\\\\*.vbs* OR lnk.target:*\\\\*.bat* OR lnk.target:*\\\\*.cmd*"
+    query: "lnk.target_path.ci:*\\\\*.ps1* OR lnk.target_path.ci:*\\\\*.vbs* OR lnk.target_path.ci:*\\\\*.bat* OR lnk.target_path.ci:*\\\\*.cmd*"
     threshold: 1
 
   - name: LNK with Hidden Window
@@ -29,7 +29,7 @@ rules:
       A shortcut points to a UNC path or remote location.
       May indicate lateral movement or payload staging.
     artifact_type: lnk
-    query: 'lnk.target:*\\\\*\\* OR lnk.target:*\\\\*\$*'
+    query: 'lnk.target_path.ci:*\\\\*\\* OR lnk.target_path.ci:*\\\\*\$*'
     threshold: 1
 
   - name: Multiple LNK Files Created Rapidly

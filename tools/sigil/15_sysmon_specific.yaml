@@ -13,7 +13,7 @@ rules:
       A process was started with a hidden window (Sysmon Event ID 1).
       Common technique for running malware in the background.
     artifact_type: evtx
-    query: "evtx.event_id:1 AND message:*HiddenWindow=true*"
+    query: "evtx.event_id:1 AND message.ci:*HiddenWindow=true*"
     threshold: 1
 
   - name: Network Connection by System Process
@@ -29,7 +29,7 @@ rules:
       A file was created in Windows or System32 directory (Sysmon Event ID 11).
       Malware often drops files in system directories.
     artifact_type: evtx
-    query: "evtx.event_id:11 AND (message:*\\\\Windows\\\\* OR message:*\\\\System32\\\\* OR message:*\\\\SysWOW64\\\\*)"
+    query: "evtx.event_id:11 AND (message.ci:*\\\\Windows\\\\* OR message.ci:*\\\\System32\\\\* OR message.ci:*\\\\SysWOW64\\\\*)"
     threshold: 1
 
   - name: Registry Persistence Key Created
@@ -37,7 +37,7 @@ rules:
       A registry key was created in a known persistence location (Sysmon Event ID 13).
       Common locations include Run keys and service entries.
     artifact_type: evtx
-    query: "evtx.event_id:13 AND (message:*\\\\CurrentVersion\\\\Run* OR message:*\\\\CurrentVersion\\\\RunOnce* OR message:*\\\\Control\\\\Services*)"
+    query: "evtx.event_id:13 AND (message.ci:*\\\\CurrentVersion\\\\Run* OR message.ci:*\\\\CurrentVersion\\\\RunOnce* OR message.ci:*\\\\Control\\\\Services*)"
     threshold: 1
 
   - name: Process Access to Sensitive Process
@@ -61,5 +61,5 @@ rules:
       A file was created with a hash matching known malware (Sysmon Event ID 11).
       Requires hash blocklist integration.
     artifact_type: evtx
-    query: "evtx.event_id:11 AND message:*Hash=*"
+    query: "evtx.event_id:11 AND message.ci:*Hash=*"
     threshold: 1

@@ -8,7 +8,7 @@ rules:
       extension). Attackers exclude their staging directory before dropping
       payloads.
     artifact_type: evtx
-    query: 'evtx.event_id:4104 AND message:*Add-MpPreference* AND (message:*Exclusion* OR message:*ExclusionPath* OR message:*ExclusionProcess*)'
+    query: 'evtx.event_id:4104 AND message.ci:*Add-MpPreference* AND (message:*Exclusion* OR message:*ExclusionPath* OR message:*ExclusionProcess*)'
     threshold: 1
     mitre: [T1562.001]
     level: high
@@ -28,7 +28,7 @@ rules:
       Windows Defender Tamper Protection was turned off, removing the guard
       that blocks changes to security settings.
     artifact_type: evtx
-    query: 'evtx.event_id:4657 AND message:*TamperProtection*'
+    query: 'evtx.event_id:4657 AND message.ci:*TamperProtection*'
     threshold: 1
     mitre: [T1562.001]
     level: high
@@ -48,7 +48,7 @@ rules:
       Event Tracing for Windows was disabled or a logging trace stopped
       (logman stop, EtwEventWrite patch) to blind telemetry.
     artifact_type: evtx
-    query: 'evtx.event_id:4104 AND (message:*EtwEventWrite* OR message:*logman*stop* OR message:*Remove-EtwTraceProvider*)'
+    query: 'evtx.event_id:4104 AND (message:*EtwEventWrite* OR message:*logman*stop* OR message.ci:*Remove-EtwTraceProvider*)'
     threshold: 1
     mitre: [T1562.006]
     level: high
@@ -58,7 +58,7 @@ rules:
       Sysmon was uninstalled (-u) or its config swapped (-c) from the command
       line — a direct attempt to stop endpoint recording.
     artifact_type: evtx
-    query: 'evtx.event_id:4688 AND message:*sysmon* AND (message:*-u* OR message:*-c*)'
+    query: 'evtx.event_id:4688 AND message:*sysmon* AND (message.ci:*-u* OR message.ci:*-c*)'
     threshold: 1
     mitre: [T1562.001]
     level: high
@@ -68,7 +68,7 @@ rules:
       wmic product call uninstall was used to silently remove an installed
       security product.
     artifact_type: evtx
-    query: 'evtx.event_id:4688 AND message:*wmic* AND message:*product* AND message:*uninstall*'
+    query: 'evtx.event_id:4688 AND message:*wmic* AND message:*product* AND message.ci:*uninstall*'
     threshold: 1
     mitre: [T1562.001]
     level: high
@@ -78,7 +78,7 @@ rules:
       bcdedit configured safeboot (optionally with network) — some ransomware
       and evasion tooling reboots into Safe Mode where most AV/EDR does not run.
     artifact_type: evtx
-    query: 'evtx.event_id:4688 AND message:*bcdedit* AND message:*safeboot*'
+    query: 'evtx.event_id:4688 AND message:*bcdedit* AND message.ci:*safeboot*'
     threshold: 1
     mitre: [T1562.009]
     level: medium

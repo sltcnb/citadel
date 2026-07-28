@@ -245,3 +245,45 @@ def test_bad_window_is_an_error(captured):
     with pytest.raises(rule_eval.RuleEvalError):
         rule_eval.evaluate("c1", {"query": "a:b", "threshold": 1, "correlation": {
             "distinct": "user.name", "min_distinct": 5, "window": "fortnight"}})
+
+
+# ── malformed queries must be visible, not silent ────────────────────────────
+# A rejected query means the rule can NEVER match. Reporting it as "no match" is
+# how several rules stayed dead indefinitely: an unescaped '/' makes
+# query_string read /.../ as a regex, an unescaped ':' is the field separator,
+# and a quote or bracket inside a wildcard is rejected outright.
+
+
+def _raiser(code, message):
+    def boom(method, path, body=None):
+        raise type("HTTPError", (Exception,), {"code": code})(message)
+
+    return boom
+
+
+def test_rejected_query_raises_instead_of_reporting_no_match(monkeypatch):
+    monkeypatch.setattr(
+        rule_eval, "es_req",
+        _raiser(400, "Failed to parse query [http.request_path.ci:*../*]"),
+    )
+    with pytest.raises(rule_eval.RuleEvalError) as exc:
+        rule_eval.evaluate("c1", {"query": "http.request_path.ci:*../*", "threshold": 1})
+    assert "cannot ever match" in str(exc.value)
+
+
+def test_missing_index_is_still_a_quiet_no_match(monkeypatch):
+    """A case legitimately may not hold that artifact type."""
+    monkeypatch.setattr(rule_eval, "es_req", _raiser(404, "index_not_found_exception"))
+    assert rule_eval.evaluate("c1", {"query": "a:b", "threshold": 1}) is None
+
+
+def test_missing_index_reported_as_400_is_not_treated_as_a_broken_rule(monkeypatch):
+    monkeypatch.setattr(rule_eval, "es_req", _raiser(400, "no such index [fo-case-c1-evtx]"))
+    assert rule_eval.evaluate("c1", {"query": "a:b", "threshold": 1}) is None
+
+
+def test_correlation_also_surfaces_a_rejected_query(monkeypatch):
+    monkeypatch.setattr(rule_eval, "es_req", _raiser(400, "Failed to parse query"))
+    with pytest.raises(rule_eval.RuleEvalError):
+        rule_eval.evaluate("c1", {"query": "a:*b/c*", "threshold": 1, "correlation": {
+            "group_by": "network.src_ip", "distinct": "user.name", "min_distinct": 5}})

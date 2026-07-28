@@ -15,7 +15,7 @@ rules:
       PowerShell was launched with -EncodedCommand or -enc.
       Base64-encoded commands are a common obfuscation technique.
     artifact_type: evtx
-    query: "evtx.event_id:4688 AND message:*powershell* AND (message:*-EncodedCommand* OR message:*-enc* OR message:*-e *)"
+    query: "evtx.event_id:4688 AND message:*powershell* AND (message.ci:*-EncodedCommand* OR message.ci:*-enc* OR message.ci:*-e *)"
     threshold: 1
     mitre: [T1059.001, T1027]
     level: high
@@ -65,7 +65,7 @@ rules:
       CertUtil used -urlcache or -decode to download or decode a file.
       A classic living-off-the-land binary technique for fetching malware.
     artifact_type: evtx
-    query: "evtx.event_id:4688 AND message:*certutil* AND (message:*-urlcache* OR message:*-decode* OR message:*http*)"
+    query: "evtx.event_id:4688 AND message:*certutil* AND (message.ci:*-urlcache* OR message.ci:*-decode* OR message:*http*)"
     threshold: 1
     mitre: [T1105, T1140]
     level: high
@@ -75,7 +75,7 @@ rules:
       A process started from a user-writable temp or AppData directory (EID 4688).
       Malware commonly drops and executes from these paths.
     artifact_type: evtx
-    query: "evtx.event_id:4688 AND (message:*\\\\Temp\\\\* OR message:*\\\\AppData\\\\Local\\\\Temp\\\\*)"
+    query: "evtx.event_id:4688 AND (message.ci:*\\\\Temp\\\\* OR message.ci:*\\\\AppData\\\\Local\\\\Temp\\\\*)"
     threshold: 1
     mitre: [T1036]
     level: medium
