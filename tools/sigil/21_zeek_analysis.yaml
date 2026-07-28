@@ -1,61 +1,137 @@
 category: Zeek Network Analysis
+# Rebuilt on the fields the Zeek parser actually indexes.
+#
+# Every rule here used a `zeek.<logtype>.<field>` shape — zeek.dns.qname,
+# zeek.conn.dst_port, zeek.http.uri — which the parser never produces. It splats
+# the log's raw TSV columns straight into the sub-object
+# (`"zeek": {"log_type": …, **row}`), so the real names are the Zeek column names
+# with NO log-type segment: zeek.query, zeek.duration, zeek.conn_state.
+# The five-tuple is additionally normalised into `network.*` for every log type,
+# and http.log into `http.*`, which is what these rules should prefer.
+#
+# Column names are taken from the parser's own reads (_build_message) and the
+# checked-in conn.log fixture, not from the Zeek documentation:
+#   conn  → ts uid id.orig_h id.orig_p id.resp_h id.resp_p proto duration conn_state
+#   dns   → query, answers, rcode_name
+#   http  → method, host, uri, version, status_code, resp_body_len, referrer,
+#           user_agent   (also normalised into http.*)
+#   ssl   → server_name, version, cipher
+#   ssh   → direction, client
+#   files → mime_type, filename
+#   notice→ note, msg          weird → name
 rules:
-  - name: DNS Query to Rare Domain
+  - name: DNS Query to a Rare or Throwaway TLD
     description: >-
-      A DNS query was made to a domain with an uncommon TLD.
-      Malware often uses rare TLDs for C2.
+      DNS queries for domains under TLDs disproportionately used for
+      short-lived C2 and phishing infrastructure. Kept at a threshold so a
+      single ad-network lookup is not a finding.
     artifact_type: zeek
-    query: "zeek.log_type:dns AND (zeek.dns.qname:*.xyz* OR zeek.dns.qname:*.top* OR zeek.dns.qname:*.club*)"
+    query: >-
+      zeek.log_type:dns AND (zeek.query.ci:*.xyz OR zeek.query.ci:*.top
+      OR zeek.query.ci:*.club OR zeek.query.ci:*.tk OR zeek.query.ci:*.gq
+      OR zeek.query.ci:*.duckdns.org OR zeek.query.ci:*.ngrok.io)
     threshold: 5
     mitre: [T1071.004]
     level: low
 
-  - name: Long DNS Query
+  - name: Long DNS Query — Possible Tunneling or DGA
     description: >-
-      A DNS query with an unusually long domain name.
-      May indicate DNS tunneling or DGA.
+      A DNS query name of 60 characters or more. Long labels are how DNS
+      tunnelling carries payload, and DGA names are typically long and random.
+
+      Uses a Lucene regexp for the length test. The parser emits no
+      ``qname_length`` field (the previous rule invented one), and query_string
+      cannot measure a string — but ``/.{60,}/`` can.
     artifact_type: zeek
-    query: "zeek.log_type:dns AND zeek.dns.qname_length:>50"
+    query: "zeek.log_type:dns AND zeek.query.ci:/.{60,}/"
     threshold: 1
-    mitre: [T1071.004]
+    mitre: [T1071.004, T1568.002]
     level: medium
 
-  - name: SSL Certificate with Self-Signed
+  - name: DNS Resolution Failures — Possible DGA
     description: >-
-      An SSL connection used a self-signed certificate.
-      Common in malware C2 to avoid certificate costs.
+      A burst of NXDOMAIN responses. Domain-generation algorithms try many
+      candidate names before one resolves, so failed lookups cluster.
+      ``rcode_name`` is read by the parser's own message builder, so the column
+      is present whenever dns.log includes it.
     artifact_type: zeek
-    query: "zeek.log_type:ssl AND (zeek.ssl.cert_subject:*self* OR zeek.ssl.cert_issuer:*self*)"
-    threshold: 1
-    mitre: [T1587.003]
-    level: low
+    query: "zeek.log_type:dns AND zeek.rcode_name:NXDOMAIN"
+    threshold: 25
+    mitre: [T1568.002]
+    level: medium
 
-  - name: HTTP Download of Executable
+  - name: TLS Certificate Failed Validation
     description: >-
-      An executable file was downloaded over HTTP.
-      May indicate malware delivery.
+      A TLS connection whose certificate did not validate — self-signed,
+      expired, or an untrusted chain. Common for C2 operators who need TLS but
+      not a real certificate.
+
+      Reads ``validation_status``, a standard ssl.log column reached via the
+      parser's splat of all columns. Where ssl.log was logged without it the
+      rule simply does not fire, rather than misreporting. The previous version
+      queried ``zeek.ssl.cert_issuer``, a field shape the parser never emits.
     artifact_type: zeek
-    query: "zeek.log_type:http AND (zeek.http.uri:*.exe* OR zeek.http.uri:*.dll*)"
+    query: >-
+      zeek.log_type:ssl AND (zeek.validation_status.ci:*self*signed*
+      OR zeek.validation_status.ci:*unable*to*verify* OR
+      zeek.validation_status.ci:*expired* OR zeek.validation_status.ci:*untrusted*)
+    threshold: 1
+    mitre: [T1587.003, T1071.001]
+    level: medium
+
+  - name: HTTP Download of an Executable
+    description: >-
+      An executable, script, or installer fetched over cleartext HTTP.
+
+      Queries the NORMALISED ``http.request_path`` that the parser populates
+      from the ``uri`` column, rather than the invented ``zeek.http.uri``. This
+      also makes the rule work against any other HTTP source (access logs,
+      Suricata) that fills the same field.
+    artifact_type: zeek
+    query: >-
+      zeek.log_type:http AND (http.request_path.ci:*.exe OR
+      http.request_path.ci:*.dll OR http.request_path.ci:*.ps1 OR
+      http.request_path.ci:*.scr OR http.request_path.ci:*.hta OR
+      http.request_path.ci:*.jar OR http.request_path.ci:*.msi)
     threshold: 1
     mitre: [T1105]
     level: medium
 
-  - name: Connection to Non-Standard Port
+  - name: Connection to a Non-Standard Port
     description: >-
-      A connection was made to an unusual port.
-      Malware often uses non-standard ports for C2.
+      Outbound connections to ports outside the common service set. Individually
+      unremarkable — hence the threshold and the ``low`` severity — but a useful
+      pivot next to a beaconing or C2 finding.
+
+      Uses ``network.dst_port``, which the parser fills from ``id.resp_p`` for
+      every log type. ``zeek.conn.dst_port`` never existed.
     artifact_type: zeek
-    query: "zeek.log_type:conn AND NOT (zeek.conn.dst_port:80 OR zeek.conn.dst_port:443 OR zeek.conn.dst_port:53 OR zeek.conn.dst_port:25)"
+    query: >-
+      zeek.log_type:conn AND NOT (network.dst_port:80 OR network.dst_port:443
+      OR network.dst_port:53 OR network.dst_port:25 OR network.dst_port:22
+      OR network.dst_port:123 OR network.dst_port:445 OR network.dst_port:3389)
     threshold: 10
     mitre: [T1571]
     level: low
 
-  - name: Beaconing Behavior
+  - name: Beaconing — Many Short Connections to One Destination
     description: >-
-      Regular periodic connections to the same destination.
-      Indicates potential C2 beaconing.
+      One internal host opened 20 or more connections to the same destination
+      IP and port. Correlation is what makes this a beacon: 20 connections
+      spread across 20 destinations is ordinary browsing, which the previous
+      rule (a bare ``zeek.conn.duration:>0`` with a count threshold) could not
+      distinguish — it matched every connection with a duration.
+
+      True periodicity needs interval variance, which a Lucene query cannot
+      express; the repetition-to-one-destination shape is the part that is
+      expressible, and it is the strong half of the signal.
     artifact_type: zeek
-    query: "zeek.log_type:conn AND zeek.conn.duration:>0"
-    threshold: 20
+    query: "zeek.log_type:conn AND network.dst_ip:*"
+    threshold: 1
+    correlation:
+      group_by: network.dst_ip
+      distinct: network.src_port
+      min_distinct: 20
+      window: 30m
     mitre: [T1071.001]
     level: high
