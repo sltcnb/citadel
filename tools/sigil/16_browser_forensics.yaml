@@ -1,61 +1,173 @@
 category: Browser Forensics
+# Rebuilt against the `browser` parser (tools/babel/browser/browser_plugin.py),
+# which is what ingesting History / places.sqlite / Login Data actually produces.
+#
+# Every rule here previously targeted `artifact_type: hindsight` with fields like
+# hindsight.record_type and hindsight.download.host. The Hindsight MODULE indexes
+# only its generic hit shape — rule_title, level, level_int, section — because it
+# stores each finding's detail as a plain string in details_raw, which the
+# indexer cannot expand. None of those fields have ever existed, so all six rules
+# returned zero on every case.
+#
+# Verified fields (browser sub-object): data_type, url, title, filename,
+#   target_path, danger_type, state, mime_type, total_bytes, received_bytes,
+#   username, action_url, signon_realm, browser_type, visit_count, typed_count,
+#   transition, times_used, date_last_used, page_url, redirects, …
+# Verified data_type values: history, download, login, autofill, formhistory,
+#   bookmark, cookie, favicon, shortcut, top_site
+# Verified danger_type values: not_dangerous, dangerous_file, dangerous_url,
+#   dangerous_content, maybe_dangerous_content, uncommon_content, user_validated,
+#   dangerous_host, potentially_unwanted
+# Verified state values: in_progress, complete, cancelled, interrupted
 rules:
-  - name: Browser Extension Installed
+  - name: Browser Flagged a Download as Dangerous
     description: >-
-      A new browser extension was installed.
-      Malicious extensions can steal data and monitor activity.
-    artifact_type: hindsight
-    query: "hindsight.record_type:extension AND hindsight.extension.event:install"
+      Chrome's own Safe Browsing verdict on a completed download was anything
+      other than "not dangerous" — dangerous_file, dangerous_url,
+      dangerous_host, potentially_unwanted, and so on.
+
+      This is the strongest signal in the browser artifacts and nothing was
+      using it: the verdict is the browser's own classification recorded at
+      download time, not an inference. `user_validated` is excluded because it
+      means the user was warned and explicitly chose to keep the file — still
+      worth knowing, but it is the "Downloaded Despite a Warning" rule below.
+    artifact_type: browser
+    query: >-
+      browser.data_type:download AND NOT
+      (browser.danger_type:not_dangerous OR browser.danger_type:user_validated)
     threshold: 1
-    mitre: [T1176]
+    mitre: [T1189, T1204.002]
+    level: high
+
+  - name: Download Kept Despite a Browser Warning
+    description: >-
+      A download the browser flagged as dangerous was explicitly kept by the
+      user (danger_type user_validated). Someone clicked through a Safe Browsing
+      warning — the classic delivery step for a social-engineered payload, and
+      evidence of user action rather than a drive-by.
+    artifact_type: browser
+    query: "browser.data_type:download AND browser.danger_type:user_validated"
+    threshold: 1
+    mitre: [T1204.002]
+    level: high
+
+  - name: Executable or Script Downloaded
+    description: >-
+      A download landed with an executable, script, or container extension.
+      Matched on target_path (where the file was written on disk) as well as the
+      source URL, so a payload renamed by the server is still caught.
+
+      Archives and disk images are included because they are the standard
+      wrapper for bypassing mark-of-the-web.
+    artifact_type: browser
+    query: >-
+      browser.data_type:download AND (browser.target_path.ci:*.exe OR
+      browser.target_path.ci:*.dll OR browser.target_path.ci:*.scr OR
+      browser.target_path.ci:*.ps1 OR browser.target_path.ci:*.bat OR
+      browser.target_path.ci:*.vbs OR browser.target_path.ci:*.js OR
+      browser.target_path.ci:*.hta OR browser.target_path.ci:*.jar OR
+      browser.target_path.ci:*.iso OR browser.target_path.ci:*.img OR
+      browser.target_path.ci:*.vhd OR browser.target_path.ci:*.lnk)
+    threshold: 1
+    mitre: [T1105, T1204.002]
     level: medium
 
-  - name: Download from Unusual Domain
+  - name: Download Direct from an IP Address
     description: >-
-      A file was downloaded from a suspicious or rare domain.
-      May indicate malware delivery or phishing site.
-    artifact_type: hindsight
-    query: "hindsight.record_type:download AND NOT (hindsight.download.host:*google* OR hindsight.download.host:*microsoft* OR hindsight.download.host:*github*)"
+      A file was downloaded from a bare IPv4 host rather than a domain name.
+      Legitimate distribution uses names; IP-literal URLs avoid domain
+      reputation and DNS logging.
+
+      Uses a Lucene regexp (`/.../`) rather than wildcards. Wildcards cannot
+      express a dotted quad: `?` matches exactly one character, so a fixed
+      `???.???.???.???` shape misses 185.12.3.44, and `*.*.*.*` matches every
+      domain name. The regexp is anchored on `//` and `/` so it tests the host
+      position specifically — verified to match an IP-literal URL and not
+      example.com.
+    artifact_type: browser
+    query: >-
+      browser.data_type:download AND
+      browser.url.ci:/.*\/\/[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\/.*/
     threshold: 1
     mitre: [T1105]
     level: medium
 
-  - name: InPrivate Incognito Mode Usage
+  - name: Download Interrupted or Cancelled
     description: >-
-      Browser was used in private browsing mode.
-      Attackers use private mode to avoid leaving traces.
-    artifact_type: hindsight
-    query: "hindsight.record_type:startup AND (hindsight.browser.mode:incognito OR hindsight.browser.mode:private)"
+      A download did not complete (state interrupted or cancelled). Frequently
+      benign — a lost connection or a user changing their mind — but it is also
+      what an endpoint AV blocking a payload mid-transfer looks like, and the
+      partial file may still be on disk.
+
+      Deliberately `low`: on its own this is context, not a finding.
+    artifact_type: browser
+    query: >-
+      browser.data_type:download AND (browser.state:interrupted OR
+      browser.state:cancelled)
     threshold: 1
-    mitre: [T1070]
+    mitre: [T1105]
     level: low
 
-  - name: Credential Form Submission to Rare Domain
+  - name: Saved Credentials for a Non-Corporate Site
     description: >-
-      A login form was submitted to an uncommon domain.
-      May indicate credential phishing attack.
-    artifact_type: hindsight
-    query: "hindsight.record_type:form_and_field_data AND hindsight.form.action:submit AND NOT (hindsight.form.domain:*google* OR hindsight.form.domain:*microsoft* OR hindsight.form.domain:*facebook*)"
-    threshold: 1
-    mitre: [T1056.003]
-    level: high
+      Credentials stored in the browser's password manager for a site outside
+      the common corporate identity providers. These are recoverable from Login
+      Data with the DPAPI key and are a standard credential-access target, so
+      the inventory matters during an incident.
 
-  - name: Multiple Failed Login Attempts
-    description: >-
-      Multiple failed form submissions detected.
-      May indicate brute force attack or credential stuffing.
-    artifact_type: hindsight
-    query: "hindsight.record_type:form_and_field_data AND hindsight.form.result:failure"
-    threshold: 5
-    mitre: [T1110]
+      Excluding the mainstream IdPs keeps this to the accounts worth reviewing
+      rather than listing every saved password. It stays `medium` because saved
+      credentials are normal user behaviour, not evidence of compromise.
+    artifact_type: browser
+    query: >-
+      browser.data_type:login AND NOT (browser.signon_realm.ci:*google.com*
+      OR browser.signon_realm.ci:*microsoftonline.com* OR
+      browser.signon_realm.ci:*microsoft.com* OR browser.signon_realm.ci:*okta.com*
+      OR browser.signon_realm.ci:*github.com*)
+    threshold: 1
+    mitre: [T1555.003]
     level: medium
 
-  - name: Browser Visited Known Malicious Domain
+  - name: Typed URL to a Rare or Suspicious Host
     description: >-
-      Browser accessed a domain flagged as malicious.
-      Indicates potential drive-by download or phishing.
-    artifact_type: hindsight
-    query: "hindsight.record_type:visit AND (hindsight.visit.domain:*malware* OR hindsight.visit.domain:*phishing* OR hindsight.visit.domain:*evil*)"
+      A URL the user typed directly (typed_count > 0) pointing at a host with a
+      TLD or shape commonly used for throwaway infrastructure. A typed URL is a
+      deliberate act, which separates it from the redirect noise that fills
+      history.
+    artifact_type: browser
+    query: >-
+      browser.data_type:history AND browser.typed_count:>0 AND
+      (browser.url.ci:*.top\/* OR browser.url.ci:*.xyz\/* OR browser.url.ci:*.tk\/*
+      OR browser.url.ci:*.gq\/* OR browser.url.ci:*.ru\/* OR browser.url.ci:*.su\/*
+      OR browser.url.ci:*duckdns* OR browser.url.ci:*ngrok* OR
+      browser.url.ci:*pastebin* OR browser.url.ci:*anonfiles*)
     threshold: 1
-    mitre: [T1189]
-    level: high
+    mitre: [T1071.001]
+    level: medium
+
+# ── Removed: no data source in these artifacts ────────────────────────────────
+#
+# "Browser Extension Installed" (T1176)
+#   The parser reads History, places.sqlite, Login Data, cookies, autofill,
+#   bookmarks, favicons, shortcuts and top sites. Extension inventory lives in
+#   the profile's Extensions/ directory and Secure Preferences, which it does not
+#   parse — there is no data_type for it. Detecting this needs parser support
+#   first.
+#
+# "InPrivate / Incognito Mode Usage" (T1070)
+#   Incognito browsing is, by design, never written to the history database.
+#   There is nothing in these artifacts to match; the evidence would be in memory
+#   or in prefetch/process telemetry.
+#
+# "Multiple Failed Login Attempts" (T1110)
+#   Browser artifacts record no authentication outcome — form history stores
+#   field values, not submission results. Failed logons are an EVTX/auth-log
+#   question (see 02_authentication.yaml, which has the correlation rules for it).
+#
+# "Browser Visited Known Malicious Domain" (T1189)
+#   Matched url:*malware* / *phishing* / *evil*, which only ever catches a domain
+#   that says so in its name. Reputation matching against real intel is what the
+#   cti_match module does, over the same indexed URLs — a substring rule here
+#   would duplicate it badly.
+#
+# A rule that cannot match reads as coverage that does not exist.
