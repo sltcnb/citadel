@@ -5,12 +5,17 @@ from __future__ import annotations
 import json
 import logging
 import time
+from datetime import UTC, datetime
 
 import redis_keys as rk
 
 from config import get_redis
 
 logger = logging.getLogger(__name__)
+
+
+def _now_iso() -> str:
+    return datetime.now(UTC).isoformat()
 MODULE_RUN_TTL = 604800  # 7 days
 MALWARE_RUNS_MAX = 200  # keep last 200 standalone runs
 
@@ -31,6 +36,10 @@ def create_module_run(
         "module_id": module_id,
         "status": "PENDING",
         "source_files": json.dumps(source_files),
+        # created_at is set here and never reset (retries only clear started_at/
+        # completed_at), so the list stays in launch order even for runs that
+        # failed at dispatch and therefore never got a started_at.
+        "created_at": _now_iso(),
         "started_at": "",
         "completed_at": "",
         "total_hits": "0",
@@ -71,11 +80,15 @@ def list_case_module_runs(case_id: str) -> list[dict]:
         run = get_module_run(rid)
         if run:
             runs.append(run)
-    return sorted(
-        runs,
-        key=lambda x: x.get("started_at") or x.get("run_id", ""),
-        reverse=True,
-    )
+    return sorted(runs, key=_run_sort_key, reverse=True)
+
+
+def _run_sort_key(run: dict) -> tuple[str, str]:
+    """Newest-first ordering key. created_at is the launch instant and survives
+    retries; started_at covers records written before created_at existed. The
+    run_id breaks ties so runs launched in the same batch keep a stable order
+    instead of shuffling between polls."""
+    return (run.get("created_at") or run.get("started_at") or "", run.get("run_id", ""))
 
 
 def update_module_run(run_id: str, **fields) -> None:
@@ -111,6 +124,19 @@ def reset_module_run_for_retry(run_id: str) -> None:
         },
     )
     r.expire(key, MODULE_RUN_TTL)
+
+
+def delete_module_run(run_id: str, case_id: str = "") -> None:
+    """Remove a module run's Redis state: the run hash, its buffered log stream,
+    any leftover cancel flag, and its membership in the case (and standalone
+    malware) indexes. Object-store output and indexed hits are purged by the
+    caller — see routers/modules.py::_purge_module_run."""
+    r = get_redis()
+    r.delete(rk.module_run(run_id), rk.module_log(run_id), rk.module_cancel(run_id))
+    if case_id:
+        r.srem(rk.case_module_runs(case_id), run_id)
+    # Cheap unconditionally: a case run was never in the malware index anyway.
+    r.zrem(rk.MALWARE_RUNS, run_id)
 
 
 def list_malware_runs() -> list[dict]:

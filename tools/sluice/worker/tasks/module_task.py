@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import csv
 import importlib.util
+import ipaddress
 import json
 import logging
 import os
@@ -3231,6 +3232,13 @@ def _run_cuckoo(
             return json.loads(resp.read())
 
     results: list[dict] = []
+    # Per-file outcome tracking. A submission/analysis error is NOT a detection:
+    # emitting it as a hit made a run where every submission failed look like a
+    # COMPLETED run with findings, and those "findings" then flowed into reports
+    # as confirmed sandbox evidence. Errors are counted here, logged to stderr,
+    # and — if nothing analysed at all — raised so the run is marked FAILED.
+    analysed: list[str] = []
+    failures: list[tuple[str, str]] = []
 
     for file_path in sorted(sources_dir.rglob("*")):
         if not file_path.is_file():
@@ -3248,14 +3256,14 @@ def _run_cuckoo(
                 )
             task_id = resp.get("task_id")
             if not task_id:
-                tool_meta["stderr"] += f"No task_id returned for {file_path.name}\n"
-                continue
+                raise RuntimeError("Cuckoo accepted the upload but returned no task_id")
 
             tool_meta["stdout"] += f"  Task ID: {task_id} — polling for completion…\n"
 
             # Poll for completion (max 10 min)
             max_wait = 600
             waited = 0
+            status = ""
             while waited < max_wait:
                 time.sleep(15)
                 waited += 15
@@ -3265,6 +3273,14 @@ def _run_cuckoo(
                     break
                 if status in ("failed_analysis", "failed_processing"):
                     raise RuntimeError(f"Cuckoo task {task_id} failed: {status}")
+            if status != "reported":
+                # Timed out mid-analysis. Fetching the report anyway yielded a
+                # partial/empty one that scored 0 — reported as "clean" when the
+                # file was never actually analysed.
+                raise RuntimeError(
+                    f"Cuckoo task {task_id} did not finish within {max_wait}s "
+                    f"(last status: {status or 'unknown'})"
+                )
 
             # Fetch report
             report = _cuckoo_req(f"/tasks/report/{task_id}")
@@ -3346,23 +3362,25 @@ def _run_cuckoo(
             )
 
             tool_meta["stdout"] += f"  Score: {score}/10 — {len(signatures)} signature(s)\n"
+            analysed.append(file_path.name)
 
         except Exception as exc:
+            failures.append((file_path.name, str(exc)))
             tool_meta["stderr"] += f"Cuckoo error for {file_path.name}: {exc}\n"
-            results.append(
-                {
-                    "id": str(uuid.uuid4()),
-                    "timestamp": "",
-                    "level": "low",
-                    "level_int": LEVEL_INT["low"],
-                    "rule_title": "Cuckoo: Submission Error",
-                    "computer": file_path.name,
-                    "details_raw": json.dumps({"error": str(exc), "file": file_path.name}),
-                    "message": f"{file_path.name} — {exc}",
-                }
-            )
 
-    tool_meta["log"] += f"\nCuckoo analysis: {len(results)} findings\n"
+    if failures and not analysed:
+        # Nothing was analysed — the run failed, it did not "complete with
+        # findings". Surfacing this as FAILED is what lets the analyst retry
+        # instead of trusting an empty sandbox verdict.
+        detail = "; ".join(f"{name}: {err}" for name, err in failures[:5])
+        raise RuntimeError(
+            f"Cuckoo analysed none of the {len(failures)} submitted file(s) — {detail}"
+        )
+
+    tool_meta["log"] += (
+        f"\nCuckoo analysis: {len(results)} finding(s) from {len(analysed)} analysed file(s)"
+        + (f", {len(failures)} file(s) failed (see stderr)\n" if failures else "\n")
+    )
     return results
 
 
@@ -3372,6 +3390,62 @@ def _run_cuckoo(
 
 _CTI_IOC_TYPES = ("hash", "ip", "domain", "url", "email", "filename")
 _CTI_TYPE_KEY = rk.cti_ioc_type  # callable(ioc_type) → key string
+
+
+def _cti_ip_is_internal(value: str) -> bool:
+    """True for any address that cannot be a routable internet threat: RFC1918,
+    loopback, link-local (incl. 169.254.169.254 metadata), CGNAT, multicast,
+    reserved and unspecified.
+
+    Computed from the value itself rather than trusting the ``is_private`` flag
+    the CTI store wrote at ingest time: feeds pulled before that flag existed
+    (and any IOC written by a path that doesn't set it) carried no flag, so
+    10.x/192.168.x addresses came back as HIGH "threat intel matches" — every
+    internal host in the case lighting up as a compromise indicator.
+    """
+    try:
+        ip = ipaddress.ip_address(str(value).split("/")[0].strip())
+    except ValueError:
+        return False
+    if (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+    ):
+        return True
+    # Carrier-grade NAT — routable on paper, never an actionable indicator.
+    return ip.version == 4 and ip in ipaddress.ip_network("100.64.0.0/10")
+
+
+# Hostname suffixes that only ever name internal infrastructure. A feed listing
+# one of these is describing the analyst's own estate, not a threat.
+_CTI_INTERNAL_HOST_SUFFIXES = (
+    ".local",
+    ".localdomain",
+    ".internal",
+    ".intranet",
+    ".lan",
+    ".home",
+    ".corp",
+    ".test",
+    ".invalid",
+    ".example",
+)
+
+
+def _cti_is_internal(ioc_type: str, value: str) -> bool:
+    """True when *value* denotes internal/non-routable infrastructure for its type."""
+    v = str(value or "").strip().lower()
+    if not v:
+        return False
+    if ioc_type == "ip":
+        return _cti_ip_is_internal(v)
+    if ioc_type == "domain":
+        return v in ("localhost",) or v.endswith(_CTI_INTERNAL_HOST_SUFFIXES)
+    return False
 
 _CTI_MATCH_FIELDS: dict[str, list[str]] = {
     "hash": [
@@ -3619,7 +3693,9 @@ def _run_cti_match(
                         ind["event_fo_id"] = latest.get("fo_id", "")
                     continue
                 is_own = bool(obj.get("is_own"))
-                is_private = bool(obj.get("is_private"))
+                # Re-derive rather than trust the stored flag — see
+                # _cti_ip_is_internal for why the flag can't be relied on.
+                is_private = bool(obj.get("is_private")) or _cti_is_internal(ioc_type, value)
                 is_allow = value.lower() in allow.get(ioc_type, ())
                 indicators[key] = {
                     "ioc_type": ioc_type,
@@ -3685,8 +3761,19 @@ def _run_cti_match(
             "is_private": ind["is_private"],
         }
 
+    # Internal / own-infrastructure / allowlisted indicators are SUPPRESSED by
+    # default: an analyst asking "what did threat intel match" does not want
+    # their own 10.x hosts and localhost listed as threat-intel hits — that
+    # noise buried the handful of real external matches and made every report
+    # read as a compromise. Pass include_internal=true to keep them (they come
+    # back tagged is_private/is_own at "info", as before).
+    include_internal = str(params.get("include_internal", "")).lower() in ("1", "true", "yes")
+    suppressed = 0
     for ind in indicators.values():
         obj = ind["obj"]
+        if ind["sev"] != "high" and not include_internal:
+            suppressed += 1
+            continue
         # A handful of sample event ids for quick drill-down/inspect (cheap);
         # the full set is reachable via pivot_query.
         if ind["sev"] == "high":
@@ -3698,12 +3785,16 @@ def _run_cti_match(
     total_hits = sum(i["event_count"] for i in indicators.values())
     tool_meta["log"] += (
         f"{len(indicators)} distinct indicator(s) ({real} external) → "
-        f"{len(results)} aggregated detection(s)\n"
+        f"{len(results)} aggregated detection(s)"
+        + (f", {suppressed} internal/own/allowlisted suppressed\n" if suppressed else "\n")
     )
     tool_meta["stdout"] += (
         f"IOCs in DB         : {total_iocs}\n"
         f"Distinct indicators: {len(indicators)} ({real} external, {len(indicators) - real} own/private)\n"
         f"Timeline detections: {len(results)} (one aggregated row per indicator)\n"
+        f"Suppressed         : {suppressed} internal/own/allowlisted"
+        + ("" if include_internal else " (pass include_internal=true to keep them)")
+        + "\n"
         f"Total event hits   : {total_hits}\n"
     )
     return results

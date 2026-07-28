@@ -948,6 +948,14 @@ GET    /cases/{id}/module-runs           list runs for a case
 GET    /module-runs/{run_id}             get run with full results_preview
 GET    /module-runs/{run_id}/log-stream  SSE stream of live log lines (text/event-stream)
                                            each event: {text: str}  final: {done: true, status}
+POST   /module-runs/{run_id}/retry       re-dispatch a FAILED or stuck PENDING run
+POST   /module-runs/{run_id}/cancel      co-operative cancel (honoured at phase boundaries)
+DELETE /module-runs/{run_id}             delete a run + its results: indexed detections
+                                           and findings, stored output/artifacts, Redis
+                                           record. 409 while PENDING/RUNNING — cancel first
+DELETE /cases/{id}/module-runs           bulk delete  ?status=FAILED (default; comma-list
+                                           or 'all')  &module_id=  — active runs skipped
+DELETE /malware-analysis/runs            same sweep over standalone malware runs
 POST   /modules/yara/validate            validate YARA rule syntax  {rules}`} />
 
             <H3>Studio (rule playground &amp; testers)</H3>

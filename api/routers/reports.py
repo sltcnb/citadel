@@ -285,8 +285,109 @@ def _fetch_notes(case_id: str) -> str:
         return s
 
 
+def _fetch_redis_list_json(key: str, limit: int = 10) -> list[dict]:
+    try:
+        raw = get_redis().lrange(key, 0, limit - 1) or []
+    except Exception:
+        return []
+    out = []
+    for item in raw:
+        try:
+            out.append(json.loads(item.decode() if isinstance(item, bytes) else item))
+        except Exception:
+            continue
+    return out
+
+
+def _ai_narrative_from_artifacts(case_id: str) -> dict | None:
+    """Compose an AI narrative from the AI work that DID happen on this case when
+    no final AI report was generated.
+
+    The exported report used to look at ``case:{id}:ai:report`` alone, so a case
+    with a risk assessment, autopilot runs and investigation sessions still
+    printed "No AI narrative" — the analyst's AI work was simply invisible in the
+    deliverable. Anything rendered here is clearly labelled as the underlying
+    assessment rather than a written report.
+    """
+    analysis = _fetch_redis_json(f"case:{case_id}:ai:analysis")
+    agent_runs = _fetch_redis_list_json(f"case:{case_id}:ai:agent_runs", 3)
+    investigations = _fetch_redis_list_json(f"case:{case_id}:ai:investigations", 5)
+    if not (analysis or agent_runs or investigations):
+        return None
+
+    parts: list[str] = ["# AI assessment (no final report generated)"]
+    parts.append(
+        "_Composed from the AI analysis performed on this case. It is the "
+        "underlying assessment, not a reviewed final report._"
+    )
+    newest = ""
+    model = ""
+
+    if analysis:
+        newest = max(newest, analysis.get("analyzed_at") or "")
+        model = model or analysis.get("model_used") or ""
+        parts.append("\n## Risk assessment")
+        risk = analysis.get("risk_level") or "unknown"
+        score = analysis.get("risk_score")
+        parts.append(f"**Risk:** {risk}" + (f" ({score}/10)" if score is not None else ""))
+        if analysis.get("executive_summary"):
+            parts.append(analysis["executive_summary"])
+        for label, key in (
+            ("Key findings", "key_findings"),
+            ("Recommended actions", "recommended_actions"),
+            ("MITRE techniques", "mitre_techniques"),
+        ):
+            items = analysis.get(key) or []
+            if items:
+                parts.append(f"\n**{label}**")
+                parts += [f"- {i}" for i in items]
+
+    for run in agent_runs:
+        newest = max(newest, run.get("analyzed_at") or "")
+        model = model or run.get("model_used") or ""
+        final = run.get("final") or {}
+        parts.append(f"\n## Autopilot investigation — {run.get('circumstance') or 'no scenario'}")
+        if run.get("stopped_reason") and run["stopped_reason"] != "concluded":
+            parts.append(f"_Incomplete: {run['stopped_reason'].replace('_', ' ')}._")
+        if final.get("incident_confirmed"):
+            parts.append(f"**Incident confirmed:** {final['incident_confirmed']}")
+        if final.get("verdict"):
+            parts.append(final["verdict"])
+        for label, key in (("Evidence", "evidence"), ("Indicators", "indicators")):
+            items = final.get(key) or []
+            if items:
+                parts.append(f"\n**{label}**")
+                parts += [f"- {i}" for i in items]
+
+    for inv in investigations:
+        newest = max(newest, inv.get("analyzed_at") or "")
+        model = model or inv.get("model_used") or ""
+        parts.append(f"\n## Investigation session — {inv.get('circumstance') or 'no scenario'}")
+        if inv.get("narrative"):
+            parts.append(inv["narrative"])
+        if inv.get("indicators"):
+            parts.append("**Indicators:** " + ", ".join(str(i) for i in inv["indicators"]))
+
+    return {
+        "content": "\n\n".join(p for p in parts if p),
+        "generated_at": newest,
+        "model_used": model,
+        "source": "derived",
+        "derived_from": {
+            "risk_assessment": bool(analysis),
+            "autopilot_runs": len(agent_runs),
+            "investigation_sessions": len(investigations),
+        },
+    }
+
+
 def _fetch_ai_report(case_id: str) -> dict | None:
-    return _fetch_redis_json(f"case:{case_id}:ai:report") or None
+    """The written AI report if one exists, else a narrative derived from the
+    case's other AI artifacts (see _ai_narrative_from_artifacts)."""
+    doc = _fetch_redis_json(f"case:{case_id}:ai:report") or None
+    if doc and (doc.get("content") or "").strip():
+        return doc
+    return _ai_narrative_from_artifacts(case_id)
 
 
 def _fetch_module_runs(case_id: str) -> list[dict]:
@@ -298,11 +399,11 @@ def _fetch_module_runs(case_id: str) -> list[dict]:
         runs = run_svc.list_case_module_runs(case_id) or []
     except Exception:
         return []
+    # Every run is listed, including FAILED/CANCELLED ones: the rendered table
+    # carries a status column, so an incomplete scanner is visible rather than
+    # implied to have found nothing.
     out = []
     for r in runs:
-        if r.get("status") not in ("COMPLETED", "completed", None):
-            # still surface running/failed, but completed first
-            pass
         out.append(
             {
                 "module_id": r.get("module_id"),
@@ -366,6 +467,9 @@ def _build_report_data(case: dict, case_id: str) -> dict:
         "has_ai": bool(ai_report and (ai_report.get("content") or "").strip()),
         "ai_model": (ai_report or {}).get("model_used", ""),
         "ai_generated_at": (ai_report or {}).get("generated_at", ""),
+        # "derived" = assembled from the case's AI analysis because no final AI
+        # report was generated; the manifest says so instead of claiming a report.
+        "ai_source": (ai_report or {}).get("source", ""),
     }
 
     return {

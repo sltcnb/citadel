@@ -343,12 +343,55 @@ def _ensure_ioc_hash(r: redis_lib.Redis, type_key: str) -> None:
     _IOC_KEY_MIGRATED.add(type_key)
 
 
+# Carrier-grade NAT: routable on paper, never an actionable indicator.
+_CGNAT_NETWORK = ipaddress.ip_network("100.64.0.0/10")
+
+# Hostname suffixes that only ever name internal infrastructure.
+_INTERNAL_HOST_SUFFIXES = (
+    ".local", ".localdomain", ".internal", ".intranet", ".lan",
+    ".home", ".corp", ".test", ".invalid", ".example",
+)
+
+
 def _ip_is_private(value: str) -> bool:
+    """True for any address that cannot be a routable internet threat.
+
+    Broader than ``_PRIVATE_NETWORKS`` (which exists for SSRF checks): also
+    covers CGNAT, multicast, reserved and unspecified space, so an internal
+    address never gets stored as a matchable threat indicator.
+    """
     try:
-        ip = ipaddress.ip_address(value.split("/")[0])
+        ip = ipaddress.ip_address(value.split("/")[0].strip())
     except ValueError:
         return False
-    return any(ip in net for net in _PRIVATE_NETWORKS)
+    if (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+    ):
+        return True
+    return ip.version == 4 and ip in _CGNAT_NETWORK
+
+
+def _is_internal_ioc(ioc_type: str, value: str) -> bool:
+    """True when *value* denotes internal infrastructure for its IOC type.
+
+    Derived from the value itself: the ``is_private`` flag on a stored IOC is
+    only as good as the code that wrote it, and feeds ingested before the flag
+    existed carry nothing — which is how 10.x/192.168.x addresses ended up
+    reported as HIGH threat-intel matches.
+    """
+    v = str(value or "").strip().lower()
+    if not v:
+        return False
+    if ioc_type == "ip":
+        return _ip_is_private(v)
+    if ioc_type == "domain":
+        return v == "localhost" or v.endswith(_INTERNAL_HOST_SUFFIXES)
+    return False
 
 
 # Operator-defined "own" public networks — their org's egress/hosting IPs. IOCs
@@ -450,8 +493,11 @@ def _store_ioc(
         "threat_type": threat_type or existing.get("threat_type", ""),
         "tags": merged_tags,
     }
+    if ioc_type in ("ip", "domain"):
+        # Internal-infrastructure IOCs are stored but flagged, so matchers can
+        # keep them out of threat results (an internal domain/IP is not a threat).
+        ioc_obj["is_private"] = _is_internal_ioc(ioc_type, value)
     if ioc_type == "ip":
-        ioc_obj["is_private"] = _ip_is_private(value)
         ioc_obj["is_own"] = _ip_is_own(value, r)
     ioc_json = json.dumps(ioc_obj, sort_keys=True)
 
@@ -1471,7 +1517,7 @@ def match_case_iocs(
                         ind["matched_fields"].append(field)
                 else:
                     is_own = bool(obj.get("is_own"))
-                    is_private = bool(obj.get("is_private"))
+                    is_private = bool(obj.get("is_private")) or _is_internal_ioc(ioc_type, value)
                     is_allow = value.lower() in allow.get(ioc_type, ())
                     indicators[key] = {
                         "ioc_type": ioc_type,

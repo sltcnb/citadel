@@ -56,6 +56,10 @@ _EN: dict[str, str] = {
     "m_saved": "{n} saved search(es)",
     "m_killchains": "{n} correlated kill chain(s)",
     "m_ai_yes": "AI narrative summary included ({model})",
+    "m_ai_derived": (
+        "AI assessment included ({model}) — assembled from this case's AI "
+        "analysis; no final AI report was generated"
+    ),
     "m_ai_no": "No AI narrative (deterministic report)",
     # saved searches
     "saved_title": "Saved searches",
@@ -147,6 +151,10 @@ _FR: dict[str, str] = {
     "m_saved": "{n} recherche(s) enregistrée(s)",
     "m_killchains": "{n} chaîne(s) d'attaque corrélée(s)",
     "m_ai_yes": "Synthèse IA incluse ({model})",
+    "m_ai_derived": (
+        "Évaluation IA incluse ({model}) — assemblée depuis l'analyse IA de ce "
+        "dossier ; aucun rapport IA final n'a été généré"
+    ),
     "m_ai_no": "Pas de synthèse IA (rapport déterministe)",
     "saved_title": "Recherches enregistrées",
     "saved_blurb": "Requêtes enregistrées, ré-exécutées pour ce rapport — nombre exact de correspondances.",
