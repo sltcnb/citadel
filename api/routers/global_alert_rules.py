@@ -34,7 +34,7 @@ except ImportError:
 
 import redis_keys as rk
 from auth.dependencies import get_company_filter, get_current_user, require_case_access
-from services.elasticsearch import _request as es_req
+from services import rule_eval
 from services.redis_mutate import mutate_json
 from services.sigma_settings import (
     get_global_sigma_enabled,
@@ -123,18 +123,27 @@ def _load_default_rules() -> list[dict]:
                     )
                     continue
 
-                rules.append(
-                    {
-                        "name": rule.get("name", ""),
-                        "category": rule.get("category", category),
-                        "description": rule.get("description", ""),
-                        "artifact_type": rule.get("artifact_type", ""),
-                        "query": query,
-                        "threshold": int(rule.get("threshold", 1)),
-                        # sigma_detection present → true Sigma rule; plain query → legacy
-                        "rule_type": "sigma" if rule.get("sigma_detection") else "legacy",
-                    }
-                )
+                entry = {
+                    "name": rule.get("name", ""),
+                    "category": rule.get("category", category),
+                    "description": rule.get("description", ""),
+                    "artifact_type": rule.get("artifact_type", ""),
+                    "query": query,
+                    "threshold": int(rule.get("threshold", 1)),
+                    # sigma_detection present → true Sigma rule; plain query → legacy
+                    "rule_type": "sigma" if rule.get("sigma_detection") else "legacy",
+                }
+                # Severity + ATT&CK mapping are authored in the YAML; without
+                # them the UI cannot rank a detection and the report cannot
+                # order findings, so they must survive the load.
+                for opt in ("level", "mitre"):
+                    if rule.get(opt):
+                        entry[opt] = rule[opt]
+                # A correlation block replaces the plain count>=threshold test
+                # (see services/rule_eval.py) — it must reach the evaluator.
+                if isinstance(rule.get("correlation"), dict):
+                    entry["correlation"] = rule["correlation"]
+                rules.append(entry)
         except Exception as exc:
             logger.error("Failed to load alert rules from %s: %s", path.name, exc)
     return rules
@@ -834,31 +843,11 @@ def run_library_against_case(
     matches: list[dict] = []
 
     for rule in rules:
-        artifact_type = rule.get("artifact_type", "").strip()
-        index = f"fo-case-{case_id}-{artifact_type}" if artifact_type else f"fo-case-{case_id}-*"
-        body = {
-            "query": {
-                "query_string": {
-                    "query": rule["query"],
-                    "default_operator": "AND",
-                }
-            },
-            "size": 5,
-            "_source": ["timestamp", "message", "host", "user", "fo_id", "artifact_type"],
-            "sort": [{"timestamp": {"order": "desc"}}],
-        }
         try:
-            resp = es_req("POST", f"/{index}/_search", body)
-            count = resp["hits"]["total"]["value"]
-            if count >= int(rule.get("threshold", 1)):
-                matches.append(
-                    {
-                        "rule": rule,
-                        "match_count": count,
-                        "sample_events": [h["_source"] for h in resp["hits"]["hits"]],
-                    }
-                )
-        except Exception as exc:
+            match = rule_eval.evaluate(case_id, rule)
+            if match:
+                matches.append(match)
+        except Exception as exc:  # noqa: BLE001 - one bad rule must not stop the sweep
             logger.warning(
                 "Alert rule %r failed during check: %s", rule.get("name", rule.get("rule_id")), exc
             )
@@ -891,33 +880,10 @@ def run_single_rule_against_case(
     if is_sigma_rule(rule) and not sigma_enabled_for_case(case_id):
         return {"match": None, "rules_checked": 0, "fired": False, "skipped": "sigma_disabled"}
 
-    artifact_type = rule.get("artifact_type", "").strip()
-    index = f"fo-case-{case_id}-{artifact_type}" if artifact_type else f"fo-case-{case_id}-*"
-    body = {
-        "query": {
-            "query_string": {
-                "query": rule["query"],
-                "default_operator": "AND",
-            }
-        },
-        "size": 5,
-        "_source": ["timestamp", "message", "host", "user", "fo_id", "artifact_type"],
-        "sort": [{"timestamp": {"order": "desc"}}],
-    }
     try:
-        resp = es_req("POST", f"/{index}/_search", body)
-        count = resp["hits"]["total"]["value"]
-        match = (
-            {
-                "rule": rule,
-                "match_count": count,
-                "sample_events": [h["_source"] for h in resp["hits"]["hits"]],
-            }
-            if count >= int(rule.get("threshold", 1))
-            else None
-        )
+        match = rule_eval.evaluate(case_id, rule)
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     return {
         "match": match,

@@ -1,14 +1,60 @@
 category: Authentication
 rules:
-  - name: Brute Force — Multiple Failed Logons
+  - name: Brute Force — Repeated Failed Logons
     description: >-
-      More than 10 failed authentication attempts (EID 4625). Indicates a
-      password spray or brute-force attack against local or network accounts.
+      More than 10 failed authentication attempts (EID 4625) — brute force
+      against local or network accounts.
+
+      This is the volume question ("did we see a lot of failures"). It stays
+      deliberately broad and ``medium``; the spray rule below asks the sharper
+      question and is the one to act on.
     artifact_type: evtx
     query: "evtx.event_id:4625"
     threshold: 10
     mitre: [T1110]
     level: medium
+
+  - name: Password Spray — Many Accounts from One Source
+    description: >-
+      A single source attempted authentication against 20 or more DISTINCT
+      accounts within 15 minutes (EID 4625) — a password spray.
+
+      Why this and not a plain failure count: "10 failed logons in the case" is
+      routine (one user with a stale cached credential generates that alone), so
+      a count threshold either misses the spray or alerts on every case. What
+      makes a spray a spray is the *fan-out* — one source, many different
+      targets, in a short window — which a count cannot express. Machine
+      accounts are excluded because a mis-configured service failing against its
+      own account repeatedly is a volume problem, not a spray.
+    artifact_type: evtx
+    query: >-
+      evtx.event_id:4625 AND NOT evtx.event_data.TargetUserName.keyword:*$
+    threshold: 1
+    correlation:
+      group_by: network.src_ip
+      distinct: evtx.event_data.TargetUserName
+      min_distinct: 20
+      window: 15m
+    mitre: [T1110.003]
+    level: high
+
+  - name: Credential Stuffing — One Account from Many Sources
+    description: >-
+      A single account was targeted from 10 or more DISTINCT source addresses
+      (EID 4625). The inverse fan-out of a spray: distributed guessing against
+      one identity, which a per-source rate limit does not see and a plain
+      failure count cannot distinguish from one noisy client.
+    artifact_type: evtx
+    query: >-
+      evtx.event_id:4625 AND NOT evtx.event_data.TargetUserName.keyword:*$
+    threshold: 1
+    correlation:
+      group_by: evtx.event_data.TargetUserName
+      distinct: network.src_ip
+      min_distinct: 10
+      window: 1h
+    mitre: [T1110.004]
+    level: high
 
   - name: Explicit Credential Use (Pass-the-Hash / RunAs)
     description: >-
@@ -53,20 +99,31 @@ rules:
 
   - name: Interactive RDP Logon (Type 10)
     description: >-
-      A Type-10 remote interactive logon was recorded (EID 4624).
-      Indicates an RDP session was opened — check for unexpected source hosts.
+      A Type-10 remote interactive logon was recorded (EID 4624) — an RDP session
+      was opened. Check for unexpected source hosts.
+
+      Reads the parsed EventData field rather than the rendered message: a
+      ``message:*LogonType\:10*`` wildcard can never match, because the analyzer
+      splits "LogonType:10" into the separate tokens [logontype, 10] and a
+      wildcard is matched against one token. This rule returned zero hits on
+      every case until the field was corrected.
     artifact_type: evtx
-    query: "evtx.event_id:4624 AND message:*LogonType\\:10*"
+    query: "evtx.event_id:4624 AND evtx.event_data.LogonType:10"
     threshold: 1
     mitre: [T1021.001]
     level: low
 
   - name: NTLM Network Logon (Type 3) — Lateral Movement Candidate
     description: >-
-      NTLM-authenticated network logon (EID 4624 type 3). Common in pass-the-hash
-      attacks and SMB lateral movement chains.
+      NTLM-authenticated network logon (EID 4624 type 3) — common in
+      pass-the-hash and SMB lateral movement chains. Machine accounts are
+      excluded: computer-to-computer NTLM is routine on a domain and swamped the
+      analyst-relevant hits.
     artifact_type: evtx
-    query: "evtx.event_id:4624 AND message:*LogonType\\:3* AND message:*NTLM*"
+    query: >-
+      evtx.event_id:4624 AND evtx.event_data.LogonType:3 AND
+      evtx.event_data.AuthenticationPackageName:NTLM AND NOT
+      evtx.event_data.TargetUserName.keyword:*$
     threshold: 1
     mitre: [T1021.002]
     level: medium
@@ -74,9 +131,14 @@ rules:
   - name: Service Account Interactive Logon
     description: >-
       A service account logged on interactively (EID 4624 type 2 or 10). Service
-      accounts should never have interactive logons — this is a high-risk indicator.
+      accounts should never have interactive logons — a high-risk indicator of a
+      stolen service credential being used by a human.
     artifact_type: evtx
-    query: "evtx.event_id:4624 AND message:*svc* AND (message:*LogonType\\:2* OR message:*LogonType\\:10*)"
+    query: >-
+      evtx.event_id:4624 AND (evtx.event_data.LogonType:2 OR
+      evtx.event_data.LogonType:10) AND (evtx.event_data.TargetUserName:svc*
+      OR evtx.event_data.TargetUserName:*service OR
+      evtx.event_data.TargetUserName:gmsa*)
     threshold: 1
     mitre: [T1078.003]
     level: high
