@@ -35,11 +35,12 @@ def _check_job_case_access(job: dict, current_user: dict) -> None:
 
 
 @router.get("/jobs/{job_id}")
-def get_job(job_id: str):
+def get_job(job_id: str, current_user: dict = Depends(get_current_user)):
     """Poll a single job's status and progress."""
     job = job_svc.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+    _check_job_case_access(job, current_user)
     return job
 
 
@@ -65,7 +66,7 @@ def list_case_jobs(
 
 
 @router.post("/jobs/batch")
-def get_jobs_batch(body: dict):
+def get_jobs_batch(body: dict, current_user: dict = Depends(get_current_user)):
     """
     Return status for up to 500 job IDs in a single request.
 
@@ -79,13 +80,21 @@ def get_jobs_batch(body: dict):
     results = []
     for jid in job_ids:
         job = job_svc.get_job(jid)
-        if job:
-            results.append(job)
+        if not job:
+            continue
+        try:
+            _check_job_case_access(job, current_user)
+        except HTTPException:
+            # Jobs from other companies (or whose case is gone) are omitted
+            # silently — same as missing IDs — so one bad ID can't fail the
+            # whole polling batch, and nothing about them leaks.
+            continue
+        results.append(job)
     return results
 
 
 @router.post("/jobs/{job_id}/retry")
-def retry_job(job_id: str):
+def retry_job(job_id: str, current_user: dict = Depends(get_current_user)):
     """
     Retry a failed ingest job.
 
@@ -96,6 +105,8 @@ def retry_job(job_id: str):
     job = job_svc.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+
+    _check_job_case_access(job, current_user)
 
     if job.get("status") not in ("FAILED", "PENDING"):
         raise HTTPException(

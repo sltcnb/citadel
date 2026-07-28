@@ -286,7 +286,9 @@ export default function Collector() {
       .catch(() => {})
   }, [])
   const [uploadApiUrl, setUploadApiUrl]     = useState(() => window.location.origin)
-  const [uploadApiToken, setUploadApiToken] = useState(() => localStorage.getItem('fo_token') || '')
+  // No API-token field: the server mints a scoped upload token automatically
+  // when the package targets this Citadel (api_token flag). The session JWT
+  // is never embedded into artifacts left on target machines.
 
   // Case selector (unified — drives both ZIP filename and upload target)
   const [cases, setCases]       = useState([])
@@ -452,29 +454,41 @@ export default function Collector() {
     [selected, fetchPatterns],
   )
 
-  function handleDownload() {
+  async function handleDownload() {
     setDownloading(true)
     setDownloaded(false)
-    const url = api.collector.packageUrl({
-      categories:      [...selected],
-      caseName:        caseName.trim() || undefined,
-      platform:        platformDef?.id || undefined,
-      path:            collectionMode === 'path' ? collectionPath.trim() || undefined : undefined,
-      disk:            collectionMode === 'disk' ? collectionDisk.trim() || undefined : undefined,
-      skipProblematic: skipProblematic || undefined,
-      fetchPatterns:   fetchPatternList.length ? fetchPatternList : undefined,
-      apiUrl:          uploadMode === 'citadel' ? uploadApiUrl.trim() || undefined : undefined,
-      caseId:          uploadMode === 'citadel' ? selectedCase?.case_id || undefined : undefined,
-      apiToken:        uploadMode === 'citadel' ? uploadApiToken.trim() || undefined : undefined,
-      uploadMode:      uploadMode === 's3-presigned' ? 's3_presigned' : undefined,
-      includePython:   includePython || undefined,
-    })
-    const a = document.createElement('a')
-    a.href = url
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    setTimeout(() => { setDownloading(false); setDownloaded(true) }, 1200)
+    try {
+      const blob = await api.collector.fetchPackage({
+        categories:      [...selected],
+        caseName:        caseName.trim() || undefined,
+        platform:        platformDef?.id || undefined,
+        path:            collectionMode === 'path' ? collectionPath.trim() || undefined : undefined,
+        disk:            collectionMode === 'disk' ? collectionDisk.trim() || undefined : undefined,
+        skipProblematic: skipProblematic || undefined,
+        fetchPatterns:   fetchPatternList.length ? fetchPatternList : undefined,
+        apiUrl:          uploadMode === 'citadel' ? uploadApiUrl.trim() || undefined : undefined,
+        caseId:          uploadMode === 'citadel' ? selectedCase?.case_id || undefined : undefined,
+        apiToken:        uploadMode === 'citadel' ? true : undefined,
+        uploadMode:      uploadMode === 's3-presigned' ? 's3_presigned' : undefined,
+        includePython:   includePython || undefined,
+      })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      // Server sets the filename in Content-Disposition; keep a sensible fallback.
+      const cd = blob.type ? '' : ''
+      a.download = cd || 'fo-collector.zip'
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+      setDownloaded(true)
+    } catch (err) {
+      // surface fetch failures inline instead of a silent dead button
+      console.error('package download failed', err)
+    } finally {
+      setDownloading(false)
+    }
   }
 
   async function handleGenerateBootstrap() {
@@ -490,7 +504,7 @@ export default function Collector() {
         caseId:       selectedCase?.case_id || undefined,
         fetchPatterns: fetchPatternList.length ? fetchPatternList : undefined,
         apiUrl:       uploadMode === 'citadel' ? uploadApiUrl.trim() || undefined : undefined,
-        apiToken:     uploadMode === 'citadel' ? uploadApiToken.trim() || undefined : undefined,
+        apiToken:     uploadMode === 'citadel' ? true : undefined,
         expiresHours: bootstrapExpiry,
         platform:     bootstrapPlatform,
         pathArg:      bootstrapPlatform === 'sh' && collectionMode === 'path' ? collectionPath.trim() || undefined : undefined,
@@ -995,15 +1009,11 @@ export default function Collector() {
                       placeholder="https://citadel.your.org"
                       className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-accent/30 focus:border-brand-accent placeholder:text-gray-400" />
                   </div>
-                  <div>
-                    <label className="block text-xs font-medium text-gray-500 mb-1">
-                      API token <span className="text-gray-500 font-normal">(pre-filled from session)</span>
-                    </label>
-                    <input type="password" value={uploadApiToken} onChange={e => setUploadApiToken(e.target.value)}
-                      placeholder="eyJ…"
-                      className="w-full text-sm font-mono border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-accent/30 focus:border-brand-accent placeholder:text-gray-400" />
-                    <p className="mt-1 text-[11px] text-gray-500">This token will be embedded in the package. For shared or field deployments, consider using a dedicated analyst account instead of your personal token.</p>
-                  </div>
+                  <p className="text-[11px] text-gray-500">
+                    The server embeds a scoped, short-lived upload token minted on your behalf — your
+                    session token never leaves the browser and is never written into the package left
+                    on the target.
+                  </p>
                 </div>
               )}
             </div>
