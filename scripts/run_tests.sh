@@ -25,6 +25,7 @@ SUITES=(
   "tools/pilot/tests/test_query_strategy.py"
   "tools/pilot/tests/test_shim_contract.py"
   "tools/pilot/tests/test_pilot_eval.py"
+  "tools/pilot/tests/test_field_help.py"
   "tools/talon/tests/test_secure_upload.py"
   "tools/talon/tests/test_chunker.py"
   "tools/sluice/worker/tests/test_routing_coverage.py"
