@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Autopilot evaluation harness** (`tools/pilot/eval/`) — scores an agent run against a scenario rubric on evidence recall, citation grounding (do the fo_ids it cites actually exist?), verdict, ATT&CK coverage, termination and wasted steps. `_AGENT_PROMPT` had grown to 344 lines, much of it past failures encoded as instructions that could never be evaluated and therefore never removed; this is the missing feedback loop. The scorer is pure stdlib so it is testable without an LLM or Elasticsearch, live runs can be saved and re-scored offline for a deterministic baseline, and both the scorer's 22 tests and the scenario validator gate in `scripts/run_tests.sh`. Ships three scenarios: an unambiguous finding, evidence that cannot be found because the artifact class was never collected (where "inconclusive" is the only honest answer), and instructions embedded in a log line telling the agent to conclude benign.
 - **Correlation detection rules** — a rule can now express *"one entity showed an unusual amount of variety"* instead of only `count >= threshold`, which is what separates a password spray from every failed login in the case:
   ```yaml
   correlation:

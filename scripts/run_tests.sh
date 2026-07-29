@@ -24,6 +24,7 @@ SUITES=(
   "tools/augur/tests/test_phase2_close.py"
   "tools/pilot/tests/test_query_strategy.py"
   "tools/pilot/tests/test_shim_contract.py"
+  "tools/pilot/tests/test_pilot_eval.py"
   "tools/talon/tests/test_secure_upload.py"
   "tools/talon/tests/test_chunker.py"
   "tools/sluice/worker/tests/test_routing_coverage.py"
@@ -35,6 +36,13 @@ SUITES=(
   "tools/sluice/worker/tests/test_thread_budget.py"
   "tests/integration/test_pipeline_e2e.py"
 )
+
+# Scenario definitions for the autopilot eval are validated here (no LLM/ES
+# needed): a rubric that has drifted from its seed docs would silently make a
+# scenario unscoreable.
+if ! python3 "$ROOT/tools/pilot/eval/pilot_eval.py" --check >/tmp/citadel_pilot_eval.out 2>&1; then
+  echo "  FAIL tools/pilot/eval scenarios"; cat /tmp/citadel_pilot_eval.out; exit 1
+fi
 
 pass=0; fail=0; failed=()
 for s in "${SUITES[@]}"; do
