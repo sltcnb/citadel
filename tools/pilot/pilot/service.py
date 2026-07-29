@@ -4039,6 +4039,40 @@ def _sanitize_evidence(text, limit: int = 200) -> str:
     return t[:limit]
 
 
+def _field_list_block(ctx: dict) -> str:
+    """The prompt's field list, ordered by population and truncated safely.
+
+    The previous form was ``', '.join(fields)[:3500]``, which slices the JOINED
+    STRING rather than the list. On a full Windows triage (~229 fields, ~5,050
+    chars) that dropped 90 fields and left the final entry cut mid-name — under a
+    heading telling the agent to use ONLY that list. Because the order was
+    alphabetical, what vanished was whatever sorted late: ``registry.*``,
+    ``user.*`` and ``zeek.*`` disappeared while empty ``evtx.event_data.A…``
+    fields were kept. That is a direct cause of the "queried a field that returns
+    0" behaviour the prompt then spends several lines trying to correct.
+    """
+    from pilot import field_help
+
+    text, shown, total = field_help.prompt_field_list(
+        ctx.get("searchable_fields") or [], ctx.get("field_density") or [], budget=3500
+    )
+    if not text:
+        return ""
+    if shown < total:
+        # Never imply the list is exhaustive when it is not: the agent is told to
+        # restrict itself to these names, so a silent omission makes it avoid
+        # fields that do exist.
+        note = (
+            f"\nMost-populated {shown} of {total} indexed fields (dotted, no aliases). "
+            f"{total - shown} sparser field(s) are not listed — a field missing here "
+            f"is not proof it does not exist, so if you need one, aggregate on "
+            f"artifact_type first and inspect a document to see its real shape:\n"
+        )
+    else:
+        note = "\nFull field list (use ONLY these — dotted, no aliases):\n"
+    return f"{note}{text}\n\n"
+
+
 def _agent_step_history(transcript: list[dict]) -> str:
     """Compact representation of past steps for the LLM's next-step context."""
     parts = []
@@ -4922,8 +4956,7 @@ def _agent_run(
         + autolaunch_block
         + whitelist_block
         + samples_block
-        + f"\nFull field list (use ONLY these — dotted, no aliases):\n"
-        f"{', '.join(ctx.get('searchable_fields') or [])[:3500]}\n\n"
+        + _field_list_block(ctx)
         + parent_hist
         + f"\nAnalyst scenario{' (follow-up)' if parent_transcript else ''}:\n{circumstance}\n"
     )
@@ -5536,6 +5569,31 @@ def _agent_run(
                 if note:
                     step["coverage_warning"] = note
             except Exception:  # noqa: BLE001 - advisory only
+                pass
+
+        # Unknown FIELD, not absent evidence. A 0-hit query that names a field the
+        # case does not index is a different failure from one that names a real
+        # field with no matches, and the agent cannot tell them apart from the
+        # count alone — the prompt asks it to infer this ("if a field:value query
+        # returns 0 twice, the FIELD is probably wrong"), which costs at least two
+        # steps. The field set is already known, so say so directly, and skip
+        # broadening: dropping a nonexistent constraint returns unrelated events
+        # and reads as though the search finally worked.
+        if (
+            action in ("search", "aggregate")
+            and step.get("query_status") == "ok"
+            and not step.get("result_count")
+        ):
+            try:
+                from pilot import field_help
+
+                _hint = field_help.unknown_field_hint(
+                    step.get("query") or step.get("agg_query") or "",
+                    set(ctx.get("searchable_fields") or []),
+                )
+                if _hint:
+                    step["field_error"] = _hint
+            except Exception:  # noqa: BLE001 - advisory only, never break a step
                 pass
 
         # Auto-broaden: if a `search` returned 0 hits, walk back up the funnel
