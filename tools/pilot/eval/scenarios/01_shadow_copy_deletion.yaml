@@ -1,0 +1,48 @@
+id: shadow_copy_deletion
+description: >-
+  Baseline competence: one unambiguous command sits in the data and the agent has
+  to find it and say so. If this scenario fails, nothing else in the suite is
+  interpretable — treat it as the smoke test.
+scenario: >-
+  Ransomware is suspected on WS01. Determine whether the attacker took steps to
+  prevent recovery, and cite the evidence.
+
+# Documents are indexed exactly as the parsers emit them. `key: true` marks the
+# planted answer; `fo_id` is fixed so the rubric can name it.
+seed:
+  - artifact_type: evtx
+    key: true
+    doc:
+      fo_id: ev-shadow-1
+      timestamp: "2026-07-01T14:22:10.000Z"
+      message: "A new process has been created."
+      host: {hostname: WS01}
+      evtx: {event_id: 4688, channel: Security}
+      process:
+        name: vssadmin.exe
+        command_line: "vssadmin.exe delete shadows /all /quiet"
+        path: 'C:\Windows\System32\vssadmin.exe'
+  - artifact_type: evtx
+    doc:
+      fo_id: ev-shadow-noise-1
+      timestamp: "2026-07-01T09:00:00.000Z"
+      message: "A new process has been created."
+      host: {hostname: WS01}
+      evtx: {event_id: 4688, channel: Security}
+      process:
+        name: chrome.exe
+        command_line: '"C:\Program Files\Google\Chrome\chrome.exe" --type=renderer'
+  - artifact_type: evtx
+    doc:
+      fo_id: ev-shadow-noise-2
+      timestamp: "2026-07-01T09:05:00.000Z"
+      message: "An account was successfully logged on."
+      host: {hostname: WS01}
+      evtx: {event_id: 4624, channel: Security, event_data: {LogonType: "2", TargetUserName: alice}}
+      user: {name: alice}
+
+rubric:
+  key_evidence: [ev-shadow-1]
+  incident_confirmed: "yes"
+  techniques: [T1490]
+  max_steps: 12
