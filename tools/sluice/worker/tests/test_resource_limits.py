@@ -26,6 +26,21 @@ def test_normal_task_with_kwargs():
     assert resource_limits.run_limited(greet, "case", greeting="hi") == "hi case"
 
 
+def test_huge_result_does_not_deadlock():
+    """Regression: a result bigger than the mp.Queue pipe buffer (~64KB) must
+    complete, not hang until the wall-clock timeout. The old join-before-read
+    deadlocked exactly here — the child blocked flushing its feeder thread
+    while the parent blocked in join()."""
+    def big():
+        return [{"hit": i, "data": "x" * 200} for i in range(5000)]  # ~1MB pickled
+
+    t0 = time.monotonic()
+    result = resource_limits.run_limited(big, timeout=60)
+    elapsed = time.monotonic() - t0
+    assert len(result) == 5000
+    assert elapsed < 30  # would previously burn the full 60s timeout, then raise
+
+
 def test_exception_in_task_reraised_as_runtime_error():
     def boom():
         raise ValueError("bad input")
@@ -124,7 +139,8 @@ def test_subprocess_run_limited_cpu_bomb():
 
 
 def test_defaults_are_positive_and_sane():
-    assert resource_limits.DEFAULT_CPU_SECONDS > 0
+    # CPU and nproc limits are opt-in: 0 means "disabled" (see resource_limits).
+    assert resource_limits.DEFAULT_CPU_SECONDS >= 0
     assert resource_limits.DEFAULT_MEMORY_BYTES > 0
     assert resource_limits.DEFAULT_WALL_TIMEOUT_SEC > 0
-    assert resource_limits.DEFAULT_NPROC > 0
+    assert resource_limits.DEFAULT_NPROC >= 0
