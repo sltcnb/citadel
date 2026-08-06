@@ -68,12 +68,14 @@ const MOD_CATEGORY_ORDER = [
 ]
 import { api, getToken } from '../api/client'
 import Timeline from './Timeline'
+import ConfirmDialog from '../components/ConfirmDialog'
 import CaseActivityBar from '../components/case/CaseActivityBar'
 // Heavy, only-when-opened panels — split into their own chunks to lighten the
 // first paint of the case view (backed by Suspense boundaries at their sites).
 const IngestPanel = lazy(() => import('../components/IngestPanel'))
 const CaseAiPanel = lazy(() => import('../components/CaseAiPanel'))
 import ToolbarMenu from '../components/shared/ToolbarMenu'
+import ErrorBox, { NoticeBox } from '../components/shared/ErrorBox'
 import { buildToolbarGroups, CASE_CAPABILITIES, readLegacyPanelState } from './caseCapabilities'
 import { CASE_PANELS } from './casePanels'
 import PanelHelp from '../components/shared/PanelHelp'
@@ -315,10 +317,12 @@ function ModuleLaunchModal({ caseId, onClose, onRunCreated, onViewRuns, embedded
   const [sources, setSources]               = useState([])
   const [selectedModule, setSelectedModule] = useState(null)
   const [selectedJobs, setSelectedJobs]     = useState(new Set())
+  const [modParams, setModParams]           = useState({})  // per-module run options (min_level, os, max_count…)
   const [sourceSearch, setSourceSearch]     = useState('')
   const [loading, setLoading]               = useState(true)
   const [running, setRunning]               = useState(false)
   const [runningAll, setRunningAll]         = useState(false)
+  const [confirmRunAll, setConfirmRunAll]   = useState(null)  // null | eligible module list (ConfirmDialog)
   const [runAllProgress, setRunAllProgress] = useState(null)  // null | {done, total}
   const [error, setError]                   = useState(null)
   const [moduleSearch, setModuleSearch]     = useState('')
@@ -533,6 +537,7 @@ function ModuleLaunchModal({ caseId, onClose, onRunCreated, onViewRuns, embedded
   function selectModule(mod) {
     setSelectedModule(mod)
     setSelectedJobs(new Set())
+    setModParams({})
     setYaraRules('')
     setYaraValid(null)
     setGrepPatterns('')
@@ -541,7 +546,10 @@ function ModuleLaunchModal({ caseId, onClose, onRunCreated, onViewRuns, embedded
   }
 
   async function handleRun() {
-    if (!selectedModule || selectedJobs.size === 0) return
+    // ES-only modules (run_on_events) query the case's indexed events directly —
+    // no source files needed.
+    const esOnly = !!selectedModule?.run_on_events
+    if (!selectedModule || (!esOnly && selectedJobs.size === 0)) return
     if (selectedModule.id === 'yara' && yaraValid && !yaraValid.valid) return
     setRunning(true)
     setError(null)
@@ -554,11 +562,17 @@ function ModuleLaunchModal({ caseId, onClose, onRunCreated, onViewRuns, embedded
       if (selectedModule.id === 'grep_search' && grepPatterns.trim()) {
         params.patterns = grepPatterns.split('\n').map(p => p.trim()).filter(Boolean)
       }
+      if (selectedModule.id === 'hayabusa' && modParams.min_level) params.min_level = modParams.min_level
+      if (selectedModule.id === 'volatility3' && modParams.os) params.os = modParams.os
+      if (selectedModule.id === 'rare_process' && modParams.max_count) params.max_count = modParams.max_count
+      if (selectedModule.id === 'auth_summary' && modParams.min_failures) params.min_failures = modParams.min_failures
       const run = await api.modules.createRun(caseId, {
         module_id:    selectedModule.id,
-        source_files: sources
-          .filter(s => selectedJobs.has(s.job_id))
-          .map(s => ({ job_id: s.job_id, filename: s.original_filename, minio_key: s.minio_object_key })),
+        source_files: esOnly
+          ? []
+          : sources
+              .filter(s => selectedJobs.has(s.job_id))
+              .map(s => ({ job_id: s.job_id, filename: s.original_filename, minio_key: s.minio_object_key })),
         params,
       })
       onRunCreated(run)
@@ -588,16 +602,19 @@ function ModuleLaunchModal({ caseId, onClose, onRunCreated, onViewRuns, embedded
       return hasCompatible
     })
     if (eligible.length === 0) return
-    if (!window.confirm(
-      `Launch all ${eligible.length} applicable module${eligible.length > 1 ? 's' : ''} against their compatible files?\n\n` +
-      eligible.map(m => `• ${m.name}`).join('\n')
-    )) return
+    setConfirmRunAll(eligible)
+  }
+
+  async function runAllConfirmed() {
+    const eligible = confirmRunAll || []
+    setConfirmRunAll(null)
 
     setRunningAll(true)
     setRunAllProgress({ done: 0, total: eligible.length })
     setError(null)
 
     let done = 0
+    const failedToLaunch = []
     for (const mod of eligible) {
       const extList  = mod.input_extensions || []
       const nameList = mod.input_filenames  || []
@@ -621,18 +638,25 @@ function ModuleLaunchModal({ caseId, onClose, onRunCreated, onViewRuns, embedded
         const run = await api.modules.createRun(caseId, { module_id: mod.id, source_files: resolvedFiles, params: {} })
         onRunCreated(run)
       } catch {
-        // best-effort — don't abort remaining modules on one failure
+        // best-effort — don't abort remaining modules on one failure, but do
+        // surface a summary at the end instead of swallowing it silently.
+        failedToLaunch.push(mod.name || mod.id)
       }
       done++
       setRunAllProgress({ done, total: eligible.length })
     }
     setRunningAll(false)
     setRunAllProgress(null)
+    if (failedToLaunch.length > 0) {
+      // Keep the panel open — the summary renders in the footer error slot.
+      setError(`${failedToLaunch.length} of ${eligible.length} modules failed to launch: ${failedToLaunch.join(', ')}`)
+      return
+    }
     onClose()
   }
 
   const yaraInvalid = selectedModule?.id === 'yara' && yaraValid && !yaraValid.valid
-  const canRun = selectedModule && selectedJobs.size > 0 && !running && !yaraInvalid && !runningAll
+  const canRun = selectedModule && (selectedJobs.size > 0 || selectedModule.run_on_events) && !running && !yaraInvalid && !runningAll
 
   const inner = (
     <>
@@ -856,12 +880,12 @@ function ModuleLaunchModal({ caseId, onClose, onRunCreated, onViewRuns, embedded
                     </div>
                   </div>
 
-                  {/* Step 1 — choose files */}
+                  {/* Step 1 — choose files (skipped for event-query modules) */}
                   <div className="flex items-center justify-between px-4 pt-3 pb-1.5 flex-shrink-0">
                     <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 flex items-center gap-1.5">
                       <span className="w-4 h-4 rounded-full bg-brand-accent/15 text-brand-accent inline-flex items-center justify-center text-[9px] font-bold">1</span>
-                      Choose files
-                      {compatibleSources.length > 0 && (
+                      {selectedModule.run_on_events ? 'Runs on case events' : 'Choose files'}
+                      {!selectedModule.run_on_events && compatibleSources.length > 0 && (
                         <span className="font-normal normal-case text-gray-400">
                           — {selectedJobs.size} of {compatibleSources.length} selected
                         </span>
@@ -883,19 +907,22 @@ function ModuleLaunchModal({ caseId, onClose, onRunCreated, onViewRuns, embedded
                     )}
                   </div>
 
-                  {sourcesLoading ? (
+                  {selectedModule.run_on_events ? (
+                    <div className="mx-4 mb-3 p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-700">
+                      {selectedModule.name} queries this case’s indexed events directly — no file selection needed. Just hit Run.
+                    </div>
+                  ) : sourcesLoading ? (
                     <div className="mx-4 mb-3 p-3 text-xs text-gray-500 flex items-center gap-2">
                       <Loader2 size={14} className="animate-spin" /> Loading case files…
                     </div>
                   ) : sourcesError ? (
-                    <div className="mx-4 mb-3 p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-600 flex items-center justify-between gap-2">
-                      <span className="truncate" title={sourcesError}>Couldn’t load case files: {sourcesError}</span>
-                      <button onClick={loadSources} className="btn-outline text-[11px] px-2 py-1 flex items-center gap-1 flex-shrink-0">
-                        <RefreshCw size={10} /> Retry
-                      </button>
-                    </div>
+                    <ErrorBox
+                      msg={`Couldn’t load case files: ${sourcesError}`}
+                      onRetry={loadSources}
+                      className="mx-4 mb-3"
+                    />
                   ) : compatibleSources.length === 0 ? (
-                    <div className="mx-4 mb-3 p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700">
+                    <NoticeBox className="mx-4 mb-3 p-3">
                       <p className="font-medium mb-0.5">No compatible files ingested yet</p>
                       <p className="text-[11px]">
                         {selectedModule.name} requires:{' '}
@@ -903,7 +930,7 @@ function ModuleLaunchModal({ caseId, onClose, onRunCreated, onViewRuns, embedded
                           {[...(selectedModule.input_extensions || []), ...(selectedModule.input_filenames || [])].join(', ') || 'any file'}
                         </span>
                       </p>
-                    </div>
+                    </NoticeBox>
                   ) : (
                     <>
                       {compatibleSources.length > 6 && (
@@ -951,6 +978,63 @@ function ModuleLaunchModal({ caseId, onClose, onRunCreated, onViewRuns, embedded
                         )}
                       </div>
                     </>
+                  )}
+
+                  {/* ── Module options (hayabusa / volatility3 / rare_process / auth_summary) ── */}
+                  {['hayabusa', 'volatility3', 'rare_process', 'auth_summary'].includes(selectedModule.id) && (
+                    <div className="px-4 py-2.5 border-t border-gray-200 flex-shrink-0 flex items-center gap-4 flex-wrap">
+                      {selectedModule.id === 'hayabusa' && (
+                        <label className="text-[10px] uppercase tracking-wider text-gray-500 font-semibold flex items-center gap-1.5">
+                          Min severity
+                          <select
+                            value={modParams.min_level || 'informational'}
+                            onChange={e => setModParams(p => ({ ...p, min_level: e.target.value }))}
+                            className="input text-xs py-1 normal-case font-normal"
+                          >
+                            <option value="informational">informational</option>
+                            <option value="low">low</option>
+                            <option value="medium">medium</option>
+                            <option value="high">high</option>
+                            <option value="critical">critical</option>
+                          </select>
+                        </label>
+                      )}
+                      {selectedModule.id === 'volatility3' && (
+                        <label className="text-[10px] uppercase tracking-wider text-gray-500 font-semibold flex items-center gap-1.5">
+                          Image OS
+                          <select
+                            value={modParams.os || 'windows'}
+                            onChange={e => setModParams(p => ({ ...p, os: e.target.value }))}
+                            className="input text-xs py-1 normal-case font-normal"
+                          >
+                            <option value="windows">windows</option>
+                            <option value="linux">linux</option>
+                          </select>
+                        </label>
+                      )}
+                      {selectedModule.id === 'rare_process' && (
+                        <label className="text-[10px] uppercase tracking-wider text-gray-500 font-semibold flex items-center gap-1.5">
+                          Rare if seen ≤
+                          <input
+                            type="number" min="1" max="100"
+                            value={modParams.max_count ?? 5}
+                            onChange={e => setModParams(p => ({ ...p, max_count: e.target.value }))}
+                            className="input text-xs py-1 w-16 normal-case font-normal"
+                          />
+                        </label>
+                      )}
+                      {selectedModule.id === 'auth_summary' && (
+                        <label className="text-[10px] uppercase tracking-wider text-gray-500 font-semibold flex items-center gap-1.5">
+                          Min failures
+                          <input
+                            type="number" min="1" max="10000"
+                            value={modParams.min_failures ?? 10}
+                            onChange={e => setModParams(p => ({ ...p, min_failures: e.target.value }))}
+                            className="input text-xs py-1 w-20 normal-case font-normal"
+                          />
+                        </label>
+                      )}
+                    </div>
                   )}
 
                   {/* ── Grep patterns ─────────────────────────────────────── */}
@@ -1083,17 +1167,11 @@ function ModuleLaunchModal({ caseId, onClose, onRunCreated, onViewRuns, embedded
           </button>
 
           {error && (
-            <div className="flex-1 flex items-center gap-2 min-w-0">
-              <p className="flex-1 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-1.5 truncate" title={error}>
-                {error}
-              </p>
-              <button
-                onClick={() => { loadModules(); loadSources() }}
-                className="btn-outline text-xs px-2.5 py-1.5 flex items-center gap-1 flex-shrink-0"
-              >
-                <RefreshCw size={11} /> Retry
-              </button>
-            </div>
+            <ErrorBox
+              msg={error}
+              onRetry={() => { loadModules(); loadSources() }}
+              className="flex-1 min-w-0"
+            />
           )}
 
           <div className="ml-auto flex items-center gap-2 min-w-0">
@@ -1101,10 +1179,12 @@ function ModuleLaunchModal({ caseId, onClose, onRunCreated, onViewRuns, embedded
             {!error && (
               <p className="text-[11px] text-gray-500 truncate hidden sm:block" title={
                 !selectedModule ? 'Pick a module first'
+                : selectedModule.run_on_events ? 'Runs on this case’s indexed events'
                 : selectedJobs.size === 0 ? 'Select at least one file'
                 : `Run ${selectedModule.name} on ${selectedJobs.size} file${selectedJobs.size > 1 ? 's' : ''}`
               }>
                 {!selectedModule ? 'Pick a module'
+                  : selectedModule.run_on_events ? <>Ready: <span className="font-semibold text-gray-700">{selectedModule.name}</span> on case events</>
                   : selectedJobs.size === 0 ? 'Select at least one file'
                   : <>Ready: <span className="font-semibold text-gray-700">{selectedModule.name}</span> × {selectedJobs.size} file{selectedJobs.size > 1 ? 's' : ''}</>}
               </p>
@@ -1115,15 +1195,29 @@ function ModuleLaunchModal({ caseId, onClose, onRunCreated, onViewRuns, embedded
               className={`btn flex items-center gap-1.5 text-xs px-4 py-1.5 font-semibold flex-shrink-0 ${
                 canRun ? 'btn-primary' : 'opacity-40 cursor-not-allowed bg-gray-100 text-gray-500 border-gray-200'
               }`}
-              title={canRun ? `Launch ${selectedModule?.name} on ${selectedJobs.size} file${selectedJobs.size > 1 ? 's' : ''}` : 'Pick a module and at least one file'}
+              title={canRun
+                ? (selectedModule?.run_on_events ? `Launch ${selectedModule?.name} on case events` : `Launch ${selectedModule?.name} on ${selectedJobs.size} file${selectedJobs.size > 1 ? 's' : ''}`)
+                : (selectedModule?.run_on_events ? 'Pick a module' : 'Pick a module and at least one file')}
             >
               {running
                 ? <><Loader2 size={12} className="animate-spin" /> Launching…</>
-                : <><Play size={12} /> Run{selectedJobs.size > 0 ? ` on ${selectedJobs.size}` : ''}</>
+                : <><Play size={12} /> Run{!selectedModule?.run_on_events && selectedJobs.size > 0 ? ` on ${selectedJobs.size}` : ''}</>
               }
             </button>
           </div>
         </div>
+
+        {confirmRunAll && (
+          <ConfirmDialog
+            title="Run all applicable modules"
+            icon={<Sparkles size={14} className="text-brand-accent" />}
+            message={`Launch all ${confirmRunAll.length} applicable module${confirmRunAll.length > 1 ? 's' : ''} against their compatible files? ${confirmRunAll.map(m => m.name).join(', ')}`}
+            confirmLabel="Run all"
+            confirmClass="btn-primary"
+            onConfirm={runAllConfirmed}
+            onCancel={() => setConfirmRunAll(null)}
+          />
+        )}
     </>
   )
   if (embedded) return <div className="flex flex-col h-full min-h-0">{inner}</div>
@@ -1140,7 +1234,10 @@ function ModuleLaunchModal({ caseId, onClose, onRunCreated, onViewRuns, embedded
 const LEVEL_ORDER_KEYS = SEVERITY_ORDER  // canonical order (utils/severity)
 
 // Full color palette — covers every module_id that can appear.
-// `strip` = the 3px top strip color; `bg` = dark-mode card tint at 15% opacity.
+// `strip` = the module accent dot; `bg` = dark-mode card tint at 15% opacity.
+// Hexes are tuned for the light (default) theme; MODULE_ACCENT_DARK overrides
+// the entries that go muddy on the dark canvases (.dark / .nord both use a
+// dark slate surface, so one override map serves both).
 const MODULE_ACCENT = {
   hayabusa:           { strip: '#fb923c', bg: 'rgba(251,146,60,0.15)'   },
   wintriage:          { strip: '#38bdf8', bg: 'rgba(56,189,248,0.15)'   },
@@ -1166,6 +1263,26 @@ const MODULE_ACCENT = {
   pe_analysis:        { strip: '#e11d48', bg: 'rgba(225,29,72,0.15)'    },
   strings_analysis:   { strip: '#86efac', bg: 'rgba(134,239,172,0.15)'  },
   access_log_analysis:{ strip: '#22d3ee', bg: 'rgba(34,211,238,0.15)'   },
+}
+
+// Dark-theme overrides for accents too dark/saturated to read on the .dark /
+// .nord surfaces (brighter tailwind-300/400 variants of the same hue).
+const MODULE_ACCENT_DARK = {
+  cuckoo:             '#fdba74',  // orange-600 → orange-300
+  malwoverview:       '#fb7185',  // rose-600  → rose-400
+  pe_analysis:        '#fb7185',  // rose-700  → rose-400
+  strings:            '#cbd5e1',  // slate-400 → slate-300
+}
+
+// Resolve a module's accent for the ACTIVE theme. Themes are classes on
+// <html> (.dark / .nord; index.css owns the definitions) — read at render
+// time so a theme switch is picked up on the next render.
+function moduleAccent(moduleId) {
+  const base = MODULE_ACCENT[moduleId]
+  if (!base) return null
+  const cls = document.documentElement.classList
+  const darkOverride = (cls.contains('dark') || cls.contains('nord')) && MODULE_ACCENT_DARK[moduleId]
+  return darkOverride ? { ...base, strip: darkOverride } : base
 }
 
 // ── LLM analysis display ──────────────────────────────────────────────────────
@@ -1258,6 +1375,8 @@ function ModuleRunCard({
   const [retryErr,   setRetryErr]   = useState('')
   const [cancelling, setCancelling] = useState(false)
   const [deleting,   setDeleting]   = useState(false)
+  const [confirmCancel, setConfirmCancel] = useState(false)
+  const [confirmDeleteRun, setConfirmDeleteRun] = useState(false)
 
   async function retryRun() {
     setRetrying(true)
@@ -1279,7 +1398,7 @@ function ModuleRunCard({
   }
 
   async function cancelRun() {
-    if (!confirm('Cancel this module run? A module already executing will finish its current step, then stop.')) return
+    setConfirmCancel(false)
     setCancelling(true)
     setRetryErr('')
     try {
@@ -1291,11 +1410,7 @@ function ModuleRunCard({
   }
 
   async function deleteRun() {
-    if (!confirm(
-      `Delete this ${moduleName} run?\n\n` +
-      'Its detections are removed from the timeline and findings, and its results ' +
-      'file and artifacts are deleted from storage. This cannot be undone.'
-    )) return
+    setConfirmDeleteRun(false)
     setDeleting(true)
     setRetryErr('')
     try {
@@ -1398,7 +1513,7 @@ function ModuleRunCard({
     return moduleId.replace(/-/g, '_').replace(/ /g, '_')
   }
 
-  const _mc = MODULE_ACCENT[run.module_id]
+  const _mc = moduleAccent(run.module_id)
 
   return (
     <div className="card overflow-hidden">
@@ -1470,7 +1585,7 @@ function ModuleRunCard({
         )}
         {(run.status === 'PENDING' || run.status === 'RUNNING') && (
           <button
-            onClick={cancelRun}
+            onClick={() => setConfirmCancel(true)}
             disabled={cancelling}
             className="btn-ghost text-xs px-1.5 py-0.5 text-red-500 hover:text-red-600 flex items-center gap-1"
             title="Cancel this module run"
@@ -1481,7 +1596,7 @@ function ModuleRunCard({
         )}
         {run.status !== 'PENDING' && run.status !== 'RUNNING' && (
           <button
-            onClick={deleteRun}
+            onClick={() => setConfirmDeleteRun(true)}
             disabled={deleting}
             className="btn-ghost text-xs px-1.5 py-0.5 text-gray-500 hover:text-red-600 flex items-center gap-1"
             title="Delete this run and its results (timeline detections, findings, stored output)"
@@ -1507,11 +1622,17 @@ function ModuleRunCard({
             </div>
           )}
 
-          {/* Detections are indexed as findings (artifact_type:finding). The
-              card summarises them inline; the button pivots the timeline to this
-              run's detections. Pinning meaningful ones into the report happens
-              in the Report panel's "Module results to include" section. */}
-          {preview.length > 0 && (
+          {/* Detections are indexed as timeline events (artifact_type:<module>) and
+              as findings. The button pivots the timeline to THIS run's events —
+              scoped by ingest_job_id (= run_id) so re-runs don't blend together. */}
+          {preview.length > 0 && (() => {
+            const artType = getModuleArtifactType(run.module_id)
+            const pivotQ = artType
+              ? `artifact_type:${artType} AND ingest_job_id:"${run.run_id}"`
+              : `artifact_type:finding AND (source_feature:"${run.module_id}" OR tags:"${run.module_id}" OR provenance.module_id:"${run.module_id}")`
+            const indexed = run.indexed_count ?? run.total_hits
+            const indexGap = indexed < run.total_hits
+            return (
             <div className="border-t border-gray-100 px-4 py-3 bg-amber-50/40">
               <div className="flex items-center justify-between gap-2 flex-wrap">
                 <p className="text-xs text-gray-600">
@@ -1522,9 +1643,14 @@ function ModuleRunCard({
                         .map(([lvl, n]) => `${n} ${lvl}`).join(', ')}
                     </span>
                   )}
+                  {indexGap && (
+                    <span className="ml-1 text-red-600 font-medium" title="Some hits never reached the timeline (ES indexing failed mid-run)">
+                      · only {indexed.toLocaleString()} indexed in timeline
+                    </span>
+                  )}
                 </p>
                 <button
-                  onClick={() => { onClose?.(); navigate(`/cases/${caseId}`, { state: { pivotQuery: `artifact_type:finding AND (source_feature:"${run.module_id}" OR tags:"${run.module_id}" OR provenance.module_id:"${run.module_id}")` } }) }}
+                  onClick={() => { onClose?.(); navigate(`/cases/${caseId}`, { state: { pivotQuery: pivotQ } }) }}
                   className="btn-ghost text-[11px] px-2 py-1 rounded-lg inline-flex items-center gap-1 text-amber-700"
                   title="Show this run's detections in the timeline"
                 >
@@ -1532,7 +1658,8 @@ function ModuleRunCard({
                 </button>
               </div>
             </div>
-          )}
+            )
+          })()}
 
           {/* Tool output (stdout / log) */}
           {(hasOutput || run.status === 'FAILED') && (
@@ -1596,6 +1723,29 @@ function ModuleRunCard({
           )}
         </div>
       )}
+
+      {confirmCancel && (
+        <ConfirmDialog
+          title="Cancel module run"
+          icon={<AlertTriangle size={14} className="text-amber-500" />}
+          message="Cancel this module run? A module already executing will finish its current step, then stop."
+          confirmLabel="Cancel run"
+          confirmClass="btn-danger"
+          onConfirm={cancelRun}
+          onCancel={() => setConfirmCancel(false)}
+        />
+      )}
+      {confirmDeleteRun && (
+        <ConfirmDialog
+          title={`Delete ${moduleName} run`}
+          icon={<Trash2 size={14} className="text-red-500" />}
+          message="Its detections are removed from the timeline and findings, and its results file and artifacts are deleted from storage. This cannot be undone."
+          confirmLabel="Delete"
+          confirmClass="btn-danger"
+          onConfirm={deleteRun}
+          onCancel={() => setConfirmDeleteRun(false)}
+        />
+      )}
     </div>
   )
 }
@@ -1627,6 +1777,7 @@ function ModuleRunsPanel({ caseId, onClose, embedded = false }) {
   const [activeTags,      setActiveTags]      = useState(new Set())
 
   const [deletingFailed, setDeletingFailed] = useState(false)
+  const [confirmDeleteFailed, setConfirmDeleteFailed] = useState(false)
 
   const fetchRuns = useCallback(() => {
     api.modules.listRuns(caseId)
@@ -1637,11 +1788,7 @@ function ModuleRunsPanel({ caseId, onClose, embedded = false }) {
   const failedCount = useMemo(() => runs.filter(r => r.status === 'FAILED').length, [runs])
 
   async function deleteFailedRuns() {
-    if (!confirm(
-      `Delete all ${failedCount} failed run(s)?\n\n` +
-      'Their results are removed from the timeline, findings and storage. ' +
-      'Runs still pending or running are left alone. This cannot be undone.'
-    )) return
+    setConfirmDeleteFailed(false)
     setDeletingFailed(true)
     setLoadError(null)
     try {
@@ -1731,7 +1878,7 @@ function ModuleRunsPanel({ caseId, onClose, embedded = false }) {
           <div className="flex items-center gap-1.5">
             {failedCount > 0 && (
               <button
-                onClick={deleteFailedRuns}
+                onClick={() => setConfirmDeleteFailed(true)}
                 disabled={deletingFailed}
                 className="btn-ghost px-2 py-1 rounded-lg flex items-center gap-1 text-xs text-gray-500 hover:text-red-600"
                 title={`Delete all ${failedCount} failed run(s) and their results`}
@@ -2083,6 +2230,18 @@ function ModuleRunsPanel({ caseId, onClose, embedded = false }) {
             ))
           )}
         </div>
+
+        {confirmDeleteFailed && (
+          <ConfirmDialog
+            title="Delete failed runs"
+            icon={<Trash2 size={14} className="text-red-500" />}
+            message={`Delete all ${failedCount} failed run(s)? Their results are removed from the timeline, findings and storage. Runs still pending or running are left alone. This cannot be undone.`}
+            confirmLabel="Delete failed"
+            confirmClass="btn-danger"
+            onConfirm={deleteFailedRuns}
+            onCancel={() => setConfirmDeleteFailed(false)}
+          />
+        )}
     </>
   )
   if (embedded) return <div className="flex flex-col h-full min-h-0">{inner}</div>
@@ -2174,11 +2333,23 @@ export default function CaseTimeline() {
   const aiEnabled = !!license?.features?.ai_assist
   const navigate = useNavigate()
   const location = useLocation()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const initialQuery = location.state?.pivotQuery || searchParams.get('q') || ''
+
+  // Consume location.state.pivotQuery into the ?q= URL param so pivots are
+  // shareable/bookmarkable (and a reload can't resurrect stale router state).
+  // replace: true — the pivot already pushed its history entry, we just rewrite
+  // it in place; Back still returns to the pre-pivot view.
+  useEffect(() => {
+    if (!location.state?.pivotQuery) return
+    const next = new URLSearchParams(location.search)
+    next.set('q', location.state.pivotQuery)
+    setSearchParams(next, { replace: true })
+  }, [location.key]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const [caseData, setCaseData]             = useState(null)
   const [loading, setLoading]               = useState(true)
+  const [loadError, setLoadError]           = useState(null)
   const [editingCompany, setEditingCompany] = useState(false)
   const [companyValue, setCompanyValue]     = useState('')
   const [availableCompanies, setAvailableCompanies] = useState([])
@@ -2196,6 +2367,18 @@ export default function CaseTimeline() {
   const openPanel   = useCallback(id => setPanels(p => ({ ...p, [id]: true })),  [setPanels])
   const closePanel  = useCallback(id => setPanels(p => ({ ...p, [id]: false })), [setPanels])
   const togglePanel = useCallback(id => setPanels(p => ({ ...p, [id]: !p[id] })), [setPanels])
+
+  // Deep-link into a capability panel: navigation carrying
+  // location.state.openPanel (e.g. the command palette's "Run detection
+  // rules" → 'rules') opens that panel once, then the router state is
+  // scrubbed via replace so a reload or Back can't resurrect it — same
+  // consumption contract as pivotQuery above.
+  useEffect(() => {
+    const panelId = location.state?.openPanel
+    if (!panelId) return
+    if (CASE_CAPABILITIES.some(c => c.id === panelId)) openPanel(panelId)
+    navigate(location.pathname + location.search, { replace: true, state: null })
+  }, [location.key]) // eslint-disable-line react-hooks/exhaustive-deps
   const [showAI, setShowAI]                 = usePersistedState(`fo_panel_ai_${caseId}`, false)
   // Auto-pilot: kick off an autonomous AI investigation the moment evidence
   // ingestion finishes (active jobs fall to 0). Persisted opt-out per case.
@@ -2295,11 +2478,13 @@ export default function CaseTimeline() {
   }, [caseId, showIngest, launchAutoPilot])
 
   const loadCase = useCallback(() => {
+    setLoading(true)
+    setLoadError(null)
     api.cases.get(caseId)
       .then(data => { setCaseData(data); setCompanyValue(data?.company || '') })
-      .catch(() => navigate('/'))
+      .catch(err => setLoadError(err?.message || 'Failed to load case'))
       .finally(() => setLoading(false))
-  }, [caseId, navigate])
+  }, [caseId])
 
   useEffect(() => { loadCase() }, [loadCase])
   useEffect(() => {
@@ -2321,6 +2506,28 @@ export default function CaseTimeline() {
       <div className="flex items-center justify-center h-64 text-gray-500">
         <Loader2 size={20} className="animate-spin mr-2" />
         Loading case…
+      </div>
+    )
+  }
+
+  // Case fetch failed (network, permissions, deleted case) — say so and offer
+  // a retry instead of silently bouncing the analyst back to the dashboard.
+  if (loadError) {
+    return (
+      <div className="flex items-center justify-center h-64 px-4">
+        <div className="card max-w-md w-full p-6 text-center">
+          <AlertTriangle size={22} className="text-red-500 mx-auto mb-3" />
+          <p className="text-sm font-semibold text-brand-text">Couldn't load this case</p>
+          <p className="text-xs text-gray-500 mt-1 break-words">{loadError}</p>
+          <div className="flex items-center justify-center gap-2 mt-4">
+            <button onClick={loadCase} className="btn-primary text-xs flex items-center gap-1.5">
+              <RefreshCw size={11} /> Retry
+            </button>
+            <button onClick={() => navigate('/')} className="btn-ghost text-xs">
+              Back to dashboard
+            </button>
+          </div>
+        </div>
       </div>
     )
   }
@@ -2612,7 +2819,7 @@ function TemplateEditor({ editor, saving, error, onChange, onSave, onCancel, set
         <button onClick={onCancel} className="btn-ghost p-1 rounded" aria-label="Cancel"><X size={13} /></button>
       </div>
 
-      {error && <div className="text-[11px] text-red-700 bg-red-50 border border-red-200 rounded p-2">{error}</div>}
+      {error && <ErrorBox msg={error} className="text-[11px]" />}
 
       <div>
         <label className="block text-[10px] font-medium text-gray-500 mb-1">Name</label>
@@ -2689,6 +2896,9 @@ function TemplatesPanel({ caseId, onClose }) {
   // Per-template seed status
   const [seeding, setSeeding]   = useState(null)
   const [seedResult, setSeedResult] = useState(null)
+  // Templates pending a ConfirmDialog (delete / seed)
+  const [confirmDeleteTpl, setConfirmDeleteTpl] = useState(null)  // template obj | null
+  const [confirmSeedTpl,   setConfirmSeedTpl]   = useState(null)  // template obj | null
 
   // Editor state. `editor` is null when closed; otherwise the working draft.
   // `editor.editingId` = id being updated (null = create / clone).
@@ -2763,7 +2973,7 @@ function TemplatesPanel({ caseId, onClose }) {
   }
 
   async function deleteTemplate(tplId) {
-    if (!confirm('Delete this custom template? This cannot be undone.')) return
+    setConfirmDeleteTpl(null)
     setError(null)
     try {
       await api.caseTemplates.remove(tplId)
@@ -2800,13 +3010,7 @@ function TemplatesPanel({ caseId, onClose }) {
   }
 
   async function seedAll(tplId) {
-    if (!confirm(
-      'Seed this case with the template?\n\n' +
-      '• Adds IOCs to the GLOBAL watchlist\n' +
-      '• Appends scenario tags to this case\n' +
-      '• Writes the notes skeleton (only if your notes are empty)\n\n' +
-      'Continue?'
-    )) return
+    setConfirmSeedTpl(null)
     setSeeding(tplId); setSeedResult(null); setError(null)
     try {
       const r = await api.caseTemplates.apply(caseId, tplId)
@@ -2929,7 +3133,7 @@ function TemplatesPanel({ caseId, onClose }) {
                           <button onClick={() => openEdit(t.id)} className="text-[10px] text-brand-accent hover:underline flex items-center gap-1">
                             <Pencil size={10} /> Edit
                           </button>
-                          <button onClick={() => deleteTemplate(t.id)} className="text-[10px] text-red-600 hover:underline flex items-center gap-1">
+                          <button onClick={() => setConfirmDeleteTpl(t)} className="text-[10px] text-red-600 hover:underline flex items-center gap-1">
                             <Trash2 size={10} /> Delete
                           </button>
                         </>
@@ -2945,7 +3149,7 @@ function TemplatesPanel({ caseId, onClose }) {
                           <Loader2 size={12} className="animate-spin" /> Running checks against this case…
                         </div>
                       ) : exp.error ? (
-                        <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded p-2">{exp.error}</div>
+                        <ErrorBox msg={exp.error} />
                       ) : (
                         <>
                           <p className="text-[10px] text-gray-500 mb-1">
@@ -2998,7 +3202,7 @@ function TemplatesPanel({ caseId, onClose }) {
                               scenario tags + drop a notes skeleton (notes only if empty).
                             </p>
                             <button
-                              onClick={() => seedAll(t.id)}
+                              onClick={() => setConfirmSeedTpl(t)}
                               disabled={seeding === t.id}
                               className="btn-secondary text-xs flex items-center gap-1.5 w-full justify-center"
                             >
@@ -3017,6 +3221,29 @@ function TemplatesPanel({ caseId, onClose }) {
             })
           )}
         </div>
+
+        {confirmDeleteTpl && (
+          <ConfirmDialog
+            title="Delete template"
+            icon={<Trash2 size={14} className="text-red-500" />}
+            message={`Delete custom template "${confirmDeleteTpl.name}"? This cannot be undone.`}
+            confirmLabel="Delete"
+            confirmClass="btn-danger"
+            onConfirm={() => deleteTemplate(confirmDeleteTpl.id)}
+            onCancel={() => setConfirmDeleteTpl(null)}
+          />
+        )}
+        {confirmSeedTpl && (
+          <ConfirmDialog
+            title="Seed this case"
+            icon={<Play size={14} className="text-brand-accent" />}
+            message={`Seed this case with template "${confirmSeedTpl.name}"? This adds IOCs to the GLOBAL watchlist, appends scenario tags to this case, and writes the notes skeleton (only if your notes are empty).`}
+            confirmLabel="Seed"
+            confirmClass="btn-primary"
+            onConfirm={() => seedAll(confirmSeedTpl.id)}
+            onCancel={() => setConfirmSeedTpl(null)}
+          />
+        )}
     </ResizableDrawer>
   )
 }

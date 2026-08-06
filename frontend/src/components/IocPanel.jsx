@@ -2,12 +2,14 @@ import { useState, useEffect } from 'react'
 import { Loader2, Search, Copy, ChevronDown, ChevronRight, Download, Globe, X, Play, AlertTriangle, CheckCircle, ShieldCheck } from 'lucide-react'
 import { api } from '../api/client'
 import PanelHelp from './shared/PanelHelp'
+import Toast from './Toast'
+import { useToast } from '../hooks/useToast'
 
 // ── Threat-intel matching ─────────────────────────────────────────────────────
 // Runs the cti_match MODULE (one matching path) — results are indexed as
 // `cti_match` timeline events, so they PERSIST and are searchable. The button
 // launches the module; "View in timeline" pivots to artifact_type:cti_match.
-function ThreatMatch({ caseId, onSearch }) {
+function ThreatMatch({ caseId, onSearch, showToast }) {
   const [status, setStatus]   = useState(null)   // null | 'running' | 'started' | {error}
   const [types, setTypes]     = useState([])
   const [autoRun, setAutoRun] = useState(null)
@@ -19,8 +21,15 @@ function ThreatMatch({ caseId, onSearch }) {
 
   const toggleType = t => setTypes(p => p.includes(t) ? p.filter(x => x !== t) : [...p, t])
   async function toggleAuto(k) {
-    const next = { ...autoRun, [k]: !autoRun[k] }; setAutoRun(next)
-    try { await api.cases.setAutoRun(caseId, { [k]: next[k] }) } catch { /* ignore */ }
+    const prev = autoRun
+    const next = { ...autoRun, [k]: !autoRun[k] }
+    setAutoRun(next)   // optimistic — revert + tell the analyst if the write fails
+    try {
+      await api.cases.setAutoRun(caseId, { [k]: next[k] })
+    } catch (e) {
+      setAutoRun(prev)
+      showToast?.(e.message || 'Failed to update the auto-run setting', 'error')
+    }
   }
 
   async function run() {
@@ -124,7 +133,8 @@ function WhoisPopover({ ip, onClose }) {
           <Globe size={11} className="text-sky-500" />
           <span className="font-semibold text-gray-700 font-mono">{ip}</span>
         </div>
-        <button onClick={onClose} className="text-gray-500 hover:text-gray-600 p-0.5 rounded hover:bg-gray-100">
+        <button onClick={onClose} aria-label="Close WHOIS lookup"
+          className="text-gray-500 hover:text-gray-600 p-1.5 rounded hover:bg-gray-100">
           <X size={10} />
         </button>
       </div>
@@ -187,7 +197,7 @@ function IocCategory({ cat, items, onSearch }) {
                 <span className="text-[9px] text-gray-500 flex-shrink-0 tabular-nums">
                   ×{item.count.toLocaleString()}
                 </span>
-                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-within:opacity-100 transition-opacity flex-shrink-0">
                   <button
                     onClick={() => navigator.clipboard.writeText(item.value)}
                     className="p-0.5 rounded hover:bg-gray-200 text-gray-500 hover:text-gray-600 transition-colors"
@@ -260,6 +270,7 @@ export default function IocPanel({ caseId, onSearch }) {
   const [loading, setLoading] = useState(true)
   const [filter, setFilter]   = useState('')
   const [showExport, setShowExport] = useState(false)
+  const [toast, showToast]    = useToast()
 
   useEffect(() => {
     setLoading(true)
@@ -344,7 +355,7 @@ export default function IocPanel({ caseId, onSearch }) {
       </div>
 
       {/* Threat-intel matching against the IOC database */}
-      <ThreatMatch caseId={caseId} onSearch={onSearch} />
+      <ThreatMatch caseId={caseId} onSearch={onSearch} showToast={showToast} />
 
       {/* Body */}
       {loading ? (
@@ -366,6 +377,7 @@ export default function IocPanel({ caseId, onSearch }) {
           ))}
         </div>
       )}
+      <Toast toast={toast} />
     </div>
   )
 }

@@ -113,4 +113,169 @@ describe('api client request()', () => {
     const [, opts] = global.fetch.mock.calls[0]
     expect(opts.headers['Authorization']).toBe('Bearer my-jwt')
   })
+
+  it('watchlist.autoRun GETs the case auto-run endpoint', async () => {
+    const payload = { ran_at: '2026-08-01T00:00:00Z', checked: 3, hits: [{ id: 'w1', hits: 7 }] }
+    global.fetch.mockResolvedValueOnce(fakeResponse({
+      status: 200, ok: true, json: async () => payload,
+    }))
+
+    const result = await api.watchlist.autoRun('case-1')
+
+    const [url, opts] = global.fetch.mock.calls[0]
+    expect(url).toBe('/api/v1/cases/case-1/watchlist/auto-run')
+    expect(opts.method).toBe('GET')
+    expect(result).toEqual(payload)
+  })
+})
+
+describe('api client — newly wired bindings', () => {
+  beforeEach(() => {
+    global.fetch = vi.fn()
+    localStorage.clear()
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  function mockOk(payload = {}) {
+    global.fetch.mockResolvedValueOnce(fakeResponse({
+      status: 200, ok: true, json: async () => payload,
+    }))
+  }
+
+  it('audit.log GETs /audit/log with query params', async () => {
+    mockOk({ items: [], count: 0, limit: 50, offset: 0 })
+    await api.audit.log({ limit: 50, actor: 'alice' })
+    const [url, opts] = global.fetch.mock.calls[0]
+    expect(url).toBe('/api/v1/audit/log?limit=50&actor=alice')
+    expect(opts.method).toBe('GET')
+  })
+
+  it('audit.verify GETs /audit/verify with a limit', async () => {
+    mockOk({ ok: true, broken_at: null, checked: 42 })
+    const result = await api.audit.verify(500)
+    const [url, opts] = global.fetch.mock.calls[0]
+    expect(url).toBe('/api/v1/audit/verify?limit=500')
+    expect(opts.method).toBe('GET')
+    expect(result).toEqual({ ok: true, broken_at: null, checked: 42 })
+  })
+
+  it('deadLetter.list GETs /admin/dead-letter', async () => {
+    mockOk({ count: 0, total: 0, entries: [] })
+    await api.deadLetter.list(100)
+    const [url, opts] = global.fetch.mock.calls[0]
+    expect(url).toBe('/api/v1/admin/dead-letter?limit=100')
+    expect(opts.method).toBe('GET')
+  })
+
+  it('deadLetter.replay POSTs to the entry replay endpoint', async () => {
+    mockOk({ status: 'requeued', task: 'ingest', task_id: 't1', job_id: 'j1', queue: 'q' })
+    const result = await api.deadLetter.replay(3)
+    const [url, opts] = global.fetch.mock.calls[0]
+    expect(url).toBe('/api/v1/admin/dead-letter/3/replay')
+    expect(opts.method).toBe('POST')
+    expect(result.status).toBe('requeued')
+  })
+
+  it('deadLetter.replayAll POSTs to replay-all', async () => {
+    mockOk({ replayed: 2, skipped_already_processed: 1, results: [] })
+    await api.deadLetter.replayAll()
+    const [url, opts] = global.fetch.mock.calls[0]
+    expect(url).toBe('/api/v1/admin/dead-letter/replay-all')
+    expect(opts.method).toBe('POST')
+  })
+
+  it('sigmaSync.status GETs /sigma/status', async () => {
+    mockOk({ last_sync: null, sigma_rules_count: 12, sigma_available: true })
+    await api.sigmaSync.status()
+    const [url, opts] = global.fetch.mock.calls[0]
+    expect(url).toBe('/api/v1/sigma/status')
+    expect(opts.method).toBe('GET')
+  })
+
+  it('sigmaSync.sync POSTs level filters to /sigma/sync', async () => {
+    mockOk({ imported: 5, skipped: 2, errors: 0, total_rules: 7 })
+    await api.sigmaSync.sync({ levels: ['high', 'critical'] })
+    const [url, opts] = global.fetch.mock.calls[0]
+    expect(url).toBe('/api/v1/sigma/sync')
+    expect(opts.method).toBe('POST')
+    expect(JSON.parse(opts.body)).toEqual({ levels: ['high', 'critical'] })
+  })
+
+  it('sigmaSync.clear DELETEs /sigma/clear', async () => {
+    mockOk({ cleared: 9 })
+    const result = await api.sigmaSync.clear()
+    const [url, opts] = global.fetch.mock.calls[0]
+    expect(url).toBe('/api/v1/sigma/clear')
+    expect(opts.method).toBe('DELETE')
+    expect(result.cleared).toBe(9)
+  })
+
+  it('sigmaSync.setSettings PUTs the enabled flag', async () => {
+    mockOk({ sigma_enabled: false })
+    await api.sigmaSync.setSettings(false)
+    const [url, opts] = global.fetch.mock.calls[0]
+    expect(url).toBe('/api/v1/sigma/settings')
+    expect(opts.method).toBe('PUT')
+    expect(JSON.parse(opts.body)).toEqual({ enabled: false })
+  })
+
+  it('export.chainOfCustody GETs the case chain-of-custody endpoint', async () => {
+    mockOk({ document_type: 'chain_of_custody', artifact_count: 0, artifacts: [] })
+    await api.export.chainOfCustody('case-9')
+    const [url, opts] = global.fetch.mock.calls[0]
+    expect(url).toBe('/api/v1/cases/case-9/chain-of-custody')
+    expect(opts.method).toBe('GET')
+  })
+
+  it('export.archiveUrl builds a download URL with the token as a query param', () => {
+    localStorage.setItem('fo_token', 'tok 123')
+    expect(api.export.archiveUrl('case-9')).toBe(
+      '/api/v1/cases/case-9/export/archive?_token=tok%20123'
+    )
+  })
+
+  it('export.archiveUrl omits the token when logged out', () => {
+    expect(api.export.archiveUrl('case-9')).toBe('/api/v1/cases/case-9/export/archive')
+  })
+
+  it('studio.queryTest POSTs case_id + query', async () => {
+    mockOk({ hits: [] })
+    await api.studio.queryTest('case-1', 'process.name:cmd.exe')
+    const [url, opts] = global.fetch.mock.calls[0]
+    expect(url).toBe('/api/v1/studio/query-test')
+    expect(opts.method).toBe('POST')
+    expect(JSON.parse(opts.body)).toEqual({ case_id: 'case-1', query: 'process.name:cmd.exe' })
+  })
+
+  it('studio.yaraTest POSTs case_id + job_id + rules', async () => {
+    mockOk({ matches: [], scanned_bytes: 128 })
+    await api.studio.yaraTest('case-1', 'job-7', 'rule r { condition: true }')
+    const [url, opts] = global.fetch.mock.calls[0]
+    expect(url).toBe('/api/v1/studio/yara-test')
+    expect(opts.method).toBe('POST')
+    expect(JSON.parse(opts.body)).toEqual({
+      case_id: 'case-1', job_id: 'job-7', rules: 'rule r { condition: true }',
+    })
+  })
+
+  it('findings.remove DELETEs with a finding_ids body', async () => {
+    mockOk({ deleted: 1 })
+    await api.findings.remove('case-1', { findingIds: ['f1'] })
+    const [url, opts] = global.fetch.mock.calls[0]
+    expect(url).toBe('/api/v1/cases/case-1/findings')
+    expect(opts.method).toBe('DELETE')
+    expect(JSON.parse(opts.body)).toEqual({ finding_ids: ['f1'], kind: null })
+  })
+
+  it('findings.promote POSTs a subset re-ingest', async () => {
+    mockOk({ job_id: 'j1', filename: 'findings-selection-abc.jsonl', count: 1, status: 'PENDING' })
+    await api.findings.promote('case-1', { findingIds: ['f1'] })
+    const [url, opts] = global.fetch.mock.calls[0]
+    expect(url).toBe('/api/v1/cases/case-1/findings/promote')
+    expect(opts.method).toBe('POST')
+    expect(JSON.parse(opts.body)).toEqual({ finding_ids: ['f1'], kind: null, filename: null })
+  })
 })

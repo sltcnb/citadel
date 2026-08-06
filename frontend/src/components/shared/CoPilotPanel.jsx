@@ -6,6 +6,7 @@ import {
 import { api } from '../../api/client'
 import { iocValueQuery } from '../../utils/ioc'
 import PanelShell from './PanelShell'
+import ErrorBox from './ErrorBox'
 
 /**
  * Pilot "co-pilot" drawer.
@@ -141,9 +142,7 @@ export default function CoPilotPanel({ caseId, onClose, onPivot }) {
             </p>
 
             {watchError && (
-              <div className="card p-3 text-xs text-red-700 bg-red-50 border-red-200 flex items-center gap-2">
-                <AlertTriangle size={14} /> {watchError}
-              </div>
+              <ErrorBox msg={watchError} />
             )}
 
             <div className="card p-4">
@@ -241,8 +240,9 @@ export default function CoPilotPanel({ caseId, onClose, onPivot }) {
                   </div>
                 </div>
                 <div className="flex-1 min-w-[180px]">
-                  <label className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">Value</label>
+                  <label htmlFor="copilot-recall-value" className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">Value</label>
                   <input
+                    id="copilot-recall-value"
                     value={recallValue}
                     onChange={e => setRecallValue(e.target.value)}
                     onKeyDown={e => { if (e.key === 'Enter') runRecall() }}
@@ -262,9 +262,7 @@ export default function CoPilotPanel({ caseId, onClose, onPivot }) {
             </div>
 
             {recallError && (
-              <div className="card p-3 text-xs text-red-700 bg-red-50 border-red-200 flex items-center gap-2">
-                <AlertTriangle size={14} /> {recallError}
-              </div>
+              <ErrorBox msg={recallError} />
             )}
 
             {recall && (
@@ -352,9 +350,7 @@ export default function CoPilotPanel({ caseId, onClose, onPivot }) {
             </div>
 
             {seenError && (
-              <div className="card p-3 text-xs text-red-700 bg-red-50 border-red-200 flex items-center gap-2">
-                <AlertTriangle size={14} /> {seenError}
-              </div>
+              <ErrorBox msg={seenError} />
             )}
 
             {seen && (

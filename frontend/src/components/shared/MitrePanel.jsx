@@ -133,7 +133,7 @@ export default function MitrePanel({ caseId, onClose, onPivot }) {
                       <div className="h-full bg-brand-accent" style={{ width: `${pct}%` }} />
                     </div>
                     <span className="font-mono tabular-nums text-gray-700 w-12 text-right">{t.count.toLocaleString()}</span>
-                    <ArrowRight size={11} className="text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
+                    <ArrowRight size={11} className="text-gray-400 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity flex-shrink-0" />
                   </button>
                 )
               })}

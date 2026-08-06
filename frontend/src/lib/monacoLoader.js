@@ -1,23 +1,37 @@
-// Pins which Monaco build the browser actually loads.
+// Bundles Monaco locally instead of fetching it from a CDN at runtime.
 //
-// @monaco-editor/react does not bundle the editor: it fetches it at runtime
-// through @monaco-editor/loader, whose default CDN URL is hardcoded to whatever
-// monaco-editor version *that loader release* shipped against (0.55.1 today) --
-// completely independent of the monaco-editor version resolved in
-// package-lock.json. So bumping the lockfile alone silences the scanners while
-// the browser keeps executing the old build.
+// @monaco-editor/react does not bundle the editor: by default @monaco-editor/
+// loader pulls it from cdn.jsdelivr.net in the browser — which leaves the
+// Studio/RuleDrawer/YaraRuleModal editors blank in air-gapped deployments
+// (typical for DFIR labs) and adds a supply-chain dependency we don't need,
+// since monaco-editor is already a locked dependency in package.json.
 //
-// MONACO_VERSION must therefore stay in step with the `monaco-editor` override
-// in package.json. Bump both together, or the runtime silently drifts back
-// behind the lockfile.
+// We import the ESM build ourselves, register an editor worker through Vite's
+// `?worker` import (emitted as a local asset chunk), and hand the instance to
+// @monaco-editor/react via loader.config({ monaco }), which skips the CDN
+// fetch entirely. Version drift is no longer possible: the browser runs
+// exactly what package-lock.json resolved.
+//
+// Only basic syntax highlighting is needed (yaml/python for Studio and
+// RuleDrawer, plaintext otherwise, plus the custom YARA Monarch grammar in
+// YaraRuleModal) — no rich language workers (json/css/html/ts), so a single
+// editor worker covers everything.
 //
 // Import this module for side effects before mounting any <Editor>; config()
 // must run before the loader's first init(). It is idempotent in practice
 // because every Editor call site imports this same module instance.
+// monaco-editor 0.56's exports map rewrites "./*" → "./esm/vs/*.js", so these
+// specifiers intentionally omit the "esm/vs/" prefix.
+import * as monaco from 'monaco-editor/editor/editor.api'
+import EditorWorker from 'monaco-editor/editor/editor.worker?worker'
+import 'monaco-editor/languages/definitions/yaml/register.js'
+import 'monaco-editor/languages/definitions/python/register.js'
 import { loader } from '@monaco-editor/react'
 
-export const MONACO_VERSION = '0.56.0'
+self.MonacoEnvironment = {
+  getWorker() {
+    return new EditorWorker()
+  },
+}
 
-loader.config({
-  paths: { vs: `https://cdn.jsdelivr.net/npm/monaco-editor@${MONACO_VERSION}/min/vs` },
-})
+loader.config({ monaco })

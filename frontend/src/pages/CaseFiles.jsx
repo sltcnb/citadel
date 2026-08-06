@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useParams } from 'react-router'
 import {
   FileText,
   HardDrive,
@@ -20,6 +21,7 @@ import {
 import { api } from '../api/client'
 import { formatBytes } from '../utils/format'
 import Modal from '../components/shared/Modal'
+import ErrorBox from '../components/shared/ErrorBox'
 
 // ── Category icons ────────────────────────────────────────────────────────────
 function FileIcon({ category, size = 13 }) {
@@ -329,7 +331,7 @@ function FileSearchPanel({ caseId, onOpenFile }) {
         </div>
       </form>
 
-      {error && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>}
+      {error && <ErrorBox msg={error} />}
 
       {result && (
         <div className="space-y-3">
@@ -417,8 +419,7 @@ function ReingestModal({ caseId, file, onClose, onDone }) {
   return (
     <Modal
       onClose={onClose}
-      overlayClassName="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
-      className="bg-white rounded-lg shadow-xl w-80 p-4"
+      className="modal-box max-w-xs p-4"
       ariaLabel="Re-ingest with plugin"
     >
       <>
@@ -432,8 +433,9 @@ function ReingestModal({ caseId, file, onClose, onDone }) {
         </p>
 
         <div className="mb-3">
-          <label className="block text-xs font-medium text-gray-600 mb-1">Parser</label>
+          <label htmlFor="cf-parser" className="block text-xs font-medium text-gray-600 mb-1">Parser</label>
           <select
+            id="cf-parser"
             className="w-full text-xs border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-accent"
             value={selected}
             onChange={e => setSelected(e.target.value)}
@@ -482,9 +484,14 @@ const STATUS_COLORS = {
   CANCELLED:  'text-gray-400 line-through',
 }
 
-export default function CaseFiles({ caseId }) {
+export default function CaseFiles({ caseId: caseIdProp }) {
+  // Routed standalone (/cases/:id/files passes no prop) and embedded — take the
+  // id from the route when the prop is missing.
+  const { caseId: routeCaseId } = useParams()
+  const caseId = caseIdProp || routeCaseId
   const [files, setFiles]               = useState([])
   const [loading, setLoading]           = useState(true)
+  const [caseName, setCaseName]         = useState('')
   const [activeView, setActiveView]     = useState(null)   // { type: 'content'|'diskimage'|'search', file? }
   const [filter, setFilter]             = useState('')
   const [reingestFile, setReingestFile] = useState(null)
@@ -505,6 +512,12 @@ export default function CaseFiles({ caseId }) {
 
   useEffect(() => {
     loadFiles()
+  }, [caseId])
+
+  // Case name for the context header — same fetch CaseTimeline does.
+  useEffect(() => {
+    if (!caseId) return
+    api.cases.get(caseId).then(c => setCaseName(c?.name || '')).catch(() => {})
   }, [caseId])
 
   const activeJobs = files.filter(f => ['PENDING', 'UPLOADING', 'RUNNING'].includes(f.status))
@@ -600,6 +613,14 @@ export default function CaseFiles({ caseId }) {
   return (
     <>
     <div className="flex flex-col h-full">
+      {/* Case context header — keeps the analyst oriented on the sub-page */}
+      <div className="px-4 py-2 border-b border-gray-100 bg-gray-50 flex items-center gap-2 flex-shrink-0">
+        <span className="text-[11px] text-gray-500 flex-shrink-0">Case</span>
+        <span className="text-[11px] font-semibold text-brand-text truncate" title={caseName || caseId}>
+          {caseName || caseId}
+        </span>
+      </div>
+
       {/* Toolbar */}
       <div className="px-4 py-2.5 border-b border-gray-200 bg-white flex items-center gap-2 flex-shrink-0">
         <div className="relative flex-1">
@@ -669,7 +690,7 @@ export default function CaseFiles({ caseId }) {
       )}
 
       {/* File list */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-auto">
         {loading && (
           <div className="flex items-center justify-center gap-2 py-10 text-gray-500 text-xs">
             <Loader2 size={14} className="animate-spin" /> Loading files…
@@ -678,7 +699,9 @@ export default function CaseFiles({ caseId }) {
         {!loading && shown.length === 0 && (
           <div className="flex flex-col items-center justify-center py-10 text-gray-500 text-xs">
             <File size={28} className="mb-2 text-gray-500" />
-            {filter ? 'No files match your filter.' : 'No files ingested yet.'}
+            {filter
+              ? 'No files match your filter.'
+              : 'No files yet — ingest evidence from the case page (Ingest button).'}
           </div>
         )}
         {!loading && shown.length > 0 && (

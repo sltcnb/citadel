@@ -7,6 +7,8 @@ import {
 import { api } from '../../api/client'
 import { ResizableDrawer } from '../shared/resizableDrawer'
 import PanelHelp from '../shared/PanelHelp'
+import ErrorBox from '../shared/ErrorBox'
+import { useConfirm } from '../useConfirm'
 import { currentUser } from '../../utils/caseConstants'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -35,23 +37,23 @@ function TemplateEditor({ editor, saving, error, onChange, onSave, onCancel, set
         <button onClick={onCancel} className="btn-ghost p-1 rounded" title="Close editor"><X size={13} /></button>
       </div>
 
-      {error && <div className="text-[11px] text-red-700 bg-red-50 border border-red-200 rounded p-2">{error}</div>}
+      {error && <ErrorBox msg={error} className="text-[11px]" />}
 
       <div>
-        <label className="block text-[10px] font-medium text-gray-500 mb-1">Name</label>
-        <input value={editor.name} onChange={e => upd({ name: e.target.value })}
+        <label htmlFor="tpl-name" className="block text-[10px] font-medium text-gray-500 mb-1">Name</label>
+        <input id="tpl-name" value={editor.name} onChange={e => upd({ name: e.target.value })}
           className="w-full text-xs border border-gray-300 rounded px-2 py-1.5" placeholder="e.g. BEC investigation" />
       </div>
 
       <div>
-        <label className="block text-[10px] font-medium text-gray-500 mb-1">Description</label>
-        <input value={editor.description} onChange={e => upd({ description: e.target.value })}
+        <label htmlFor="tpl-desc" className="block text-[10px] font-medium text-gray-500 mb-1">Description</label>
+        <input id="tpl-desc" value={editor.description} onChange={e => upd({ description: e.target.value })}
           className="w-full text-xs border border-gray-300 rounded px-2 py-1.5" />
       </div>
 
       <div>
-        <label className="block text-[10px] font-medium text-gray-500 mb-1">Tags (comma-separated)</label>
-        <input value={editor.tags} onChange={e => upd({ tags: e.target.value })}
+        <label htmlFor="tpl-tags" className="block text-[10px] font-medium text-gray-500 mb-1">Tags (comma-separated)</label>
+        <input id="tpl-tags" value={editor.tags} onChange={e => upd({ tags: e.target.value })}
           className="w-full text-xs border border-gray-300 rounded px-2 py-1.5" placeholder="phishing, bec" />
       </div>
 
@@ -78,15 +80,15 @@ function TemplateEditor({ editor, saving, error, onChange, onSave, onCancel, set
       </div>
 
       <div>
-        <label className="block text-[10px] font-medium text-gray-500 mb-1">Rule categories (comma-separated)</label>
-        <input value={editor.rule_categories} onChange={e => upd({ rule_categories: e.target.value })}
+        <label htmlFor="tpl-rule-cats" className="block text-[10px] font-medium text-gray-500 mb-1">Rule categories (comma-separated)</label>
+        <input id="tpl-rule-cats" value={editor.rule_categories} onChange={e => upd({ rule_categories: e.target.value })}
           className="w-full text-xs border border-gray-300 rounded px-2 py-1.5 font-mono"
           placeholder="sigma_hq/01_initial_access, sigma_hq/02_execution" />
       </div>
 
       <div>
-        <label className="block text-[10px] font-medium text-gray-500 mb-1">Notes (markdown)</label>
-        <textarea value={editor.notes} onChange={e => upd({ notes: e.target.value })} rows={6}
+        <label htmlFor="tpl-notes" className="block text-[10px] font-medium text-gray-500 mb-1">Notes (markdown)</label>
+        <textarea id="tpl-notes" value={editor.notes} onChange={e => upd({ notes: e.target.value })} rows={6}
           className="w-full text-[11px] border border-gray-300 rounded px-2 py-1.5 font-mono" />
       </div>
 
@@ -118,6 +120,7 @@ export default function TemplatesPanel({ caseId, onClose }) {
   const [editor, setEditor]   = useState(null)
   const [saving, setSaving]   = useState(false)
   const [editorErr, setEditorErr] = useState(null)
+  const [confirmEl, askConfirm] = useConfirm()
 
   function refresh() {
     return api.caseTemplates.list()
@@ -186,7 +189,7 @@ export default function TemplatesPanel({ caseId, onClose }) {
   }
 
   async function deleteTemplate(tplId) {
-    if (!confirm('Delete this custom template? This cannot be undone.')) return
+    if (!await askConfirm('Delete this custom template? This cannot be undone.', { title: 'Delete template?' })) return
     setError(null)
     try {
       await api.caseTemplates.remove(tplId)
@@ -223,12 +226,13 @@ export default function TemplatesPanel({ caseId, onClose }) {
   }
 
   async function seedAll(tplId) {
-    if (!confirm(
+    if (!await askConfirm(
       'Seed this case with the template?\n\n' +
       '• Adds IOCs to the GLOBAL watchlist\n' +
       '• Appends scenario tags to this case\n' +
       '• Writes the notes skeleton (only if your notes are empty)\n\n' +
-      'Continue?'
+      'Continue?',
+      { title: 'Apply template?' },
     )) return
     setSeeding(tplId); setSeedResult(null); setError(null)
     try {
@@ -294,7 +298,7 @@ export default function TemplatesPanel({ caseId, onClose }) {
           )}
 
           {error && (
-            <div className="card p-3 text-xs text-red-700 bg-red-50 border-red-200">{error}</div>
+            <ErrorBox msg={error} />
           )}
           {seedResult && (
             <div className="card p-3 text-xs text-emerald-700 bg-emerald-50 border-emerald-200">
@@ -368,7 +372,7 @@ export default function TemplatesPanel({ caseId, onClose }) {
                           <Loader2 size={12} className="animate-spin" /> Running checks against this case…
                         </div>
                       ) : exp.error ? (
-                        <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded p-2">{exp.error}</div>
+                        <ErrorBox msg={exp.error} />
                       ) : (
                         <>
                           <p className="text-[10px] text-gray-500 mb-1">
@@ -440,6 +444,7 @@ export default function TemplatesPanel({ caseId, onClose }) {
             })
           )}
         </div>
+        {confirmEl}
     </ResizableDrawer>
   )
 }

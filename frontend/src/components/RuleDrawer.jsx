@@ -8,6 +8,7 @@ import { api } from '../api/client'
 import { useCompanies } from '../pages/UserManagement'
 import { severityStyle } from '../utils/severity'
 import Modal from './shared/Modal'
+import ErrorBox from './shared/ErrorBox'
 
 // ── Shared constants ──────────────────────────────────────────────────────────
 
@@ -245,7 +246,7 @@ export default function RuleDrawer({ rule = null, onClose, onSaved, inline = fal
     <div
       className={inline
         ? "flex flex-col h-full bg-white"
-        : "bg-white border border-gray-200 rounded-xl w-full max-w-5xl shadow-2xl flex flex-col"}
+        : "flex flex-col min-h-0"}
       style={inline ? undefined : { height: '88vh' }}
     >
         {/* Header */}
@@ -402,7 +403,7 @@ export default function RuleDrawer({ rule = null, onClose, onSaved, inline = fal
                     )}
                   </div>
                 ) : (
-                  <p className="text-[11px] text-gray-500 italic">Click "Parse YAML" to preview</p>
+                  <p className="text-[11px] text-gray-500 italic">Click &quot;Parse YAML&quot; to preview</p>
                 )}
               </div>
             )}
@@ -464,10 +465,7 @@ export default function RuleDrawer({ rule = null, onClose, onSaved, inline = fal
 
             {/* Error */}
             {error && (
-              <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-start gap-1.5">
-                <AlertTriangle size={11} className="mt-0.5 flex-shrink-0" />
-                <span className="leading-snug">{error}</span>
-              </div>
+              <ErrorBox msg={error} />
             )}
           </div>
         </div>
@@ -490,8 +488,7 @@ export default function RuleDrawer({ rule = null, onClose, onSaved, inline = fal
   return (
     <Modal
       onClose={onClose}
-      overlayClassName="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
-      className="contents"
+      className="modal-box max-w-5xl"
       ariaLabel={rule ? 'Edit rule' : 'New rule'}
     >
       {drawerInner}

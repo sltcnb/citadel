@@ -4,6 +4,8 @@ import { AlertTriangle, Plus, Trash2, Play, CheckCircle, Loader2,
          ExternalLink, Shield, ShieldOff } from 'lucide-react'
 import { api } from '../api/client'
 import ConfirmDialog from '../components/ConfirmDialog'
+import Toast from '../components/Toast'
+import { useToast } from '../hooks/useToast'
 
 // ── Sigma enable/disable — per-case override on top of the global default ──────
 // Surfaced here (the Detection Rules panel) because this is where an analyst
@@ -209,8 +211,10 @@ function LibraryRulesList({ rules, caseId, onSearchQuery }) {
           sample_events: r.match?.sample_events || [],
         },
       }))
-    } catch {
-      setResults(p => ({ ...p, [rule.id]: { error: true } }))
+    } catch (e) {
+      // Keep the server's detail (e.g. "Elasticsearch rejected the rule query — …")
+      // so the analyst sees *why* the run failed, not just that it did.
+      setResults(p => ({ ...p, [rule.id]: { error: e.message || 'Run failed' } }))
     } finally {
       setRunningId(null)
     }
@@ -273,7 +277,11 @@ function LibraryRulesList({ rules, caseId, onSearchQuery }) {
                           clean
                         </span>
                   )}
-                  {result?.error && <span className="text-[10px] text-red-400 flex-shrink-0">err</span>}
+                  {result?.error && (
+                    <span className="text-[10px] text-red-500 flex-shrink-0 max-w-[260px] truncate" title={result.error}>
+                      {result.error}
+                    </span>
+                  )}
                   <button
                     onClick={() => runRule(rule)}
                     disabled={isRunning || !!runningId}
@@ -388,6 +396,7 @@ export default function AlertRules({ caseId, onSearchQuery }) {
   const [triage, setTriage]             = useState([])
   // Pending rule deletion (ConfirmDialog)
   const [confirmDelete, setConfirmDelete] = useState(null) // rule | null
+  const [toast, showToast]              = useToast()
 
   // ── Load on mount ─────────────────────────────────────────────────────────
 
@@ -444,8 +453,8 @@ export default function AlertRules({ caseId, onSearchQuery }) {
           sample_events: r.match?.sample_events || [],
         },
       }))
-    } catch {
-      setCaseRuleResults(p => ({ ...p, [rule.id]: { error: true } }))
+    } catch (e) {
+      setCaseRuleResults(p => ({ ...p, [rule.id]: { error: e.message || 'Run failed' } }))
     } finally {
       setRunningCaseRuleId(null)
     }
@@ -478,7 +487,7 @@ export default function AlertRules({ caseId, onSearchQuery }) {
       const freshRun = await api.alertRules.runLibrary(caseId, types)
       setRun(freshRun)
       if (freshRun.matches?.length) analyzeAll(freshRun.matches)
-    } catch (e) { alert('Check failed: ' + e.message) }
+    } catch (e) { showToast('Check failed: ' + e.message, 'error') }
     finally { setChecking(false) }
   }
 
@@ -491,9 +500,11 @@ export default function AlertRules({ caseId, onSearchQuery }) {
     setTriaging(true)
     try {
       const res = await api.alertRules.triage(caseId, 3)
+      // Per-rule config errors come back as data in res.triaged and render
+      // inline in TriageItem — only a transport failure lands in catch.
       setTriage(res.triaged || [])
     } catch (e) {
-      alert('Triage failed: ' + e.message)
+      showToast('Triage failed: ' + e.message, 'error')
     } finally {
       setTriaging(false)
     }
@@ -530,7 +541,7 @@ export default function AlertRules({ caseId, onSearchQuery }) {
       setShowForm(true)
       setAiDesc('')
     } catch (err) {
-      alert('AI generation failed: ' + err.message)
+      showToast('AI generation failed: ' + err.message, 'error')
     } finally {
       setGenerating(false)
     }
@@ -785,7 +796,7 @@ export default function AlertRules({ caseId, onSearchQuery }) {
                     const res = caseRuleResults[rule.id]
                     if (!res) return null
                     return res.error
-                      ? <span className="text-[10px] text-red-400">err</span>
+                      ? <span className="text-[10px] text-red-500 max-w-[260px] truncate" title={res.error}>{res.error}</span>
                       : res.fired
                         ? <span className="badge bg-yellow-100 text-yellow-700 border border-yellow-200 text-[10px]">{res.match_count} hit{res.match_count !== 1 ? 's' : ''}</span>
                         : <span className="badge bg-green-50 text-green-600 border border-green-200 text-[10px]">clean</span>
@@ -829,6 +840,8 @@ export default function AlertRules({ caseId, onSearchQuery }) {
           onCancel={() => setConfirmDelete(null)}
         />
       )}
+
+      <Toast toast={toast} />
     </div>
   )
 }

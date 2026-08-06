@@ -180,8 +180,9 @@ export default function KillChainPanel({
         <form onSubmit={onSubmitForm} className="card p-3 space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2">
-              <label className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">fo_id</label>
+              <label htmlFor="kc-foid" className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">fo_id</label>
               <input
+                id="kc-foid"
                 type="text"
                 value={formFoId}
                 onChange={e => setFormFoId(e.target.value)}
@@ -191,8 +192,9 @@ export default function KillChainPanel({
             </div>
             <div className="col-span-2 text-[10px] text-gray-400 text-center -my-1">— or —</div>
             <div>
-              <label className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">Host</label>
+              <label htmlFor="kc-host" className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">Host</label>
               <input
+                id="kc-host"
                 type="text"
                 value={formHost}
                 onChange={e => setFormHost(e.target.value)}
@@ -201,8 +203,9 @@ export default function KillChainPanel({
               />
             </div>
             <div>
-              <label className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">Timestamp</label>
+              <label htmlFor="kc-ts" className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">Timestamp</label>
               <input
+                id="kc-ts"
                 type="text"
                 value={formTs}
                 onChange={e => setFormTs(e.target.value)}
@@ -213,8 +216,9 @@ export default function KillChainPanel({
           </div>
           <div className="flex items-end gap-3">
             <div>
-              <label className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">Window (min)</label>
+              <label htmlFor="kc-window" className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">Window (min)</label>
               <input
+                id="kc-window"
                 type="number" min={1} max={1440}
                 value={windowMinutes}
                 onChange={e => setWindow(+e.target.value || 60)}

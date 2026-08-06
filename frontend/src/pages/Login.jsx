@@ -1,7 +1,8 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useId, Children, isValidElement, cloneElement } from 'react'
 import { useNavigate, useLocation } from 'react-router'
 import { Loader2, Eye, EyeOff, ShieldCheck, ArrowLeft, KeyRound, Lock } from 'lucide-react'
 import { api, setToken } from '../api/client'
+import ErrorBox, { NoticeBox } from '../components/shared/ErrorBox'
 
 // Robust FastAPI error extraction (detail may be a string or a 422 array).
 async function readError(res) {
@@ -73,6 +74,7 @@ export default function Login({ onLogin }) {
     const params = new URLSearchParams(hash.replace(/^#/, ''))
     const token = params.get('sso_token')
     const ssoErr = params.get('sso_error')
+    const ssoPwToken = params.get('sso_pw_token')
     // Clear the hash so the token/error doesn't linger in the URL or get re-read.
     const clearHash = () => {
       window.history.replaceState(null, '', window.location.pathname + window.location.search)
@@ -80,6 +82,14 @@ export default function Login({ onLogin }) {
     if (token) {
       clearHash()
       finishSSO(token)
+    } else if (ssoPwToken) {
+      // SSO account flagged must_change_password: the callback withheld the
+      // access token and issued a pw-change challenge instead (same flow as
+      // the password login path).
+      clearHash()
+      setPwToken(ssoPwToken)
+      setNewPass(''); setConfirmPass('')
+      setStep('change_password')
     } else if (ssoErr) {
       clearHash()
       setError(decodeURIComponent(ssoErr))
@@ -233,7 +243,8 @@ export default function Login({ onLogin }) {
                       onChange={e => setPassword(e.target.value)} autoComplete="current-password"
                       placeholder="Enter your password" className="input w-full pr-10" disabled={loading}
                     />
-                    <button type="button" onClick={() => setShowPass(v => !v)} tabIndex={-1}
+                    <button type="button" onClick={() => setShowPass(v => !v)}
+                      aria-label={showPass ? 'Hide password' : 'Show password'}
                       className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
                       {showPass ? <EyeOff size={15} /> : <Eye size={15} />}
                     </button>
@@ -329,7 +340,8 @@ export default function Login({ onLogin }) {
                       placeholder="At least 8 characters" className="input w-full pr-10"
                       autoFocus disabled={loading}
                     />
-                    <button type="button" onClick={() => setShowPass(v => !v)} tabIndex={-1}
+                    <button type="button" onClick={() => setShowPass(v => !v)}
+                      aria-label={showPass ? 'Hide password' : 'Show password'}
                       className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
                       {showPass ? <EyeOff size={15} /> : <Eye size={15} />}
                     </button>
@@ -385,28 +397,28 @@ function ProviderIcon({ id }) {
 }
 
 function Field({ label, children }) {
+  const id = useId()
   return (
     <div>
-      <label className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1.5 block">
+      <label htmlFor={id} className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1.5 block">
         {label}
       </label>
-      {children}
+      {injectFieldId(children, id)}
     </div>
   )
 }
 
-function NoticeBox({ msg }) {
-  return (
-    <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-      {msg}
-    </div>
-  )
-}
-
-function ErrorBox({ msg }) {
-  return (
-    <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-      {msg}
-    </div>
-  )
+// Walk the child tree and give the first form control the label's id, so
+// inputs wrapped in a positioning div (password fields) are covered too.
+function injectFieldId(node, id) {
+  return Children.map(node, child => {
+    if (!isValidElement(child)) return child
+    if (['input', 'select', 'textarea'].includes(child.type)) {
+      return cloneElement(child, { id: child.props.id || id })
+    }
+    if (child.props?.children) {
+      return cloneElement(child, { children: injectFieldId(child.props.children, id) })
+    }
+    return child
+  })
 }

@@ -2,12 +2,14 @@ import { severityStyle } from '../../utils/severity'
 import { statusStyle } from '../../utils/status'
 
 /**
- * Generic colored badge. `color` is a full Tailwind class string
- * (e.g. 'text-red-700 bg-red-50 border-red-200'). Extra classes via `className`.
+ * Generic colored badge — the single base for every chip/pill. Renders the
+ * shared `.badge` CSS look (flat pastel, no border, 11px semibold, rounded-md).
+ * `color` is a full Tailwind class string (e.g. 'text-red-700 bg-red-50').
+ * Extra classes via `className` (e.g. 'rounded-full' for a pill shape).
  */
 export function Badge({ color = '', className = '', children }) {
   return (
-    <span className={`inline-flex items-center border rounded-full px-2 py-0.5 text-[10px] font-medium whitespace-nowrap ${color} ${className}`}>
+    <span className={`badge ${color} ${className}`}>
       {children}
     </span>
   )

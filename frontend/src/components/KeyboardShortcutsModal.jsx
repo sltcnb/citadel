@@ -4,8 +4,30 @@ import { NAV_SHORTCUTS, GLOBAL_SHORTCUTS } from '../nav'
 
 const KBD_CLS = 'inline-flex items-center px-1.5 py-0.5 text-[10px] font-mono font-semibold rounded border border-gray-300 bg-gray-100 text-gray-700 shadow-sm'
 
-function Kbd({ children }) {
+export function Kbd({ children }) {
   return <kbd className={KBD_CLS}>{children}</kbd>
+}
+
+// One shortcut row: description left, key sequence right. `sep` is the joiner
+// shown between multiple keys — 'then' for a sequence, '/' for alternatives.
+// Shared with the per-page shortcut overlays (e.g. Timeline) so every kbd
+// looks identical.
+export function ShortcutRow({ label, keys, sep = 'then' }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-xs text-gray-600">{label}</span>
+      <div className="flex items-center gap-1 flex-shrink-0">
+        {keys.map((k, ki) => (
+          <span key={ki} className="flex items-center gap-1">
+            {ki > 0 && (
+              <span className="text-[10px] text-gray-500">{sep}</span>
+            )}
+            <Kbd>{k}</Kbd>
+          </span>
+        ))}
+      </div>
+    </div>
+  )
 }
 
 // Derived from the shared nav manifest so the displayed keys always match the
@@ -39,19 +61,7 @@ export default function KeyboardShortcutsModal({ onClose }) {
               </p>
               <div className="space-y-1.5">
                 {section.shortcuts.map((sc, i) => (
-                  <div key={i} className="flex items-center justify-between gap-3">
-                    <span className="text-xs text-gray-600">{sc.label}</span>
-                    <div className="flex items-center gap-1 flex-shrink-0">
-                      {sc.keys.map((k, ki) => (
-                        <span key={ki} className="flex items-center gap-1">
-                          {ki > 0 && (
-                            <span className="text-[10px] text-gray-500">then</span>
-                          )}
-                          <Kbd>{k}</Kbd>
-                        </span>
-                      ))}
-                    </div>
-                  </div>
+                  <ShortcutRow key={i} label={sc.label} keys={sc.keys} />
                 ))}
               </div>
             </div>

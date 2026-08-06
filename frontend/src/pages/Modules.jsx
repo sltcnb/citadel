@@ -2,11 +2,12 @@ import { useEffect, useState, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router'
 import {
   Cpu, CheckCircle, XCircle, ChevronDown,
-  Code2, AlertCircle, Search as SearchIcon, X, BookOpen,
+  Code2, Search as SearchIcon, X, BookOpen,
   Shield, Monitor, HardDrive, Globe, Brain,
   Binary, Bug, Network, FileImage, TextSearch, Tag, ArrowRight,
 } from 'lucide-react'
 import { PageShell, PageHeader } from '../components/shared/PageShell'
+import ErrorBox from '../components/shared/ErrorBox'
 import { api } from '../api/client'
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts'
 
@@ -245,9 +246,7 @@ export default function Modules() {
 
       {/* Error */}
       {error && (
-        <div className="mb-4 flex items-center gap-2 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-          <AlertCircle size={13} /> Failed to load modules: {error}
-        </div>
+        <ErrorBox msg={`Failed to load modules: ${error}`} className="mb-4" />
       )}
 
       {/* Filter bar */}

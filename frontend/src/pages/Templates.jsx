@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
-  LayoutTemplate, Plus, Pencil, Trash2, Copy, Loader2, X, Save, AlertCircle, Lock, RotateCcw,
+  LayoutTemplate, Plus, Pencil, Trash2, Copy, Loader2, X, Save, Lock, RotateCcw,
 } from 'lucide-react'
 import { PageShell, PageHeader } from '../components/shared/PageShell'
 import { api } from '../api/client'
 import ConfirmDialog from '../components/ConfirmDialog'
+import ErrorBox from '../components/shared/ErrorBox'
 import Modal from '../components/shared/Modal'
 
 // Investigation-template authoring page. Built-ins can be edited in place
@@ -66,9 +67,7 @@ function TemplateEditor({ initial, isClone, onClose, onSaved }) {
 
         <div className="p-5 space-y-3 overflow-y-auto">
           {error && (
-            <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-center gap-1.5">
-              <AlertCircle size={12} /> {error}
-            </p>
+            <ErrorBox msg={error} />
           )}
           <div className="grid grid-cols-2 gap-3">
             <label className="block">
@@ -178,9 +177,7 @@ export default function Templates() {
       </div>
 
       {error && (
-        <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-3 flex items-center gap-1.5">
-          <AlertCircle size={12} /> {error}
-        </p>
+        <ErrorBox msg={error} className="mb-3" />
       )}
 
       {loading ? (

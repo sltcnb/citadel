@@ -111,6 +111,13 @@ export const api = {
                                               ...(runIds?.length ? { run_ids: runIds } : {}),
                                               ...(language ? { language } : {}),
                                             }, signal ? { signal } : {}),
+    // Background report job — generation survives drawer close / navigation.
+    // 404s on older APIs; callers fall back to the sync aiReport above.
+    aiReportJobStart:  (id, runIds, language) => request('POST', `/cases/${id}/ai/report/job`, {
+                                              ...(runIds?.length ? { run_ids: runIds } : {}),
+                                              ...(language ? { language } : {}),
+                                            }),
+    aiReportJobStatus: (id) => request('GET', `/cases/${id}/ai/report/status`),
   },
 
   ingest: {
@@ -176,6 +183,7 @@ export const api = {
     processTree: (caseId, host) => request('GET', `/cases/${caseId}/process-tree${host ? `?host=${encodeURIComponent(host)}` : ''}`),
     whois:     (ip)                 => request('GET', `/whois/${encodeURIComponent(ip)}`),
     getEvent:  (caseId, foId)        => request('GET', `/cases/${caseId}/events/${foId}`),
+    getSourceEvent: (caseId, foId)   => request('GET', `/cases/${caseId}/events/${foId}/source`),
     tagEvent:  (caseId, foId, tags)  => request('PUT', `/cases/${caseId}/events/${foId}/tag`,  { tags }),
     flagEvent: (caseId, foId)        => request('PUT', `/cases/${caseId}/events/${foId}/flag`),
     pinEvent:  (caseId, foId, body = {}) => request('PUT', `/cases/${caseId}/events/${foId}/pin`, body),
@@ -293,6 +301,8 @@ export const api = {
     add:      (entry) => request('POST', '/watchlist', entry),
     delete:   (id) => request('DELETE', `/watchlist/${id}`),
     evaluate: () => request('POST',   '/watchlist/evaluate'),
+    // Latest post-ingest automatic sweep for one case (persisted by the worker).
+    autoRun:  (caseId) => request('GET', `/cases/${caseId}/watchlist/auto-run`),
     getWhitelist: () => request('GET', '/watchlist/whitelist'),
     setWhitelist: (hostnames, ips) => request('PUT', '/watchlist/whitelist', { hostnames, ips }),
   },
@@ -339,6 +349,13 @@ export const api = {
       const qs    = [q, auth].filter(Boolean).join('&')
       return `/api/v1/cases/${caseId}/export/csv${qs ? '?' + qs : ''}`
     },
+    // Browser download of the full .citadel archive — token in the query param
+    // since browser-initiated downloads cannot set Authorization headers.
+    archiveUrl: (caseId) => {
+      const token = getToken()
+      return `/api/v1/cases/${caseId}/export/archive${token ? `?_token=${encodeURIComponent(token)}` : ''}`
+    },
+    chainOfCustody: (caseId) => request('GET', `/cases/${caseId}/chain-of-custody`),
     archivePurge:   (caseId) => request('POST', `/cases/${caseId}/purge-archive`),
     uploadArchive:  (caseId) => request('POST', `/cases/${caseId}/upload-archive`),
     restoreArchive: (caseId) => request('POST', `/cases/${caseId}/restore-archive`),
@@ -380,6 +397,29 @@ export const api = {
   studio: {
     queryTest: (caseId, query) => request('POST', '/studio/query-test', { case_id: caseId, query }),
     yaraTest:  (caseId, jobId, rules) => request('POST', '/studio/yara-test', { case_id: caseId, job_id: jobId, rules }),
+  },
+
+  // Admin: tamper-evident audit trail (read + chain verify)
+  audit: {
+    log:    (params = {})  => request('GET', withParams('/audit/log', params)),
+    verify: (limit = 1000) => request('GET', `/audit/verify?limit=${limit}`),
+  },
+
+  // Admin: dead-letter queue (poison worker tasks) — inspect & replay
+  deadLetter: {
+    list:      (limit = 200) => request('GET',  `/admin/dead-letter?limit=${limit}`),
+    replay:    (index)       => request('POST', `/admin/dead-letter/${index}/replay`),
+    replayAll: ()            => request('POST', '/admin/dead-letter/replay-all'),
+  },
+
+  // Sigma HQ sync (status/rules are admin-only; settings GET is any user)
+  sigmaSync: {
+    status:      ()            => request('GET', '/sigma/status'),
+    rules:       (params = {}) => request('GET', withParams('/sigma/rules', params)),
+    getSettings: ()            => request('GET', '/sigma/settings'),
+    setSettings: (enabled)     => request('PUT', '/sigma/settings', { enabled }),
+    sync:        (filters = {}) => request('POST', '/sigma/sync', filters),
+    clear:       ()            => request('DELETE', '/sigma/clear'),
   },
 
   sso: {

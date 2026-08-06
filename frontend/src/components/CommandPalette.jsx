@@ -14,7 +14,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
-import { Search, ArrowRight } from 'lucide-react'
+import { Search, ArrowRight, Plus, Shield } from 'lucide-react'
 import { api } from '../api/client'
 import { NAV_ITEMS, CASE_ICON } from '../nav'
 import Modal from './shared/Modal'
@@ -34,6 +34,7 @@ export default function CommandPalette() {
   const [query, setQuery] = useState('')
   const [idx, setIdx]     = useState(0)
   const [cases, setCases] = useState([])
+  const [lastCaseId, setLastCaseId] = useState(null)
   const inputRef = useRef(null)
   const navigate = useNavigate()
 
@@ -41,6 +42,12 @@ export default function CommandPalette() {
   useEffect(() => {
     if (!open || cases.length > 0) return
     api.cases.list().then(r => setCases(r.cases || [])).catch(() => {})
+  }, [open])
+
+  // The action commands target the "current" case — re-read it on every open
+  // so it reflects the case the analyst was just in, not the one at mount.
+  useEffect(() => {
+    if (open) setLastCaseId(localStorage.getItem('fo-last-case') || null)
   }, [open])
 
   // Global hotkey: Cmd/Ctrl-K
@@ -56,8 +63,41 @@ export default function CommandPalette() {
 
   useEffect(() => { if (open) setTimeout(() => inputRef.current?.focus(), 0) }, [open])
 
-  // Build the command list (nav + case jumps)
+  // Build the command list (actions + nav + case jumps)
   const all = useMemo(() => {
+    // Top-level actions — navigation-level only, no API mutations. "New case"
+    // opens the layout's new-case form via the shared event; the case actions
+    // jump to the current case (detection rules live in its Detect panel).
+    const actionCmds = [
+      {
+        id:    'action:new-case',
+        label: 'New case',
+        group: 'Actions',
+        Icon:  Plus,
+        run:   () => window.dispatchEvent(new CustomEvent('citadel:new-case')),
+      },
+      ...(lastCaseId ? [
+        {
+          id:    'action:current-case',
+          label: 'Go to current case',
+          group: 'Actions',
+          sub:   lastCaseId,
+          to:    `/cases/${lastCaseId}`,
+          Icon:  CASE_ICON,
+        },
+        {
+          id:    'action:detect',
+          label: 'Run detection rules',
+          group: 'Actions',
+          sub:   'on current case',
+          to:    `/cases/${lastCaseId}`,
+          // Deep-link straight into the Detection Rules panel — CaseTimeline
+          // consumes location.state.openPanel on mount and opens the drawer.
+          state: { openPanel: 'rules' },
+          Icon:  Shield,
+        },
+      ] : []),
+    ]
     const caseCmds = cases.map(c => ({
       id:    `case:${c.case_id}`,
       label: c.name,
@@ -66,8 +106,8 @@ export default function CommandPalette() {
       to:    `/cases/${c.case_id}`,
       Icon:  CASE_ICON,
     }))
-    return [...NAV_COMMANDS, ...caseCmds]
-  }, [cases])
+    return [...actionCmds, ...NAV_COMMANDS, ...caseCmds]
+  }, [cases, lastCaseId])
 
   // Filter
   const filtered = useMemo(() => {
@@ -84,7 +124,8 @@ export default function CommandPalette() {
 
   function run(cmd) {
     setOpen(false)
-    if (cmd?.to) navigate(cmd.to)
+    if (cmd?.run) cmd.run()
+    else if (cmd?.to) navigate(cmd.to, cmd.state ? { state: cmd.state } : undefined)
   }
 
   function onKeyDown(e) {
@@ -122,17 +163,23 @@ export default function CommandPalette() {
             onChange={e => setQuery(e.target.value)}
             onKeyDown={onKeyDown}
             placeholder="Type a page, case, or action…"
+            role="combobox"
+            aria-expanded="true"
+            aria-controls="cmdk-listbox"
+            aria-activedescendant={filtered.length > 0 ? `cmdk-option-${idx}` : undefined}
+            aria-autocomplete="list"
+            aria-label="Command palette"
             className="flex-1 bg-transparent outline-none text-sm placeholder:text-gray-400 text-brand-text"
           />
           <kbd className="kbd">esc</kbd>
         </div>
-        <div className="max-h-[60vh] overflow-y-auto py-1">
+        <div className="max-h-[60vh] overflow-y-auto py-1" role="listbox" id="cmdk-listbox" aria-label="Commands">
           {filtered.length === 0 && (
             <p className="text-xs text-gray-500 italic text-center py-6">No matches</p>
           )}
           {byGroup.map(g => (
-            <div key={g.group} className="py-1">
-              <div className="px-3 py-1 text-[10px] font-semibold text-gray-500 uppercase tracking-wider">
+            <div key={g.group} className="py-1" role="group" aria-label={g.group}>
+              <div className="px-3 py-1 text-[10px] font-semibold text-gray-500 uppercase tracking-wider" aria-hidden="true">
                 {g.group}
               </div>
               {g.items.map(c => {
@@ -140,6 +187,9 @@ export default function CommandPalette() {
                 return (
                   <button
                     key={c.id}
+                    id={`cmdk-option-${c._i}`}
+                    role="option"
+                    aria-selected={active}
                     onClick={() => run(c)}
                     onMouseEnter={() => setIdx(c._i)}
                     className={`w-full flex items-center gap-3 px-3 py-2 text-sm transition-colors ${

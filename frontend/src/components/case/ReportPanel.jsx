@@ -7,6 +7,8 @@ import {
 import { api, getToken } from '../../api/client'
 import { ResizableDrawer } from '../shared/resizableDrawer'
 import PanelHelp from '../shared/PanelHelp'
+import ConfirmDialog from '../ConfirmDialog'
+import ErrorBox from '../shared/ErrorBox'
 import { useLicense } from '../../contexts/LicenseContext'
 import { MODULE_NAMES, FINDING_KIND_LABELS } from '../../utils/caseConstants'
 
@@ -28,18 +30,25 @@ export default function ReportPanel({ caseId, onClose }) {
   // ── Flat report download/preview (md + html) ────────────────────────────────
   const [busy, setBusy]   = useState(null)
   const [error, setError] = useState(null)
+  // Last failed download/preview action — powers the error card's Retry button.
+  const lastActionRef = useRef(null)
 
   // ── AI investigation summary ────────────────────────────────────────────────
   const [aiReport, setAiReport] = useState(null)
   const [aiLoading, setAiLoading] = useState(true)
   const [aiGenerating, setAiGen]  = useState(false)
   const [aiError, setAiError]     = useState(null)
-  // Report generation can run for several minutes. Track elapsed time and keep
-  // an AbortController so the analyst can cancel a request that's taking too long.
+  // Report generation runs as a SERVER-SIDE JOB (POST /ai/report/job + status
+  // polling) so it survives closing this drawer or navigating away. jobMode is
+  // false only for the legacy sync fallback (older API without the job routes).
+  const [jobMode, setJobMode]   = useState(false)
   const [elapsed, setElapsed]     = useState(0)
-  const abortRef = useRef(null)
+  const abortRef = useRef(null)      // legacy sync path only
+  const genStartRef = useRef(null)   // generation start (ms) — set locally or from the resumed job
   const [reportHistory, setReportHistory] = useState([])
   const [showHistory, setShowHistory] = useState(false)
+  const [confirmDeleteReport, setConfirmDeleteReport] = useState(false)
+  const [deletingReport, setDeletingReport] = useState(false)
 
   function refreshHistory() {
     api.cases.aiReportHistory(caseId)
@@ -81,6 +90,18 @@ export default function ReportPanel({ caseId, onClose }) {
       .finally(() => setAiLoading(false))
 
     refreshHistory()
+
+    // Resume watching a job that's already running server-side (drawer was
+    // closed / page reloaded mid-generation). 404 on older APIs → no-op.
+    api.cases.aiReportJobStatus(caseId)
+      .then(job => {
+        if (job && (job.status === 'pending' || job.status === 'running')) {
+          genStartRef.current = Date.parse(job.started_at) || Date.now()
+          setJobMode(true)
+          setAiGen(true)
+        }
+      })
+      .catch(() => {})
 
     api.modules.listRuns(caseId)
       .then(r => {
@@ -135,27 +156,74 @@ export default function ReportPanel({ caseId, onClose }) {
 
   // Tick an elapsed-time counter while a report is generating, so the analyst
   // sees progress instead of a bare, silent spinner over a multi-minute request.
+  // For a resumed server job the clock starts from the job's started_at.
   useEffect(() => {
     if (!aiGenerating) return
-    setElapsed(0)
-    const started = Date.now()
-    const t = setInterval(() => setElapsed(Math.floor((Date.now() - started) / 1000)), 1000)
+    const started = genStartRef.current || Date.now()
+    setElapsed(Math.max(0, Math.floor((Date.now() - started) / 1000)))
+    const t = setInterval(() => setElapsed(Math.max(0, Math.floor((Date.now() - started) / 1000))), 1000)
     return () => clearInterval(t)
   }, [aiGenerating])
 
-  // Abort any in-flight request when the panel unmounts.
+  // Poll the server-side generation job. Unmounting only stops the polling —
+  // the job keeps running and is resumed when the panel reopens (see mount effect).
+  useEffect(() => {
+    if (!aiGenerating || !jobMode) return
+    let stopped = false
+    async function tick() {
+      try {
+        const job = await api.cases.aiReportJobStatus(caseId)
+        if (stopped) return
+        if (job.status === 'done') {
+          if (job.result) setAiReport(job.result)
+          setJobMode(false)
+          setAiGen(false)
+          refreshHistory()
+        } else if (job.status === 'error') {
+          setAiError(job.error || 'Report generation failed.')
+          setJobMode(false)
+          setAiGen(false)
+        }
+      } catch { /* transient poll failure — keep polling */ }
+    }
+    const t = setInterval(tick, 3000)
+    tick()
+    return () => { stopped = true; clearInterval(t) }
+  }, [aiGenerating, jobMode, caseId])
+
+  // Abort any in-flight request when the panel unmounts — this only applies to
+  // the legacy sync fallback; the server job is deliberately NOT tied to the UI.
   useEffect(() => () => abortRef.current?.abort(), [])
 
   function cancelAi() {
     abortRef.current?.abort()
   }
 
+  const isNotFound = (e) => /404|not found/i.test(e?.message || '')
+
   async function generateAi() {
     setAiGen(true); setAiError(null)
+    genStartRef.current = Date.now()
+    const runIds = selectedRunIds.size > 0 ? [...selectedRunIds] : undefined
+
+    // Preferred path: server-side job + status polling (survives UI close).
+    try {
+      await api.cases.aiReportJobStart(caseId, runIds, reportLang)
+      setJobMode(true)
+      return
+    } catch (e) {
+      if (!isNotFound(e)) {
+        setAiGen(false)
+        setAiError(e.message || 'Report generation failed.')
+        return
+      }
+    }
+
+    // Fallback for older APIs without the job endpoints: one synchronous request.
+    setJobMode(false)
     const controller = new AbortController()
     abortRef.current = controller
     try {
-      const runIds = selectedRunIds.size > 0 ? [...selectedRunIds] : undefined
       const res = await api.cases.aiReport(caseId, runIds, reportLang, controller.signal)
       setAiReport(res)
       refreshHistory()
@@ -209,6 +277,7 @@ ul,ol{padding-left:1.5em;}li{margin:2px 0;}
   // final deliverable in any format. base='ai/report' vs 'report'.
   async function downloadDoc(base, ext, lang) {
     const key = `${base}:${ext}`
+    lastActionRef.current = () => downloadDoc(base, ext, lang)
     setBusy(key); setError(null)
     try {
       const token = getToken()
@@ -238,6 +307,7 @@ ul,ol{padding-left:1.5em;}li{margin:2px 0;}
   // ext: 'md' | 'html' | 'pdf' | 'docx' — all share the same server-rendered
   // report data, just a different renderer.
   async function download(ext) {
+    lastActionRef.current = () => download(ext)
     setBusy(ext); setError(null)
     try {
       const token = getToken()
@@ -263,6 +333,7 @@ ul,ol{padding-left:1.5em;}li{margin:2px 0;}
   }
 
   async function openHtml() {
+    lastActionRef.current = () => openHtml()
     setBusy('html-view'); setError(null)
     try {
       const token = getToken()
@@ -302,7 +373,10 @@ ul,ol{padding-left:1.5em;}li{margin:2px 0;}
           />
 
           {error && (
-            <div className="card p-3 text-xs text-red-700 bg-red-50 border-red-200">{error}</div>
+            <ErrorBox
+              msg={error}
+              onRetry={lastActionRef.current ? () => lastActionRef.current?.() : undefined}
+            />
           )}
 
           {/* ── What this report contains — live composition ──────────────── */}
@@ -481,15 +555,7 @@ ul,ol{padding-left:1.5em;}li{margin:2px 0;}
                       <Printer size={11} />
                     </button>
                     <button
-                      onClick={async () => {
-                        if (!confirm('Delete the AI Investigation Report? The agent runs + your analysis stay intact.')) return
-                        try {
-                          await api.cases.aiDeleteReport(caseId)
-                          setAiReport(null)
-                        } catch (e) {
-                          setAiError(e.message || 'Failed to delete report')
-                        }
-                      }}
+                      onClick={() => setConfirmDeleteReport(true)}
                       className="btn-ghost text-xs flex items-center gap-1.5 text-red-500 hover:text-red-700"
                       title="Delete the generated report"
                     >
@@ -512,13 +578,21 @@ ul,ol{padding-left:1.5em;}li{margin:2px 0;}
                 )}
                 {aiEnabled && (
                   aiGenerating ? (
-                    <button
-                      onClick={cancelAi}
-                      className="btn-ghost text-xs flex items-center gap-1.5 text-red-600 hover:text-red-700"
-                      title="Cancel report generation"
-                    >
-                      <XCircle size={11} /> Cancel
-                    </button>
+                    jobMode ? (
+                      // Server-side job: nothing to cancel client-side — the
+                      // analyst can close the drawer and come back.
+                      <span className="text-[11px] text-gray-500 flex items-center gap-1.5">
+                        <Loader2 size={11} className="animate-spin" /> Generating…
+                      </span>
+                    ) : (
+                      <button
+                        onClick={cancelAi}
+                        className="btn-ghost text-xs flex items-center gap-1.5 text-red-600 hover:text-red-700"
+                        title="Cancel report generation"
+                      >
+                        <XCircle size={11} /> Cancel
+                      </button>
+                    )
                   ) : (
                     <button
                       onClick={generateAi}
@@ -531,11 +605,7 @@ ul,ol{padding-left:1.5em;}li{margin:2px 0;}
               </div>
             </div>
 
-            {aiError && (
-              <div className="text-[11px] text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1 mb-2">
-                {aiError}
-              </div>
-            )}
+            {aiError && <ErrorBox msg={aiError} className="text-[11px] mb-2" />}
 
             {aiGenerating ? (
               <div className="flex flex-col items-center justify-center py-6 gap-2 text-center" role="status" aria-live="polite">
@@ -544,12 +614,18 @@ ul,ol{padding-left:1.5em;}li{margin:2px 0;}
                 <div className="text-[11px] text-gray-500 tabular-nums">
                   Elapsed {fmtElapsed(elapsed)} · this can take a few minutes
                 </div>
-                <button
-                  onClick={cancelAi}
-                  className="mt-1 btn-ghost text-[11px] flex items-center gap-1 text-red-600 hover:text-red-700"
-                >
-                  <XCircle size={12} /> Cancel
-                </button>
+                {jobMode ? (
+                  <div className="text-[11px] text-gray-400">
+                    Runs on the server — safe to close this panel or navigate away; it picks back up when you return.
+                  </div>
+                ) : (
+                  <button
+                    onClick={cancelAi}
+                    className="mt-1 btn-ghost text-[11px] flex items-center gap-1 text-red-600 hover:text-red-700"
+                  >
+                    <XCircle size={12} /> Cancel
+                  </button>
+                )}
               </div>
             ) : aiLoading ? (
               <div className="flex items-center justify-center py-6 text-xs text-gray-500 gap-2">
@@ -711,6 +787,30 @@ ul,ol{padding-left:1.5em;}li{margin:2px 0;}
             </div>
           </div>
         </div>
+
+        {confirmDeleteReport && (
+          <ConfirmDialog
+            title="Delete AI report"
+            icon={<Trash2 size={14} className="text-red-500" />}
+            message="Delete the AI Investigation Report? The agent runs + your analysis stay intact."
+            confirmLabel="Delete"
+            confirmClass="btn-danger"
+            busy={deletingReport}
+            onCancel={() => setConfirmDeleteReport(false)}
+            onConfirm={async () => {
+              setDeletingReport(true)
+              try {
+                await api.cases.aiDeleteReport(caseId)
+                setAiReport(null)
+                setConfirmDeleteReport(false)
+              } catch (e) {
+                setAiError(e.message || 'Failed to delete report')
+              } finally {
+                setDeletingReport(false)
+              }
+            }}
+          />
+        )}
     </ResizableDrawer>
   )
 }

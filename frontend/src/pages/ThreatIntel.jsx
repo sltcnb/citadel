@@ -4,6 +4,9 @@ import { PageShell, PageHeader } from '../components/shared/PageShell'
 import { api } from '../api/client'
 import { formatDate } from '../utils/format'
 import Modal from '../components/shared/Modal'
+import Toast from '../components/Toast'
+import { useToast } from '../hooks/useToast'
+import { useConfirm } from '../components/useConfirm'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -77,7 +80,7 @@ const POLL_UNITS = [
   { value: 'days',    label: 'Days'    },
 ]
 
-function FeedModal({ feed, onClose, onSaved }) {
+function FeedModal({ feed, onClose, onSaved, onError }) {
   const [form, setForm] = useState({
     name:                 feed?.name || '',
     type:                 feed?.type || 'taxii',
@@ -106,7 +109,7 @@ function FeedModal({ feed, onClose, onSaved }) {
         : await api.cti.addFeed(payload)
       onSaved(result)
     } catch (err) {
-      alert('Save failed: ' + err.message)
+      onError?.('Save failed: ' + err.message)
     } finally {
       setSaving(false)
     }
@@ -126,15 +129,15 @@ function FeedModal({ feed, onClose, onSaved }) {
         <form onSubmit={save} className="p-5 space-y-4">
           {/* Name */}
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Name *</label>
-            <input value={form.name} onChange={e => set('name', e.target.value)}
+            <label htmlFor="ti-feed-name" className="block text-xs font-medium text-gray-600 mb-1">Name *</label>
+            <input id="ti-feed-name" value={form.name} onChange={e => set('name', e.target.value)}
               placeholder="AlienVault OTX" className="input text-xs" required />
           </div>
 
           {/* Type */}
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Type</label>
-            <select value={form.type} onChange={e => set('type', e.target.value)}
+            <label htmlFor="ti-feed-type" className="block text-xs font-medium text-gray-600 mb-1">Type</label>
+            <select id="ti-feed-type" value={form.type} onChange={e => set('type', e.target.value)}
               className="input text-xs">
               {FEED_TYPES.map(t => (
                 <option key={t.value} value={t.value}>{t.label}</option>
@@ -145,8 +148,8 @@ function FeedModal({ feed, onClose, onSaved }) {
           {/* URL — required for TAXII/STIX/MISP/YETI, optional for manual */}
           {form.type !== 'manual' ? (
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">URL *</label>
-              <input value={form.url} onChange={e => set('url', e.target.value)}
+              <label htmlFor="ti-feed-url" className="block text-xs font-medium text-gray-600 mb-1">URL *</label>
+              <input id="ti-feed-url" value={form.url} onChange={e => set('url', e.target.value)}
                 placeholder={
                   form.type === 'taxii'    ? 'https://taxii.example.com/taxii2/' :
                   form.type === 'misp'     ? 'https://misp.example.com' :
@@ -157,10 +160,10 @@ function FeedModal({ feed, onClose, onSaved }) {
             </div>
           ) : (
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">
+              <label htmlFor="ti-feed-url" className="block text-xs font-medium text-gray-600 mb-1">
                 Re-import URL <span className="text-gray-500 font-normal">(optional — enables periodic auto-pull)</span>
               </label>
-              <input value={form.url} onChange={e => set('url', e.target.value)}
+              <input id="ti-feed-url" value={form.url} onChange={e => set('url', e.target.value)}
                 placeholder="https://example.com/stix-bundle.json"
                 className="input text-xs font-mono" />
               {form.url && (
@@ -174,12 +177,12 @@ function FeedModal({ feed, onClose, onSaved }) {
           {/* API Key (for TAXII, MISP, YETI) */}
           {(form.type === 'taxii' || form.type === 'misp' || form.type === 'yeti') && (
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">
+              <label htmlFor="ti-feed-key" className="block text-xs font-medium text-gray-600 mb-1">
                 API Key <span className="text-gray-500 font-normal">
                   {form.type === 'misp' ? '(required)' : '(optional)'}
                 </span>
               </label>
-              <input value={form.api_key} onChange={e => set('api_key', e.target.value)}
+              <input id="ti-feed-key" value={form.api_key} onChange={e => set('api_key', e.target.value)}
                 placeholder={form.type === 'misp' ? 'MISP API key' : form.type === 'yeti' ? 'YETI API key' : 'Bearer token or API key'}
                 className="input text-xs" />
             </div>
@@ -188,11 +191,11 @@ function FeedModal({ feed, onClose, onSaved }) {
           {/* Collection (TAXII) / Tag filter (MISP) */}
           {(form.type === 'taxii' || form.type === 'misp') && (
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">
+              <label htmlFor="ti-feed-collection" className="block text-xs font-medium text-gray-600 mb-1">
                 {form.type === 'misp' ? 'Tag filter' : 'Collection'}{' '}
                 <span className="text-gray-500 font-normal">(optional)</span>
               </label>
-              <input value={form.collection} onChange={e => set('collection', e.target.value)}
+              <input id="ti-feed-collection" value={form.collection} onChange={e => set('collection', e.target.value)}
                 placeholder={form.type === 'misp' ? 'e.g. tlp:white' : 'Collection ID or name'}
                 className="input text-xs font-mono" />
             </div>
@@ -235,7 +238,7 @@ function FeedModal({ feed, onClose, onSaved }) {
               <input type="checkbox" checked={form.verify_ssl} onChange={e => set('verify_ssl', e.target.checked)}
                 className="mt-0.5 rounded border-gray-300 accent-brand-accent" />
               <span>
-                Verify the server's TLS certificate
+                Verify the server&apos;s TLS certificate
                 <span className="block text-[10px] text-gray-400">
                   Uncheck only for an internal MISP/TAXII with a self-signed certificate you trust.
                 </span>
@@ -266,6 +269,7 @@ function FeedModal({ feed, onClose, onSaved }) {
 // ── Main Component ───────────────────────────────────────────────────────────
 
 export default function ThreatIntel() {
+  const [confirmEl, askConfirm]   = useConfirm()
   // Feeds
   const [feeds, setFeeds]           = useState([])
   const [feedsLoading, setFeedsLoading] = useState(true)
@@ -289,16 +293,6 @@ export default function ThreatIntel() {
   const [importMsg, setImportMsg]   = useState(null) // { ok, text }
   const fileRef = useRef()
 
-  // Case matching
-  const [cases, setCases]           = useState([])
-  const [matchCaseId, setMatchCaseId] = useState('')
-  const [matching, setMatching]     = useState(false)
-  const [matchResult, setMatchResult] = useState(null)
-  const [matchTypes, setMatchTypes] = useState([])      // [] = all types
-  const [showOwn, setShowOwn]       = useState(false)   // show own/private indicators
-  const [drill, setDrill]           = useState({})      // indicator key -> {loading, events, total}
-  const [autoRun, setAutoRun]       = useState(null)    // per-case auto-run stage flags
-
   // Clear IOCs
   const [clearing, setClearing]     = useState(false)
 
@@ -312,14 +306,16 @@ export default function ThreatIntel() {
   const [allowSaving, setAllowSaving] = useState(false)
   const [allowMsg, setAllowMsg]     = useState(null)
 
+  const [toast, showToast]          = useToast()
+
   // ── Load data ──────────────────────────────────────────────────────────────
 
-  useEffect(() => { loadFeeds(); loadStats(); loadCases(); loadOwnNets(); loadAllowlist() }, [])
+  useEffect(() => { loadFeeds(); loadStats(); loadOwnNets(); loadAllowlist() }, [])
 
   function loadAllowlist() {
     api.cti.getAllowlist()
       .then(r => setAllowlist(Object.values(r.allowlist || {}).flat().join('\n')))
-      .catch(() => {})
+      .catch(err => showToast('Failed to load allowlist: ' + err.message, 'error'))
   }
 
   async function saveAllowlist() {
@@ -337,7 +333,7 @@ export default function ThreatIntel() {
   function loadOwnNets() {
     api.cti.getOwnNetworks()
       .then(r => setOwnNets((r.cidrs || []).join('\n')))
-      .catch(() => {})
+      .catch(err => showToast('Failed to load own networks: ' + err.message, 'error'))
   }
 
   async function saveOwnNets() {
@@ -357,14 +353,14 @@ export default function ThreatIntel() {
     setFeedsLoading(true)
     api.cti.listFeeds()
       .then(r => setFeeds(r.feeds || r || []))
-      .catch(() => {})
+      .catch(err => showToast('Failed to load feeds: ' + err.message, 'error'))
       .finally(() => setFeedsLoading(false))
   }
 
   function loadStats() {
     api.cti.iocStats()
       .then(r => setStats(r))
-      .catch(() => {})
+      .catch(err => showToast('Failed to load IOC stats: ' + err.message, 'error'))
   }
 
   function loadIOCs() {
@@ -377,14 +373,8 @@ export default function ThreatIntel() {
         setIocs(r.iocs || [])
         setIocTotal(r.total || 0)
       })
-      .catch(() => {})
+      .catch(err => showToast('Failed to load IOCs: ' + err.message, 'error'))
       .finally(() => setIocLoading(false))
-  }
-
-  function loadCases() {
-    api.cases.list()
-      .then(r => setCases(r.cases || []))
-      .catch(() => {})
   }
 
   // ── Feed actions ───────────────────────────────────────────────────────────
@@ -396,19 +386,19 @@ export default function ThreatIntel() {
       loadFeeds()
       loadStats()
     } catch (err) {
-      alert('Pull failed: ' + err.message)
+      showToast('Pull failed: ' + err.message, 'error')
     } finally {
       setPullingId(null)
     }
   }
 
   async function deleteFeed(id) {
-    if (!confirm('Delete this feed?')) return
+    if (!await askConfirm('Delete this feed?', { title: 'Delete feed?' })) return
     try {
       await api.cti.deleteFeed(id)
       setFeeds(prev => prev.filter(f => f.id !== id))
     } catch (err) {
-      alert('Delete failed: ' + err.message)
+      showToast('Delete failed: ' + err.message, 'error')
     }
   }
 
@@ -449,60 +439,16 @@ export default function ThreatIntel() {
   // ── Clear IOCs ─────────────────────────────────────────────────────────────
 
   async function clearIOCs() {
-    if (!confirm('Delete ALL IOCs? This cannot be undone.')) return
+    if (!await askConfirm('Delete ALL IOCs? This cannot be undone.', { title: 'Delete all IOCs?' })) return
     setClearing(true)
     try {
       await api.cti.clearIOCs()
       loadStats()
       loadIOCs()
     } catch (err) {
-      alert('Clear failed: ' + err.message)
+      showToast('Clear failed: ' + err.message, 'error')
     } finally {
       setClearing(false)
-    }
-  }
-
-  // ── Case matching ─────────────────────────────────────────────────────────
-
-  async function runMatch() {
-    if (!matchCaseId) return
-    setMatching(true)
-    setMatchResult(null)
-    setDrill({})
-    try {
-      const r = await api.cti.matchCase(matchCaseId, matchTypes.length ? matchTypes.join(',') : undefined)
-      setMatchResult(r)
-    } catch (err) {
-      alert('Match failed: ' + err.message)
-    } finally {
-      setMatching(false)
-    }
-  }
-
-  function toggleMatchType(t) {
-    setMatchTypes(prev => prev.includes(t) ? prev.filter(x => x !== t) : [...prev, t])
-  }
-
-  useEffect(() => {
-    if (!matchCaseId) { setAutoRun(null); return }
-    api.cases.getAutoRun(matchCaseId).then(setAutoRun).catch(() => setAutoRun(null))
-  }, [matchCaseId])
-
-  async function toggleAuto(k) {
-    const next = { ...autoRun, [k]: !autoRun[k] }
-    setAutoRun(next)
-    try { await api.cases.setAutoRun(matchCaseId, { [k]: next[k] }) } catch { /* ignore */ }
-  }
-
-  async function toggleDrill(ind) {
-    const key = `${ind.ioc_type}:${ind.ioc_value}`
-    if (drill[key]) { setDrill(d => { const n = { ...d }; delete n[key]; return n }) ; return }
-    setDrill(d => ({ ...d, [key]: { loading: true, events: [] } }))
-    try {
-      const r = await api.cti.indicatorEvents(matchCaseId, ind.ioc_type, ind.ioc_value)
-      setDrill(d => ({ ...d, [key]: { loading: false, events: r.events || [], total: r.total } }))
-    } catch (err) {
-      setDrill(d => ({ ...d, [key]: { loading: false, events: [], error: err.message } }))
     }
   }
 
@@ -520,6 +466,7 @@ export default function ThreatIntel() {
           feed={editFeed?.id ? editFeed : null}
           onClose={() => setEditFeed(null)}
           onSaved={handleFeedSaved}
+          onError={msg => showToast(msg, 'error')}
         />
       )}
 
@@ -527,7 +474,7 @@ export default function ThreatIntel() {
       <PageHeader
         title="Threat Intelligence"
         icon={Shield}
-        subtitle="Manage CTI feeds, import STIX bundles, and match IOCs against case artifacts"
+        subtitle="Manage CTI feeds and import STIX bundles"
       />
 
 
@@ -641,10 +588,10 @@ export default function ThreatIntel() {
         <h2 className="text-sm font-semibold text-brand-text mb-3">Your Networks</h2>
         <div className="card p-4 space-y-3">
           <p className="text-xs text-gray-500">
-            Your organisation's own public IP ranges (CIDR, one per line). IPs in these
+            Your organisation&apos;s own public IP ranges (CIDR, one per line). IPs in these
             ranges are flagged <code className="text-brand-accent">own</code>. They still
             <strong> match</strong> on the case timeline, but as <strong>low-severity
-            "info"</strong> hits labelled <em>CTI Match (own)</em> — separated from real
+            &quot;info&quot;</strong> hits labelled <em>CTI Match (own)</em> — separated from real
             threats (high severity). Filter them out on the timeline with the severity
             filter. Private IPs (RFC1918) get the same treatment automatically.
           </p>
@@ -676,7 +623,7 @@ export default function ThreatIntel() {
           <p className="text-xs text-gray-500">
             Known-good values to suppress from IOC matches — one per line. IPs, domains,
             URLs, hashes, emails, filenames or process names (auto-classified). Matches on
-            these are kept but downgraded to <strong>"info"</strong> (like own/private), so
+            these are kept but downgraded to <strong>&quot;info&quot;</strong> (like own/private), so
             real threats stand out. Use it to mute baseline noise (your own infra,
             monitoring agents, common false positives).
           </p>
@@ -740,6 +687,7 @@ export default function ThreatIntel() {
 
         {/* Table */}
         <div className="card overflow-hidden">
+          <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-200">
@@ -782,6 +730,7 @@ export default function ThreatIntel() {
               })}
             </tbody>
           </table>
+          </div>
 
           {/* Pagination */}
           {totalPages > 1 && (
@@ -846,6 +795,8 @@ export default function ThreatIntel() {
         </div>
       </div>
 
+      <Toast toast={toast} />
+      {confirmEl}
     </PageShell>
   )
 }

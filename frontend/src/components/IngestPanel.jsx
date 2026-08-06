@@ -19,6 +19,10 @@ import ArtifactSelector from './shared/ArtifactSelector'
 import { api, getToken } from '../api/client'
 import { useUpload } from '../contexts/UploadContext'
 import { formatBytes as fmtSize } from '../utils/format'
+import Toast from './Toast'
+import ConfirmDialog from './ConfirmDialog'
+import ErrorBox from './shared/ErrorBox'
+import { useToast } from '../hooks/useToast'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -76,9 +80,10 @@ function fmtElapsed(ms) {
 
 // ── JobCard ───────────────────────────────────────────────────────────────────
 
-function JobCard({ jobId, jobData, onRetry, onDelete }) {
+function JobCard({ jobId, jobData, onRetry, onDelete, showToast }) {
   const [retrying,     setRetrying]     = useState(false)
   const [deleting,     setDeleting]     = useState(false)
+  const [confirming,   setConfirming]   = useState(false)
   const [expanded,     setExpanded]     = useState(false)
   const [eventsPerSec, setEventsPerSec] = useState(null)
   const lastSnapRef = useRef(null)
@@ -109,18 +114,18 @@ function JobCard({ jobId, jobData, onRetry, onDelete }) {
   async function retryJob() {
     setRetrying(true)
     try { await api.ingest.retryJob(jobId); onRetry?.(jobId) }
-    catch (err) { alert('Retry failed: ' + err.message) }
+    catch (err) { showToast('Retry failed: ' + err.message, 'error') }
     finally { setRetrying(false) }
   }
 
   async function deleteJob() {
-    if (!window.confirm(`Remove "${job.original_filename}"?\nThis deletes the file and all its indexed events.`)) return
+    setConfirming(false)
     setDeleting(true)
     try {
       await api.ingest.deleteJob(jobId)
       onDelete?.(jobId)
     } catch (err) {
-      alert('Delete failed: ' + err.message)
+      showToast('Delete failed: ' + err.message, 'error')
       setDeleting(false)
     }
   }
@@ -144,6 +149,19 @@ function JobCard({ jobId, jobData, onRetry, onDelete }) {
 
   return (
     <div className={`card p-3 ${job.status === 'FAILED' ? 'border-red-200' : job.status === 'RUNNING' ? 'border-brand-accent/30' : ''}`}>
+
+      {confirming && (
+        <ConfirmDialog
+          title="Delete job"
+          icon={<Trash2 size={14} className="text-red-500" />}
+          message={`Remove "${job.original_filename}"? This deletes the file and all its indexed events.`}
+          confirmLabel="Delete"
+          confirmClass="btn-danger"
+          busy={deleting}
+          onConfirm={deleteJob}
+          onCancel={() => setConfirming(false)}
+        />
+      )}
 
       {/* ── Header row ── */}
       <div className="flex items-start justify-between mb-1 gap-2">
@@ -169,7 +187,7 @@ function JobCard({ jobId, jobData, onRetry, onDelete }) {
             </button>
           )}
           {!['RUNNING', 'UPLOADING'].includes(job.status) && (
-            <button onClick={deleteJob} disabled={deleting}
+            <button onClick={() => setConfirming(true)} disabled={deleting}
               className="btn-ghost text-xs px-1.5 py-0.5 text-red-400 hover:text-red-600 flex items-center gap-1"
               title="Delete this job and all its indexed events">
               {deleting ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
@@ -580,9 +598,7 @@ function S3Tab({ caseId, onJobsAdded }) {
       </div>
 
       {error && (
-        <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-center gap-1.5">
-          <AlertTriangle size={12} /> {error}
-        </div>
+        <ErrorBox msg={error} />
       )}
 
       {/* File listing */}
@@ -641,18 +657,17 @@ function S3Tab({ caseId, onJobsAdded }) {
             const name = f.key.slice(prefix.length)
             const sel  = selected.has(f.key)
             return (
-              <div key={f.key} onClick={() => toggleFile(f.key)}
+              <label key={f.key}
                 className={`flex items-center gap-2.5 px-3 py-2 cursor-pointer border-b border-gray-50 transition-colors text-xs ${
                   sel ? 'bg-brand-accentlight' : 'hover:bg-gray-50'
                 }`}>
                 <input type="checkbox" checked={sel}
                   onChange={() => toggleFile(f.key)}
-                  onClick={e => e.stopPropagation()}
                   className="w-3 h-3 flex-shrink-0" />
                 <File size={12} className="text-gray-500 flex-shrink-0" />
                 <span className="flex-1 truncate font-mono text-[10px] text-gray-700">{name}</span>
                 <span className="text-gray-500 text-[10px] flex-shrink-0 ml-2">{fmtSize(f.size)}</span>
-              </div>
+              </label>
             )
           })}
         </div>
@@ -895,6 +910,8 @@ export default function IngestPanel({ caseId, onClose, onComplete, autoPilot, se
   const [filterStatus, setFilterStatus] = useState(null)   // null = All
   const [searchQuery,  setSearchQuery]  = useState('')
   const [loadError,    setLoadError]    = useState(null)
+  const [toast, showToast] = useToast()
+  const [confirmClear, setConfirmClear] = useState(null)  // null | 'failed' | 'all'
   const [totalJobs,    setTotalJobs]    = useState(null)   // server-side total
   const [serverCounts, setServerCounts] = useState(null)   // server-side status_counts
 
@@ -972,26 +989,37 @@ export default function IngestPanel({ caseId, onClose, onComplete, autoPilot, se
     setJobDataMap(p => { const n = { ...p }; delete n[id]; return n })
   }, [])
 
-  const handleClearFailed = useCallback(async () => {
+  const handleClearFailed = useCallback(() => {
     const failedIds = jobsRef.current.filter(jid => statusesRef.current[jid] === 'FAILED')
     if (!failedIds.length) return
-    if (!window.confirm(`Delete all ${failedIds.length} failed job${failedIds.length > 1 ? 's' : ''} and their data?`)) return
+    setConfirmClear('failed')
+  }, [])
+
+  const handleClearAll = useCallback(() => {
+    const activeStatuses = new Set(['RUNNING', 'UPLOADING'])
+    const deletableIds = jobsRef.current.filter(jid => !activeStatuses.has(statusesRef.current[jid]))
+    if (!deletableIds.length) return
+    setConfirmClear('all')
+  }, [])
+
+  async function doClearFailed() {
+    const failedIds = jobsRef.current.filter(jid => statusesRef.current[jid] === 'FAILED')
+    setConfirmClear(null)
     await Promise.allSettled(failedIds.map(id => api.ingest.deleteJob(id)))
     setJobs(prev => prev.filter(jid => statusesRef.current[jid] !== 'FAILED'))
     setJobStatuses(p => { const n = { ...p }; failedIds.forEach(id => delete n[id]); return n })
     setJobDataMap(p => { const n = { ...p }; failedIds.forEach(id => delete n[id]); return n })
-  }, [])
+  }
 
-  const handleClearAll = useCallback(async () => {
+  async function doClearAll() {
     const activeStatuses = new Set(['RUNNING', 'UPLOADING'])
     const deletableIds = jobsRef.current.filter(jid => !activeStatuses.has(statusesRef.current[jid]))
-    if (!deletableIds.length) return
-    if (!window.confirm(`Delete all ${deletableIds.length} job${deletableIds.length > 1 ? 's' : ''} and their indexed data?\nActive jobs will be skipped.`)) return
+    setConfirmClear(null)
     await api.ingest.deleteAllJobs(caseId)
     setJobs(prev => prev.filter(jid => activeStatuses.has(statusesRef.current[jid])))
     setJobStatuses(p => { const n = { ...p }; deletableIds.forEach(id => delete n[id]); return n })
     setJobDataMap(p => { const n = { ...p }; deletableIds.forEach(id => delete n[id]); return n })
-  }, [caseId])
+  }
 
   // ── Derived counts ────────────────────────────────────────────────────────
   // Prefer server-side totals when available (handles >2000 jobs accurately);
@@ -1086,7 +1114,10 @@ export default function IngestPanel({ caseId, onClose, onComplete, autoPilot, se
                   // chain reads the per-case `auto_ai` flag), so this one switch
                   // truly governs whether the LLM runs on ingest. Modules always
                   // auto-run regardless — this only gates the LLM.
-                  api.cases.setAutoRun(caseId, { auto_ai: next }).catch(() => {})
+                  api.cases.setAutoRun(caseId, { auto_ai: next }).catch(e => {
+                    setAutoPilot(!next)  // server kept the old value — flip back
+                    showToast(e.message || 'Failed to update Auto-AI', 'error')
+                  })
                 }}
                 className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg border text-left transition-colors ${
                   autoPilot
@@ -1217,12 +1248,32 @@ export default function IngestPanel({ caseId, onClose, onComplete, autoPilot, se
             ) : (
               <div className="space-y-2">
                 {filteredJobs.map(jid => (
-                  <JobCard key={jid} jobId={jid} jobData={jobDataMap[jid]} onRetry={handleRetry} onDelete={handleDelete} />
+                  <JobCard key={jid} jobId={jid} jobData={jobDataMap[jid]} onRetry={handleRetry} onDelete={handleDelete} showToast={showToast} />
                 ))}
               </div>
             )}
           </div>
         </div>
+      {confirmClear && (() => {
+        const activeStatuses = new Set(['RUNNING', 'UPLOADING'])
+        const count = confirmClear === 'failed'
+          ? jobs.filter(jid => jobStatuses[jid] === 'FAILED').length
+          : jobs.filter(jid => !activeStatuses.has(jobStatuses[jid])).length
+        return (
+          <ConfirmDialog
+            title={confirmClear === 'failed' ? 'Delete failed jobs' : 'Delete all jobs'}
+            icon={<Trash2 size={14} className="text-red-500" />}
+            message={confirmClear === 'failed'
+              ? `Delete all ${count} failed job${count > 1 ? 's' : ''} and their data?`
+              : `Delete all ${count} job${count > 1 ? 's' : ''} and their indexed data? Active jobs will be skipped.`}
+            confirmLabel="Delete"
+            confirmClass="btn-danger"
+            onConfirm={confirmClear === 'failed' ? doClearFailed : doClearAll}
+            onCancel={() => setConfirmClear(null)}
+          />
+        )
+      })()}
+      <Toast toast={toast} />
     </ResizableDrawer>
   )
 }

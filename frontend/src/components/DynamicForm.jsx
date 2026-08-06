@@ -54,12 +54,15 @@ export default function DynamicForm({ fields = [], values = {}, onChange }) {
       {shown.map(f => (
         <div key={f.name}>
           {f.type !== 'bool' && (
-            <label className="block text-xs font-medium text-gray-600 mb-1">
+            <label
+              htmlFor={f.type !== 'multiselect' ? `df-${f.name}` : undefined}
+              className="block text-xs font-medium text-gray-600 mb-1"
+            >
               {f.label || f.name}
               {f.required && <span className="text-red-500 ml-0.5">*</span>}
             </label>
           )}
-          <Field f={f} value={values[f.name]} set={v => set(f.name, v)} />
+          <Field f={f} id={`df-${f.name}`} value={values[f.name]} set={v => set(f.name, v)} />
           {f.help && <p className="text-[10px] text-gray-400 mt-1">{f.help}</p>}
         </div>
       ))}
@@ -67,7 +70,7 @@ export default function DynamicForm({ fields = [], values = {}, onChange }) {
   )
 }
 
-function Field({ f, value, set }) {
+function Field({ f, id, value, set }) {
   const base = 'input text-sm w-full'
   switch (f.type) {
     case 'bool':
@@ -80,19 +83,19 @@ function Field({ f, value, set }) {
         </label>
       )
     case 'text':
-      return <textarea className={base} rows={3} placeholder={f.placeholder}
+      return <textarea id={id} className={base} rows={3} placeholder={f.placeholder}
         value={value ?? ''} onChange={e => set(e.target.value)} />
     case 'int':
     case 'float':
-      return <input type="number" className={base} placeholder={f.placeholder}
+      return <input id={id} type="number" className={base} placeholder={f.placeholder}
         min={f.min} max={f.max} step={f.type === 'int' ? 1 : 'any'}
         value={value ?? ''} onChange={e => set(e.target.value === '' ? '' : Number(e.target.value))} />
     case 'secret':
-      return <input type="password" className={base} placeholder={f.placeholder}
+      return <input id={id} type="password" className={base} placeholder={f.placeholder}
         value={value ?? ''} onChange={e => set(e.target.value)} />
     case 'enum':
       return (
-        <select className={base} value={value ?? ''} onChange={e => set(e.target.value)}>
+        <select id={id} className={base} value={value ?? ''} onChange={e => set(e.target.value)}>
           {!f.required && <option value="">—</option>}
           {f.options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
@@ -100,7 +103,7 @@ function Field({ f, value, set }) {
     case 'multiselect':
       return <MultiSelect options={f.options} value={Array.isArray(value) ? value : []} set={set} />
     default: // string, path, host
-      return <input type="text" className={base} placeholder={f.placeholder}
+      return <input id={id} type="text" className={base} placeholder={f.placeholder}
         value={value ?? ''} onChange={e => set(e.target.value)} />
   }
 }

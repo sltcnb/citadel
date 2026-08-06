@@ -33,8 +33,150 @@ import RuleDrawer, {
   CATEGORY_ORDER, CATEGORY_STYLES,
 } from '../components/RuleDrawer'
 import AlertRuleFilterBar from '../components/AlertRuleFilterBar'
+import ConfirmDialog from '../components/ConfirmDialog'
 import Modal from '../components/shared/Modal'
+import ErrorBox from '../components/shared/ErrorBox'
+import Toast from '../components/Toast'
+import { useToast } from '../hooks/useToast'
+import { currentUser } from '../utils/caseConstants'
 import { filterAlertRules, ruleProvenance } from '../lib/alertRuleFilters'
+
+// ── Sigma HQ sync (admin) ─────────────────────────────────────────────────────
+// Downloads community rules from Sigma HQ and converts them into library rules
+// (api/routers/sigma_sync.py). Status shows the last sync + synced rule count;
+// the global enable toggle gates Sigma platform-wide.
+function SigmaSyncSection() {
+  const [status, setStatus]     = useState(null)   // { last_sync, sigma_rules_count, sigma_available }
+  const [enabled, setEnabled]   = useState(null)   // global sigma_enabled flag
+  const [levels, setLevels]     = useState('critical')
+  const [syncing, setSyncing]   = useState(false)
+  const [syncMsg, setSyncMsg]   = useState(null)   // { ok, text }
+  const [confirmClear, setConfirmClear] = useState(false)
+  const [clearing, setClearing] = useState(false)
+
+  const load = useCallback(() => {
+    api.sigmaSync.status().then(setStatus).catch(() => {})
+    api.sigmaSync.getSettings().then(r => setEnabled(!!r.sigma_enabled)).catch(() => {})
+  }, [])
+  useEffect(() => { load() }, [load])
+
+  async function toggleEnabled() {
+    const next = !enabled
+    setEnabled(next)  // optimistic — the toggle feels instant; revert on error
+    try {
+      await api.sigmaSync.setSettings(next)
+    } catch (err) {
+      setEnabled(!next)
+      setSyncMsg({ ok: false, text: err.message })
+    }
+  }
+
+  async function sync() {
+    setSyncing(true)
+    setSyncMsg(null)
+    try {
+      const r = await api.sigmaSync.sync(levels === 'all' ? {} : { levels: levels.split(',') })
+      setSyncMsg({
+        ok: true,
+        text: `Imported ${r.imported} · skipped ${r.skipped} · ${r.errors} error(s) — ${r.total_rules} total`,
+      })
+      load()
+    } catch (err) {
+      setSyncMsg({ ok: false, text: err.message })
+    } finally {
+      setSyncing(false)
+    }
+  }
+
+  async function clear() {
+    setClearing(true)
+    try {
+      const r = await api.sigmaSync.clear()
+      setSyncMsg({ ok: true, text: `Cleared ${r.cleared} synced rule(s).` })
+      load()
+    } catch (err) {
+      setSyncMsg({ ok: false, text: err.message })
+    } finally {
+      setClearing(false)
+      setConfirmClear(false)
+    }
+  }
+
+  const lastSync = status?.last_sync ? new Date(status.last_sync) : null
+
+  return (
+    <div className="card p-4 mb-6 space-y-3">
+      <div className="flex items-center gap-2 flex-wrap">
+        <RefreshCw size={14} className="text-brand-accent" />
+        <h2 className="font-semibold text-brand-text text-sm">Sigma Sync</h2>
+        <span className="text-[11px] text-gray-500">community detections from Sigma HQ</span>
+        <div className="ml-auto flex items-center gap-2">
+          <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer" title="Enable/disable Sigma rules platform-wide">
+            <input
+              type="checkbox"
+              checked={!!enabled}
+              disabled={enabled === null}
+              onChange={toggleEnabled}
+              className="rounded border-gray-300 text-brand-accent focus:ring-brand-accent"
+            />
+            Enabled
+          </label>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-4 flex-wrap text-xs text-gray-600">
+        <span>
+          Synced rules: <span className="font-semibold text-brand-text">{status ? status.sigma_rules_count : '…'}</span>
+        </span>
+        <span>
+          Last sync: <span className="font-medium">{lastSync && !Number.isNaN(lastSync.getTime()) ? lastSync.toLocaleString() : (status?.last_sync || 'never')}</span>
+        </span>
+        {status && !status.sigma_available && (
+          <span className="text-amber-600 flex items-center gap-1"><AlertTriangle size={11} /> Sigma converter unavailable on the server</span>
+        )}
+      </div>
+
+      <div className="flex items-center gap-2 flex-wrap">
+        <select value={levels} onChange={e => setLevels(e.target.value)} className="input text-xs w-44" title="Which rule severities to pull">
+          <option value="critical">Critical only (default)</option>
+          <option value="high,critical">High + Critical</option>
+          <option value="all">All levels</option>
+        </select>
+        <button onClick={sync} disabled={syncing || enabled === false} className="btn-primary text-xs flex items-center gap-1.5 disabled:opacity-50"
+          title={enabled === false ? 'Sigma is disabled platform-wide' : 'Download & convert rules from Sigma HQ (can take minutes)'}>
+          {syncing ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+          {syncing ? 'Syncing…' : 'Sync from Sigma HQ'}
+        </button>
+        <button
+          onClick={() => setConfirmClear(true)}
+          disabled={!status?.sigma_rules_count}
+          className="btn-outline text-xs flex items-center gap-1.5 text-red-600 disabled:opacity-50"
+        >
+          <Trash2 size={12} /> Clear synced rules
+        </button>
+        {syncMsg && (
+          <span className={`text-xs flex items-center gap-1 ${syncMsg.ok ? 'text-green-600' : 'text-red-600'}`}>
+            {syncMsg.ok ? <Check size={12} /> : <AlertTriangle size={12} />} {syncMsg.text}
+          </span>
+        )}
+      </div>
+
+      {confirmClear && (
+        <ConfirmDialog
+          title="Clear synced Sigma rules?"
+          icon={<Trash2 size={14} className="text-red-500" />}
+          message={`This removes all ${status?.sigma_rules_count ?? ''} rules imported from Sigma HQ. Custom rules are untouched.`}
+          confirmLabel="Clear"
+          confirmClass="btn-danger"
+          busy={clearing}
+          onConfirm={clear}
+          onCancel={() => setConfirmClear(false)}
+        />
+      )}
+    </div>
+  )
+}
+
 
 // ── AI Analysis panel (shown inside RunOnCaseModal after a firing result) ──────
 function AiAnalysisPanel({ rule, result }) {
@@ -116,9 +258,7 @@ function RunOnCaseModal({ rule, cases, onClose }) {
   return (
     <Modal
       onClose={onClose}
-      overlayClassName="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4"
-      className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl w-full max-w-md shadow-2xl flex flex-col"
-      style={{ maxHeight: '90vh' }}
+      className="modal-box max-w-md"
       ariaLabel="Run rule on case"
     >
       <>
@@ -157,9 +297,7 @@ function RunOnCaseModal({ rule, cases, onClose }) {
             {running ? 'Running…' : 'Run Rule'}
           </button>
 
-          {error && (
-            <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>
-          )}
+          {error && <ErrorBox msg={error} />}
 
           {result && (
             <div className={`rounded-lg border p-3 space-y-2 ${result.fired ? 'border-red-200 bg-red-50' : 'border-green-200 bg-green-50'}`}>
@@ -209,7 +347,7 @@ function RunOnCaseModal({ rule, cases, onClose }) {
 }
 
 // ── Library rule card ─────────────────────────────────────────────────────────
-function LibraryRuleCard({ rule, cases, onDelete, onUpdated, onEdit }) {
+function LibraryRuleCard({ rule, cases, onDelete, onUpdated, onEdit, onError }) {
   const [expanded, setExpanded]     = useState(false)
   const [showRun,  setShowRun]      = useState(false)
   const [editCo,   setEditCo]       = useState(false)
@@ -225,7 +363,7 @@ function LibraryRuleCard({ rule, cases, onDelete, onUpdated, onEdit }) {
       onUpdated?.(updated)
       setEditCo(false)
     } catch (err) {
-      alert('Failed to save: ' + err.message)
+      onError?.('Failed to save: ' + err.message)
     } finally {
       setCoSaving(false)
     }
@@ -404,10 +542,12 @@ export default function AlertLibrary() {
   const [rules, setRules]     = useState([])
   const [cases, setCases]     = useState([])
   const [loading, setLoading] = useState(true)
+  const isAdmin = currentUser()?.role === 'admin'
   const [seeding, setSeeding]   = useState(false)
   const [seedMsg, setSeedMsg]   = useState(null)
   const [drawerRule,    setDrawerRule]    = useState(null)   // null=closed, false=create, obj=edit
   const [search, setSearch]             = useState('')
+  const [toast, showToast]              = useToast()
 
   // Standalone Sigma validator
   const [showValidator, setShowValidator]     = useState(false)
@@ -430,7 +570,7 @@ export default function AlertLibrary() {
   }
   const [artifactFilter, setArtifactFilter] = useState('all')
   const [categoryFilter, setCategoryFilter] = useState('all')
-  const [provenanceFilter, setProvenanceFilter] = useState('custom')
+  const [provenanceFilter, setProvenanceFilter] = useState('all')
   const searchRef = useRef(null)
 
   useKeyboardShortcuts([
@@ -466,7 +606,7 @@ export default function AlertLibrary() {
   const groupedRules      = useMemo(() => groupByCategory(primaryRules), [primaryRules])
   const groupedSigmaRules = useMemo(() => groupByCategory(sigmaRules),   [sigmaRules])
 
-  const hasFilters = !!(search || artifactFilter !== 'all' || categoryFilter !== 'all' || provenanceFilter !== 'custom')
+  const hasFilters = !!(search || artifactFilter !== 'all' || categoryFilter !== 'all' || provenanceFilter !== 'all')
 
   const loadRules = useCallback(() => {
     api.alertRules.listLibrary()
@@ -499,8 +639,9 @@ export default function AlertLibrary() {
     setRules(prev => prev.map(r => r.id === updated.id ? updated : r))
   }
 
+  const [confirmDeleteRule, setConfirmDeleteRule] = useState(null)  // rule id pending delete confirmation
+
   async function deleteRule(id) {
-    if (!confirm('Delete this rule?')) return
     try {
       await api.alertRules.deleteLibraryRule(id)
       setRules(prev => prev.filter(r => r.id !== id))
@@ -513,7 +654,7 @@ export default function AlertLibrary() {
     setSearch('')
     setArtifactFilter('all')
     setCategoryFilter('all')
-    setProvenanceFilter('custom')
+    setProvenanceFilter('all')
   }
 
   return (
@@ -524,6 +665,8 @@ export default function AlertLibrary() {
         subtitle="Sigma-based detection rules. Run on any case, or use 'Run Alerts' on a case timeline to fire all rules."
       />
 
+      {/* Sigma HQ sync — admin only (endpoints require admin) */}
+      {isAdmin && <SigmaSyncSection />}
 
       {/* Library section */}
       <div className="mb-8">
@@ -672,9 +815,10 @@ export default function AlertLibrary() {
                       key={rule.id}
                       rule={rule}
                       cases={cases}
-                      onDelete={deleteRule}
+                      onDelete={setConfirmDeleteRule}
                       onUpdated={handleUpdated}
                       onEdit={r => setDrawerRule(r)}
+                      onError={msg => showToast(msg, 'error')}
                     />
                   ))}
                 </div>
@@ -703,9 +847,10 @@ export default function AlertLibrary() {
                             key={rule.id}
                             rule={rule}
                             cases={cases}
-                            onDelete={deleteRule}
+                            onDelete={setConfirmDeleteRule}
                             onUpdated={handleUpdated}
                             onEdit={r => setDrawerRule(r)}
+                            onError={msg => showToast(msg, 'error')}
                           />
                         ))}
                       </div>
@@ -717,6 +862,22 @@ export default function AlertLibrary() {
           </div>
         )}
       </div>
+      {confirmDeleteRule && (
+        <ConfirmDialog
+          title="Delete rule"
+          icon={<Trash2 size={14} className="text-red-500" />}
+          message={`Delete rule "${rules.find(r => r.id === confirmDeleteRule)?.name || confirmDeleteRule}"? This can't be undone.`}
+          confirmLabel="Delete"
+          confirmClass="btn-danger"
+          onConfirm={async () => {
+            const id = confirmDeleteRule
+            setConfirmDeleteRule(null)
+            await deleteRule(id)
+          }}
+          onCancel={() => setConfirmDeleteRule(null)}
+        />
+      )}
+      <Toast toast={toast} />
     </PageShell>
   )
 }

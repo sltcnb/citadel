@@ -9,7 +9,7 @@ import { api } from '../../api/client'
 import { useKeyboardShortcuts } from '../../hooks/useKeyboardShortcuts'
 import KeyboardShortcutsModal from '../KeyboardShortcutsModal'
 import CommandPalette from '../CommandPalette'
-import { ToolByline } from '../../pages/Suite'
+import { ToolByline } from '../ToolByline'
 
 // Byline tool is DERIVED from the tools' declared surfaces (passed in). Citadel
 // holds no page→tool table — a tool says where it surfaces, the byline follows.
@@ -131,6 +131,14 @@ export default function ModernLayout({ user, onLogout }) {
   useEffect(() => {
     if (showNewCase) setTimeout(() => newCaseRef.current?.focus(), 50)
   }, [showNewCase])
+
+  // The dashboard hero CTA and the ⌘K palette open the same new-case flow as
+  // the header button by dispatching this event — one flow, one place.
+  useEffect(() => {
+    function open() { setShowNewCase(true) }
+    window.addEventListener('citadel:new-case', open)
+    return () => window.removeEventListener('citadel:new-case', open)
+  }, [])
 
   async function handleCreateCase(e) {
     e.preventDefault()
@@ -336,6 +344,15 @@ export default function ModernLayout({ user, onLogout }) {
       {/* ── Mobile nav drawer ────────────────────────────────────────────────── */}
       {mobileOpen && (
         <div className="md:hidden fixed inset-0 top-12 z-30 bg-white overflow-y-auto py-3 px-2 border-t border-gray-200">
+          {/* New case — the header button is desktop-only, so the drawer carries
+              the mobile entry point (opens the same inline form in the header). */}
+          <button
+            onClick={() => { setMobileOpen(false); setShowNewCase(true) }}
+            className="w-full flex items-center gap-2.5 px-3 py-2 mb-1 rounded-lg text-sm font-medium text-brand-accent hover:bg-gray-50 border border-gray-200"
+          >
+            <Plus size={14} />
+            New case
+          </button>
           {[
             HOME_ITEM,
             ...(lastCaseId ? [{ to: `/cases/${lastCaseId}`, icon: FolderOpen, label: 'Case' }] : []),

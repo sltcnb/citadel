@@ -7,7 +7,6 @@ import {
   FileCode2,
   X,
   CheckCircle,
-  AlertCircle,
   Code2,
   BookOpen,
   Plus,
@@ -16,6 +15,9 @@ import {
 import { PageShell, PageHeader } from '../components/shared/PageShell'
 import { api } from '../api/client'
 import { formatBytes } from '../utils/format'
+import Toast from '../components/Toast'
+import ErrorBox from '../components/shared/ErrorBox'
+import { useToast } from '../hooks/useToast'
 
 // ── UploadZone ────────────────────────────────────────────────────────────────
 function UploadZone({ onUploaded }) {
@@ -122,9 +124,7 @@ function UploadZone({ onUploaded }) {
         </div>
       )}
       {status === 'error' && (
-        <div className="mt-2 flex items-center gap-2 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-          <AlertCircle size={13} /> {message}
-        </div>
+        <ErrorBox msg={message} className="mt-2" />
       )}
     </div>
   )
@@ -136,6 +136,7 @@ export default function Ingesters() {
   const [plugins, setPlugins] = useState([])
   const [loading, setLoading] = useState(true)
   const [reloading, setReloading] = useState(false)
+  const [toast, showToast] = useToast()
 
   function loadPlugins() {
     setLoading(true)
@@ -153,7 +154,7 @@ export default function Ingesters() {
       const r = await api.plugins.reload()
       setPlugins(r.plugins || [])
     } catch (e) {
-      alert('Reload failed: ' + e.message)
+      showToast('Reload failed: ' + e.message, 'error')
     } finally {
       setReloading(false)
     }
@@ -398,6 +399,8 @@ export default function Ingesters() {
           </div>
         </div>
       </section>
+
+      <Toast toast={toast} />
     </PageShell>
   )
 }

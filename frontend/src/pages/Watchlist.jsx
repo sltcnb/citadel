@@ -6,6 +6,10 @@ import {
 } from 'lucide-react'
 import { api } from '../api/client'
 import { PageShell, PageHeader } from '../components/shared/PageShell'
+import ErrorBox from '../components/shared/ErrorBox'
+import Toast from '../components/Toast'
+import { useToast } from '../hooks/useToast'
+import { useConfirm } from '../components/useConfirm'
 
 // ── IOC kind catalogue ──────────────────────────────────────────────────────
 // Each entry: id, label, icon, hint (what it matches), example (placeholder),
@@ -71,10 +75,13 @@ export default function Watchlist() {
   const [adding,    setAdding]   = useState(false)
   const [running,   setRunning]  = useState(false)
   const [lastSweep, setLastSweep] = useState(null)
+  const [autoSweep, setAutoSweep] = useState(null)  // { ran_at, checked, hits[] } aggregated across cases
   const [wlHosts, setWlHosts]    = useState('')
   const [wlIps, setWlIps]        = useState('')
   const [wlSaving, setWlSaving]  = useState(false)
   const [wlMsg, setWlMsg]        = useState(null)
+  const [confirmEl, askConfirm]  = useConfirm()
+  const [toast, showToast]       = useToast()
   const navigate = useNavigate()
 
   const draftKind = useMemo(
@@ -90,7 +97,38 @@ export default function Watchlist() {
     } catch { setEntries([]) }
     finally { setLoading(false) }
   }
-  useEffect(() => { load(); loadWhitelist() }, [])
+  useEffect(() => { load(); loadWhitelist(); loadAutoSweep() }, [])
+
+  // Automatic post-ingest sweeps run per case (worker → fo:watchlist_runs);
+  // fold every case's latest run into one per-entry aggregate for this page.
+  async function loadAutoSweep() {
+    try {
+      const { cases = [] } = await api.cases.list()
+      const runs = await Promise.all(
+        cases.map(c =>
+          api.watchlist.autoRun(c.case_id)
+            .then(r => r?.ran_at ? { ...r, case_id: c.case_id, case_name: c.name || c.case_id } : null)
+            .catch(() => null)
+        )
+      )
+      const valid = runs.filter(Boolean)
+      if (!valid.length) return
+      const byId = {}
+      for (const run of valid) {
+        for (const h of run.hits || []) {
+          const a = (byId[h.id] = byId[h.id] || { ...h, hits: 0, cases: [] })
+          a.hits += h.hits
+          a.cases.push({ case_id: run.case_id, case_name: run.case_name, hits: h.hits })
+        }
+      }
+      const hits = Object.values(byId).sort((a, b) => b.hits - a.hits)
+      setAutoSweep({
+        ran_at:  valid.map(r => r.ran_at).sort().at(-1),
+        checked: Math.max(...valid.map(r => r.checked || 0)),
+        hits,
+      })
+    } catch { /* automatic sweep section is best-effort */ }
+  }
 
   function loadWhitelist() {
     api.watchlist.getWhitelist()
@@ -119,19 +157,19 @@ export default function Watchlist() {
       // Auto-sweep — analyst gets hit counts without a second click.
       await sweep()
     } catch (err) {
-      alert(err.message)
+      showToast(err.message || 'Add failed', 'error')
     } finally {
       setAdding(false)
     }
   }
 
   async function remove(id) {
-    if (!confirm('Delete this watchlist entry? It will stop being evaluated against future cases.')) return
+    if (!await askConfirm('Delete this watchlist entry? It will stop being evaluated against future cases.', { title: 'Delete watchlist entry?' })) return
     try {
       await api.watchlist.delete(id)
       load()
     } catch (err) {
-      alert(err.message || 'Delete failed')
+      showToast(err.message || 'Delete failed', 'error')
     }
   }
 
@@ -142,7 +180,7 @@ export default function Watchlist() {
       setEntries(r.entries || [])
       setLastSweep(new Date())
     } catch (err) {
-      alert(err.message)
+      showToast(err.message || 'Sweep failed', 'error')
     } finally {
       setRunning(false)
     }
@@ -161,6 +199,7 @@ export default function Watchlist() {
   }, [entries])
 
   const hotCount = entries.filter(e => (e.total_hits || 0) > 0).length
+  const errorCount = entries.filter(e => e.error).length
 
   return (
     <PageShell>
@@ -217,8 +256,9 @@ export default function Watchlist() {
         {/* Value + Label */}
         <div className="grid grid-cols-1 md:grid-cols-12 gap-2">
           <div className="md:col-span-6">
-            <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-1.5 block">Value</label>
+            <label htmlFor="wl-value" className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-1.5 block">Value</label>
             <input
+              id="wl-value"
               value={draftValue}
               onChange={e => setDraftValue(e.target.value)}
               placeholder={draftKind.example}
@@ -226,10 +266,11 @@ export default function Watchlist() {
             />
           </div>
           <div className="md:col-span-4">
-            <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-1.5 block">
+            <label htmlFor="wl-label" className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-1.5 block">
               Label <span className="text-gray-400 font-normal normal-case">(optional)</span>
             </label>
             <input
+              id="wl-label"
               value={draftLabel}
               onChange={e => setDraftLabel(e.target.value)}
               placeholder="e.g. APT29 — Cozy Bear C2"
@@ -273,14 +314,14 @@ export default function Watchlist() {
         </p>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
-            <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-1 block">Hostnames</label>
-            <textarea value={wlHosts} onChange={e => setWlHosts(e.target.value)}
+            <label htmlFor="wl-hosts" className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-1 block">Hostnames</label>
+            <textarea id="wl-hosts" value={wlHosts} onChange={e => setWlHosts(e.target.value)}
               placeholder={"DC01\nWEB-PROD-01\nfileserver.corp.local"} rows={4}
               className="input text-xs font-mono resize-y w-full" />
           </div>
           <div>
-            <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-1 block">IP addresses</label>
-            <textarea value={wlIps} onChange={e => setWlIps(e.target.value)}
+            <label htmlFor="wl-ips" className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-1 block">IP addresses</label>
+            <textarea id="wl-ips" value={wlIps} onChange={e => setWlIps(e.target.value)}
               placeholder={"10.0.0.5\n192.168.1.10\n203.0.113.7"} rows={4}
               className="input text-xs font-mono resize-y w-full" />
           </div>
@@ -307,6 +348,60 @@ export default function Watchlist() {
               <span className="text-amber-700/80"> · Last sweep: {lastSweep.toLocaleTimeString()}</span>
             )}
           </span>
+        </div>
+      )}
+
+      {/* ── Sweep error banner ────────────────────────────────────────────── */}
+      {errorCount > 0 && (
+        <div className="card border-red-200 bg-red-50 p-3 flex items-start gap-2.5 text-xs">
+          <AlertTriangle size={14} className="text-red-600 flex-shrink-0 mt-0.5" />
+          <span className="text-red-800">
+            <strong>{errorCount}</strong> entr{errorCount === 1 ? 'y' : 'ies'} failed during the last sweep — expand the entries below for the per-entry error.
+          </span>
+        </div>
+      )}
+
+      {/* ── Latest automatic sweep (post-ingest, per case) ─────────────────── */}
+      {autoSweep && (
+        <div className="card p-4 space-y-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <ShieldAlert size={14} className="text-brand-accent" />
+            <h2 className="font-semibold text-brand-text text-sm">Latest automatic sweep</h2>
+            <span className="text-[11px] text-gray-500">
+              ran {new Date(autoSweep.ran_at).toLocaleString()} · {autoSweep.checked} entr{autoSweep.checked === 1 ? 'y' : 'ies'} checked
+            </span>
+          </div>
+          {autoSweep.hits.length === 0 ? (
+            <p className="text-xs text-gray-500">No watchlist hits in the last automatic sweep.</p>
+          ) : (
+            <div className="space-y-1.5">
+              {autoSweep.hits.map(h => (
+                <div key={h.id} className="flex items-start gap-2 text-xs">
+                  <AlertTriangle size={12} className="text-amber-500 flex-shrink-0 mt-0.5" />
+                  <div className="min-w-0 flex-1">
+                    <span className="font-medium text-gray-800">{h.label || h.value}</span>
+                    <span className="badge text-[10px] bg-amber-100 text-amber-800 font-semibold ml-2">
+                      {h.hits.toLocaleString()} hits
+                    </span>
+                    <div className="mt-0.5 space-y-0.5">
+                      {h.cases.map(c => (
+                        <button
+                          key={c.case_id}
+                          onClick={() => navigate(`/cases/${c.case_id}`, { state: { pivotQuery: h.query } })}
+                          className="w-full flex items-center gap-2 text-[11px] hover:bg-brand-accentlight/40 rounded px-2 py-1 transition-colors group"
+                          title={`Open ${c.case_name} with this IOC pivoted in`}
+                        >
+                          <span className="text-gray-700 truncate flex-1 text-left">{c.case_name}</span>
+                          <span className="badge text-[10px] bg-amber-50 text-amber-700">{c.hits.toLocaleString()}</span>
+                          <ExternalLink size={11} className="text-gray-400 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity" />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -379,6 +474,9 @@ export default function Watchlist() {
                         <code className="block bg-gray-50 border border-gray-100 rounded px-2 py-1 text-[11px] font-mono text-gray-700 break-all">
                           {e.query}
                         </code>
+                        {e.error && (
+                          <ErrorBox msg={`Sweep failed for this entry: ${e.error}`} className="mt-1.5 text-[11px] rounded px-2 py-1" />
+                        )}
                         {(e.matched_cases || []).length > 0 && (
                           <div className="mt-2 space-y-0.5">
                             {e.matched_cases.map(m => (
@@ -390,7 +488,7 @@ export default function Watchlist() {
                               >
                                 <span className="text-gray-700 truncate flex-1 text-left">{m.case_name}</span>
                                 <span className="badge text-[10px] bg-amber-50 text-amber-700">{m.hits.toLocaleString()}</span>
-                                <ExternalLink size={11} className="text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+                                <ExternalLink size={11} className="text-gray-400 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity" />
                               </button>
                             ))}
                           </div>
@@ -404,6 +502,8 @@ export default function Watchlist() {
           })}
         </div>
       )}
+      {confirmEl}
+      <Toast toast={toast} />
     </PageShell>
   )
 }

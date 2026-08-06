@@ -35,9 +35,11 @@ import {
 import { api } from '../api/client'
 import { useTheme, THEMES, THEME_LABELS } from '../hooks/useTheme'
 import ConfirmDialog from '../components/ConfirmDialog'
+import { Badge } from '../components/shared/Badge'
 import LicenseGate from '../components/LicenseGate'
 import { useLicense } from '../contexts/LicenseContext'
 import { PageShell, PageHeader } from '../components/shared/PageShell'
+import ErrorBox from '../components/shared/ErrorBox'
 import { useAsyncConfig } from '../hooks/useAsyncConfig'
 
 /* ── Constants ────────────────────────────────────────────────────────────── */
@@ -293,9 +295,7 @@ function PilotSettingsSection() {
                       {(testResult.sample || []).map((s, i) => <p key={i} className="text-gray-600 truncate">{s}</p>)}
                     </div>
                   ) : (
-                    <p className="text-[11px] text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-start gap-1.5">
-                      <AlertCircle size={11} className="mt-0.5 flex-shrink-0" /> {testResult.error}
-                    </p>
+                    <ErrorBox msg={testResult.error} className="text-[11px]" />
                   )
                 )}
               </div>
@@ -311,9 +311,7 @@ function PilotSettingsSection() {
         </form>
       )}
       {error && (
-        <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-center gap-1.5">
-          <AlertCircle size={12} /> {error}
-        </p>
+        <ErrorBox msg={error} />
       )}
     </section>
   )
@@ -537,9 +535,7 @@ function SSOSettingsSection() {
       )}
 
       {error && (
-        <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-center gap-1.5">
-          <AlertCircle size={12} /> {error}
-        </p>
+        <ErrorBox msg={error} />
       )}
     </section>
   )
@@ -682,9 +678,7 @@ function PlatformSettingsSection() {
       )}
 
       {error && (
-        <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-center gap-1.5">
-          <AlertCircle size={12} /> {error}
-        </p>
+        <ErrorBox msg={error} />
       )}
     </section>
   )
@@ -760,9 +754,7 @@ function StorageReconcilePanel() {
       </div>
 
       {status === 'error' && (
-        <div role="alert" className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-start gap-1.5">
-          <AlertCircle size={12} className="mt-0.5 flex-shrink-0" /><span>{error}</span>
-        </div>
+        <ErrorBox msg={error} />
       )}
 
       {status === 'none' && (
@@ -995,7 +987,7 @@ export default function Settings() {
   const license = useLicense()
   const visibleTabs = isAdmin ? TABS : []
   const [tab, setTab] = useState('ai')
-  // Pending destructive action (ConfirmDialog): { kind: 'source' | 'webhook', id, name }
+  // Pending destructive action (ConfirmDialog): { title, message, confirmLabel, action }
   const [confirmAction, setConfirmAction] = useState(null)
 
   /* ── AI state ─────────────────────────────────────────────────────────── */
@@ -1147,7 +1139,6 @@ export default function Settings() {
   }
 
   async function resetReportTemplate() {
-    if (!confirm('Reset the report template to defaults?')) return
     try {
       const tpl = await api.admin.resetReportTemplate()
       setRtForm(tpl)
@@ -1225,7 +1216,6 @@ export default function Settings() {
   }
 
   async function clearAI() {
-    if (!confirm('Remove LLM configuration?')) return
     try {
       await api.llm.clearConfig()
       setConfig({ provider: '', model: '', api_key_set: false, base_url: '', enabled: false })
@@ -1316,7 +1306,6 @@ export default function Settings() {
   }
 
   async function clearS3Triage() {
-    if (!confirm('Remove Collector Dropzone configuration?')) return
     try {
       await api.s3Triage.clearConfig()
       setS3TriageConfig({ endpoint: '', access_key: '', secret_key_set: false, bucket: '', region: '', vendor: 'scaleway', use_ssl: true })
@@ -1346,7 +1335,6 @@ export default function Settings() {
 
   /* ── Cuckoo handlers ──────────────────────────────────────────────────── */
   async function clearCuckoo() {
-    if (!confirm('Remove Cuckoo Sandbox configuration?')) return
     try {
       await api.cuckooConfig.clear()
       setCuckooConfig({ api_url: '', api_token_set: false, configured: false })
@@ -1391,7 +1379,6 @@ export default function Settings() {
   }
 
   async function clearVt() {
-    if (!confirm('Remove VirusTotal API key?')) return
     try {
       await api.mwoConfig.clear()
       setVtConfig({ vt_api_key_set: false, configured: false })
@@ -1401,7 +1388,6 @@ export default function Settings() {
 
   /* ── System handlers ──────────────────────────────────────────────────── */
   async function runPurge() {
-    if (!confirm('Purge all orphaned case data? This deletes MinIO objects, ES indices, and all Redis keys (jobs, collab lists, dedup sets, alert runs, case records) for cases no longer in the database. Active cases are untouched.')) return
     setPurging(true); setPurgeResult(null)
     try {
       const res = await api.admin.purgeOrphaned()
@@ -1544,9 +1530,7 @@ export default function Settings() {
             )}
 
             {error && (
-              <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-center gap-1.5">
-                <AlertCircle size={12} /> {error}
-              </p>
+              <ErrorBox msg={error} />
             )}
 
             <div className="flex items-center gap-2 flex-wrap">
@@ -1562,7 +1546,7 @@ export default function Settings() {
               )}
               {saved && <span className="text-xs text-green-600 flex items-center gap-1"><Check size={11} /> Saved</span>}
               {config?.provider && (
-                <button type="button" onClick={clearAI} className="btn-ghost text-xs text-red-500 hover:text-red-700 ml-auto">
+                <button type="button" onClick={() => setConfirmAction({ title: 'Remove LLM configuration', message: 'Remove LLM configuration? The saved API key will be deleted.', confirmLabel: 'Remove', action: clearAI })} className="btn-ghost text-xs text-red-500 hover:text-red-700 ml-auto">
                   <Trash2 size={12} /> Remove
                 </button>
               )}
@@ -1575,10 +1559,7 @@ export default function Settings() {
                   <span><strong>Connected.</strong> Model replied: <em className="font-mono">{testResult.response}</em></span>
                 </div>
               ) : (
-                <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-start gap-1.5">
-                  <X size={12} className="mt-0.5 flex-shrink-0" />
-                  <span><strong>Failed:</strong> {testResult.error}</span>
-                </div>
+                <ErrorBox msg={<><strong>Failed:</strong> {testResult.error}</>} />
               )
             )}
           </form>
@@ -1624,13 +1605,13 @@ export default function Settings() {
               {importSources.map(src => {
                 const testRes = sourceTestResults[src.id]
                 return (
-                  <div key={src.id} className="rounded-lg border border-gray-100 bg-gray-50/50 dark:bg-transparent dark:border-white/10 px-4 py-3">
+                  <div key={src.id} className="rounded-lg border border-gray-100 bg-gray-50/50 px-4 py-3">
                     <div className="flex items-center justify-between gap-3">
                       <div className="flex items-center gap-3 min-w-0">
                         <span className="font-medium text-sm text-brand-text truncate">{src.name}</span>
-                        <span className="text-[10px] bg-white dark:bg-white/10 border border-gray-200 dark:border-white/15 rounded px-1.5 py-0.5 text-gray-500 uppercase tracking-wide flex-shrink-0">
+                        <Badge color="bg-white border border-gray-200 text-gray-500 uppercase tracking-wide" className="text-micro font-medium flex-shrink-0">
                           {src.vendor || 'other'}
-                        </span>
+                        </Badge>
                         <span className="text-xs text-gray-500 font-mono truncate hidden sm:block">{src.bucket}</span>
                       </div>
                       <div className="flex items-center gap-1.5 flex-shrink-0">
@@ -1658,7 +1639,12 @@ export default function Settings() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => setConfirmAction({ kind: 'source', id: src.id, name: src.name })}
+                          onClick={() => setConfirmAction({
+                            title: 'Remove import source',
+                            message: `Remove import source "${src.name}"? Saved credentials for it will be deleted.`,
+                            confirmLabel: 'Remove',
+                            action: () => deleteSource(src.id),
+                          })}
                           className="btn-ghost text-xs py-1 px-2 text-red-500 hover:text-red-700"
                           title="Delete"
                         >
@@ -1712,9 +1698,7 @@ export default function Settings() {
               />
 
               {sourceError && (
-                <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-center gap-1.5">
-                  <AlertCircle size={12} /> {sourceError}
-                </p>
+                <ErrorBox msg={sourceError} />
               )}
 
               <div className="flex items-center gap-2">
@@ -1770,9 +1754,7 @@ export default function Settings() {
               />
 
               {s3TriageError && (
-                <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-center gap-1.5">
-                  <AlertCircle size={12} /> {s3TriageError}
-                </p>
+                <ErrorBox msg={s3TriageError} />
               )}
 
               <div className="flex items-center gap-2 flex-wrap">
@@ -1788,7 +1770,7 @@ export default function Settings() {
                 )}
                 {s3TriageSaved && <span className="text-xs text-green-600 flex items-center gap-1"><Check size={11} /> Saved</span>}
                 {s3TriageConfig?.endpoint && (
-                  <button type="button" onClick={clearS3Triage} className="btn-ghost text-xs text-red-500 hover:text-red-700 ml-auto">
+                  <button type="button" onClick={() => setConfirmAction({ title: 'Remove Collector Dropzone', message: 'Remove Collector Dropzone configuration? Saved credentials will be deleted.', confirmLabel: 'Remove', action: clearS3Triage })} className="btn-ghost text-xs text-red-500 hover:text-red-700 ml-auto">
                     <Trash2 size={12} /> Remove
                   </button>
                 )}
@@ -1801,10 +1783,7 @@ export default function Settings() {
                     <span><strong>Connected.</strong> {s3TriageTestResult.message}</span>
                   </div>
                 ) : (
-                  <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-start gap-1.5">
-                    <X size={12} className="mt-0.5 flex-shrink-0" />
-                    <span><strong>Failed:</strong> {s3TriageTestResult.error}</span>
-                  </div>
+                  <ErrorBox msg={<><strong>Failed:</strong> {s3TriageTestResult.error}</>} />
                 )
               )}
             </form>
@@ -1879,7 +1858,7 @@ export default function Settings() {
                 Export to S3 and purge local data when archiving
               </label>
 
-              <div className="border border-gray-100 dark:border-white/10 rounded-lg p-4 space-y-4 bg-gray-50/50 dark:bg-transparent">
+              <div className="border border-gray-100 rounded-lg p-4 space-y-4 bg-gray-50/50">
                 <p className="text-xs font-medium text-gray-600">S3 Archive Storage</p>
                 <p className="text-xs text-gray-500">
                   Required for manual purge-archive and auto-export. Works with AWS S3, MinIO, Wasabi, and any S3-compatible service.
@@ -1895,9 +1874,7 @@ export default function Settings() {
               </div>
 
               {archiveError && (
-                <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-center gap-1.5">
-                  <AlertCircle size={12} /> {archiveError}
-                </p>
+                <ErrorBox msg={archiveError} />
               )}
 
               {archiveTestResult && (
@@ -2021,9 +1998,7 @@ export default function Settings() {
               </div>
 
               {cuckooError && (
-                <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-center gap-1.5">
-                  <AlertCircle size={12} /> {cuckooError}
-                </p>
+                <ErrorBox msg={cuckooError} />
               )}
 
               <div className="flex items-center gap-2 flex-wrap">
@@ -2037,7 +2012,7 @@ export default function Settings() {
                   </span>
                 )}
                 {cuckooConfig?.configured && (
-                  <button type="button" onClick={clearCuckoo} className="btn-ghost text-xs text-red-500 hover:text-red-700 ml-auto">
+                  <button type="button" onClick={() => setConfirmAction({ title: 'Remove Cuckoo Sandbox', message: 'Remove Cuckoo Sandbox configuration? The saved API token will be deleted.', confirmLabel: 'Remove', action: clearCuckoo })} className="btn-ghost text-xs text-red-500 hover:text-red-700 ml-auto">
                     <Trash2 size={12} /> Remove
                   </button>
                 )}
@@ -2113,9 +2088,7 @@ export default function Settings() {
               </div>
 
               {vtError && (
-                <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-center gap-1.5">
-                  <AlertCircle size={12} /> {vtError}
-                </p>
+                <ErrorBox msg={vtError} />
               )}
 
               <div className="flex items-center gap-2 flex-wrap">
@@ -2129,7 +2102,7 @@ export default function Settings() {
                   </span>
                 )}
                 {vtConfig?.vt_api_key_set && (
-                  <button type="button" onClick={clearVt} className="btn-ghost text-xs text-red-500 hover:text-red-700 ml-auto">
+                  <button type="button" onClick={() => setConfirmAction({ title: 'Remove VirusTotal API key', message: 'Remove VirusTotal API key?', confirmLabel: 'Remove', action: clearVt })} className="btn-ghost text-xs text-red-500 hover:text-red-700 ml-auto">
                     <Trash2 size={12} /> Remove
                   </button>
                 )}
@@ -2172,9 +2145,9 @@ export default function Settings() {
                         <p className="text-xs font-medium text-brand-text flex items-center gap-1.5">
                           {hook.name}
                           {(hook.events || []).map(ev => (
-                            <span key={ev} className="px-1.5 py-px rounded text-[9px] font-medium bg-teal-50 text-teal-600 border border-teal-200">
+                            <Badge key={ev} color="bg-teal-50 text-teal-600 border border-teal-200">
                               {ev === 'alert_rules' ? 'detections' : 'module hits'}
-                            </span>
+                            </Badge>
                           ))}
                         </p>
                         <p className="text-[10px] text-gray-500 font-mono truncate">{hook.url}</p>
@@ -2194,7 +2167,12 @@ export default function Settings() {
                         Test
                       </button>
                       <button
-                        onClick={() => setConfirmAction({ kind: 'webhook', id: hook.id, name: hook.name })}
+                        onClick={() => setConfirmAction({
+                          title: 'Delete webhook',
+                          message: `Delete webhook "${hook.name}"? No further notifications will be sent to it.`,
+                          confirmLabel: 'Delete',
+                          action: () => deleteWebhook(hook.id),
+                        })}
                         className="btn-ghost text-xs px-1.5 py-0.5 text-red-500 hover:text-red-700"
                         title="Delete webhook"
                       >
@@ -2251,9 +2229,7 @@ export default function Settings() {
               </form>
 
               {whError && (
-                <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-center gap-1.5">
-                  <AlertCircle size={12} /> {whError}
-                </p>
+                <ErrorBox msg={whError} />
               )}
             </>
           )}
@@ -2344,9 +2320,7 @@ export default function Settings() {
                 </div>
               </div>
               {rtError && (
-                <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-center gap-1.5">
-                  <AlertCircle size={12} /> {rtError}
-                </p>
+                <ErrorBox msg={rtError} />
               )}
               <div className="flex items-center gap-2">
                 <button type="submit" disabled={rtSaving} className="btn-primary text-xs">
@@ -2358,7 +2332,7 @@ export default function Settings() {
                     <Check size={11} /> Saved
                   </span>
                 )}
-                <button type="button" onClick={resetReportTemplate} className="btn-ghost text-xs text-red-500 hover:text-red-700 ml-auto">
+                <button type="button" onClick={() => setConfirmAction({ title: 'Reset report template', message: 'Reset the report template to defaults? Your customizations will be lost.', confirmLabel: 'Reset', action: resetReportTemplate })} className="btn-ghost text-xs text-red-500 hover:text-red-700 ml-auto">
                   <RefreshCw size={12} /> Reset to defaults
                 </button>
               </div>
@@ -2475,7 +2449,12 @@ resources:
           <div className="flex items-center gap-3 flex-wrap">
             <button
               type="button"
-              onClick={runPurge}
+              onClick={() => setConfirmAction({
+                title: 'Purge orphaned case data',
+                message: 'Purge all orphaned case data? This deletes MinIO objects, ES indices, and all Redis keys (jobs, collab lists, dedup sets, alert runs, case records) for cases no longer in the database. Active cases are untouched.',
+                confirmLabel: 'Purge',
+                action: runPurge,
+              })}
               disabled={purging}
               className="btn-outline text-xs px-4 py-1.5 flex items-center gap-1.5 text-red-500 border-red-200 hover:border-red-400 disabled:opacity-50"
             >
@@ -2494,10 +2473,7 @@ resources:
                 <p className="text-gray-500">Redis case keys deleted: <strong>{(purgeResult.data.redis_case_keys_deleted ?? 0).toLocaleString()}</strong></p>
               </div>
             ) : (
-              <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-start gap-1.5">
-                <AlertCircle size={12} className="mt-0.5 flex-shrink-0" />
-                <span>{purgeResult.error}</span>
-              </div>
+              <ErrorBox msg={purgeResult.error} />
             )
           )}
         </section>
@@ -2539,10 +2515,7 @@ resources:
                 <p className="text-gray-500">Redis keys deleted: <strong>{wipeResult.data.redis_keys_deleted.toLocaleString()}</strong></p>
               </div>
             ) : (
-              <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-start gap-1.5">
-                <AlertCircle size={12} className="mt-0.5 flex-shrink-0" />
-                <span>{wipeResult.error}</span>
-              </div>
+              <ErrorBox msg={wipeResult.error} />
             )
           )}
         </section>
@@ -2558,14 +2531,14 @@ resources:
         icon={Settings2}
         subtitle={isAdmin ? 'Platform configuration for administrators. Your account & password are under Account.' : 'Administrators only — your account & password are under Account.'}
         actions={(
-          <span className={`text-[10px] font-semibold px-2.5 py-1 rounded-full border ${
+          <Badge className="rounded-full border" color={
             license.plan === 'enterprise' ? 'bg-indigo-50 text-indigo-700 border-indigo-200' :
             license.plan === 'pro'        ? 'bg-blue-50 text-blue-700 border-blue-200' :
             'bg-gray-100 text-gray-500 border-gray-200'
-          }`}>
+          }>
             {license.plan_label}
             {license.org_name && license.org_name !== 'Community' ? ` · ${license.org_name}` : ''}
-          </span>
+          </Badge>
         )}
       />
 
@@ -2590,7 +2563,7 @@ resources:
               <Icon size={13} />
               <span className="flex flex-col items-start leading-tight">
                 {t.label}
-                {t.tool && <span className="text-[9px] text-gray-400 font-normal">{t.tool}</span>}
+                {t.tool && <span className="text-micro text-gray-500 font-normal">{t.tool}</span>}
               </span>
             </button>
           )
@@ -2613,18 +2586,15 @@ resources:
 
       {confirmAction && (
         <ConfirmDialog
-          title={confirmAction.kind === 'webhook' ? 'Delete webhook' : 'Remove import source'}
+          title={confirmAction.title}
           icon={<Trash2 size={14} className="text-red-500" />}
-          message={confirmAction.kind === 'webhook'
-            ? `Delete webhook "${confirmAction.name}"? No further notifications will be sent to it.`
-            : `Remove import source "${confirmAction.name}"? Saved credentials for it will be deleted.`}
-          confirmLabel={confirmAction.kind === 'webhook' ? 'Delete' : 'Remove'}
+          message={confirmAction.message}
+          confirmLabel={confirmAction.confirmLabel}
           confirmClass="btn-danger"
           onConfirm={() => {
-            const { kind, id } = confirmAction
+            const { action } = confirmAction
             setConfirmAction(null)
-            if (kind === 'webhook') deleteWebhook(id)
-            else deleteSource(id)
+            action?.()
           }}
           onCancel={() => setConfirmAction(null)}
         />
@@ -2646,6 +2616,7 @@ function LicensePanel() {
   const [busy, setBusy]             = useState(false)
   const [error, setError]           = useState(null)
   const [okMessage, setOkMessage]   = useState(null)
+  const [confirmClear, setConfirmClear] = useState(false)
 
   const planBadge =
     license.plan === 'community'  ? 'bg-gray-100 text-gray-700' :
@@ -2669,7 +2640,6 @@ function LicensePanel() {
   }
 
   async function handleClear() {
-    if (!confirm('Remove the runtime license override and revert to the env / community license?')) return
     setBusy(true); setError(null); setOkMessage(null)
     try {
       await api.license.uninstall()
@@ -2707,9 +2677,9 @@ function LicensePanel() {
             <div>
               <div className="text-sm font-semibold text-gray-900 flex items-center gap-2">
                 {license.plan_label || license.plan}
-                <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${planBadge}`}>
+                <Badge color={planBadge} className="rounded-full">
                   {license.plan}
-                </span>
+                </Badge>
               </div>
               <div className="text-xs text-gray-500">{license.org_name}</div>
             </div>
@@ -2814,7 +2784,7 @@ function LicensePanel() {
             </button>
             {license.source === 'file' && (
               <button
-                onClick={handleClear}
+                onClick={() => setConfirmClear(true)}
                 disabled={busy}
                 className="btn-secondary text-xs flex items-center gap-1.5 text-red-700"
               >
@@ -2825,6 +2795,18 @@ function LicensePanel() {
           </div>
         </div>
       </div>
+
+      {confirmClear && (
+        <ConfirmDialog
+          title="Remove license override"
+          icon={<Trash2 size={14} className="text-red-500" />}
+          message="Remove the runtime license override and revert to the env / community license?"
+          confirmLabel="Remove"
+          confirmClass="btn-danger"
+          onConfirm={() => { setConfirmClear(false); handleClear() }}
+          onCancel={() => setConfirmClear(false)}
+        />
+      )}
     </div>
   )
 }

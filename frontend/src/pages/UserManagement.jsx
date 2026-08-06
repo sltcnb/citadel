@@ -4,6 +4,8 @@ import { PageShell, PageHeader } from '../components/shared/PageShell'
 import { api } from '../api/client'
 import { formatDate } from '../utils/format'
 import SharedModal from '../components/shared/Modal'
+import ErrorBox from '../components/shared/ErrorBox'
+import { useConfirm } from '../components/useConfirm'
 
 /* ── Shared company hooks ─────────────────────────────────────────────────── */
 
@@ -36,8 +38,7 @@ function Modal({ open, onClose, title, children, wide = false }) {
   return (
     <SharedModal
       onClose={onClose}
-      overlayClassName="fixed inset-0 z-50 flex items-center justify-center bg-black/30"
-      className={`card p-5 w-full ${wide ? 'max-w-2xl' : 'max-w-md'} mx-4 space-y-4 max-h-[90vh] overflow-y-auto`}
+      className={`modal-box p-5 space-y-4 overflow-y-auto ${wide ? 'max-w-2xl' : 'max-w-md'}`}
       ariaLabel={title}
     >
       <>
@@ -112,41 +113,11 @@ function CheckboxList({ options, selected, onChange, getId = o => o, getLabel = 
   )
 }
 
-// Comma/tag style input backed by a string array.
-function TagInput({ value, onChange, placeholder }) {
-  const [draft, setDraft] = useState('')
-  function commit() {
-    const v = draft.trim()
-    if (v && !value.includes(v)) onChange([...value, v])
-    setDraft('')
-  }
-  return (
-    <div className="border border-gray-200 rounded-lg px-2 py-1.5 flex flex-wrap gap-1 items-center">
-      {value.map(t => (
-        <span key={t} className="badge bg-cyan-50 text-cyan-700 border border-cyan-200 text-[10px] gap-1">
-          {t}
-          <button type="button" onClick={() => onChange(value.filter(x => x !== t))} className="text-cyan-400 hover:text-red-500"><X size={10} /></button>
-        </span>
-      ))}
-      <input
-        className="flex-1 min-w-[100px] text-xs outline-none bg-transparent py-0.5"
-        placeholder={placeholder || 'Type and press Enter…'}
-        value={draft}
-        onChange={e => setDraft(e.target.value)}
-        onKeyDown={e => {
-          if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); commit() }
-          else if (e.key === 'Backspace' && !draft && value.length) onChange(value.slice(0, -1))
-        }}
-        onBlur={commit}
-      />
-    </div>
-  )
-}
-
 /* ══════════════════════════════════════════════════════════════════════════ */
 
 export default function UserManagement() {
   const [me, setMe] = useState(cachedUser)  // seed from cache, verified via API below
+  const [confirmEl, askConfirm] = useConfirm()
 
   /* ── State ── */
   const [tab, setTab]           = useState('users')   // 'users' | 'groups'
@@ -185,12 +156,6 @@ export default function UserManagement() {
   const [userErr, setUserErr]         = useState('')
   const [effective, setEffective]     = useState(null)   // userEffective() result
   const [effLoading, setEffLoading]   = useState(false)
-
-  // Edit role
-  const [editTarget, setEditTarget]     = useState(null) // { username, role }
-  const [editRole, setEditRole]         = useState('analyst')
-  const [editingSave, setEditingSave]   = useState(false)
-  const [editErr, setEditErr]           = useState('')
 
   // Edit companies
   const [companiesTarget, setCompaniesTarget]   = useState(null) // { username, companies }
@@ -256,13 +221,6 @@ export default function UserManagement() {
     }
   }
 
-  async function loadCompanies() {
-    try {
-      const d = await api.companies.list()
-      setCompanyList(d.companies || [])
-    } catch {}
-  }
-
   async function handleAddCompany(e) {
     e.preventDefault()
     if (!newCompany.trim()) return
@@ -280,7 +238,7 @@ export default function UserManagement() {
   }
 
   async function handleDeleteCompany(name) {
-    if (!confirm(`Remove company "${name}"? Users restricted to this company will lose their restriction.`)) return
+    if (!await askConfirm(`Remove company "${name}"? Users restricted to this company will lose their restriction.`, { title: 'Remove company?' })) return
     try {
       const d = await api.companies.remove(name)
       setCompanyList(d.companies || [])
@@ -327,28 +285,6 @@ export default function UserManagement() {
       setCreateErr(err.message)
     } finally {
       setCreating(false)
-    }
-  }
-
-  /* ── Edit role ── */
-  function openEditRole(u) {
-    setEditTarget(u)
-    setEditRole(u.role)
-    setEditErr('')
-  }
-
-  async function handleEditRole(e) {
-    e.preventDefault()
-    setEditingSave(true)
-    setEditErr('')
-    try {
-      await api.auth.updateUser(editTarget.username, { role: editRole })
-      setEditTarget(null)
-      await loadUsers()
-    } catch (err) {
-      setEditErr(err.message)
-    } finally {
-      setEditingSave(false)
     }
   }
 
@@ -429,7 +365,7 @@ export default function UserManagement() {
   }
 
   async function handleDeleteGroup(g) {
-    if (!confirm(`Delete group "${g.name}"? Members will lose the access it grants.`)) return
+    if (!await askConfirm(`Delete group "${g.name}"? Members will lose the access it grants.`, { title: 'Delete group?' })) return
     try {
       await api.auth.deleteGroup(g.id)
       await loadGroups()
@@ -489,7 +425,7 @@ export default function UserManagement() {
 
   /* ── Delete user ── */
   async function handleDelete(username) {
-    if (!confirm(`Delete user "${username}"? This cannot be undone.`)) return
+    if (!await askConfirm(`Delete user "${username}"? This cannot be undone.`, { title: 'Delete user?' })) return
     try {
       await api.auth.deleteUser(username)
       await loadUsers()
@@ -529,8 +465,9 @@ export default function UserManagement() {
     return (
       <form onSubmit={handleChangePw} className="space-y-3">
         <div>
-          <label className="block text-xs font-medium text-gray-600 mb-1">Current Password</label>
+          <label htmlFor="um-pw-current" className="block text-xs font-medium text-gray-600 mb-1">Current Password</label>
           <input
+            id="um-pw-current"
             type="password"
             className="input text-xs"
             placeholder="Enter current password"
@@ -540,10 +477,11 @@ export default function UserManagement() {
           />
         </div>
         <div>
-          <label className="block text-xs font-medium text-gray-600 mb-1">
+          <label htmlFor="um-pw-new" className="block text-xs font-medium text-gray-600 mb-1">
             New Password <span className="text-gray-500 font-normal">(min. 8 characters)</span>
           </label>
           <input
+            id="um-pw-new"
             type="password"
             className="input text-xs"
             placeholder="Enter new password (min. 8 characters)"
@@ -554,8 +492,9 @@ export default function UserManagement() {
           />
         </div>
         <div>
-          <label className="block text-xs font-medium text-gray-600 mb-1">Confirm New Password</label>
+          <label htmlFor="um-pw-confirm" className="block text-xs font-medium text-gray-600 mb-1">Confirm New Password</label>
           <input
+            id="um-pw-confirm"
             type="password"
             className="input text-xs"
             placeholder="Confirm new password"
@@ -591,6 +530,7 @@ export default function UserManagement() {
   /* ── Main render ── */
   return (
     <PageShell>
+      {confirmEl}
 
       {/* Header */}
       <PageHeader
@@ -660,7 +600,7 @@ export default function UserManagement() {
             <Loader2 size={14} className="animate-spin" /> Loading users...
           </div>
         ) : error ? (
-          <div className="text-xs text-red-600 bg-red-50 border-t border-red-100 px-5 py-4 flex items-center gap-1.5">
+          <div role="alert" className="text-xs text-red-600 bg-red-50 border-t border-red-100 px-5 py-4 flex items-center gap-1.5">
             <AlertTriangle size={12} /> {error}
           </div>
         ) : users.length === 0 ? (
@@ -779,7 +719,7 @@ export default function UserManagement() {
             <Loader2 size={14} className="animate-spin" /> Loading groups...
           </div>
         ) : groupsError ? (
-          <div className="text-xs text-red-600 bg-red-50 border-t border-red-100 px-5 py-4 flex items-center gap-1.5">
+          <div role="alert" className="text-xs text-red-600 bg-red-50 border-t border-red-100 px-5 py-4 flex items-center gap-1.5">
             <AlertTriangle size={12} /> {groupsError}
           </div>
         ) : groups.length === 0 ? (
@@ -907,8 +847,9 @@ export default function UserManagement() {
       <Modal open={showCreate} onClose={() => setShowCreate(false)} title="Create User">
         <form onSubmit={handleCreate} className="space-y-3">
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Username</label>
+            <label htmlFor="um-create-username" className="block text-xs font-medium text-gray-600 mb-1">Username</label>
             <input
+              id="um-create-username"
               className="input text-xs"
               placeholder="e.g. jdoe"
               value={createForm.username}
@@ -918,8 +859,9 @@ export default function UserManagement() {
             />
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Password</label>
+            <label htmlFor="um-create-password" className="block text-xs font-medium text-gray-600 mb-1">Password</label>
             <input
+              id="um-create-password"
               type="password"
               className="input text-xs"
               placeholder="Temporary password"
@@ -929,8 +871,9 @@ export default function UserManagement() {
             />
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Role</label>
+            <label htmlFor="um-create-role" className="block text-xs font-medium text-gray-600 mb-1">Role</label>
             <select
+              id="um-create-role"
               className="input text-xs"
               value={createForm.role}
               onChange={e => setCreateForm(f => ({ ...f, role: e.target.value }))}
@@ -1001,9 +944,7 @@ export default function UserManagement() {
           )}
 
           {createErr && (
-            <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-center gap-1.5">
-              <AlertTriangle size={12} /> {createErr}
-            </p>
+            <ErrorBox msg={createErr} />
           )}
 
           <div className="flex items-center gap-2 pt-1">
@@ -1012,41 +953,6 @@ export default function UserManagement() {
               Create User
             </button>
             <button type="button" onClick={() => setShowCreate(false)} className="btn-ghost text-xs">
-              Cancel
-            </button>
-          </div>
-        </form>
-      </Modal>
-
-      {/* ── Edit Role Modal ── */}
-      <Modal open={!!editTarget} onClose={() => setEditTarget(null)} title={`Edit Role — ${editTarget?.username}`}>
-        <form onSubmit={handleEditRole} className="space-y-3">
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Role</label>
-            <select
-              className="input text-xs"
-              value={editRole}
-              onChange={e => setEditRole(e.target.value)}
-            >
-              <option value="analyst">Analyst — full access, no Studio</option>
-              <option value="developer">Developer — Analyst + Studio</option>
-              <option value="guest">Guest — read-only</option>
-              <option value="admin">Admin — full access</option>
-            </select>
-          </div>
-
-          {editErr && (
-            <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-center gap-1.5">
-              <AlertTriangle size={12} /> {editErr}
-            </p>
-          )}
-
-          <div className="flex items-center gap-2 pt-1">
-            <button type="submit" disabled={editingSave} className="btn-primary text-xs">
-              {editingSave ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
-              Save
-            </button>
-            <button type="button" onClick={() => setEditTarget(null)} className="btn-ghost text-xs">
               Cancel
             </button>
           </div>
@@ -1099,9 +1005,7 @@ export default function UserManagement() {
           )}
 
           {companiesErr && (
-            <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-center gap-1.5">
-              <AlertTriangle size={12} /> {companiesErr}
-            </p>
+            <ErrorBox msg={companiesErr} />
           )}
 
           <div className="flex items-center gap-2 pt-1">
@@ -1120,8 +1024,9 @@ export default function UserManagement() {
       <Modal open={!!resetTarget} onClose={() => setResetTarget(null)} title={`Reset Password — ${resetTarget}`}>
         <form onSubmit={handleResetPw} className="space-y-3">
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">New Password</label>
+            <label htmlFor="um-reset-pw" className="block text-xs font-medium text-gray-600 mb-1">New Password</label>
             <input
+              id="um-reset-pw"
               type="password"
               className="input text-xs"
               placeholder="Enter new password"
@@ -1133,9 +1038,7 @@ export default function UserManagement() {
           </div>
 
           {resetErr && (
-            <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-center gap-1.5">
-              <AlertTriangle size={12} /> {resetErr}
-            </p>
+            <ErrorBox msg={resetErr} />
           )}
 
           <div className="flex items-center gap-2 pt-1">
@@ -1155,8 +1058,8 @@ export default function UserManagement() {
         title={`Edit — ${userTarget?.username}`}>
         <form onSubmit={handleSaveUser} className="space-y-4">
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Role</label>
-            <select className="input text-xs" value={userForm.role}
+            <label htmlFor="um-user-role" className="block text-xs font-medium text-gray-600 mb-1">Role</label>
+            <select id="um-user-role" className="input text-xs" value={userForm.role}
               onChange={e => setUserForm(f => ({ ...f, role: e.target.value }))}>
               <option value="analyst">Analyst — full access, no Studio</option>
               <option value="developer">Developer — Analyst + Studio</option>
@@ -1202,9 +1105,7 @@ export default function UserManagement() {
           </div>
 
           {userErr && (
-            <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-center gap-1.5">
-              <AlertTriangle size={12} /> {userErr}
-            </p>
+            <ErrorBox msg={userErr} />
           )}
           <div className="flex items-center gap-2 pt-1">
             <button type="submit" disabled={userSaving} className="btn-primary text-xs">
@@ -1221,13 +1122,13 @@ export default function UserManagement() {
         <form onSubmit={handleSaveGroup} className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Name</label>
-              <input className="input text-xs" value={groupForm.name} autoFocus
+              <label htmlFor="um-group-name" className="block text-xs font-medium text-gray-600 mb-1">Name</label>
+              <input id="um-group-name" className="input text-xs" value={groupForm.name} autoFocus
                 onChange={e => setGroupForm(f => ({ ...f, name: e.target.value }))} required />
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Description</label>
-              <input className="input text-xs" value={groupForm.description}
+              <label htmlFor="um-group-desc" className="block text-xs font-medium text-gray-600 mb-1">Description</label>
+              <input id="um-group-desc" className="input text-xs" value={groupForm.description}
                 onChange={e => setGroupForm(f => ({ ...f, description: e.target.value }))} />
             </div>
           </div>
@@ -1285,9 +1186,7 @@ export default function UserManagement() {
           </div>
 
           {groupErr && (
-            <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-center gap-1.5">
-              <AlertTriangle size={12} /> {groupErr}
-            </p>
+            <ErrorBox msg={groupErr} />
           )}
           <div className="flex items-center gap-2 pt-1">
             <button type="submit" disabled={groupSaving} className="btn-primary text-xs">

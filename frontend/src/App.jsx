@@ -9,8 +9,6 @@ import ErrorBoundary  from './components/ErrorBoundary'
 // Heavy page components are lazy-loaded so they ship as separate chunks.
 const Dashboard       = lazy(() => import('./pages/Dashboard'))
 const CaseTimeline    = lazy(() => import('./pages/CaseTimeline'))
-const CaseFiles       = lazy(() => import('./pages/CaseFiles'))
-const CaseNotes       = lazy(() => import('./pages/CaseNotes'))
 const AlertLibrary    = lazy(() => import('./pages/AlertLibrary'))
 const YaraLibrary     = lazy(() => import('./pages/YaraLibrary'))
 const Templates       = lazy(() => import('./pages/Templates'))
@@ -94,8 +92,12 @@ export default function App() {
             <Route index                            element={<Dashboard />} />
             <Route path="cases"                     element={<Navigate to="/" replace />} />
             <Route path="cases/:caseId"             element={<CaseTimeline />} />
-            <Route path="cases/:caseId/files"       element={<CaseFiles />} />
-            <Route path="cases/:caseId/notes"       element={<CaseNotes />} />
+            {/* /files and /notes used to be standalone routes here, but both
+                pages take caseId as a prop (no useParams) so the routes rendered
+                broken, and nothing linked to them. Notes lives in the case
+                drawer (casePanels.jsx); deep-linking these lands on the case. */}
+            <Route path="cases/:caseId/files"       element={<Navigate to=".." replace />} />
+            <Route path="cases/:caseId/notes"       element={<Navigate to=".." replace />} />
             <Route path="cases/:caseId/mitre"        element={<Navigate to=".." replace />} />
             <Route path="cases/:caseId/process-tree" element={<Navigate to=".." replace />} />
             <Route path="cases/:caseId/anomaly"      element={<Navigate to=".." replace />} />

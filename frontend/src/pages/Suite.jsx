@@ -5,6 +5,7 @@ import {
   Hammer, Sparkles, Bot, FileText, ArrowRight, ExternalLink, X, ChevronRight,
 } from 'lucide-react'
 import { PageShell, PageHeader } from '../components/shared/PageShell'
+import { Badge } from '../components/shared/Badge'
 import { api } from '../api/client'
 
 const PLATFORM_LABEL = {
@@ -16,8 +17,8 @@ const PLATFORM_LABEL = {
  * The Citadel suite is composed of independent, single-responsibility tools —
  * each its own repository, wired together by the platform. This page makes that
  * composition visible: what each tool does, where it sits in the pipeline, and
- * which screens surface it. A small <ToolByline> (below) marks the owning tool
- * on each feature page.
+ * which screens surface it. A small <ToolByline> (components/ToolByline.jsx)
+ * marks the owning tool on each feature page.
  */
 
 // Pipeline order → groups the cards left-to-right by where work flows. The
@@ -262,7 +263,7 @@ export default function Suite() {
                         )}
                         <div className="flex gap-1 mt-1.5 flex-wrap">
                           {(c.platforms || []).map(p => (
-                            <span key={p} className="badge bg-gray-100 text-gray-500 border border-gray-200 text-[9px]">{PLATFORM_LABEL[p] || p}</span>
+                            <Badge key={p} color="bg-gray-100 text-gray-500 border border-gray-200">{PLATFORM_LABEL[p] || p}</Badge>
                           ))}
                         </div>
                       </div>
@@ -279,26 +280,5 @@ export default function Suite() {
         )
       })()}
     </PageShell>
-  )
-}
-
-/* ── Tool byline ──────────────────────────────────────────────────────────
- * Drop <ToolByline tool="babel" /> at the top of a feature page to mark which
- * suite tool powers it, with a link back to the Suite overview.
- */
-export function ToolByline({ tool, className = '' }) {
-  if (!tool) return null
-  // Derive from the key — no static registry. (Bylines are tiny labels; the
-  // rich per-tool data lives in the manifest, shown on the Suite page.)
-  const name = tool.charAt(0).toUpperCase() + tool.slice(1)
-  return (
-    <Link
-      to="/suite"
-      title={`${name} — see the full suite`}
-      className={`inline-flex items-center gap-1.5 text-[11px] text-gray-500 hover:text-brand-accent border border-gray-200 hover:border-brand-accent rounded-full pl-1.5 pr-2 py-0.5 ${className}`}
-    >
-      <Boxes size={11} className="text-brand-accent" />
-      <span>Powered by <span className="font-semibold">{name}</span></span>
-    </Link>
   )
 }
