@@ -38,6 +38,7 @@ import {
   Braces,
   Search,
   LayoutTemplate,
+  FlaskConical,
 } from 'lucide-react'
 import Editor from '@monaco-editor/react'
 import '../lib/monacoLoader'
@@ -50,6 +51,8 @@ import RuleDrawer, {
 import YaraRuleModal from '../components/YaraRuleModal'
 import { ProvenancePills } from '../components/AlertRuleFilterBar'
 import { filterAlertRules } from '../lib/alertRuleFilters'
+import Toast from '../components/Toast'
+import { useToast } from '../hooks/useToast'
 
 // ── Templates ─────────────────────────────────────────────────────────────────
 
@@ -446,7 +449,7 @@ def run(run_id, case_id, source_files, params, minio_client, redis_client, tmp_d
 
 // ── NewFileModal ──────────────────────────────────────────────────────────────
 
-function NewFileModal({ type, existing, onClose, onCreate }) {
+function NewFileModal({ type, existing, onClose, onCreate, onError }) {
   const templates = TEMPLATE_CATALOG[type] || []
   const [selectedTpl, setSelectedTpl] = useState(templates[0]?.id || '')
   const [name, setName] = useState('')
@@ -466,7 +469,7 @@ function NewFileModal({ type, existing, onClose, onCreate }) {
     if (isCodeFile) {
       const slug = trimmed.toLowerCase().replace(/[^a-z0-9_]/g, '_')
       const full = `${slug}${suffix}${ext}`
-      if (existing.includes(full)) { alert(`${full} already exists.`); return }
+      if (existing.includes(full)) { onError?.(`${full} already exists.`); return }
       onCreate(full, undefined, chosenTpl?.build)
     } else {
       onCreate(trimmed, chosenTpl?.ruleKind, chosenTpl?.build)
@@ -727,6 +730,7 @@ function ValidationModal({ type, validation, onClose }) {
 
 export default function Studio() {
   const location = useLocation()
+  const [toast, showToast] = useToast()
 
   // Sidebar panel: 'ingesters' | 'modules' | 'alertrule'
   const [sidebarTab, setSidebarTab]     = useState('ingesters')
@@ -760,6 +764,11 @@ export default function Studio() {
   const [openTabs,      setOpenTabs]     = useState([])
   const [activeTabKey,  setActiveTabKey] = useState(null)
 
+  // Derived — must sit above every hook/handler that reads activeTab (the test
+  // playground effect below lists it in its deps, which evaluate at render time).
+  const activeTab = openTabs.find(t => fileId(t.type, t.name) === activeTabKey) || null
+  const isDirty   = activeTab ? activeTab.code !== activeTab.originalCode : false
+
   // Modal visibility
   const [showNew,          setShowNew]          = useState(false)
   const [showDelete,       setShowDelete]       = useState(false)
@@ -788,6 +797,44 @@ export default function Studio() {
       .then(r => setModRun(p => ({ ...p, sources: r.sources || [], selectedJobs: [] })))
       .catch(() => {})
   }, [modRun.show, modRun.caseId])
+
+  // Test playground — run the current YARA rule / detection-rule query against
+  // a case without leaving the editor (POST /studio/yara-test | query-test).
+  const [testRun, setTestRun] = useState({
+    show: false, caseId: '', sources: [], jobId: '', query: '', running: false, result: null,
+  })
+  useEffect(() => {
+    if (!testRun.show || !testRun.caseId || activeTab?.type !== 'yara') return
+    api.modules.listSources(testRun.caseId)
+      .then(r => setTestRun(p => ({ ...p, sources: r.sources || [] })))
+      .catch(() => {})
+  }, [testRun.show, testRun.caseId, activeTab?.type])
+
+  function openTest() {
+    if (!activeTab) return
+    setTestRun({ show: true, caseId: '', sources: [], jobId: '', query: '', running: false, result: null })
+    // Best-effort: pre-fill the query box with the rule's converted ES query
+    // (Sigma YAML → Lucene). Custom rules that don't parse leave the box empty
+    // — the analyst can still type/paste any Lucene query.
+    if (activeTab.type === 'alertrule') {
+      api.alertRules.parseSigma({ yaml: activeTab.code })
+        .then(r => setTestRun(p => p.show ? { ...p, query: r.query || '' } : p))
+        .catch(() => {})
+    }
+  }
+
+  async function runTest() {
+    if (!activeTab || !testRun.caseId) return
+    setTestRun(p => ({ ...p, running: true, result: null }))
+    try {
+      const r = activeTab.type === 'yara'
+        ? await api.studio.yaraTest(testRun.caseId, testRun.jobId, activeTab.code)
+        : await api.studio.queryTest(testRun.caseId, testRun.query)
+      setTestRun(p => ({ ...p, running: false, result: r }))
+    } catch (err) {
+      setTestRun(p => ({ ...p, running: false, result: { error: err.message } }))
+    }
+  }
 
   // Live log panel (SSE)
   const [logPanel, setLogPanel] = useState({ show: false, lines: [], done: false, runId: null })
@@ -823,9 +870,7 @@ export default function Studio() {
     }
   }
 
-  // Derived
-  const activeTab = openTabs.find(t => fileId(t.type, t.name) === activeTabKey) || null
-  const isDirty   = activeTab ? activeTab.code !== activeTab.originalCode : false
+  // (derived activeTab/isDirty live above, next to the tab state)
 
   // ── Tab mutation helper ────────────────────────────────────────────────────
 
@@ -948,7 +993,7 @@ export default function Studio() {
     } catch (err) {
       setOpenTabs(tabs => tabs.filter(t => fileId(t.type, t.name) !== key))
       setActiveTabKey(prev => prev === key ? null : prev)
-      alert('Failed to load: ' + err.message)
+      showToast('Failed to load: ' + err.message, 'error')
     }
   }
 
@@ -1003,7 +1048,7 @@ export default function Studio() {
         setTimeout(() => updateTab(type, name, { saveMsg: null }), 3000)
       } catch (err) {
         updateTab(type, name, { saving: false })
-        alert('Create failed: ' + err.message)
+        showToast('Create failed: ' + err.message, 'error')
       }
     }
   }
@@ -1083,7 +1128,7 @@ export default function Studio() {
       setActiveTabKey(nextTab ? fileId(nextTab.type, nextTab.name) : null)
       await loadLists()
     } catch (err) {
-      alert('Delete failed: ' + err.message)
+      showToast('Delete failed: ' + err.message, 'error')
     }
   }
 
@@ -1114,7 +1159,7 @@ export default function Studio() {
       openLogStream(r.run_id)
     } catch (err) {
       setModRun(p => ({ ...p, running: false }))
-      alert('Dispatch failed: ' + err.message)
+      showToast('Dispatch failed: ' + err.message, 'error')
     }
   }
 
@@ -1128,7 +1173,7 @@ export default function Studio() {
       setEditingPriority(null)
       await loadLists()
     } catch (err) {
-      alert('Priority update failed: ' + err.message)
+      showToast('Priority update failed: ' + err.message, 'error')
     }
   }
 
@@ -1556,6 +1601,16 @@ export default function Studio() {
                     <Play size={12} /> Run
                   </button>
                 )}
+                {/* YARA / detection rule: Test against a case */}
+                {(activeTab.type === 'yara' || activeTab.type === 'alertrule') && (
+                  <button
+                    onClick={openTest}
+                    className="btn-outline text-xs py-1 px-2 text-purple-700 border-purple-200 hover:bg-purple-50"
+                    title="Test this rule against a case's data"
+                  >
+                    <FlaskConical size={12} /> Test
+                  </button>
+                )}
                 {/* Log panel toggle */}
                 {logPanel.runId && (
                   <button
@@ -1739,6 +1794,7 @@ export default function Studio() {
           existing={existingNames}
           onClose={() => setShowNew(false)}
           onCreate={handleCreate}
+          onError={msg => showToast(msg, 'error')}
         />
       )}
       {showDelete && activeTab && (
@@ -1757,6 +1813,130 @@ export default function Studio() {
       )}
 
       {/* ── Module Run modal ──────────────────────────────────────────────── */}
+      {/* ── Test playground modal (yara / detection rule vs a case) ────────── */}
+      {testRun.show && activeTab && (activeTab.type === 'yara' || activeTab.type === 'alertrule') && (
+        <Modal onClose={() => setTestRun(p => ({ ...p, show: false }))} className="modal-box max-w-lg" ariaLabel="Test rule">
+          <>
+            <div className="modal-header">
+              <div className="flex items-center gap-2">
+                <FlaskConical size={14} className="text-purple-500" />
+                <span className="text-sm font-semibold">Test: {activeTab.label || activeTab.name}</span>
+              </div>
+              <button className="icon-btn" onClick={() => setTestRun(p => ({ ...p, show: false }))}><X size={14} /></button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1.5">Case</label>
+                <select
+                  className="input w-full"
+                  value={testRun.caseId}
+                  onChange={e => setTestRun(p => ({ ...p, caseId: e.target.value, sources: [], jobId: '', result: null }))}
+                >
+                  <option value="">Select a case…</option>
+                  {caseList.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </div>
+
+              {activeTab.type === 'yara' && testRun.caseId && (
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1.5">Source file to scan</label>
+                  {testRun.sources.length === 0 ? (
+                    <p className="text-xs text-gray-500 italic">Loading sources…</p>
+                  ) : (
+                    <select
+                      className="input w-full font-mono text-xs"
+                      value={testRun.jobId}
+                      onChange={e => setTestRun(p => ({ ...p, jobId: e.target.value }))}
+                    >
+                      <option value="">Select a source file…</option>
+                      {testRun.sources.map(s => (
+                        <option key={s.job_id} value={s.job_id}>{s.original_filename}</option>
+                      ))}
+                    </select>
+                  )}
+                  <p className="text-[10px] text-gray-400 mt-1">At most 10 MB of the file is scanned.</p>
+                </div>
+              )}
+
+              {activeTab.type === 'alertrule' && (
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1.5">Lucene query</label>
+                  <textarea
+                    value={testRun.query}
+                    onChange={e => setTestRun(p => ({ ...p, query: e.target.value }))}
+                    placeholder="process.name:powershell.exe AND …"
+                    spellCheck={false}
+                    className="input w-full font-mono text-xs h-24 resize-y"
+                  />
+                  <p className="text-[10px] text-gray-400 mt-1">
+                    Pre-filled from the rule&rsquo;s Sigma conversion when possible — edit freely.
+                  </p>
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2">
+                <button className="btn-ghost text-sm" onClick={() => setTestRun(p => ({ ...p, show: false }))}>Close</button>
+                <button
+                  className="btn-primary text-sm"
+                  disabled={
+                    testRun.running || !testRun.caseId ||
+                    (activeTab.type === 'yara' && !testRun.jobId) ||
+                    (activeTab.type === 'alertrule' && !testRun.query.trim())
+                  }
+                  onClick={runTest}
+                >
+                  {testRun.running ? <RefreshCw size={12} className="animate-spin" /> : <Play size={12} />}
+                  {testRun.running ? 'Testing…' : 'Run test'}
+                </button>
+              </div>
+
+              {/* Result */}
+              {testRun.result && (
+                testRun.result.error ? (
+                  <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-start gap-1.5">
+                    <AlertCircle size={12} className="flex-shrink-0 mt-0.5" /> {testRun.result.error}
+                  </p>
+                ) : activeTab.type === 'yara' ? (
+                  <div className="border border-gray-200 rounded-lg p-3 space-y-2">
+                    <p className="text-xs text-gray-600">
+                      {(testRun.result.matches || []).length} rule(s) matched
+                      {testRun.result.scanned_bytes != null && ` · ${testRun.result.scanned_bytes.toLocaleString()} bytes scanned`}
+                    </p>
+                    {(testRun.result.matches || []).map(m => (
+                      <div key={m.rule} className="bg-amber-50 border border-amber-200 rounded px-2.5 py-1.5 text-xs">
+                        <span className="font-mono font-semibold text-amber-800">{m.rule}</span>
+                        {(m.tags || []).length > 0 && (
+                          <span className="ml-2 text-[10px] text-amber-600">{m.tags.join(', ')}</span>
+                        )}
+                        <span className="ml-2 text-[10px] text-gray-500">{(m.strings || []).length} string(s)</span>
+                      </div>
+                    ))}
+                    {(testRun.result.matches || []).length === 0 && (
+                      <p className="text-xs text-green-700 flex items-center gap-1"><CheckCircle size={12} /> No matches</p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="border border-gray-200 rounded-lg p-3 space-y-1.5">
+                    <p className="text-xs text-gray-600">
+                      First {(testRun.result.hits || []).length} matching event(s)
+                    </p>
+                    {(testRun.result.hits || []).map((h, i) => (
+                      <div key={i} className="bg-gray-50 border border-gray-100 rounded px-2.5 py-1.5">
+                        <p className="text-[10px] text-gray-400 font-mono">{h.timestamp || '—'}</p>
+                        <p className="text-xs text-gray-700 break-words">{h.message || JSON.stringify(h).slice(0, 200)}</p>
+                      </div>
+                    ))}
+                    {(testRun.result.hits || []).length === 0 && (
+                      <p className="text-xs text-green-700 flex items-center gap-1"><CheckCircle size={12} /> No matches — query did not fire</p>
+                    )}
+                  </div>
+                )
+              )}
+            </div>
+          </>
+        </Modal>
+      )}
+
       {modRun.show && activeTab?.type === 'module' && (
         <Modal onClose={() => setModRun(p => ({ ...p, show: false }))} className="modal-box max-w-lg" ariaLabel="Run module">
           <>
@@ -1830,6 +2010,8 @@ export default function Studio() {
           </>
         </Modal>
       )}
+
+      <Toast toast={toast} />
     </div>
   )
 }

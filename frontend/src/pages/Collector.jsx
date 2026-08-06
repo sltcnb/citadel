@@ -13,6 +13,9 @@ import {
 } from 'lucide-react'
 import { api } from '../api/client'
 import ArtifactSelector from '../components/shared/ArtifactSelector'
+import ErrorBox from '../components/shared/ErrorBox'
+import Toast from '../components/Toast'
+import { useToast } from '../hooks/useToast'
 
 function _currentUser() {
   try { return JSON.parse(localStorage.getItem('fo_user')) } catch { return null }
@@ -301,6 +304,7 @@ export default function Collector() {
   const [s3TriageConfigured,      setS3TriageConfigured]      = useState(false)
   const [downloadingUploader,     setDownloadingUploader]     = useState(false)
   const [downloadedUploader,      setDownloadedUploader]      = useState(false)
+  const [toast, showToast] = useToast()
   // S3 bootstrap
   const [bootstrapPlatform,       setBootstrapPlatform]       = useState('ps1')  // 'ps1' | 'sh'
   const [bootstrapExpiry,         setBootstrapExpiry]         = useState(24)
@@ -568,7 +572,7 @@ export default function Collector() {
       URL.revokeObjectURL(url)
       setDownloadedUploader(true)
     } catch (err) {
-      alert('Failed to generate presigned uploader: ' + err.message)
+      showToast('Failed to generate presigned uploader: ' + err.message, 'error')
     } finally {
       setDownloadingUploader(false)
     }
@@ -779,12 +783,13 @@ export default function Collector() {
             )}
             {selected.has('file_search') && (
               <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
-                <label className="flex items-center gap-1.5 text-xs font-semibold text-amber-800 mb-1.5">
+                <label htmlFor="collector-fetch-patterns" className="flex items-center gap-1.5 text-xs font-semibold text-amber-800 mb-1.5">
                   <AlertTriangle size={13} className="text-amber-500" />
                   File Search patterns
                   <span className="font-normal text-amber-700">— one per line (or comma-separated)</span>
                 </label>
                 <textarea
+                  id="collector-fetch-patterns"
                   value={fetchPatterns}
                   onChange={e => setFetchPatterns(e.target.value)}
                   rows={4}
@@ -823,11 +828,12 @@ export default function Collector() {
               </div>
               {/* Searchable case picker */}
               <div className="relative" ref={caseDropRef}>
-                <label className="block text-xs font-medium text-gray-500 mb-1">
+                <label htmlFor="collector-case-search" className="block text-xs font-medium text-gray-500 mb-1">
                   Link to case <span className="text-gray-500 font-normal">(optional)</span>
                 </label>
                 <div className="relative">
                   <input
+                    id="collector-case-search"
                     type="text"
                     value={selectedCase ? selectedCase.name : caseSearch}
                     onChange={e => {
@@ -873,10 +879,11 @@ export default function Collector() {
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">
+                <label htmlFor="collector-case-name" className="block text-xs font-medium text-gray-500 mb-1">
                   Case name <span className="text-gray-500 font-normal">(optional — used in output ZIP filename)</span>
                 </label>
                 <input
+                  id="collector-case-name"
                   type="text"
                   value={caseName}
                   onChange={e => setCaseName(e.target.value)}
@@ -915,10 +922,11 @@ export default function Collector() {
               </div>
               {collectionMode === 'path' && (
                 <div className="mb-3">
-                  <label className="block text-xs font-medium text-gray-500 mb-1">
+                  <label htmlFor="collector-mount-path" className="block text-xs font-medium text-gray-500 mb-1">
                     Mounted path <span className="text-gray-500 font-normal">(baked into config — run with zero args)</span>
                   </label>
                   <input
+                    id="collector-mount-path"
                     type="text"
                     value={collectionPath}
                     onChange={e => setCollectionPath(e.target.value)}
@@ -931,10 +939,11 @@ export default function Collector() {
               )}
               {collectionMode === 'disk' && (
                 <div className="mb-3">
-                  <label className="block text-xs font-medium text-gray-500 mb-1">
+                  <label htmlFor="collector-disk" className="block text-xs font-medium text-gray-500 mb-1">
                     Block device / image <span className="text-gray-500 font-normal">(Linux only — ntfs-3g + dislocker required)</span>
                   </label>
                   <input
+                    id="collector-disk"
                     type="text"
                     value={collectionDisk}
                     onChange={e => setCollectionDisk(e.target.value)}
@@ -947,11 +956,12 @@ export default function Collector() {
               )}
               {collectionMode === 'disk' && (
                 <div className="mb-3">
-                  <label className="block text-xs font-medium text-gray-500 mb-1">
+                  <label htmlFor="collector-bitlocker" className="block text-xs font-medium text-gray-500 mb-1">
                     BitLocker recovery key{' '}
                     <span className="text-gray-500 font-normal">(optional)</span>
                   </label>
                   <input
+                    id="collector-bitlocker"
                     type="text"
                     value={bitlockerKey}
                     onChange={e => setBitlockerKey(e.target.value)}
@@ -1004,8 +1014,8 @@ export default function Collector() {
               {uploadMode === 'citadel' && (
                 <div className="space-y-2">
                   <div>
-                    <label className="block text-xs font-medium text-gray-500 mb-1">Citadel API URL</label>
-                    <input type="text" value={uploadApiUrl} onChange={e => setUploadApiUrl(e.target.value)}
+                    <label htmlFor="collector-api-url" className="block text-xs font-medium text-gray-500 mb-1">Citadel API URL</label>
+                    <input id="collector-api-url" type="text" value={uploadApiUrl} onChange={e => setUploadApiUrl(e.target.value)}
                       placeholder="https://citadel.your.org"
                       className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-accent/30 focus:border-brand-accent placeholder:text-gray-400" />
                   </div>
@@ -1032,10 +1042,11 @@ export default function Collector() {
 
               {/* Bundle Python interpreter */}
               <div className="mb-3">
-                <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-1.5 block">
+                <label htmlFor="collector-python-bundle" className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-1.5 block">
                   Bundle Python interpreter (offline targets)
                 </label>
                 <select
+                  id="collector-python-bundle"
                   value={includePython}
                   onChange={e => setIncludePython(e.target.value)}
                   className="input text-xs h-8 w-full"
@@ -1166,8 +1177,9 @@ export default function Collector() {
                 </div>
 
                 <div className="flex items-center gap-2 mb-3 flex-wrap">
-                  <label className="text-xs text-gray-500 flex-shrink-0">Expires in</label>
+                  <label htmlFor="collector-bootstrap-expiry" className="text-xs text-gray-500 flex-shrink-0">Expires in</label>
                   <select
+                    id="collector-bootstrap-expiry"
                     value={bootstrapExpiry}
                     onChange={e => setBootstrapExpiry(Number(e.target.value))}
                     className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-accent/30 focus:border-brand-accent"
@@ -1196,9 +1208,7 @@ export default function Collector() {
                 )}
 
                 {bootstrapError && (
-                  <div className="mb-3 p-2.5 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
-                    {bootstrapError}
-                  </div>
+                  <ErrorBox msg={bootstrapError} className="mb-3" />
                 )}
 
                 <div className="flex gap-2">
@@ -1298,6 +1308,7 @@ export default function Collector() {
 
 
       </div>
+      <Toast toast={toast} />
     </div>
   )
 }

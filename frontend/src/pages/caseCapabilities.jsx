@@ -14,7 +14,7 @@
  */
 import {
   Bell, Activity, Layers, Target, Crosshair, GitBranch, Network, Bot,
-  FileText, LayoutTemplate, FileDown, Shield,
+  FileText, LayoutTemplate, FileDown, Shield, Flag,
 } from 'lucide-react'
 
 export const CAPABILITY_GROUPS = [
@@ -66,6 +66,9 @@ export const CASE_CAPABILITIES = [
   { id: 'report',    group: 'case', kind: 'doc',
     label: 'Report', icon: <FileDown size={13} />,
     title: 'Generate a Markdown / HTML case report' },
+  { id: 'findings',  group: 'case', kind: 'lens',
+    label: 'Findings', icon: <Flag size={13} />,
+    title: 'Review, prune, re-ingest and export every saved finding' },
   { id: 'evidence',  group: 'case', kind: 'doc',
     label: 'Evidence chain', icon: <Shield size={13} />,
     title: 'Signed chain-of-custody — verify integrity, export court-ready manifest' },

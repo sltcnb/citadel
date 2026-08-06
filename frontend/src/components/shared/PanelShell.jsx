@@ -1,5 +1,6 @@
-import { Loader2, X, AlertTriangle } from 'lucide-react'
+import { Loader2, X } from 'lucide-react'
 import PanelHelp from './PanelHelp'
+import ErrorBox from './ErrorBox'
 import { useResizableWidth, DrawerResizeHandle } from './resizableDrawer'
 import Modal from './Modal'
 
@@ -100,9 +101,7 @@ export default function PanelShell({
               <Loader2 size={16} className="animate-spin" /> Loading…
             </div>
           ) : error ? (
-            <div className="card p-3 text-xs text-red-700 bg-red-50 border border-red-200 flex items-center gap-2">
-              <AlertTriangle size={14} className="flex-shrink-0" /> {error}
-            </div>
+            <ErrorBox msg={error} />
           ) : empty ? (
             <div className="card p-6 text-center text-xs text-gray-500">{emptyText}</div>
           ) : (

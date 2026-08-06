@@ -132,12 +132,31 @@ export default function EventDetail({ event: initialEvent, caseId, onClose, onFi
     }
   }
 
+  const [sourcing, setSourcing]       = useState(false)
+
+  // Hayabusa detections keep the source event's coordinates (channel +
+  // record_id + computer) — resolve the original log event lazily and open it
+  // in place, so the analyst sees exactly what the rule fired on.
+  const canTraceSource = !!event.hayabusa?.record_id
+
+  async function openSourceEvent() {
+    setSourcing(true)
+    setActionError('')
+    try {
+      const r = await api.search.getSourceEvent(caseId, event.fo_id)
+      setEvent({ ...r.event, fo_id: r.fo_id })
+    } catch (err) {
+      setActionError(err?.message || 'Source event not found')
+    } finally {
+      setSourcing(false)
+    }
+  }
+
   async function togglePin() {
     setActionError('')
     try {
       const r = await api.search.pinEvent(caseId, event.fo_id, {})
-      setEvent(p => ({ ...p, is_pinned: r.is_pinned }))
-    } catch (err) {
+      setEvent(p => ({ ...p, is_pinned: r.is_pinned }))    } catch (err) {
       setActionError(err?.message || 'Failed to pin event')
     }
   }
@@ -361,6 +380,17 @@ export default function EventDetail({ event: initialEvent, caseId, onClose, onFi
             <Bookmark size={12} fill={event.is_pinned ? 'currentColor' : 'none'} />
             {event.is_pinned ? 'Pinned' : 'Pin'}
           </button>
+          {canTraceSource && (
+            <button
+              onClick={openSourceEvent}
+              disabled={sourcing}
+              title="Open the original log event this detection fired on (matched via channel + record ID)"
+              className="btn text-xs btn-ghost text-brand-accent border border-brand-accent/30 disabled:opacity-50"
+            >
+              {sourcing ? <Loader2 size={12} className="animate-spin" /> : <FileText size={12} />}
+              Source event
+            </button>
+          )}
           <button
             onClick={explainEvent}
             disabled={explaining}
@@ -864,7 +894,7 @@ function RawEvent({ event, caseId, findText = '' }) {
     <div>
       <button
         onClick={toggle}
-        className="flex items-center gap-1.5 text-[10px] font-semibold text-gray-400 uppercase tracking-widest hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+        className="flex items-center gap-1.5 text-[10px] font-semibold text-gray-400 uppercase tracking-widest hover:text-gray-600 transition-colors"
       >
         <Code2 size={10} />
         Raw
@@ -881,13 +911,13 @@ function RawEvent({ event, caseId, findText = '' }) {
             <>
               <button
                 onClick={copyRaw}
-                className="absolute top-2 right-2 opacity-0 group-hover/raw:opacity-100 transition-opacity btn-ghost text-[10px] px-1.5 py-0.5 flex items-center gap-1"
+                className="absolute top-2 right-2 opacity-0 group-hover/raw:opacity-100 focus-visible:opacity-100 transition-opacity btn-ghost text-[10px] px-1.5 py-0.5 flex items-center gap-1"
                 title="Copy raw"
               >
                 {copied ? <Check size={10} /> : <Copy size={10} />}
                 {copied ? 'Copied' : 'Copy'}
               </button>
-              <pre className="bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-lg p-3 text-[10px] font-mono text-gray-700 dark:text-gray-300 leading-relaxed whitespace-pre-wrap break-words">
+              <pre className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-[10px] font-mono text-gray-700 leading-relaxed whitespace-pre-wrap break-words">
                 <Highlight text={displayText} query={findText} />
               </pre>
             </>
@@ -927,7 +957,7 @@ function FieldGroup({ title, fields, pivotFields = [], filterFields = {}, onPivo
               </span>
               {/* Filter in / out buttons — visible on group row hover */}
               {isFilterable && (
-                <span className="inline-flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+                <span className="inline-flex gap-0.5 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-within:opacity-100 transition-opacity flex-shrink-0">
                   <button
                     type="button"
                     onClick={() => onFilterIn(esField, String(v))}

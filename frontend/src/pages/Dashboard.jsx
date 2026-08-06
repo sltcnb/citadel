@@ -19,6 +19,7 @@ import {
   DollarSign,
   Trash2,
   Filter,
+  Plus,
   Upload,
   CloudDownload,
   CloudUpload,
@@ -147,6 +148,7 @@ const STATUS_TABS = [
 export default function Dashboard() {
   const [cases, setCases]           = useState([])
   const [loading, setLoading]       = useState(true)
+  const [casesLoading, setCasesLoading] = useState(true)
   const [metrics, setMetrics]       = useState(null)
   const [ruleCount, setRuleCount]   = useState(null)
   const [lastFetch, setLastFetch]   = useState(null)
@@ -155,6 +157,8 @@ export default function Dashboard() {
   const [companyFilter, setCompany]       = useState('all')
   const [registeredCompanies, setRegComp] = useState([])
   const [confirm, setConfirm]       = useState(null)  // {action, caseId, caseName}
+  const [casesError, setCasesError] = useState(null)
+  const [degraded, setDegraded]     = useState([])  // names of secondary fetches that failed
   const [busy, setBusy]             = useState(false)
   const [restoringId, setRestoringId] = useState(null)
   const [importing, setImporting]   = useState(false)
@@ -165,14 +169,28 @@ export default function Dashboard() {
 
   function load() {
     setLoading(true)
+    setCasesLoading(true)
     setLastFetch(new Date())
-    Promise.all([
-      api.cases.list().then(r => setCases(r.cases || [])).catch(() => {}),
-      api.metrics.dashboard().then(setMetrics).catch(() => {}),
-      api.alertRules.listLibrary().then(r => setRuleCount((r.rules || r).length)).catch(() => {}),
-      api.llm.getUsage().then(setLlmUsage).catch(() => {}),
-      api.companies.list().then(d => setRegComp(d.companies || [])).catch(() => {}),
-    ]).finally(() => setLoading(false))
+    setCasesError(null)
+    setDegraded([])
+    // Cases render as soon as they arrive — don't gate them on the slower calls below.
+    // A failed cases fetch must NOT look like an empty case list: surface the error
+    // with a retry instead of the false "No cases yet" a backend outage used to show.
+    api.cases.list()
+      .then(r => setCases(r.cases || []))
+      .catch(err => setCasesError(err?.message || 'Failed to load cases'))
+      .finally(() => setCasesLoading(false))
+    // Secondary cards degrade gracefully (they show '—'), but the failure is
+    // noted in a banner so silent staleness isn't mistaken for health.
+    const secondary = [
+      ['platform metrics', api.metrics.dashboard().then(setMetrics)],
+      ['detection rules',  api.alertRules.listLibrary().then(r => setRuleCount((r.rules || r).length))],
+      ['AI usage',         api.llm.getUsage().then(setLlmUsage)],
+      ['companies',        api.companies.list().then(d => setRegComp(d.companies || []))],
+    ]
+    Promise.all(secondary.map(([name, p]) =>
+      p.catch(() => setDegraded(prev => (prev.includes(name) ? prev : [...prev, name])))
+    )).finally(() => setLoading(false))
   }
 
   useEffect(() => { load() }, [])
@@ -353,6 +371,20 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {/* Secondary-fetch failures — cases get their own error card below; these
+          cards degrade to '—' on their own, so a compact note + retry suffices. */}
+      {degraded.length > 0 && (
+        <div className="card px-4 py-2.5 border-amber-200 bg-amber-50 flex items-center gap-2.5">
+          <AlertTriangle size={13} className="text-amber-600 flex-shrink-0" />
+          <p className="text-xs text-amber-700 flex-1 min-w-0">
+            Some dashboard data failed to load ({degraded.join(', ')}) — figures shown may be stale.
+          </p>
+          <button onClick={load} disabled={loading} className="btn-ghost text-xs flex items-center gap-1 text-amber-700">
+            <RefreshCw size={11} className={loading ? 'animate-spin' : ''} /> Retry
+          </button>
+        </div>
+      )}
+
       {/* Stats rows */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <BigStatCard icon={FolderOpen}   label="Total Cases"     value={cases.length}                loading={loading} />
@@ -418,20 +450,70 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {loading ? (
+          {casesLoading ? (
             <div className="space-y-2">
               {[1,2,3].map(i => <div key={i} className="skeleton h-20 w-full rounded-xl" />)}
             </div>
+          ) : casesError ? (
+            <div className="card px-5 py-6 border-red-200 bg-red-50 flex items-center gap-4">
+              <AlertTriangle size={16} className="text-red-500 flex-shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-red-700">Couldn't load cases</p>
+                <p className="text-xs text-red-600 mt-0.5 truncate" title={casesError}>{casesError}</p>
+              </div>
+              <button onClick={load} disabled={loading} className="btn-outline text-xs flex items-center gap-1.5 flex-shrink-0">
+                <RefreshCw size={12} className={loading ? 'animate-spin' : ''} /> Retry
+              </button>
+            </div>
+          ) : cases.length === 0 ? (
+            /* First-run hero — an empty list used to be a dead end. The CTA opens
+               the same new-case flow as the header button (via the layout's
+               citadel:new-case event), followed by the 3-step workflow hint. */
+            <div className="card p-6 lg:p-8">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-5">
+                <div className="w-12 h-12 rounded-xl bg-brand-accent/10 flex items-center justify-center flex-shrink-0">
+                  <FolderOpen size={22} className="text-brand-accent" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-lg font-semibold text-brand-text tracking-tight">No cases yet</h3>
+                  <p className="text-sm text-gray-500 mt-1">
+                    Cases are where an investigation lives — ingest evidence, analyze the timeline, report findings.
+                  </p>
+                </div>
+                <button
+                  onClick={() => window.dispatchEvent(new CustomEvent('citadel:new-case'))}
+                  className="btn-primary text-sm flex items-center gap-1.5 flex-shrink-0 self-start sm:self-center"
+                >
+                  <Plus size={14} /> Create your first case
+                </button>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-5 text-xs mt-6 pt-6 border-t border-gray-100">
+                {[
+                  { n: 1, title: 'Ingest evidence',
+                    body: 'Create a case, then drop in EVTX, logs, disk images or a .citadel archive — every file is parsed into a searchable timeline.' },
+                  { n: 2, title: 'Analyze the timeline',
+                    body: 'Search events, run detection rules and analysis modules, and flag or pin what matters.' },
+                  { n: 3, title: 'Report findings',
+                    body: 'Turn flagged events, IOCs, module detections and notes into a deliverable report.' },
+                ].map(({ n, title, body }) => (
+                  <div key={n} className="flex gap-3">
+                    <div className="w-6 h-6 rounded-full bg-brand-accent text-white flex items-center justify-center text-[11px] font-bold flex-shrink-0 mt-0.5">
+                      {n}
+                    </div>
+                    <div>
+                      <p className="font-semibold text-brand-text mb-1">{title}</p>
+                      <p className="text-gray-500 leading-relaxed">{body}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           ) : filteredCases.length === 0 ? (
             <div className="card px-4 py-6 flex items-center gap-4">
-              <span className="text-sm text-gray-500">
-                {cases.length === 0 ? 'No cases yet' : 'No cases match filter'}
-              </span>
-              {cases.length > 0 && (
-                <button className="btn-ghost text-xs" onClick={() => { setStatusTab('all'); setCompany('all') }}>
-                  Clear filters
-                </button>
-              )}
+              <span className="text-sm text-gray-500">No cases match filter</span>
+              <button className="btn-ghost text-xs" onClick={() => { setStatusTab('all'); setCompany('all') }}>
+                Clear filters
+              </button>
             </div>
           ) : (
             <div className="space-y-2">
@@ -470,6 +552,7 @@ export default function Dashboard() {
                         restoring={restoringId === c.case_id}
                         onArchive={id => doArchive(id)}
                         onUpload={id => doUploadS3(id)}
+                        onDownload={id => window.open(api.export.archiveUrl(id), '_blank')}
                         onPurge={(id, name) => setConfirm({ action: 'purge', caseId: id, caseName: name })}
                         onRestore={(id) => setConfirm({ action: 'restore', caseId: id, caseName: c.name })}
                         onUnarchive={id => doUnarchive(id)}

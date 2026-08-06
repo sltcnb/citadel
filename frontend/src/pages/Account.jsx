@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useId } from 'react'
 import {
   UserCircle, KeyRound, Check, AlertCircle, Loader2, Shield,
   ShieldCheck, Smartphone, Copy, Lock,
@@ -284,10 +284,11 @@ function Row({ label, value, icon }) {
 }
 
 function Input({ label, type = 'text', value, onChange, help, ...rest }) {
+  const id = useId()
   return (
     <div>
-      <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
-      <input type={type} className="input text-sm w-full" value={value}
+      <label htmlFor={id} className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
+      <input id={id} type={type} className="input text-sm w-full" value={value}
         onChange={e => onChange(e.target.value)} {...rest} />
       {help && <p className="text-[10px] text-gray-400 mt-1">{help}</p>}
     </div>

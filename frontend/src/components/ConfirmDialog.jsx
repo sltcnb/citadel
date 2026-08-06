@@ -22,7 +22,7 @@ export default function ConfirmDialog({
         <button className="icon-btn" aria-label="Close" onClick={onCancel}><X size={14} /></button>
       </div>
       <div className="p-5">
-        <p className="text-sm text-gray-600 mb-5">{message}</p>
+        <p className="text-sm text-gray-600 mb-5 whitespace-pre-line">{message}</p>
         <div className="flex gap-3 justify-end">
           <button className="btn-ghost" onClick={onCancel}>Cancel</button>
           <button className={confirmClass} disabled={busy} onClick={onConfirm}>

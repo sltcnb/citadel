@@ -458,7 +458,7 @@ export default function Performance() {
                           <span className="text-xs text-gray-500 font-mono">{name}</span>
                           <div className="flex items-center gap-2">
                             {sparkData && sparkData.length > 2 && (
-                              <Sparkline data={sparkData} color={level === 'red' ? '#ef4444' : level === 'yellow' ? '#f59e0b' : '#22c55e'} width={60} height={20} />
+                              <Sparkline data={sparkData} color={level === 'red' ? 'var(--ct-status-crit)' : level === 'yellow' ? 'var(--ct-status-warn)' : 'var(--ct-status-ok)'} width={60} height={20} />
                             )}
                             <span className="text-xs font-semibold text-brand-text">{depth}</span>
                           </div>
@@ -525,12 +525,12 @@ export default function Performance() {
                   </p>
                   <div className="grid grid-cols-2 gap-2">
                     {[
-                      { label: 'p95 latency', data: spark.p95, color: '#6366f1' },
-                      { label: 'req/min',     data: spark.rps, color: '#0ea5e9' },
+                      { label: 'p95 latency', data: spark.p95, color: 'var(--ct-accent)' },
+                      { label: 'req/min',     data: spark.rps, color: 'var(--ct-chart-sky)' },
                     ].map(({ label, data: d, color }) => (
                       <div key={label} className="flex flex-col items-center gap-0.5">
                         <Sparkline data={d} color={color} width={100} height={28} />
-                        <span className="text-[9px] text-gray-500">{label}</span>
+                        <span className="text-micro text-gray-500">{label}</span>
                       </div>
                     ))}
                   </div>

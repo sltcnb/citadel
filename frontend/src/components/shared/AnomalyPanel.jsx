@@ -133,16 +133,18 @@ export default function AnomalyPanel({ caseId, onClose, onPivot }) {
       <div className="card p-3">
             <div className="flex items-end gap-3 flex-wrap">
               <div>
-                <label className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">Window (days)</label>
+                <label htmlFor="anomaly-days" className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">Window (days)</label>
                 <input
+                  id="anomaly-days"
                   type="number" min={3} max={90}
                   value={days} onChange={e => setDays(+e.target.value || 14)}
                   className="input h-8 text-xs w-20"
                 />
               </div>
               <div>
-                <label className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">Threshold (σ)</label>
+                <label htmlFor="anomaly-threshold" className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">Threshold (σ)</label>
                 <input
+                  id="anomaly-threshold"
                   type="number" step="0.5" min={1.5} max={10}
                   value={threshold} onChange={e => setThr(+e.target.value || 3)}
                   className="input h-8 text-xs w-20"

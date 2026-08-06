@@ -97,8 +97,9 @@ export default function BaselinePanel({ caseId, onClose, onPivot }) {
       <div className="card p-3">
         <div className="flex items-end gap-3 flex-wrap">
           <div>
-            <label className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">Field</label>
+            <label htmlFor="baseline-field" className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">Field</label>
             <select
+              id="baseline-field"
               value={field}
               onChange={e => setField(e.target.value)}
               disabled={loadingFields}
@@ -110,8 +111,9 @@ export default function BaselinePanel({ caseId, onClose, onPivot }) {
             </select>
           </div>
           <div>
-            <label className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">Host</label>
+            <label htmlFor="baseline-host" className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">Host</label>
             <select
+              id="baseline-host"
               value={host}
               onChange={e => setHost(e.target.value)}
               disabled={loadingFields}
@@ -123,8 +125,9 @@ export default function BaselinePanel({ caseId, onClose, onPivot }) {
             </select>
           </div>
           <div>
-            <label className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">Max hosts</label>
+            <label htmlFor="baseline-max-hosts" className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">Max hosts</label>
             <input
+              id="baseline-max-hosts"
               type="number" min={1} max={50}
               value={maxHosts}
               onChange={e => setMaxHosts(Math.min(50, Math.max(1, +e.target.value || 2)))}

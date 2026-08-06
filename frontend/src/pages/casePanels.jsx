@@ -33,6 +33,7 @@ const BaselinePanel    = lazy(() => import('../components/shared/BaselinePanel')
 const EntityGraphPanel = lazy(() => import('../components/shared/EntityGraphPanel'))
 const KillChainPanel   = lazy(() => import('../components/shared/KillChainPanel'))
 const EvidencePanel    = lazy(() => import('../components/shared/EvidencePanel'))
+const FindingsPanel    = lazy(() => import('../components/shared/FindingsPanel'))
 const CoPilotPanel     = lazy(() => import('../components/shared/CoPilotPanel'))
 
 function NotesDrawer({ caseId, close }) {
@@ -136,4 +137,5 @@ export const CASE_PANELS = {
   templates: ({ caseId, close }) => <TemplatesPanel caseId={caseId} onClose={close} />,
   report:    ({ caseId, close }) => <ReportPanel caseId={caseId} onClose={close} />,
   evidence:  ({ caseId, close }) => <EvidencePanel caseId={caseId} onClose={close} />,
+  findings:  ({ caseId, close }) => <FindingsPanel caseId={caseId} onClose={close} />,
 }

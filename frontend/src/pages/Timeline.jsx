@@ -27,6 +27,8 @@ import {
 import { api } from '../api/client'
 import ConfirmDialog from '../components/ConfirmDialog'
 import Modal from '../components/shared/Modal'
+import ErrorBox, { NoticeBox } from '../components/shared/ErrorBox'
+import { ShortcutRow } from '../components/KeyboardShortcutsModal'
 import EventDetail from '../components/shared/EventDetail'
 import StatsPopover from '../components/shared/StatsPopover'
 import PanelHelp from '../components/shared/PanelHelp'
@@ -236,7 +238,7 @@ function deduplicateEvents(events) {
 const SORT_ES_FIELDS = {
   timestamp:   'timestamp',
   type:        'artifact_type',
-  level:       'evtx.level.keyword',
+  level:       '_severity',
   event_id:    'evtx.event_id',
   host:        'host.hostname.keyword',
   user:        'user.name.keyword',
@@ -249,11 +251,11 @@ const SORT_ES_FIELDS = {
   src_port:    'network.src_port',
   dst_port:    'network.dst_port',
   run_count:   'prefetch.run_count',
-  http_method: 'http.method.keyword',
+  http_method: 'http.method',
   http_status: 'http.status_code',
   http_path:   'http.request_path.keyword',
   resp_size:   'http.response_size',
-  channel:     'evtx.channel.keyword',
+  channel:     'evtx.channel',
   rule:        'evtx.rule_title.keyword',
 }
 
@@ -365,6 +367,26 @@ const COLUMN_ES_FIELD = {
   raw_data:    'raw',
 }
 
+// Build the Lucene clause for the severity-level filter. Levels live in
+// different sub-objects depending on plugin:
+//   evtx.level (Windows), hayabusa.level (Sigma alerts), top-level `level`
+//   (some plugins). Cover all three with OR. Multiple selected levels are
+// OR'ed together; 'none' matches events with no level field at all.
+function levelFilterQuery(levelsStr) {
+  const levels = (levelsStr || '').split(',').filter(Boolean)
+  if (levels.length === 0) return ''
+  const parts = []
+  const named = levels.filter(l => l !== 'none')
+  if (named.length > 0) {
+    const vals = named.length === 1 ? named[0] : `(${named.join(' OR ')})`
+    parts.push(`(evtx.level:${vals} OR hayabusa.level:${vals} OR level:${vals})`)
+  }
+  if (levels.includes('none')) {
+    parts.push('((NOT _exists_:level) AND (NOT _exists_:evtx.level) AND (NOT _exists_:hayabusa.level))')
+  }
+  return parts.length === 1 ? parts[0] : `(${parts.join(' OR ')})`
+}
+
 // Types that pollute the timeline if shown by default but stay available
 // as filter chips so analysts can toggle them on when they want them.
 // Earlier the chip blacklist hid these from the sidebar too — but on cases
@@ -440,6 +462,7 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
 
   const [facets, setFacets]                 = useState({})
   const [facetFilters, setFacetFilters]     = useState({})
+  const [expandedFacets, setExpandedFacets] = useState(new Set())  // facet keys showing all buckets
   const [savedSearches, setSavedSearches]   = useState([])
   const [showSaveForm, setShowSaveForm]     = useState(false)
   const [saveSearchName, setSaveSearchName] = useState('')
@@ -457,6 +480,7 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
 
   // Draggable filter-sidebar width — analysts on wide facet lists want it wider,
   // those chasing screen real-estate want it narrow. Persisted like the columns.
+  const [mobileFilters, setMobileFilters] = useState(false)  // slide-in sidebar below md
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     try { const n = parseInt(localStorage.getItem('timeline_sidebar_w'), 10); if (!isNaN(n) && n >= 140) return n } catch { /* ignore */ }
     return 176
@@ -737,12 +761,7 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
         effectiveQ = effectiveQ ? `(${effectiveQ}) AND ${typeQ}` : typeQ
       }
       if (selectedLevel) {
-        // Levels live in different sub-objects depending on plugin:
-        //   evtx.level (Windows), hayabusa.level (Sigma alerts), top-level
-        //   `level` (some plugins). Cover all three with OR.
-        const levelQ = selectedLevel === 'none'
-          ? '(NOT _exists_:level) AND (NOT _exists_:evtx.level) AND (NOT _exists_:hayabusa.level)'
-          : `(evtx.level:${selectedLevel} OR hayabusa.level:${selectedLevel} OR level:${selectedLevel})`
+        const levelQ = levelFilterQuery(selectedLevel)
         effectiveQ = effectiveQ ? `(${effectiveQ}) AND ${levelQ}` : levelQ
       }
       if (flaggedOnly) {
@@ -778,11 +797,7 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
     const and = (clause) => { q = q ? `(${q}) AND ${clause}` : clause }
     const typesArr = selectedTypesStr ? selectedTypesStr.split(',') : []
     if (typesArr.length) and(`artifact_type:(${typesArr.join(' OR ')})`)
-    if (selectedLevel) {
-      and(selectedLevel === 'none'
-        ? '(NOT _exists_:level) AND (NOT _exists_:evtx.level) AND (NOT _exists_:hayabusa.level)'
-        : `(evtx.level:${selectedLevel} OR hayabusa.level:${selectedLevel} OR level:${selectedLevel})`)
-    }
+    if (selectedLevel) and(levelFilterQuery(selectedLevel))
     if (flaggedOnly) and('is_flagged:true')
     const FACET_FIELD = {
       hostname: 'host.hostname.keyword', username: 'user.name.keyword',
@@ -1141,15 +1156,26 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
 
   return (
     <div className="flex h-full">
-      {/* ── Filter sidebar (draggable width) ───────────── */}
+      {/* Mobile backdrop for the slide-in filter sidebar */}
+      {mobileFilters && (
+        <div className="fixed inset-0 z-30 bg-black/30 md:hidden" onClick={() => setMobileFilters(false)} />
+      )}
+      {/* ── Filter sidebar (draggable width; slide-in overlay below md) ─── */}
       <div
-        className="relative flex-shrink-0 bg-gray-50 border-r border-gray-200 flex flex-col"
+        className={`relative flex-shrink-0 bg-gray-50 border-r border-gray-200 flex flex-col
+          max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-40 max-md:shadow-xl max-md:transition-transform
+          ${mobileFilters ? 'max-md:translate-x-0' : 'max-md:-translate-x-full'}`}
         style={{ width: sidebarWidth }}
       >
-        <div className="p-3 border-b border-gray-200">
+        <div className="p-3 border-b border-gray-200 flex items-center justify-between">
           <p className="flex items-center gap-1.5 text-xs font-semibold text-gray-500 uppercase tracking-widest">
             <Filter size={11} /> Filters
           </p>
+          <button
+            onClick={() => setMobileFilters(false)}
+            className="md:hidden text-gray-400 hover:text-gray-600 text-lg leading-none px-1"
+            aria-label="Close filters"
+          >×</button>
         </div>
 
         {/* Right-edge resize grip — drag to widen/narrow, self-labelled */}
@@ -1417,22 +1443,34 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
                 { value: 'low',           label: 'Low',   cls: 'bg-blue-100 text-blue-700 border-blue-200' },
                 { value: 'informational', label: 'Info',  cls: 'bg-gray-100 text-gray-500 border-gray-200' },
                 { value: 'none',          label: 'None',  cls: 'bg-slate-100 text-slate-400 border-slate-200' },
-              ].map(({ value, label, cls }) => (
+              ].map(({ value, label, cls }) => {
+                // selectedLevel is a comma-joined set (matches selectedTypesStr)
+                // so several severities can be active at once. 'All' clears it.
+                const activeLevels = selectedLevel ? selectedLevel.split(',') : []
+                const isActive = value === '' ? !selectedLevel : activeLevels.includes(value)
+                return (
                 <button
                   key={value || 'all'}
-                  onClick={() => setSelectedLevel(value)}
+                  onClick={() => {
+                    if (value === '') { setSelectedLevel(''); return }
+                    const next = activeLevels.includes(value)
+                      ? activeLevels.filter(l => l !== value)
+                      : [...activeLevels, value]
+                    setSelectedLevel(next.join(','))
+                  }}
                   title={value === '' ? 'Show all severity levels'
-                    : value === 'none' ? 'Show only events with no severity level'
-                    : `Show only ${label} severity events`}
+                    : value === 'none' ? 'Toggle events with no severity level'
+                    : `Toggle ${label} severity events`}
                   className={`text-[10px] px-1.5 py-0.5 rounded border transition-colors ${
-                    selectedLevel === value
+                    isActive
                       ? (value === '' || value === 'none') ? 'bg-gray-600 text-white border-gray-500' : cls
                       : 'border-gray-200 text-gray-500 hover:border-brand-accent hover:text-brand-accent'
                   }`}
                 >
                   {label}
                 </button>
-              ))}
+                )
+              })}
             </div>
           </div>
 
@@ -1502,7 +1540,7 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
                 <button
                   onClick={() => setConfirmDeleteSearch(s)}
                   title="Delete saved search"
-                  className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-gray-100 text-gray-500 hover:text-red-500 transition-all">
+                  className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-within:opacity-100 p-0.5 rounded hover:bg-gray-100 text-gray-500 hover:text-red-500 transition-all">
                   <Trash2 size={9} />
                 </button>
               </div>
@@ -1548,7 +1586,7 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
                 <button
                   onClick={() => setConfirmDeleteView(v)}
                   title="Delete saved view"
-                  className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-gray-100 text-gray-500 hover:text-red-500 transition-all">
+                  className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-within:opacity-100 p-0.5 rounded hover:bg-gray-100 text-gray-500 hover:text-red-500 transition-all">
                   <Trash2 size={9} />
                 </button>
               </div>
@@ -1561,11 +1599,13 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
             const label     = { by_hostname:'Host',    by_username:'User',     by_event_id:'Event ID', by_channel:'Channel', by_src_ip:'Source IP', by_dest_ip:'Dest IP', by_status_code:'HTTP Status', by_http_method:'Method', by_domain:'Domain' }[facetKey]
             const buckets   = facets[facetKey]?.buckets || []
             if (!buckets.length) return null
+            const expanded  = expandedFacets.has(facetKey)
+            const shownBuckets = expanded ? buckets : buckets.slice(0, 8)
             return (
               <div key={facetKey} className="border-t border-gray-100 pt-3">
                 <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-1">{label}</p>
                 <div className="flex flex-wrap gap-0.5">
-                  {buckets.slice(0, 8).map(b => (
+                  {shownBuckets.map(b => (
                     <button key={b.key}
                       onClick={() => setFacetFilters(prev =>
                         prev[filterKey] === String(b.key)
@@ -1581,6 +1621,19 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
                       <span className="text-[10px] opacity-60">{b.doc_count}</span>
                     </button>
                   ))}
+                  {buckets.length > 8 && (
+                    <button
+                      onClick={() => setExpandedFacets(prev => {
+                        const next = new Set(prev)
+                        if (next.has(facetKey)) next.delete(facetKey); else next.add(facetKey)
+                        return next
+                      })}
+                      className="text-[10px] px-1.5 py-0.5 rounded border border-dashed border-gray-200 text-gray-500 hover:border-brand-accent hover:text-brand-accent transition-colors mb-0.5"
+                      title={expanded ? 'Show fewer values' : `Show all ${buckets.length} values`}
+                    >
+                      {expanded ? 'less' : `+${buckets.length - 8} more…`}
+                    </button>
+                  )}
                 </div>
               </div>
             )
@@ -1603,6 +1656,14 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
         {/* Search bar */}
         <div className="px-4 py-3 border-b border-gray-200 bg-white">
           <form onSubmit={submitSearch} className="flex gap-2 items-center">
+            <button
+              type="button"
+              onClick={() => setMobileFilters(true)}
+              className="md:hidden btn-outline flex items-center gap-1 px-2.5 py-2 text-xs flex-shrink-0"
+              aria-label="Open filters"
+            >
+              <Filter size={13} />
+            </button>
             <div className="relative flex-1">
               <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" />
               <input
@@ -1682,7 +1743,7 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
               <Sparkles size={13} />
             </button>
 
-            <button type="submit" className="btn-primary text-xs px-4" title="Run the Lucene query (Enter)">Search</button>
+            <button type="submit" disabled={loading} className="btn-primary text-xs px-4" title="Run the Lucene query (Enter)">Search</button>
 
             {(query || inputVal) && (
               <button type="button" onClick={clearSearch} className="btn-ghost text-xs" title="Clear search">
@@ -2063,6 +2124,13 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
               <Search size={28} className="text-gray-500 mb-3" />
               <p className="text-gray-500 text-sm">No events match your search.</p>
               <p className="text-gray-500 text-xs mt-1">Try a broader query, or clear filters.</p>
+              <button
+                onClick={() => { clearSearch(); setSelectedTypesStr(''); setFromTs(''); setToTs(''); setFlaggedOnly(false); setSelectedLevel(''); setFacetFilters({}) }}
+                className="btn-ghost text-xs mt-3 border border-gray-200"
+                title="Reset the search box and every sidebar filter"
+              >
+                <X size={11} /> Clear search &amp; filters
+              </button>
             </div>
           )}
           {events.length === 0 && hasLoaded && !query && (
@@ -2325,8 +2393,7 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
       {showHelp && (
         <Modal
           onClose={() => setShowHelp(false)}
-          overlayClassName="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center"
-          className="bg-white rounded-xl shadow-2xl p-6 w-80 max-w-[90vw]"
+          className="modal-box w-80 max-w-[90vw] p-6"
           ariaLabel="Keyboard shortcuts"
         >
           <>
@@ -2341,17 +2408,7 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
             </div>
             <div className="space-y-3">
               {SHORTCUTS.map(({ keys, desc }) => (
-                <div key={desc} className="flex items-center justify-between gap-4">
-                  <span className="text-sm text-gray-600">{desc}</span>
-                  <div className="flex items-center gap-1 flex-shrink-0">
-                    {keys.map((k, ki) => (
-                      <span key={k} className="flex items-center gap-1">
-                        {ki > 0 && <span className="text-[10px] text-gray-500">/</span>}
-                        <kbd className="kbd">{k}</kbd>
-                      </span>
-                    ))}
-                  </div>
-                </div>
+                <ShortcutRow key={desc} label={desc} keys={keys} sep="/" />
               ))}
             </div>
             <div className="mt-5 pt-4 border-t border-gray-200">
@@ -2426,7 +2483,7 @@ function SortableTh({ colId, label, sortField, sortOrder, onSort, width, onResiz
             <button
               type="button"
               onClick={e => { e.stopPropagation(); onToggleExists(esField, false) }}
-              className="opacity-0 group-hover:opacity-100 ml-1 px-1 rounded text-[9px] font-mono text-gray-500 hover:text-green-700 hover:bg-green-50 transition-all"
+              className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-within:opacity-100 ml-1 px-1 rounded text-[9px] font-mono text-gray-500 hover:text-green-700 hover:bg-green-50 transition-all"
               title={`Only events where ${esField} exists (_exists_:${esField})`}
             >
               ∃
@@ -2434,7 +2491,7 @@ function SortableTh({ colId, label, sortField, sortOrder, onSort, width, onResiz
             <button
               type="button"
               onClick={e => { e.stopPropagation(); onToggleExists(esField, true) }}
-              className="opacity-0 group-hover:opacity-100 px-1 rounded text-[9px] font-mono text-gray-500 hover:text-red-700 hover:bg-red-50 transition-all"
+              className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-within:opacity-100 px-1 rounded text-[9px] font-mono text-gray-500 hover:text-red-700 hover:bg-red-50 transition-all"
               title={`Only events where ${esField} is missing (NOT _exists_:${esField})`}
             >
               ∅
@@ -2619,7 +2676,7 @@ function FieldExplorer({ fieldMap, onInsert, onUseSnippet, onAggregate, onClose 
                     <button
                       type="button"
                       onClick={() => onAggregate(f.name)}
-                      className="opacity-0 group-hover/field:opacity-100 transition-opacity text-[9px] px-1 py-0.5 rounded hover:bg-brand-accentlight text-gray-500 hover:text-brand-text"
+                      className="opacity-0 group-hover/field:opacity-100 focus-visible:opacity-100 focus-within:opacity-100 transition-opacity text-[9px] px-1 py-0.5 rounded hover:bg-brand-accentlight text-gray-500 hover:text-brand-text"
                       title={`Aggregate by ${f.name}`}
                     >
                       <BarChart2 size={9} />
@@ -2904,15 +2961,17 @@ function AggregatePanel({ caseId, query, fieldMap, state, setState, result, load
           </p>
         )}
         {result?.error && (
-          <div className="border border-red-200 bg-red-50 rounded-md p-3 text-xs text-red-700">
-            <p className="font-semibold mb-1">Aggregation failed</p>
-            <p className="font-mono break-words">{result.error}</p>
-          </div>
+          <ErrorBox className="rounded-md p-3">
+            <span>
+              <span className="block font-semibold mb-1">Aggregation failed</span>
+              <span className="block font-mono break-words">{result.error}</span>
+            </span>
+          </ErrorBox>
         )}
         {result?.timed_out && !result.error && (
-          <div className="border border-amber-200 bg-amber-50 rounded-md p-2 text-[11px] text-amber-700 mb-2">
+          <NoticeBox className="rounded-md p-2 text-[11px] mb-2">
             Partial results — the aggregation hit the time limit on this case's volume. Narrow with a search filter or a date range for a complete answer.
-          </div>
+          </NoticeBox>
         )}
         {result && !result.error && <AggResult result={result} />}
       </div>
@@ -3176,7 +3235,7 @@ function AiSearchAssistPanel({ caseId, onApply, onClose }) {
 /* ── Filter +/− buttons ── */
 function FilterButtons({ field, value, onIn, onOut }) {
   return (
-    <span className="inline-flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 ml-1">
+    <span className="inline-flex gap-0.5 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-within:opacity-100 transition-opacity flex-shrink-0 ml-1">
       <button
         type="button"
         onClick={e => { e.stopPropagation(); onIn(field, value) }}
@@ -3368,7 +3427,7 @@ function EventRow({ event, index, onSelect, selected, keyboardSelected, onFilter
       {vis('host') && (
         <td className="px-3 py-2 text-gray-500 max-w-[7rem]">
           <div className="flex items-center min-w-0">
-            <span className="truncate">{host}</span>
+            <span className="truncate" title={host}>{host}</span>
             {host && <FilterButtons field="host.hostname" value={host} onIn={onFilterIn} onOut={onFilterOut} />}
           </div>
         </td>
@@ -3377,7 +3436,7 @@ function EventRow({ event, index, onSelect, selected, keyboardSelected, onFilter
       {vis('user') && (
         <td className="px-3 py-2 text-gray-500 max-w-[6rem]">
           <div className="flex items-center min-w-0">
-            <span className="truncate">{user}</span>
+            <span className="truncate" title={user}>{user}</span>
             {user && <FilterButtons field="user.name" value={user} onIn={onFilterIn} onOut={onFilterOut} />}
           </div>
         </td>

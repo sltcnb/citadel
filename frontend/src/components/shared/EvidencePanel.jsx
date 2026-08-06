@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
 import {
-  ShieldCheck, ShieldAlert, Loader2, RefreshCw, AlertTriangle, X,
-  Download, Copy, Check, FileCheck, Lock,
+  ShieldCheck, ShieldAlert, Loader2, RefreshCw, X,
+  Download, Copy, Check, FileCheck, Lock, ScrollText,
 } from 'lucide-react'
 import { api } from '../../api/client'
 import PanelHelp from './PanelHelp'
+import { ResizableDrawer } from './resizableDrawer'
+import ErrorBox from './ErrorBox'
 
 /**
  * Right-side drawer: court-ready signed evidence chain (tamper-evident
@@ -28,6 +30,10 @@ export default function EvidencePanel({ caseId, onClose }) {
   const [verifying, setVerifying]   = useState(false)
   const [downloading, setDownloading] = useState(false)
   const [manifestInfo, setManifestInfo] = useState(null) // last download: { signed }
+
+  // Chain-of-custody document (per-artifact hashes + provenance)
+  const [custody, setCustody]         = useState(null)   // null = collapsed
+  const [custodyLoading, setCustodyLoading] = useState(false)
 
   const [copied, setCopied] = useState(null)   // sha256 just copied
 
@@ -91,6 +97,20 @@ export default function EvidencePanel({ caseId, onClose }) {
     } catch { /* clipboard unavailable */ }
   }
 
+  // Load (or collapse) the chain-of-custody document — one row per ingested
+  // artifact with its SHA-256, provenance timestamps and storage key.
+  async function toggleCustody() {
+    if (custody) { setCustody(null); return }
+    setCustodyLoading(true); setError(null)
+    try {
+      setCustody(await api.export.chainOfCustody(caseId))
+    } catch (e) {
+      setError(e.message || 'Failed to load chain of custody.')
+    } finally {
+      setCustodyLoading(false)
+    }
+  }
+
   async function sealManual(e) {
     e?.preventDefault?.()
     if (!artId.trim() || !sha.trim()) return
@@ -114,11 +134,7 @@ export default function EvidencePanel({ caseId, onClose }) {
   const sealedCount = verify?.sealed_count ?? seals.length
 
   return (
-    <div className="panel-backdrop" onClick={onClose}>
-      <div
-        className="panel-drawer md:w-[860px]"
-        onClick={e => e.stopPropagation()}
-      >
+    <ResizableDrawer slug="evidence" defaultWidth={860} onClose={onClose}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 flex-shrink-0">
           <div className="flex items-center gap-2">
             <ShieldCheck size={16} className="text-brand-accent" />
@@ -129,7 +145,7 @@ export default function EvidencePanel({ caseId, onClose }) {
               <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
               Refresh
             </button>
-            <button onClick={onClose} className="btn-ghost p-1.5 rounded-lg">
+            <button onClick={onClose} aria-label="Close" className="btn-ghost p-1.5 rounded-lg">
               <X size={16} />
             </button>
           </div>
@@ -187,9 +203,7 @@ export default function EvidencePanel({ caseId, onClose }) {
           )}
 
           {error && (
-            <div className="card p-3 text-xs text-red-700 bg-red-50 border-red-200 flex items-center gap-2">
-              <AlertTriangle size={14} /> {error}
-            </div>
+            <ErrorBox msg={error} />
           )}
 
           {/* Actions */}
@@ -202,6 +216,14 @@ export default function EvidencePanel({ caseId, onClose }) {
               {downloading ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
               Download manifest
             </button>
+            <button
+              onClick={toggleCustody}
+              disabled={custodyLoading}
+              className="btn-secondary text-xs flex items-center gap-1.5"
+            >
+              {custodyLoading ? <Loader2 size={12} className="animate-spin" /> : <ScrollText size={12} />}
+              {custody ? 'Hide chain of custody' : 'Chain of custody'}
+            </button>
             {manifestInfo && (
               <span className={`text-[11px] flex items-center gap-1 ${manifestInfo.signed ? 'text-emerald-700' : 'text-gray-500'}`}>
                 {manifestInfo.signed
@@ -210,6 +232,61 @@ export default function EvidencePanel({ caseId, onClose }) {
               </span>
             )}
           </div>
+
+          {/* Chain-of-custody document */}
+          {custody && (
+            <div className="card overflow-hidden">
+              <div className="px-3 py-2 border-b border-gray-100 flex items-center justify-between">
+                <h3 className="text-[11px] font-semibold text-gray-700 uppercase tracking-wide">
+                  Chain of custody — {custody.case_name || custody.case_id}
+                </h3>
+                <span className="text-[10px] text-gray-500">
+                  {custody.artifact_count} artifact{custody.artifact_count === 1 ? '' : 's'} · generated {fmtTime(custody.generated_at)}
+                </span>
+              </div>
+              {(custody.artifacts || []).length === 0 ? (
+                <div className="p-5 text-center text-xs text-gray-500">No ingested artifacts recorded for this case.</div>
+              ) : (
+                <table className="w-full text-[11px]">
+                  <thead className="bg-gray-50 text-gray-600">
+                    <tr>
+                      <Th>Artifact</Th>
+                      <Th>SHA-256</Th>
+                      <Th>Status</Th>
+                      <Th>Events</Th>
+                      <Th>Received</Th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {custody.artifacts.map(a => (
+                      <tr key={a.job_id || a.filename} className="border-t border-gray-100 hover:bg-gray-50">
+                        <Td className="max-w-[180px] truncate" title={a.filename}>{a.filename || '—'}</Td>
+                        <Td>
+                          <div className="flex items-center gap-1">
+                            <span className="font-mono max-w-[140px] truncate inline-block align-bottom" title={a.sha256}>
+                              {a.sha256 || '—'}
+                            </span>
+                            {a.sha256 && (
+                              <button
+                                onClick={() => copySha(a.sha256)}
+                                className="text-gray-400 hover:text-brand-accent"
+                                title="Copy SHA-256"
+                              >
+                                {copied === a.sha256 ? <Check size={11} className="text-emerald-600" /> : <Copy size={11} />}
+                              </button>
+                            )}
+                          </div>
+                        </Td>
+                        <Td className="text-gray-500">{a.status || '—'}</Td>
+                        <Td className="text-gray-500 tabular-nums">{(a.events_indexed || 0).toLocaleString()}</Td>
+                        <Td className="text-gray-500 whitespace-nowrap">{fmtTime(a.received_at)}</Td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
 
           {/* Seals table */}
           <div className="card overflow-hidden">
@@ -296,8 +373,7 @@ export default function EvidencePanel({ caseId, onClose }) {
             )}
           </div>
         </div>
-      </div>
-    </div>
+    </ResizableDrawer>
   )
 }
 

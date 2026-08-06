@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
+import { useParams } from 'react-router'
 import DOMPurify from 'dompurify'
 import {
   Save,
@@ -259,10 +260,29 @@ function NotesTab({ caseId }) {
 // CaseNotes is now a thin wrapper around NotesTab so the file rename + import
 // chain stays unchanged.
 // ─────────────────────────────────────────────────────────────────────────────
-export default function CaseNotes({ caseId }) {
+export default function CaseNotes({ caseId: caseIdProp }) {
+  // Routed standalone (/cases/:id/notes passes no prop) and embedded in the
+  // notes drawer — take the id from the route when the prop is missing.
+  const { caseId: routeCaseId } = useParams()
+  const caseId = caseIdProp || routeCaseId
+  // Case name for the context header — same fetch CaseTimeline does.
+  const [caseName, setCaseName] = useState('')
+  useEffect(() => {
+    if (!caseId) return
+    api.cases.get(caseId).then(c => setCaseName(c?.name || '')).catch(() => {})
+  }, [caseId])
   return (
     <div className="flex flex-col h-full min-h-0">
-      <NotesTab caseId={caseId} />
+      {/* Case context header — keeps the analyst oriented on the sub-page */}
+      <div className="px-4 py-1.5 border-b border-gray-100 bg-gray-50 flex items-center gap-2 flex-shrink-0">
+        <span className="text-[11px] text-gray-500 flex-shrink-0">Case</span>
+        <span className="text-[11px] font-semibold text-brand-text truncate" title={caseName || caseId}>
+          {caseName || caseId}
+        </span>
+      </div>
+      <div className="flex-1 min-h-0 flex flex-col">
+        <NotesTab caseId={caseId} />
+      </div>
     </div>
   )
 }

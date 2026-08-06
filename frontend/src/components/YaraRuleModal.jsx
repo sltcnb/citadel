@@ -5,6 +5,7 @@ import {
 import Editor from '@monaco-editor/react'
 import '../lib/monacoLoader'
 import Modal from './shared/Modal'
+import ErrorBox from './shared/ErrorBox'
 import { api } from '../api/client'
 import { useCompanies } from '../pages/UserManagement'
 
@@ -270,15 +271,15 @@ export default function YaraRuleModal({ rule = null, onClose, onSaved, openAI = 
       {aiOpen && (
         <div className="mt-3 space-y-2">
           <div>
-            <label className="text-[11px] font-medium text-gray-600 mb-1 block">What to detect *</label>
-            <input value={aiPrompt} onChange={e => setAiPrompt(e.target.value)}
+            <label htmlFor="yara-ai-prompt" className="text-[11px] font-medium text-gray-600 mb-1 block">What to detect *</label>
+            <input id="yara-ai-prompt" value={aiPrompt} onChange={e => setAiPrompt(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && !e.shiftKey && generateWithAI()}
               placeholder="e.g. Cobalt Strike beacon in memory, ransomware dropping note files"
               className="input text-xs w-full" autoFocus />
           </div>
           <div>
-            <label className="text-[11px] font-medium text-gray-600 mb-1 block">Hints (optional)</label>
-            <input value={aiContext} onChange={e => setAiContext(e.target.value)}
+            <label htmlFor="yara-ai-hints" className="text-[11px] font-medium text-gray-600 mb-1 block">Hints (optional)</label>
+            <input id="yara-ai-hints" value={aiContext} onChange={e => setAiContext(e.target.value)}
               placeholder="known strings, hex patterns, file type, malware family…"
               className="input text-xs w-full" />
           </div>
@@ -333,19 +334,19 @@ export default function YaraRuleModal({ rule = null, onClose, onSaved, openAI = 
         <div className="flex-shrink-0 overflow-y-auto p-4 space-y-3 border-b border-gray-100" style={{ maxHeight: '45%' }}>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs font-medium text-gray-600 mb-1 block">Rule name *</label>
-              <input value={name} onChange={e => setName(e.target.value)}
+              <label htmlFor="yara-name" className="text-xs font-medium text-gray-600 mb-1 block">Rule name *</label>
+              <input id="yara-name" value={name} onChange={e => setName(e.target.value)}
                 placeholder="e.g. Detect_Cobalt_Strike" className="input text-xs w-full" />
             </div>
             <div>
-              <label className="text-xs font-medium text-gray-600 mb-1 block">Tags</label>
-              <input value={tags} onChange={e => setTags(e.target.value)}
+              <label htmlFor="yara-tags" className="text-xs font-medium text-gray-600 mb-1 block">Tags</label>
+              <input id="yara-tags" value={tags} onChange={e => setTags(e.target.value)}
                 placeholder="malware, apt, ransomware" className="input text-xs w-full" />
             </div>
           </div>
           <div>
-            <label className="text-xs font-medium text-gray-600 mb-1 block">Description</label>
-            <input value={desc} onChange={e => setDesc(e.target.value)}
+            <label htmlFor="yara-desc" className="text-xs font-medium text-gray-600 mb-1 block">Description</label>
+            <input id="yara-desc" value={desc} onChange={e => setDesc(e.target.value)}
               placeholder="What does this rule detect?" className="input text-xs w-full" />
           </div>
           {companyScope}
@@ -405,8 +406,7 @@ export default function YaraRuleModal({ rule = null, onClose, onSaved, openAI = 
     <Modal
       onClose={onClose}
       closeOnOverlayClick={false}
-      overlayClassName="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
-      className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl mx-4 flex flex-col max-h-[92vh]"
+      className="modal-box max-w-2xl"
       ariaLabel={isEdit ? 'Edit YARA rule' : 'New YARA rule'}
     >
       <>
@@ -414,19 +414,19 @@ export default function YaraRuleModal({ rule = null, onClose, onSaved, openAI = 
         <div className="overflow-y-auto flex-1 p-5 space-y-4">
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs font-medium text-gray-600 mb-1 block">Rule name *</label>
-              <input value={name} onChange={e => setName(e.target.value)}
+              <label htmlFor="yara-name" className="text-xs font-medium text-gray-600 mb-1 block">Rule name *</label>
+              <input id="yara-name" value={name} onChange={e => setName(e.target.value)}
                 placeholder="e.g. Detect_Cobalt_Strike" className="input text-xs w-full" />
             </div>
             <div>
-              <label className="text-xs font-medium text-gray-600 mb-1 block">Tags</label>
-              <input value={tags} onChange={e => setTags(e.target.value)}
+              <label htmlFor="yara-tags" className="text-xs font-medium text-gray-600 mb-1 block">Tags</label>
+              <input id="yara-tags" value={tags} onChange={e => setTags(e.target.value)}
                 placeholder="malware, apt, ransomware" className="input text-xs w-full" />
             </div>
           </div>
           <div>
-            <label className="text-xs font-medium text-gray-600 mb-1 block">Description</label>
-            <input value={desc} onChange={e => setDesc(e.target.value)}
+            <label htmlFor="yara-desc" className="text-xs font-medium text-gray-600 mb-1 block">Description</label>
+            <input id="yara-desc" value={desc} onChange={e => setDesc(e.target.value)}
               placeholder="What does this rule detect?" className="input text-xs w-full" />
           </div>
           {companyScope}
@@ -448,9 +448,7 @@ export default function YaraRuleModal({ rule = null, onClose, onSaved, openAI = 
             )}
           </div>
           {error && (
-            <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-center gap-1.5">
-              <AlertTriangle size={12} /> {error}
-            </p>
+            <ErrorBox msg={error} />
           )}
         </div>
         {footer}

@@ -19,23 +19,26 @@ import {
 import { PageShell, PageHeader } from '../components/shared/PageShell'
 import { api } from '../api/client'
 import { formatDate } from '../utils/format'
+import Toast from '../components/Toast'
+import ConfirmDialog from '../components/ConfirmDialog'
+import { useToast } from '../hooks/useToast'
 
 import YaraRuleModal from '../components/YaraRuleModal'
 
 // ── Rule card ──────────────────────────────────────────────────────────────────
 
-function RuleCard({ rule, onEdit, onDelete }) {
+function RuleCard({ rule, onEdit, onDelete, onError }) {
   const [expanded, setExpanded] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
 
-  async function confirmDelete() {
-    if (!confirm(`Delete rule "${rule.name}"?`)) return
+  async function deleteRule() {
     setDeleting(true)
     try {
       await api.yaraRules.delete(rule.id)
       onDelete(rule.id)
     } catch (err) {
-      alert('Delete failed: ' + err.message)
+      onError?.('Delete failed: ' + err.message)
       setDeleting(false)
     }
   }
@@ -70,7 +73,7 @@ function RuleCard({ rule, onEdit, onDelete }) {
             <Pencil size={12} />
           </button>
           <button
-            onClick={e => { e.stopPropagation(); confirmDelete() }}
+            onClick={e => { e.stopPropagation(); setConfirmDelete(true) }}
             disabled={deleting}
             className="icon-btn text-red-400 hover:text-red-600"
             title="Delete rule"
@@ -100,6 +103,18 @@ function RuleCard({ rule, onEdit, onDelete }) {
           </div>
         </div>
       )}
+
+      {confirmDelete && (
+        <ConfirmDialog
+          title="Delete rule"
+          icon={<Trash2 size={14} className="text-red-500" />}
+          message={`Delete rule "${rule.name}"?`}
+          confirmLabel="Delete"
+          confirmClass="btn-danger"
+          onConfirm={() => { setConfirmDelete(false); deleteRule() }}
+          onCancel={() => setConfirmDelete(false)}
+        />
+      )}
     </div>
   )
 }
@@ -113,6 +128,7 @@ export default function YaraLibrary() {
   const [showModal, setShowModal] = useState(false)
   const [editRule, setEditRule]   = useState(null)
   const [modalOpenAI, setModalOpenAI] = useState(false)
+  const [toast, showToast] = useToast()
   const importRef = useRef(null)
 
   // Standalone validator state
@@ -314,6 +330,7 @@ export default function YaraLibrary() {
               rule={rule}
               onEdit={openEdit}
               onDelete={id => setRules(prev => prev.filter(r => r.id !== id))}
+              onError={msg => showToast(msg, 'error')}
             />
           ))}
         </div>
@@ -334,6 +351,8 @@ export default function YaraLibrary() {
           }}
         />
       )}
+
+      <Toast toast={toast} />
     </PageShell>
   )
 }

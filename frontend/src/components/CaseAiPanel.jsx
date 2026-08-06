@@ -24,6 +24,11 @@ import {
 import { api } from '../api/client'
 import { RISK_CONFIG } from '../utils/severity'
 import PanelHelp from './shared/PanelHelp'
+import Toast from './Toast'
+import { useToast } from '../hooks/useToast'
+import { ResizableDrawer } from './shared/resizableDrawer'
+import ErrorBox from './shared/ErrorBox'
+import { useConfirm } from './useConfirm'
 
 // Key findings are written by the prompt to cite the fo_ids they're grounded
 // in, e.g. "Suspicious PowerShell download (event_ids: abc123, def456)". Parse
@@ -514,6 +519,7 @@ function AgentRunBlock({ run, idx, onDelete, onSearchQuery, caseId, onFollowup, 
   const [followupText, setFollowupText] = useState('')
   const [showFollowup, setShowFollowup] = useState(false)
   const [feedback, setFeedback] = useState(run.feedback?.verdict || null)
+  const [confirmEl, askConfirm] = useConfirm()
 
   async function sendFeedback(verdict) {
     let reason = ''
@@ -531,7 +537,7 @@ function AgentRunBlock({ run, idx, onDelete, onSearchQuery, caseId, onFollowup, 
   }
 
   async function flagEvidence() {
-    if (!confirm(`Flag the ${eventCount} distinct event(s) surfaced during this run? They'll appear in the case's flagged filter.`)) return
+    if (!await askConfirm(`Flag the ${eventCount} distinct event(s) surfaced during this run? They'll appear in the case's flagged filter.`, { title: 'Flag evidence?' })) return
     setFlagging(true); setActionErr(null)
     try {
       const r = await api.cases.aiAgentFlag(caseId, idx)
@@ -542,7 +548,7 @@ function AgentRunBlock({ run, idx, onDelete, onSearchQuery, caseId, onFollowup, 
   }
 
   async function promoteIocs() {
-    if (!confirm(`Promote ${final.indicators?.length || 0} indicator(s) to the global watchlist? They'll be auto-classified (IP / domain / hash / cmdline / custom).`)) return
+    if (!await askConfirm(`Promote ${final.indicators?.length || 0} indicator(s) to the global watchlist? They'll be auto-classified (IP / domain / hash / cmdline / custom).`, { title: 'Promote indicators?' })) return
     setPromoting(true); setActionErr(null)
     try {
       const r = await api.cases.aiAgentPromote(caseId, idx)
@@ -554,6 +560,7 @@ function AgentRunBlock({ run, idx, onDelete, onSearchQuery, caseId, onFollowup, 
 
   return (
     <div className="border border-purple-200 rounded-xl overflow-hidden">
+      {confirmEl}
       <div className="flex items-center justify-between px-4 py-2.5 bg-purple-50 border-b border-purple-100">
         <div className="flex-1 min-w-0">
           <p className="text-xs font-medium text-purple-900 truncate flex items-center gap-1.5">
@@ -690,11 +697,7 @@ function AgentRunBlock({ run, idx, onDelete, onSearchQuery, caseId, onFollowup, 
                 Added {promoteResult.added} watchlist entr{promoteResult.added === 1 ? 'y' : 'ies'} · skipped {promoteResult.skipped}
               </p>
             )}
-            {actionErr && (
-              <p className="text-[10px] text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1">
-                {actionErr}
-              </p>
-            )}
+            {actionErr && <ErrorBox msg={actionErr} className="text-[10px] rounded px-2 py-1" />}
           </div>
         )}
       </div>
@@ -877,6 +880,8 @@ export default function CaseAiPanel({ caseId, onClose, onSearchQuery, onOpenRepo
   // ── Autopilot agent state
   const [agentRuns, setAgentRuns]   = useState([])
   const [agentErr,  setAgentErr]    = useState(null)
+  const [toast, showToast]          = useToast()
+  const [confirmEl, askConfirm]     = useConfirm()
   // Language for the autopilot's auto-drafted report. The analyst picks the real
   // report language at generation time (Report tab, persisted as fo_report_lang);
   // we reuse that choice here so the quick auto-draft matches, falling back to
@@ -1050,30 +1055,33 @@ export default function CaseAiPanel({ caseId, onClose, onSearchQuery, onOpenRepo
     const what = includeReport
       ? 'Clear ALL AI state (risk assessment + suggestions + agent runs + auto-generated report)?'
       : 'Clear AI working data (risk + suggestions + agent runs)? The generated Report is kept.'
-    if (!confirm(what)) return
+    if (!await askConfirm(what, { title: 'Clear AI analysis?' })) return
     setAnalysis(null)
     setInvestigations([])
     setAgentRuns([])
-    await api.cases.aiDeleteResults(caseId, includeReport).catch(() => {})
+    await api.cases.aiDeleteResults(caseId, includeReport)
+      .catch(e => showToast(e.message || 'Clear failed — the server kept the data', 'error'))
   }
 
   async function clearAgentRuns() {
-    if (!confirm('Clear the Autopilot run history? The generated Report (if any) is kept.')) return
+    if (!await askConfirm('Clear the Autopilot run history? The generated Report (if any) is kept.', { title: 'Clear Autopilot runs?' })) return
     setAgentRuns([])
-    await api.cases.aiDeleteAgentRuns(caseId).catch(() => {})
+    await api.cases.aiDeleteAgentRuns(caseId)
+      .catch(e => showToast(e.message || 'Clear failed — the server kept the runs', 'error'))
   }
 
   async function deleteInvestigation(idx) {
-    await api.cases.aiDeleteInvestigation(caseId, idx).catch(() => {})
-    setInvestigations(prev => prev.filter((_, i) => i !== idx))
+    try {
+      await api.cases.aiDeleteInvestigation(caseId, idx)
+      setInvestigations(prev => prev.filter((_, i) => i !== idx))
+    } catch (e) {
+      showToast(e.message || 'Delete failed — the investigation is still stored', 'error')
+    }
   }
 
   return (
-    <div className="panel-backdrop" onClick={onClose}>
-      <div
-        className="panel-drawer md:w-[640px]"
-        onClick={e => e.stopPropagation()}
-      >
+    <ResizableDrawer slug="case-ai" defaultWidth={640} onClose={onClose}>
+      {confirmEl}
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 flex-shrink-0">
           <div className="flex items-center gap-2">
@@ -1140,10 +1148,11 @@ export default function CaseAiPanel({ caseId, onClose, onSearchQuery, onOpenRepo
               </div>
 
               <div className="mb-3 max-w-xl mx-auto">
-                <label className="text-[10px] uppercase tracking-wider font-semibold text-gray-500 block mb-1.5 text-center">
+                <label htmlFor="ai-circumstance" className="text-[10px] uppercase tracking-wider font-semibold text-gray-500 block mb-1.5 text-center">
                   Investigation context
                 </label>
                 <textarea
+                  id="ai-circumstance"
                   value={circumstance}
                   onChange={e => setCircumstance(e.target.value)}
                   rows={4}
@@ -1180,9 +1189,7 @@ export default function CaseAiPanel({ caseId, onClose, onSearchQuery, onOpenRepo
                 </button>
               </div>
               {(investigateErr || agentErr) && (
-                <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-center gap-1.5 mb-4">
-                  <AlertTriangle size={12} /> {investigateErr || agentErr}
-                </div>
+                <ErrorBox msg={investigateErr || agentErr} className="mb-4" />
               )}
 
               {/* Live in-progress agents — one card per in-flight run.
@@ -1297,9 +1304,7 @@ export default function CaseAiPanel({ caseId, onClose, onSearchQuery, onOpenRepo
               </div>
 
               {analyzeErr && (
-                <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-center gap-1.5 mb-3">
-                  <AlertTriangle size={12} /> {analyzeErr}
-                </div>
+                <ErrorBox msg={analyzeErr} className="mb-3" />
               )}
 
               {!analysis && !analyzing && (
@@ -1406,7 +1411,7 @@ export default function CaseAiPanel({ caseId, onClose, onSearchQuery, onOpenRepo
             </section>
           </div>
         )}
-      </div>
-    </div>
+      <Toast toast={toast} />
+    </ResizableDrawer>
   )
 }

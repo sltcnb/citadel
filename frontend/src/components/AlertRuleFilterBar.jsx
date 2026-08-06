@@ -63,7 +63,9 @@ export default function AlertRuleFilterBar({
   const cats      = presentCategories(rules)
   const artifacts = artifactTypes(rules)
 
-  const hasFilters = search || provenance !== 'custom' || category !== 'all' || artifact !== 'all'
+  // Any non-default filter (provenance included — 'all' is the neutral value)
+  // shows the clear affordance; no per-filter special-casing.
+  const hasFilters = Boolean(search) || provenance !== 'all' || category !== 'all' || artifact !== 'all'
 
   return (
     <div className="space-y-2">

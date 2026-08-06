@@ -36,6 +36,9 @@ export const NAV_GROUPS = [
       { to: '/templates',   icon: LayoutTemplate, label: 'Templates'     },
       { to: '/cti',         icon: Shield,         label: 'Threat Intel'  },
       { to: '/watchlist',   icon: ListChecks,     label: 'IOC Watchlist' },
+      // Docs live here (not Platform) so analysts get in-app docs too —
+      // the Platform group is adminOnly and hid them from everyone else.
+      { to: '/docs',        icon: BookOpen,        label: 'Docs'          },
     ],
   },
   {
@@ -45,7 +48,6 @@ export const NAV_GROUPS = [
       { to: '/suite',     icon: Boxes,   label: 'Stack'     },
       { to: '/studio',    icon: Code2,   label: 'Studio'    },
       { to: '/ingesters', icon: Puzzle,  label: 'Ingesters' },
-      { to: '/docs',      icon: BookOpen, label: 'Docs'     },
     ],
   },
   {
