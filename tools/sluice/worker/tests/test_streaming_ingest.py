@@ -183,7 +183,7 @@ class _FakeMinioClient:
     def __init__(self):
         self.uploads: list[tuple[str, str, int]] = []
 
-    def put_object(self, bucket, key, fileobj, size):
+    def put_object(self, bucket, key, fileobj, length=None, part_size=None):
         # Consume the stream the same way the real MinIO SDK would, in
         # bounded reads, to prove no caller hands it a giant bytes blob.
         total = 0
@@ -192,8 +192,8 @@ class _FakeMinioClient:
             if not chunk:
                 break
             total += len(chunk)
-        assert total == size
-        self.uploads.append((bucket, key, size))
+        assert total == length
+        self.uploads.append((bucket, key, length))
 
 
 def test_expand_zip_into_child_jobs_streams_large_entry(tmp_path, monkeypatch):
@@ -215,3 +215,30 @@ def test_expand_zip_into_child_jobs_streams_large_entry(tmp_path, monkeypatch):
     assert count == 2
     sizes = sorted(size for _, _, size in fake_minio.uploads)
     assert sizes == sorted([len(big_entry), len(small_entry)])
+
+
+# ── _is_fo_zip: only *.zip bundles expand — ZIP-based documents must not ──────
+
+
+def test_is_fo_zip_accepts_real_zip_bundle(tmp_path):
+    bundle = tmp_path / "fo-artifacts.zip"
+    with zipfile.ZipFile(bundle, "w") as zf:
+        zf.writestr("docProps/core.xml", b"<xml/>")
+    assert ingest_task._is_fo_zip(bundle) is True
+
+
+def test_is_fo_zip_rejects_zip_based_documents(tmp_path):
+    # A harvested .docx IS a valid zipfile, but it is a document, not a
+    # collection bundle. Expanding it turned every OOXML part (docProps/core.xml,
+    # word/document.xml, ...) into its own junk ingest job.
+    for name in ("invoice.docx", "book.xlsx", "slides.pptx"):
+        doc = tmp_path / name
+        with zipfile.ZipFile(doc, "w") as zf:
+            zf.writestr("docProps/core.xml", b"<xml/>")
+        assert ingest_task._is_fo_zip(doc) is False
+
+
+def test_is_fo_zip_rejects_non_zip_with_zip_suffix(tmp_path):
+    fake = tmp_path / "not-really.zip"
+    fake.write_bytes(b"MZ not a zip at all")
+    assert ingest_task._is_fo_zip(fake) is False

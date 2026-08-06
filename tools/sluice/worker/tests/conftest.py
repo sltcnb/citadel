@@ -14,8 +14,13 @@ from pathlib import Path
 import pytest
 
 _PROCESSOR_ROOT = Path(__file__).resolve().parent.parent
-if str(_PROCESSOR_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROCESSOR_ROOT))
+# Move-to-front, not insert-if-absent: the worker root can already sit in
+# sys.path at a LATE position (pytest path bootstrap order), where api/ —
+# which ships its own plugin_loader.py copy — would shadow the worker's
+# modules and silently change which plugin_loader tasks/tests resolve.
+if str(_PROCESSOR_ROOT) in sys.path:
+    sys.path.remove(str(_PROCESSOR_ROOT))
+sys.path.insert(0, str(_PROCESSOR_ROOT))
 
 
 class FakeRedis:

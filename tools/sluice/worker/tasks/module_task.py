@@ -563,29 +563,28 @@ def run_module(
 
         # ── 3c. Index module hits into Elasticsearch so they appear in Timeline ──
         _index_at = datetime.now(UTC).isoformat()
+        indexed_count = 0
         if results:
             try:
                 if module_id == "hayabusa":
-                    indexed = _hayabusa_index_to_es(case_id, run_id, results, _index_at)
+                    indexed_count = _hayabusa_index_to_es(case_id, run_id, results, _index_at)
                 elif module_id == "browser_report":
-                    indexed = _browser_report_index_to_es(case_id, run_id, results, _index_at)
+                    indexed_count = _browser_report_index_to_es(case_id, run_id, results, _index_at)
                 elif module_id not in _MODULE_INDEX_SKIP and not _mod_meta.get("index_skip", False):
-                    indexed = _generic_module_index_to_es(
+                    indexed_count = _generic_module_index_to_es(
                         case_id, run_id, module_id, results, _index_at
                     )
-                else:
-                    indexed = 0
-                if indexed:
+                if indexed_count:
                     atype = (
                         _mod_meta.get("artifact_type")
                         or _MODULE_ARTIFACT_TYPE.get(module_id)
                         or module_id.replace("-", "_").replace(" ", "_")
                     )
                     tool_meta["log"] += (
-                        f"\nIndexed {indexed} events into Elasticsearch (artifact_type={atype})\n"
+                        f"\nIndexed {indexed_count} events into Elasticsearch (artifact_type={atype})\n"
                     )
                     tool_meta["stdout"] += (
-                        f"\n=== Indexed {indexed} events into Timeline (ES) ===\n"
+                        f"\n=== Indexed {indexed_count} events into Timeline (ES) ===\n"
                     )
             except Exception as _es_exc:  # noqa: BLE001 - indexing failure must not lose the hits already collected
                 logger.warning("[%s] ES indexing failed (non-fatal): %s", run_id, _es_exc)
@@ -662,6 +661,7 @@ def run_module(
             run_id,
             status="COMPLETED",
             total_hits=str(len(results)),
+            indexed_count=str(indexed_count),
             hits_by_level=json.dumps(hits_by_level),
             results_preview=json.dumps(results_by_severity[:200]),
             output_minio_key=output_key,
@@ -838,9 +838,12 @@ def _run_hayabusa(
         )
     logger.info("[%s] Using Hayabusa rules: %s", run_id, rules_dir)
 
-    # List EVTX files we are about to scan
+    # List EVTX files we are about to scan (recursive — source filenames may
+    # keep collector path components like "evtx/Security.evtx")
     evtx_files = [
-        p.name for p in sources_dir.iterdir() if p.is_file() and p.suffix.lower() == ".evtx"
+        str(p.relative_to(sources_dir))
+        for p in sources_dir.rglob("*")
+        if p.is_file() and p.suffix.lower() == ".evtx"
     ]
     logger.info("[%s] EVTX files in sources_dir: %s", run_id, evtx_files)
     tool_meta["log"] = f"Rules: {rules_dir}\nEVTX files: {', '.join(evtx_files) or 'none'}\n"
@@ -984,6 +987,11 @@ def _parse_hayabusa_csv(path: Path, tool_meta: dict | None = None) -> list[dict]
                         event_id: int | None = int(event_id_raw) if event_id_raw else None
                     except ValueError:
                         event_id = None
+                    record_id_raw = str(row.get("RecordID") or row.get("recordId") or "")
+                    try:
+                        record_id: int | None = int(record_id_raw) if record_id_raw else None
+                    except ValueError:
+                        record_id = None
 
                     # Tags column: comma-separated MITRE ATT&CK tags
                     # e.g. "attack.defense-evasion,attack.t1059.003"
@@ -1000,6 +1008,7 @@ def _parse_hayabusa_csv(path: Path, tool_meta: dict | None = None) -> list[dict]
                             "computer": str(row.get("Computer") or row.get("computer") or ""),
                             "channel": str(row.get("Channel") or row.get("channel") or ""),
                             "event_id": event_id,
+                            "record_id": record_id,
                             "details_raw": details_raw[:2000],
                             "rule_file": str(row.get("RuleFile") or row.get("ruleFile") or ""),
                             "evtx_file": str(row.get("EvtxFile") or row.get("evtxFile") or ""),
@@ -1034,6 +1043,36 @@ def _parse_hayabusa_csv(path: Path, tool_meta: dict | None = None) -> list[dict]
     return results
 
 
+def _es_bulk_post(es_url: str, body: str, label: str, offset: int) -> dict:
+    """POST one bulk body with retries on transient transport failures.
+
+    Broken pipe / connection reset / read timeouts happen on a loaded
+    single-node ES — retry with backoff, then raise. A persistent failure must
+    NEVER be swallowed: that is how a run once reported 70k hits while only
+    1k actually landed.
+    """
+    req = urllib.request.Request(
+        f"{es_url}/_bulk",
+        data=body.encode("utf-8"),
+        headers={"Content-Type": "application/x-ndjson"},
+        method="POST",
+    )
+    last_exc: Exception | None = None
+    for attempt in range(4):
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                return json.loads(resp.read())
+        except Exception as exc:  # noqa: BLE001 - retried below, raised after the last attempt
+            last_exc = exc
+            logger.warning(
+                "%s bulk @%d: attempt %d failed (%s) — retrying", label, offset, attempt + 1, exc
+            )
+            time.sleep(2 * (attempt + 1))
+    raise RuntimeError(
+        f"{label} bulk index failed after 4 attempts (offset {offset}): {last_exc}"
+    ) from last_exc
+
+
 def _hayabusa_index_to_es(
     case_id: str,
     run_id: str,
@@ -1060,11 +1099,35 @@ def _hayabusa_index_to_es(
             headers={"Content-Type": "application/x-ndjson"},
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            result = json.loads(resp.read())
-            if result.get("errors"):
-                errs = [i for i in result.get("items", []) if i.get("index", {}).get("error")]
-                logger.warning("Hayabusa ES bulk: %d errors in batch", len(errs))
+        # Transport errors (broken pipe / reset / timeout) are usually
+        # transient on a loaded single-node ES — retry before giving up. A
+        # persistent failure must raise so the run can't report 70k hits
+        # while only a fraction actually landed (seen live: 1,000/70,434).
+        result = None
+        last_exc: Exception | None = None
+        for attempt in range(4):
+            try:
+                with urllib.request.urlopen(req, timeout=120) as resp:
+                    result = json.loads(resp.read())
+                break
+            except Exception as exc:  # noqa: BLE001 - retried below, raised after the last attempt
+                last_exc = exc
+                logger.warning(
+                    "Hayabusa ES bulk: attempt %d failed (%s) — retrying", attempt + 1, exc
+                )
+                time.sleep(2 * (attempt + 1))
+        if result is None:
+            raise RuntimeError(
+                f"Elasticsearch bulk index failed after 4 attempts "
+                f"(batch of {len(batch)} at offset {indexed}): {last_exc}"
+            ) from last_exc
+        if result.get("errors"):
+            errs = [i for i in result.get("items", []) if i.get("index", {}).get("error")]
+            sample = errs[0]["index"]["error"] if errs else ""
+            logger.warning(
+                "Hayabusa ES bulk: %d/%d docs rejected in batch @%d (first: %s)",
+                len(errs), len(batch), indexed, str(sample)[:200],
+            )
         indexed += len(batch)
 
     batch: list[dict] = []
@@ -1094,6 +1157,7 @@ def _hayabusa_index_to_es(
                 "computer": computer,
                 "channel": hit.get("channel", ""),
                 "event_id": hit.get("event_id"),
+                "record_id": hit.get("record_id"),
                 "details_raw": hit.get("details_raw", ""),
                 "rule_file": hit.get("rule_file", ""),
                 "evtx_file": hit.get("evtx_file", ""),
@@ -1360,6 +1424,10 @@ def _index_module_findings_to_es(
     lines: list[str] = []
     for hit in results:
         title = hit.get("rule_title") or hit.get("message") or module_id
+        # Hit constructors stamp their unique key as "id", not "fo_id" — reading
+        # only "fo_id" always missed, collapsing dedup to {run_id}:{rule_title}
+        # so every same-title hit in a run overwrote the previous one in ES.
+        hit_id = hit.get("fo_id") or hit.get("id")
         f = Finding(
             kind="module",
             title=title,
@@ -1369,27 +1437,59 @@ def _index_module_findings_to_es(
             timestamp=hit.get("timestamp") or ingested_at,
             timestamp_desc=f"{module_id} module",
             techniques=hit.get("techniques") or [],
-            evidence=[hit["fo_id"]] if hit.get("fo_id") else [],
+            evidence=[hit_id] if hit_id else [],
             tags=["module", module_id],
             payload={k: v for k, v in hit.items() if k not in ("details_raw",)},
             provenance={"run_id": run_id, "module_id": module_id},
-            dedup_key=f"{run_id}:{hit.get('fo_id') or title}",
+            dedup_key=f"{run_id}:{hit_id or title}",
         )
         doc = f.to_event(case_id, ingested_at=ingested_at)
         lines.append(json.dumps({"index": {"_index": index_name, "_id": doc["fo_id"]}}))
         lines.append(json.dumps(doc))
     if not lines:
         return 0
-    body = "\n".join(lines) + "\n"
-    req = urllib.request.Request(
-        f"{es_url}/_bulk",
-        data=body.encode("utf-8"),
-        headers={"Content-Type": "application/x-ndjson"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        json.loads(resp.read())
-    return len(results)
+
+    # Batch the bulk — a single request with tens of thousands of docs makes a
+    # multi-hundred-MB body that the server drops mid-stream (seen live: 70k
+    # findings → broken pipe after ~1k). Retry transient transport errors, then
+    # raise so the run surfaces the failure instead of silently losing hits.
+    written = 0
+
+    def _post(body: str, offset: int) -> None:
+        req = urllib.request.Request(
+            f"{es_url}/_bulk",
+            data=body.encode("utf-8"),
+            headers={"Content-Type": "application/x-ndjson"},
+            method="POST",
+        )
+        last_exc: Exception | None = None
+        for attempt in range(4):
+            try:
+                with urllib.request.urlopen(req, timeout=120) as resp:
+                    json.loads(resp.read())
+                return
+            except Exception as exc:  # noqa: BLE001 - retried, raised after the last attempt
+                last_exc = exc
+                logger.warning(
+                    "[%s] findings bulk @%d: attempt %d failed (%s) — retrying",
+                    run_id, offset, attempt + 1, exc,
+                )
+                time.sleep(2 * (attempt + 1))
+        raise RuntimeError(
+            f"findings bulk index failed after 4 attempts (offset {offset}): {last_exc}"
+        ) from last_exc
+
+    chunk: list[str] = []
+    for i, line in enumerate(lines):
+        chunk.append(line)
+        if (i + 1) % 1000 == 0:  # 1000 lines = 500 docs
+            _post("\n".join(chunk) + "\n", written)
+            written += len(chunk) // 2
+            chunk = []
+    if chunk:
+        _post("\n".join(chunk) + "\n", written)
+        written += len(chunk) // 2
+    return written
 
 
 def _parse_hayabusa_jsonl(path: Path, tool_meta: dict | None = None) -> list[dict]:
@@ -1782,12 +1882,26 @@ def _run_regripper(
         )
 
     results: list[dict] = []
+    skipped_unknown = 0
 
     for file_path in sorted(sources_dir.iterdir()):
         if not file_path.is_file():
             continue
 
         profile = _regripper_profile(file_path.name)
+        if profile is None:
+            # Unrecognised hive name — guessing "ntuser" used to feed arbitrary
+            # files through the ntuser plugins and produce garbage findings.
+            skipped_unknown += 1
+            logger.info(
+                "[%s] RegRipper: skipping %s — no hive profile matches the filename",
+                run_id,
+                file_path.name,
+            )
+            tool_meta["log"] += (
+                f"Skipped {file_path.name}: no RegRipper profile matches the filename\n"
+            )
+            continue
         logger.info("[%s] RegRipper: %s (profile: %s)", run_id, file_path.name, profile)
 
         try:
@@ -1814,10 +1928,22 @@ def _run_regripper(
                 (proc.stderr or "")[:200],
             )
 
+    if skipped_unknown:
+        logger.info(
+            "[%s] RegRipper: skipped %d file(s) with no matching hive profile",
+            run_id,
+            skipped_unknown,
+        )
+
     return results
 
 
-def _regripper_profile(filename: str) -> str:
+def _regripper_profile(filename: str) -> str | None:
+    """Map a hive filename to a RegRipper plugin profile.
+
+    Returns None when the filename matches no known hive — callers must skip
+    the file rather than guess a profile (running e.g. a Prefetch file through
+    the ntuser plugins only produces garbage findings)."""
     name = os.path.basename(filename).upper()
     if "NTUSER" in name or "USRCLASS" in name:
         return "ntuser"
@@ -1829,7 +1955,7 @@ def _regripper_profile(filename: str) -> str:
         return "sam"
     if name == "SECURITY":
         return "security"
-    return "ntuser"
+    return None
 
 
 def _parse_regripper_output(output: str, filename: str) -> list[dict]:
@@ -1994,7 +2120,13 @@ _REG_TRIAGE_PATHS: dict[str, list[tuple[str, str]]] = {
 MAX_REG_VALUES = 60  # per key
 
 
-def _hive_type(filename: str) -> str:
+def _hive_type(filename: str) -> str | None:
+    """Map a hive filename to a _REG_TRIAGE_PATHS key.
+
+    Returns None when the filename matches no known hive — the caller must skip
+    the file rather than guess "ntuser" (running an arbitrary file through the
+    ntuser key paths only produces garbage). Same semantics as
+    _regripper_profile()."""
     n = os.path.basename(filename).upper()
     if "NTUSER" in n:
         return "ntuser"
@@ -2008,7 +2140,7 @@ def _hive_type(filename: str) -> str:
         return "sam"
     if n == "SECURITY":
         return "security"
-    return "ntuser"
+    return None
 
 
 # ── EVTX ─────────────────────────────────────────────────────────────────────
@@ -2098,6 +2230,12 @@ def _parse_registry_triage(file_path: Path) -> list[dict]:
         return []
 
     hive_type = _hive_type(file_path.name)
+    if hive_type is None:
+        logger.info(
+            "[wintriage] skipping %s — filename matches no known registry hive",
+            file_path.name,
+        )
+        return []
     triage_paths = _REG_TRIAGE_PATHS.get(hive_type, [])
     if not triage_paths:
         return []
@@ -2644,17 +2782,26 @@ def _load_yara_library_rules(
     run_id: str,
     selected_ids: list[str] | None = None,
     case_company: str = "",
+    validate=None,
 ) -> str:
     """
     Fetch YARA rules from the library (Redis).
     If selected_ids is provided, only those rule IDs are included.
     If case_company is provided, rules with a non-empty companies list are only
     included when case_company is in that list.
-    Each rule is compiled individually before inclusion — bad rules are skipped with a warning
-    so one invalid rule never prevents the rest from running.
+    Each rule is validated before inclusion — bad rules are skipped with a warning
+    so one invalid rule never prevents the rest from running. ``validate`` is a
+    callable that raises on invalid rule source; it defaults to yara-python
+    compilation, but the CLI fallback passes a validator based on the yara binary.
     """
     try:
-        import yara
+        if validate is None:
+            import yara
+
+            def _yara_python_validate(source: str) -> None:
+                yara.compile(source=source)
+
+            validate = _yara_python_validate
 
         r = get_redis()
         all_ids = r.smembers(rk.YARA_RULES_SET)
@@ -2688,7 +2835,7 @@ def _load_yara_library_rules(
             content_str = content.decode() if isinstance(content, bytes) else content
             # Validate before including — skip rules that don't compile cleanly
             try:
-                yara.compile(source=content_str)
+                validate(content_str)
                 parts.append(content_str)
             except Exception as exc:
                 skipped += 1
@@ -2714,17 +2861,6 @@ def _run_yara(
     tool_meta: dict,
 ) -> list[dict]:
     """Scan source files with YARA rules (built-in + library + optional custom rules)."""
-    custom_rules = params.get("custom_rules", "") or ""
-    use_library = params.get("use_library_rules", True)
-    selected_ids = params.get("selected_rule_ids", None)  # list[str] | None
-    case_company = params.get("case_company", "") or ""
-
-    # Merge library rules (fetched from Redis) with any inline custom rules from the run params
-    library_rules = (
-        _load_yara_library_rules(run_id, selected_ids, case_company) if use_library else ""
-    )
-    all_extra = "\n\n".join(s for s in [custom_rules.strip(), library_rules.strip()] if s)
-
     try:
         import yara
     except ImportError:
@@ -2735,6 +2871,17 @@ def _run_yara(
                 "Ensure yara-python is installed in the processor image (pip install yara-python)."
             )
         return _run_yara_cli(run_id, work_dir, sources_dir, yara_bin, params, tool_meta)
+
+    custom_rules = params.get("custom_rules", "") or ""
+    use_library = params.get("use_library_rules", True)
+    selected_ids = params.get("selected_rule_ids", None)  # list[str] | None
+    case_company = params.get("case_company", "") or ""
+
+    # Merge library rules (fetched from Redis) with any inline custom rules from the run params
+    library_rules = (
+        _load_yara_library_rules(run_id, selected_ids, case_company) if use_library else ""
+    )
+    all_extra = "\n\n".join(s for s in [custom_rules.strip(), library_rules.strip()] if s)
 
     # Compile built-in rules + library rules + any custom rules
     try:
@@ -2810,9 +2957,62 @@ def _run_yara(
 def _run_yara_cli(
     run_id: str, work_dir: Path, sources_dir: Path, yara_bin: str, params: dict, tool_meta: dict
 ) -> list[dict]:
-    """Fallback: use the yara CLI binary."""
+    """Fallback: use the yara CLI binary.
+
+    Compiles the same rule set as the yara-python path — built-in rules plus
+    the run's selected library rules and inline custom rules — so a run
+    launched with custom_rules/selected_rule_ids behaves identically on
+    workers without yara-python installed.
+    """
+    custom_rules = params.get("custom_rules", "") or ""
+    use_library = params.get("use_library_rules", True)
+    selected_ids = params.get("selected_rule_ids", None)  # list[str] | None
+    case_company = params.get("case_company", "") or ""
+
+    def _cli_validate(source: str) -> None:
+        """Validate rule source by asking the yara binary to parse it.
+
+        Scanning an empty target: a syntax error reports 'error' on stderr
+        (and/or a non-zero exit); a valid rule set scans cleanly regardless
+        of matches."""
+        probe = work_dir / f".rule_probe_{uuid.uuid4().hex}.yar"
+        probe.write_text(source)
+        try:
+            proc = subprocess.run(
+                [yara_bin, str(probe), os.devnull],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        finally:
+            probe.unlink(missing_ok=True)
+        stderr = proc.stderr or ""
+        if proc.returncode not in (0, 1) or "error" in stderr.lower():
+            raise RuntimeError((stderr or proc.stdout or "rule does not compile").strip()[:300])
+
+    library_rules = (
+        _load_yara_library_rules(run_id, selected_ids, case_company, validate=_cli_validate)
+        if use_library
+        else ""
+    )
+    all_extra = "\n\n".join(s for s in [custom_rules.strip(), library_rules.strip()] if s)
+    source = _YARA_RULES_SOURCE + ("\n\n" + all_extra if all_extra else "")
+
+    # Fail fast like the yara-python path instead of silently scanning with a
+    # broken rules file (every scan would error and yield zero results).
+    try:
+        _cli_validate(source)
+    except Exception as exc:
+        raise RuntimeError(f"YARA rule compilation failed: {exc}") from exc
+
     rules_file = work_dir / "rules.yar"
-    rules_file.write_text(_YARA_RULES_SOURCE)
+    rules_file.write_text(source)
+
+    n_custom = custom_rules.strip().count("rule ") if custom_rules.strip() else 0
+    n_library = library_rules.strip().count("rule ") if library_rules.strip() else 0
+    tool_meta["log"] = (
+        f"Built-in rules + {n_library} library rule(s) + {n_custom} custom rule(s) [yara CLI]\n"
+    )
 
     results: list[dict] = []
 
@@ -3256,18 +3456,23 @@ def _run_cuckoo(
             "to enter the API URL, or set CUCKOO_API_URL as an environment variable."
         )
 
-    def _cuckoo_req(path: str, method: str = "GET", data=None, files=None):
+    def _cuckoo_req(path: str, method: str = "GET", data=None, files=None, fields=None):
         """Simple urllib-based Cuckoo API request."""
         url = f"{api_url}{path}"
         headers = {}
         if api_token:
             headers["Authorization"] = f"Bearer {api_token}"
 
-        if files:
+        if files or fields:
             # Multipart form — build manually
             boundary = f"----FormBoundary{uuid.uuid4().hex}"
             body_parts: list[bytes] = []
-            for field_name, (fname, fdata, ctype) in files.items():
+            for field_name, value in (fields or {}).items():
+                body_parts.append(
+                    f'--{boundary}\r\nContent-Disposition: form-data; name="{field_name}"'
+                    f"\r\n\r\n{value}\r\n".encode()
+                )
+            for field_name, (fname, fdata, ctype) in (files or {}).items():
                 body_parts.append(
                     f'--{boundary}\r\nContent-Disposition: form-data; name="{field_name}"; '
                     f'filename="{fname}"\r\nContent-Type: {ctype}\r\n\r\n'.encode()
@@ -3289,6 +3494,21 @@ def _run_cuckoo(
             return json.loads(resp.read())
 
     results: list[dict] = []
+
+    # Run params from the UI (MalwareAnalysis.jsx ToolSettings):
+    #   timeout_minutes — how long to poll for the sandbox report (clamped 1-120)
+    #   priority        — Cuckoo scheduling priority, higher runs sooner (1-3)
+    try:
+        timeout_minutes = int(params.get("timeout_minutes") or 10)
+    except (TypeError, ValueError):
+        timeout_minutes = 10
+    timeout_minutes = max(1, min(120, timeout_minutes))
+    try:
+        priority = int(params.get("priority") or 1)
+    except (TypeError, ValueError):
+        priority = 1
+    priority = max(1, min(3, priority))
+
     # Per-file outcome tracking. A submission/analysis error is NOT a detection:
     # emitting it as a hit made a run where every submission failed look like a
     # COMPLETED run with findings, and those "findings" then flowed into reports
@@ -3310,6 +3530,7 @@ def _run_cuckoo(
                     "/tasks/create/file",
                     method="POST",
                     files={"file": (file_path.name, fh, "application/octet-stream")},
+                    fields={"priority": priority},
                 )
             task_id = resp.get("task_id")
             if not task_id:
@@ -3317,8 +3538,8 @@ def _run_cuckoo(
 
             tool_meta["stdout"] += f"  Task ID: {task_id} — polling for completion…\n"
 
-            # Poll for completion (max 10 min)
-            max_wait = 600
+            # Poll for completion (bounded by the run's timeout_minutes param)
+            max_wait = timeout_minutes * 60
             waited = 0
             status = ""
             while waited < max_wait:

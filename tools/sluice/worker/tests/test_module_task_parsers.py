@@ -371,8 +371,8 @@ def test_parse_regripper_output_content_capped_at_2000():
         ("SOFTWARE", "software"),
         ("SAM", "sam"),
         ("SECURITY", "security"),
-        ("some_unknown_file.bin", "ntuser"),
-        ("", "ntuser"),
+        ("some_unknown_file.bin", None),  # no guess: caller skips unknown files
+        ("", None),
     ],
 )
 def test_regripper_profile_never_raises(filename, expected):
@@ -388,8 +388,8 @@ def test_regripper_profile_never_raises(filename, expected):
         ("SOFTWARE", "software"),
         ("SAM", "sam"),
         ("SECURITY", "security"),
-        ("weird.hive", "ntuser"),
-        ("", "ntuser"),
+        ("weird.hive", None),  # no ntuser guess: caller skips unknown files
+        ("", None),
     ],
 )
 def test_hive_type_never_raises(filename, expected):
