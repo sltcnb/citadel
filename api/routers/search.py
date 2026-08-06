@@ -295,9 +295,11 @@ def get_source_event(case_id: str, fo_id: str, _acl: dict = Depends(require_case
             detail="This event carries no source coordinates (channel/record_id) — only hayabusa detections can be traced back.",
         )
     must = [
-        {"term": {"evtx.channel": channel}},
         {"term": {"evtx.record_id": int(record_id) if str(record_id).isdigit() else record_id}},
     ]
+    # The channel can't be a hard filter: hayabusa writes abbreviated names
+    # ("Sec", "Sys", "App") while the evtx plugin stores full ones ("Security").
+    # record_id is unique per channel on a host, so host + record_id is enough.
     if computer:
         must.append({"term": {"host.hostname.keyword": computer}})
     body = {
