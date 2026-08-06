@@ -98,3 +98,65 @@ def test_clean_caps_and_collapses():
 
 def test_clean_neutralizes_fence():
     assert "```" not in _clean("```\nx\n```")
+
+
+# ── trigger_triage persistence ────────────────────────────────────────────────
+
+
+def test_failed_retriage_does_not_clobber_successful_entry(monkeypatch):
+    """A re-triage while the LLM is down produces error entries; those must not
+    overwrite a previously recorded successful rule_id → run_id mapping."""
+    import json
+
+    import fakeredis
+    import redis_keys as rk
+
+    import services.alert_triage as at
+
+    fake = fakeredis.FakeRedis(decode_responses=True)
+    monkeypatch.setattr(at, "get_redis", lambda: fake)
+
+    key = rk.case_alert_triage("case1")
+    good = {
+        "rule_id": "r1",
+        "rule_name": "R1",
+        "run_id": "run-good",
+        "status": "running",
+        "triggered_at": "2026-01-01T00:00:00+00:00",
+    }
+    fake.set(key, json.dumps({"r1": good}))
+
+    def _boom(*a, **k):
+        raise RuntimeError("LLM not configured")
+
+    monkeypatch.setattr("routers.llm_config.launch_agent_run", _boom)
+
+    matches = [{"rule": {"id": "r1", "name": "R1"}, "match_count": 2, "sample_events": []}]
+    entries = at.trigger_triage("case1", matches)
+    assert len(entries) == 1 and "error" in entries[0]
+
+    stored = json.loads(fake.get(key))
+    assert stored["r1"]["run_id"] == "run-good"
+
+
+def test_failed_triage_records_error_when_no_prior_success(monkeypatch):
+    """No prior success → the error entry IS stored (nothing better to show)."""
+    import json
+
+    import fakeredis
+    import redis_keys as rk
+
+    import services.alert_triage as at
+
+    fake = fakeredis.FakeRedis(decode_responses=True)
+    monkeypatch.setattr(at, "get_redis", lambda: fake)
+
+    def _boom(*a, **k):
+        raise RuntimeError("LLM not configured")
+
+    monkeypatch.setattr("routers.llm_config.launch_agent_run", _boom)
+
+    matches = [{"rule": {"id": "r9", "name": "R9"}, "match_count": 1, "sample_events": []}]
+    at.trigger_triage("case2", matches)
+    stored = json.loads(fake.get(rk.case_alert_triage("case2")))
+    assert "error" in stored["r9"]

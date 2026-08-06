@@ -34,7 +34,9 @@ except ImportError:
 
 import redis_keys as rk
 from auth.dependencies import get_company_filter, get_current_user, require_case_access
+from license.gate import require_feature
 from services import rule_eval
+from services.elasticsearch import validate_lucene_query
 from services.redis_mutate import mutate_json
 from services.sigma_settings import (
     get_global_sigma_enabled,
@@ -104,11 +106,13 @@ def _load_default_rules() -> list[dict]:
 
                 # sigma_hq files store a raw Sigma detection block instead of a
                 # pre-built ES query.  Convert on the fly when query is absent.
+                conv_notes: list[str] = []
                 if not query and rule.get("sigma_detection"):
                     try:
                         detection = yaml.safe_load(rule["sigma_detection"])
                         if isinstance(detection, dict):
                             query = _sigma_to_es_query({"detection": detection})
+                            conv_notes = _sigma_conversion_notes({"detection": detection})
                     except Exception as conv_exc:
                         logger.warning(
                             "sigma_detection conversion failed for '%s' in %s: %s",
@@ -139,6 +143,10 @@ def _load_default_rules() -> list[dict]:
                 for opt in ("level", "mitre"):
                     if rule.get(opt):
                         entry[opt] = rule[opt]
+                # Lossy conversions (unsupported modifiers) are flagged so the
+                # analyst knows the stored query is approximate.
+                if conv_notes:
+                    entry["conversion_note"] = "; ".join(conv_notes)
                 # A correlation block replaces the plain count>=threshold test
                 # (see services/rule_eval.py) — it must reach the evaluator.
                 if isinstance(rule.get("correlation"), dict):
@@ -339,7 +347,9 @@ def parse_sigma_rule(body: dict):
     """
     Parse a Sigma YAML string and return the derived fields WITHOUT creating a rule.
     Used by the frontend edit modal to preview / validate the ES query.
-    Returns { name, description, category, artifact_type, query, sigma_level, sigma_tags, sigma_status }.
+    Returns { name, description, category, artifact_type, query, query_valid,
+    query_error, sigma_level, sigma_tags, sigma_status } — ``query_error`` is
+    None when the produced Lucene passes the structural pre-check.
     """
     if not get_global_sigma_enabled():
         raise HTTPException(status_code=503, detail="Sigma integration is disabled on this instance.")
@@ -354,15 +364,25 @@ def parse_sigma_rule(body: dict):
         raise HTTPException(status_code=422, detail=f"YAML parse error: {exc}")
     if not isinstance(sigma, dict) or not sigma.get("title"):
         raise HTTPException(status_code=422, detail="Sigma rule must have a 'title' field.")
+    try:
+        query = _sigma_to_es_query(sigma)
+    except SigmaConversionError as exc:
+        raise HTTPException(status_code=422, detail=f"Unconvertible Sigma rule: {exc}") from exc
+    # Test-run the produced Lucene through the structural validator so the
+    # preview surfaces conversion output ES would 400 on, not just a string.
+    query_error = validate_lucene_query(query)
     return {
         "name": sigma.get("title", "Untitled"),
         "description": sigma.get("description", ""),
         "category": _sigma_to_category(sigma),
         "artifact_type": _sigma_to_artifact_type(sigma),
-        "query": _sigma_to_es_query(sigma),
+        "query": query,
+        "query_valid": query_error is None,
+        "query_error": query_error,
         "sigma_level": sigma.get("level", ""),
         "sigma_tags": sigma.get("tags", []),
         "sigma_status": sigma.get("status", ""),
+        "conversion_note": "; ".join(_sigma_conversion_notes(sigma)),
     }
 
 
@@ -379,7 +399,7 @@ def import_sigma_rules(body: dict):
     using a best-effort field mapper.  Complex Sigma detections (pipes,
     aggregations, near-conditions) are stored as-is with a note to review.
 
-    Returns { "imported": N, "skipped": N, "rules": [...] }
+    Returns { "imported": N, "skipped": N, "degraded": N, "rules": [...] }
     """
     if not get_global_sigma_enabled():
         raise HTTPException(status_code=503, detail="Sigma integration is disabled on this instance.")
@@ -399,6 +419,7 @@ def import_sigma_rules(body: dict):
     existing_names = {rl["name"].lower() for rl in rules}
 
     imported, skipped, new_rules, skip_reasons = 0, 0, [], []
+    degraded: list[dict] = []
     for raw_yaml in raw_list:
         try:
             sigma = yaml.safe_load(raw_yaml)
@@ -432,9 +453,15 @@ def import_sigma_rules(body: dict):
             )
             continue
 
-        query = _sigma_to_es_query(sigma)
+        try:
+            query = _sigma_to_es_query(sigma)
+        except SigmaConversionError as exc:
+            skipped += 1
+            skip_reasons.append({"reason": f"Unconvertible Sigma rule: {exc}", "title": name})
+            continue
         category = _sigma_to_category(sigma)
         art_type = _sigma_to_artifact_type(sigma)
+        notes = _sigma_conversion_notes(sigma)
 
         new_rule = {
             "id": str(uuid.uuid4())[:8],
@@ -453,6 +480,9 @@ def import_sigma_rules(body: dict):
             "sigma_status": sigma.get("status", ""),
             "companies": body.get("companies", []),
         }
+        if notes:
+            new_rule["conversion_note"] = "; ".join(notes)
+            degraded.append({"title": name, "note": new_rule["conversion_note"]})
         rules.append(new_rule)
         existing_names.add(name.lower())
         new_rules.append(new_rule)
@@ -474,6 +504,8 @@ def import_sigma_rules(body: dict):
     return {
         "imported": imported,
         "skipped": skipped,
+        "degraded": len(degraded),
+        "degraded_rules": degraded,
         "rules": new_rules,
         "skip_reasons": skip_reasons,
     }
@@ -488,9 +520,9 @@ _SIGMA_FIELD_MAP: dict[str, str] = {
     "event_id": "evtx.event_id",
     # Process
     "commandline": "process.command_line",
-    "image": "process.executable",
-    "parentcommandline": "process.parent.command_line",
-    "parentimage": "process.parent.executable",
+    "image": "process.path",
+    "parentcommandline": "process.parent_command_line",
+    "parentimage": "process.parent_executable",
     "originalfilename": "process.name",
     # User / Identity
     "targetusername": "user.name",
@@ -501,18 +533,29 @@ _SIGMA_FIELD_MAP: dict[str, str] = {
     "hostname": "host.hostname",
     "computername": "host.hostname",
     # Network
-    "destinationip": "network.dest_ip",
-    "destinationport": "network.dest_port",
+    "destinationip": "network.dst_ip",
+    "destinationport": "network.dst_port",
     "sourceip": "network.src_ip",
     "sourceport": "network.src_port",
     # Generic
     "message": "message",
-    "keywords": "evtx.keywords",
     "channel": "evtx.channel",
     # Registry
-    "targetobject": "registry.key",
-    "details": "registry.value",
+    "targetobject": "registry.key_path",
 }
+
+# Sigma fields with no equivalent in the case index template — a rule keyed on
+# one would emit a never-matching query, so it is rejected as unconvertible.
+# ("details" = registry value *data*: no parser emits a value-data field.)
+_SIGMA_UNMAPPABLE_FIELDS = {"keywords", "details"}
+
+# Sigma value modifiers we cannot reproduce in Lucene — rules using them are
+# stored with a conversion_note so an analyst knows the query is approximate.
+_SIGMA_UNSUPPORTED_MODIFIERS = {"base64offset", "cidr", "windash", "expand"}
+
+
+class SigmaConversionError(ValueError):
+    """Raised when a Sigma rule cannot be converted to a meaningful ES query."""
 
 
 def _map_field(field: str) -> str:
@@ -520,24 +563,39 @@ def _map_field(field: str) -> str:
     return _SIGMA_FIELD_MAP.get(field.lower(), field.lower())
 
 
+# Lucene special chars that must be backslash-escaped inside a term, plus the
+# space — an unescaped space splits the term and silently changes the query.
+_LUCENE_VALUE_SPECIALS_RE = re.compile(r'([+\-!(){}\[\]^"~*?:\\\/ ])')
+
+
+def _escape_lucene_value(value: str) -> str:
+    """Escape a literal value for embedding in a Lucene query_string term."""
+    return _LUCENE_VALUE_SPECIALS_RE.sub(r"\\\1", value)
+
+
 def _sigma_value_to_es(field: str, value: Any, modifiers: list[str]) -> str:
     """Convert a single Sigma field+value to an ES Lucene clause."""
+    if field.lower() in _SIGMA_UNMAPPABLE_FIELDS:
+        raise SigmaConversionError(f"no Elasticsearch equivalent for Sigma field '{field}'")
     es_field = _map_field(field)
+
+    if value is None:
+        # Sigma `field: null` matches events where the field is absent.
+        return f"NOT _exists_:{es_field}"
+
     str_val = str(value)
 
     if "contains" in modifiers:
-        return f"{es_field}:*{str_val}*"
+        return f"{es_field}:*{_escape_lucene_value(str_val)}*"
     if "startswith" in modifiers:
-        return f"{es_field}:{str_val}*"
+        return f"{es_field}:{_escape_lucene_value(str_val)}*"
     if "endswith" in modifiers:
-        return f"{es_field}:*{str_val}"
+        return f"{es_field}:*{_escape_lucene_value(str_val)}"
     if "re" in modifiers:
         # Regex — wrap in /<regex>/
         return f"{es_field}:/{str_val}/"
     # Exact / default
-    # Escape special Lucene chars in the value
-    escaped = re.sub(r'([+\-!(){}\[\]^"~*?:\\\/])', r"\\\1", str_val)
-    return f"{es_field}:{escaped}"
+    return f"{es_field}:{_escape_lucene_value(str_val)}"
 
 
 def _sigma_selection_to_es(selection: Any) -> str:
@@ -551,8 +609,9 @@ def _sigma_selection_to_es(selection: Any) -> str:
             modifiers = parts[1:] if len(parts) > 1 else []
 
             if isinstance(value, list):
-                # Multiple values → OR
-                sub = " OR ".join(_sigma_value_to_es(field, v, modifiers) for v in value)
+                # Multiple values → OR, unless `|all` requires every value
+                joiner = " AND " if "all" in modifiers else " OR "
+                sub = joiner.join(_sigma_value_to_es(field, v, modifiers) for v in value)
                 clauses.append(f"({sub})")
             else:
                 clauses.append(_sigma_value_to_es(field, value, modifiers))
@@ -568,6 +627,30 @@ def _sigma_selection_to_es(selection: Any) -> str:
     return "*"
 
 
+def _sigma_conversion_notes(sigma: dict) -> list[str]:
+    """Human-readable notes about lossy parts of a rule's conversion."""
+    detection = sigma.get("detection", {})
+    if not isinstance(detection, dict):
+        return []
+    notes: list[str] = []
+    for key, val in detection.items():
+        if key in ("condition", "timeframe"):
+            continue
+        selections = val if isinstance(val, list) else [val]
+        for sel in selections:
+            if not isinstance(sel, dict):
+                continue
+            for raw_field in sel:
+                parts = raw_field.split("|")
+                bad = [m for m in parts[1:] if m in _SIGMA_UNSUPPORTED_MODIFIERS]
+                if bad:
+                    notes.append(
+                        f"field '{parts[0]}' uses unsupported modifier(s) {', '.join(bad)}"
+                        " — query is approximate, review before relying on it"
+                    )
+    return list(dict.fromkeys(notes))
+
+
 def _sigma_to_es_query(sigma: dict) -> str:
     """
     Best-effort conversion of a Sigma detection block to an ES Lucene query.
@@ -577,11 +660,17 @@ def _sigma_to_es_query(sigma: dict) -> str:
       - condition: selection  (AND of all fields)
       - condition: selection1 or selection2
       - condition: selection1 and not filter1
+      - condition: 1 of selection* / all of them (incl. under `not`)
+      - Parenthesised expressions — precedence: parens > not > and > or
     Unsupported constructs produce a query placeholder with a review note.
+
+    Raises SigmaConversionError when the rule keys on a field with no
+    Elasticsearch equivalent — storing a never-matching query is worse.
     """
     detection = sigma.get("detection", {})
     if not detection:
-        return f"title:{sigma.get('title', '*')}"
+        title = str(sigma.get("title", "")).replace("\\", "\\\\").replace('"', '\\"')
+        return f'title:"{title}"' if title else "*"
 
     condition = str(detection.get("condition", "selection")).strip().lower()
 
@@ -594,8 +683,7 @@ def _sigma_to_es_query(sigma: dict) -> str:
             continue
         selection_map[key] = _sigma_selection_to_es(val)
 
-    # Evaluate simple condition expressions
-    # Normalise: replace "and not" with a placeholder for negation
+    # Evaluate the condition expression
     try:
         result = _eval_condition(condition, selection_map)
     except Exception:
@@ -607,51 +695,117 @@ def _sigma_to_es_query(sigma: dict) -> str:
     return result or "*"
 
 
-def _eval_condition(condition: str, sel_map: dict[str, str]) -> str:
-    """Parse a simple Sigma condition string."""
-    import re as _re
+_COND_TOKEN_RE = re.compile(r"\(|\)|[^\s()]+")
 
+
+def _resolve_of(quantifier: str, pattern: str, sel_map: dict[str, str]) -> str:
+    """Resolve `1 of X` / `all of X` to the OR/AND of the matching selections.
+
+    `them` selects every named selection; otherwise X is a selection-name
+    pattern where `*` is a wildcard. Returns "" when nothing matches — the
+    caller treats an empty clause as no constraint (a negation of an empty
+    selection set must not poison the whole query)."""
+    if pattern == "them":
+        matched = list(sel_map.values())
+    else:
+        # Escape the selection-name pattern before turning the wildcard `*`
+        # into `.*` — prevents regex injection from rule-supplied names.
+        pattern_re = re.compile(
+            "^" + re.escape(pattern).replace(r"\*", ".*") + "$", re.IGNORECASE
+        )
+        matched = [v for k, v in sel_map.items() if pattern_re.match(k)]
+    if not matched:
+        return ""
+    joiner = " OR " if quantifier == "1" else " AND "
+    return joiner.join(f"({v})" for v in matched)
+
+
+def _eval_condition(condition: str, sel_map: dict[str, str]) -> str:
+    """Parse a Sigma condition string (precedence: parens > not > and > or)."""
     cond = condition.strip()
 
-    # Bound input length — the splitter regexes below run on `cond`, so a
-    # pathologically long condition could cause super-linear backtracking.
+    # Bound input length — the parser runs on `cond`, so a pathologically long
+    # condition could otherwise burn unbounded time.
     if len(cond) > 2000:
         raise ValueError("Sigma condition too long")
 
-    # "1 of selection*" / "all of selection*"
-    m = _re.match(r"^(1|all) of (\S+)$", cond)
-    if m:
-        quantifier, pattern = m.groups()
-        # Escape the selection-name pattern before turning the wildcard `*`
-        # into `.*` — prevents regex injection from rule-supplied names.
-        pattern_re = _re.compile("^" + _re.escape(pattern).replace(r"\*", ".*") + "$")
-        matched = [v for k, v in sel_map.items() if pattern_re.match(k)]
-        joiner = " OR " if quantifier == "1" else " AND "
-        return joiner.join(f"({v})" for v in matched) if matched else "*"
+    tokens = _COND_TOKEN_RE.findall(cond)
+    pos = 0
 
-    # Replace "and not" with special token
-    parts = _re.split(r"\s+and\s+not\s+", cond)
-    if len(parts) == 2:
-        include, exclude = parts
-        inc_q = _eval_condition(include.strip(), sel_map)
-        exc_q = _eval_condition(exclude.strip(), sel_map)
-        return f"({inc_q}) AND NOT ({exc_q})"
+    def peek() -> str | None:
+        return tokens[pos].lower() if pos < len(tokens) else None
 
-    # "or" splits
-    or_parts = [p.strip() for p in _re.split(r"\s+or\s+", cond)]
-    if len(or_parts) > 1:
-        clauses = [_eval_condition(p, sel_map) for p in or_parts]
-        return " OR ".join(f"({c})" for c in clauses if c)
+    def advance() -> str:
+        nonlocal pos
+        tok = tokens[pos]
+        pos += 1
+        return tok
 
-    # "and" splits
-    and_parts = [p.strip() for p in _re.split(r"\s+and\s+", cond)]
-    if len(and_parts) > 1:
-        clauses = [_eval_condition(p, sel_map) for p in and_parts]
-        return " AND ".join(f"({c})" for c in clauses if c)
+    def parse_or() -> str:
+        clauses = [parse_and()]
+        while peek() == "or":
+            advance()
+            clauses.append(parse_and())
+        clauses = [c for c in clauses if c]
+        if not clauses:
+            return ""
+        out = clauses[0]
+        for c in clauses[1:]:
+            out = f"({out}) OR ({c})"
+        return out
 
-    # Single selection name
-    cond_clean = cond.strip("() ")
-    return sel_map.get(cond_clean, cond_clean)
+    def parse_and() -> str:
+        clauses = [parse_not()]
+        while peek() == "and":
+            advance()
+            clauses.append(parse_not())
+        clauses = [c for c in clauses if c]
+        if not clauses:
+            return ""
+        out = clauses[0]
+        for c in clauses[1:]:
+            # A negated clause is already parenthesised by parse_not.
+            out = f"({out}) AND {c}" if c.startswith("NOT ") else f"({out}) AND ({c})"
+        return out
+
+    def parse_not() -> str:
+        if peek() == "not":
+            advance()
+            operand = parse_not()
+            # Negating an empty selection set imposes no constraint.
+            return f"NOT ({operand})" if operand else ""
+        return parse_primary()
+
+    def parse_primary() -> str:
+        nonlocal pos
+        tok = peek()
+        if tok == "(":
+            advance()
+            inner = parse_or()
+            if peek() != ")":
+                raise ValueError("unbalanced parenthesis in Sigma condition")
+            advance()
+            return inner
+        if tok in ("1", "all"):
+            saved = pos
+            advance()
+            if peek() == "of":
+                advance()
+                return _resolve_of(tok, advance(), sel_map)
+            pos = saved  # not a quantifier after all — fall through
+        name = advance()
+        if name in sel_map:
+            return sel_map[name]
+        # The condition was lowercased upstream — selection names may not be.
+        for key, val in sel_map.items():
+            if key.lower() == name:
+                return val
+        raise ValueError(f"unknown selection {name!r} in Sigma condition")
+
+    result = parse_or()
+    if pos != len(tokens):
+        raise ValueError("trailing tokens in Sigma condition")
+    return result
 
 
 # Sigma logsource product → MITRE category approximation
@@ -895,7 +1049,10 @@ def run_single_rule_against_case(
 # ── Alert auto-triage — spawn a scoped Pilot investigation per fired rule ───────
 
 
-@router.post("/cases/{case_id}/alert-rules/triage")
+@router.post(
+    "/cases/{case_id}/alert-rules/triage",
+    dependencies=[Depends(require_feature("ai_assist"))],
+)
 def triage_alerts(
     case_id: str, limit: int = 3, _acl: dict = Depends(require_case_access)
 ):

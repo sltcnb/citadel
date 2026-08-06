@@ -2,16 +2,11 @@
 
 from __future__ import annotations
 
-import json
-
-import redis_keys as rk
 from auth.dependencies import get_current_user, require_admin
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from services.sigma_settings import get_global_sigma_enabled, set_global_sigma_enabled
 from services.sigma_sync import SigmaSyncService
-
-from config import get_redis
 
 router = APIRouter(tags=["sigma-sync"])
 
@@ -101,7 +96,7 @@ def clear_sigma_rules(current_user: dict = Depends(require_admin)):
 @router.get("/sigma/rules")
 def list_sigma_rules(skip: int = 0, limit: int = 50, current_user: dict = Depends(require_admin)):
     """List synced Sigma HQ rules."""
-    redis_client = get_redis()
-    rules = json.loads(redis_client.get(rk.GLOBAL_SIGMA_RULES) or "[]")
+    service = SigmaSyncService()
+    rules = service.list_rules()
 
     return {"rules": rules[skip : skip + limit], "total": len(rules), "skip": skip, "limit": limit}
