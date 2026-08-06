@@ -56,6 +56,8 @@ GLOBAL_ALERT_RULES_SEEDED = "fo:alert_rules:_global:seeded"
 GLOBAL_ALERT_RULES_MIGRATED = "fo:alert_rules:migrated_v2"
 GLOBAL_SIGMA_RULES = "fo:alert_rules:_global:sigma"
 GLOBAL_SIGMA_LAST_SYNC = "fo:alert_rules:_global:sigma:last_sync"
+# Global Sigma opt-out runtime setting ("1"/"0") — same key as api/redis_keys.py.
+GLOBAL_SIGMA_ENABLED = "fo:settings:sigma_enabled"
 
 # ── Module runs ───────────────────────────────────────────────────────────────
 MALWARE_RUNS = "fo:malware_runs"
@@ -71,6 +73,10 @@ def module_log(run_id: str) -> str:
 
 def module_cancel(run_id: str) -> str:
     return f"fo:module_cancel:{run_id}"
+
+
+def harvest_cancel(run_id: str) -> str:
+    return f"fo:harvest_cancel:{run_id}"
 
 
 # ── YARA ──────────────────────────────────────────────────────────────────────
@@ -125,3 +131,7 @@ def llm_usage_hourly(hour: int) -> str:
 ARCHIVE_SETTINGS = "fo:archive_settings"
 COMPANIES = "fo:companies"
 METRICS_HISTORY = "fo:metrics:snapshots"
+# Plugins generation counter — bumped (INCR) by the API on plugin upload/edit.
+# Workers compare it before picking a parser and reload their plugin loader
+# when it changed (same key as api/redis_keys.py).
+PLUGINS_VERSION = "fo:plugins:version"

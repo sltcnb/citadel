@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 import redis
+import redis_keys as rk
 import robustness
 from celery_app import REDIS_URL, app  # REDIS_URL carries REDIS_PASSWORD auth
 
@@ -529,7 +530,6 @@ LEVEL_CATEGORIES: dict[str, list[str]] = {
         "downloads",
         "email_outlook",
         "email_thunderbird",
-        "email_other",
         "teams",
         "slack",
         "discord",
@@ -539,7 +539,6 @@ LEVEL_CATEGORIES: dict[str, list[str]] = {
         "cloud_onedrive",
         "cloud_google_drive",
         "cloud_dropbox",
-        "cloud_other",
         "remote_access",
         "rdp",
         "ssh_ftp",
@@ -559,7 +558,6 @@ LEVEL_CATEGORIES: dict[str, list[str]] = {
         "gaming",
         "printing",
         "password_managers",
-        "vpn",
         "memory",
         "hashing",
         "file_listing",
@@ -755,6 +753,17 @@ def _update_run(r: redis.Redis, run_id: str, **fields) -> None:
         mapping={k: (json.dumps(v) if not isinstance(v, str) else v) for k, v in fields.items()},
     )
     r.expire(key, RUN_TTL)
+
+
+class _Cancelled(Exception):
+    """Raised at a cancel checkpoint when the analyst cancelled the run."""
+
+
+def _check_cancel(r: redis.Redis, run_id: str) -> None:
+    """Co-operative cancel — the API sets a flag (rk.harvest_cancel), we honour
+    it at category boundaries (same pattern as module_task._check_cancel)."""
+    if r.get(rk.harvest_cancel(run_id)):
+        raise _Cancelled()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1051,6 +1060,7 @@ def run_harvest(
     fs: _FsAccess | None = None
 
     try:
+        _check_cancel(r, run_id)  # cancelled while still queued
         _update_run(
             r,
             run_id,
@@ -1106,16 +1116,31 @@ def run_harvest(
         cat_extract_dir.mkdir()
 
         for cat in run_cats:
+            _check_cancel(r, run_id)  # cooperative cancel at category boundaries
             cat_def = HARVEST_CATEGORIES.get(cat)
             if not cat_def:
                 logger.warning("[%s] Unknown category %r — skipped", run_id, cat)
                 continue
-            if (
-                not cat_def.get("paths")
-                and not cat_def.get("dir_exts")
-                and not cat_def.get("user_paths")
-                and not cat_def.get("critical_paths")
-                and not cat_def.get("firefox")
+            # A category with no collection spec of ANY kind is a stub (e.g.
+            # hashing/file_listing are generated later, not collected from
+            # disk) — skip it. Categories that only declare chromium /
+            # user_dir_all / user_dir_recursive / recursive_paths (jumplists,
+            # downloads, recyclebin, browser_chrome, …) DO collect via the
+            # per-user / walk paths in _collect_category and must not be
+            # dropped here.
+            if not any(
+                cat_def.get(k)
+                for k in (
+                    "paths",
+                    "dir_exts",
+                    "user_paths",
+                    "critical_paths",
+                    "firefox",
+                    "chromium",
+                    "user_dir_all",
+                    "user_dir_recursive",
+                    "recursive_paths",
+                )
             ):
                 logger.debug("[%s] Category %r has no paths — skipped", run_id, cat)
                 continue
@@ -1132,14 +1157,44 @@ def run_harvest(
                 logger.error("[%s] Category %s failed: %s", run_id, cat, exc)
 
         # ── 5. Complete ────────────────────────────────────────────────────────
-        result = {
-            "status": "COMPLETED",
-            "total_dispatched": str(total_dispatched),
-            "completed_at": datetime.now(UTC).isoformat(),
-        }
+        # Never clobber a terminal CANCELLED status — the API marks the run
+        # CANCELLED the moment the analyst asks; if the cancel flag was set
+        # after our last category-boundary check, the run must stay CANCELLED.
+        current_status = r.hget(f"harvest_run:{run_id}", "status") or ""
+        if current_status == "CANCELLED":
+            result = {
+                "status": "CANCELLED",
+                "total_dispatched": str(total_dispatched),
+                "completed_at": datetime.now(UTC).isoformat(),
+            }
+            logger.info(
+                "[%s] Harvest finished after cancel request — %d jobs dispatched, "
+                "status kept CANCELLED",
+                run_id,
+                total_dispatched,
+            )
+        else:
+            result = {
+                "status": "COMPLETED",
+                "total_dispatched": str(total_dispatched),
+                "completed_at": datetime.now(UTC).isoformat(),
+            }
+            logger.info(
+                "[%s] Harvest complete — %d ingest jobs dispatched", run_id, total_dispatched
+            )
         _update_run(r, run_id, **result)
-        logger.info("[%s] Harvest complete — %d ingest jobs dispatched", run_id, total_dispatched)
         return result
+
+    except _Cancelled:
+        logger.info("[%s] Harvest run cancelled by analyst", run_id)
+        _update_run(
+            r,
+            run_id,
+            status="CANCELLED",
+            completed_at=datetime.now(UTC).isoformat(),
+        )
+        r.delete(rk.harvest_cancel(run_id))
+        return {"status": "CANCELLED", "total_dispatched": "0"}
 
     except Exception as exc:
         logger.exception("[%s] Harvest failed: %s", run_id, exc)

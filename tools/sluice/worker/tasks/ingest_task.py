@@ -22,6 +22,7 @@ from typing import Any
 import redis
 import redis_keys as rk
 import robustness
+import rule_eval
 
 try:  # pragma: no cover - observability is always present in-tree
     import observability as _obs
@@ -150,6 +151,26 @@ BULK_SIZE = int(os.getenv("BULK_SIZE", "500"))
 # Shared plugin loader instance (reused across tasks in the same worker)
 _plugin_loader = PluginLoader(Path("/app/babel"))
 
+# Plugins generation last seen by this worker process. The API INCRs
+# rk.PLUGINS_VERSION on plugin upload/edit; we reload the loader when the
+# value changes so long-lived Celery children pick up new/changed parsers
+# (the loader is otherwise static for the life of the child process).
+_plugins_version_seen: str | None = None
+
+
+def _maybe_reload_plugins(r: redis.Redis) -> None:
+    """Reload the shared plugin loader if the API bumped the plugins version."""
+    global _plugins_version_seen
+    try:
+        version = r.get(rk.PLUGINS_VERSION)
+    except Exception:  # noqa: BLE001 - never block ingestion on a version probe
+        return
+    if version is None or version == _plugins_version_seen:
+        return
+    _plugins_version_seen = version
+    logger.info("Plugins version bumped (%s) — reloading plugin loader", version)
+    _plugin_loader.reload()
+
 # Shared pool — prevents each task from creating its own pool (which exhausts Redis connections)
 _redis_pool = redis.ConnectionPool.from_url(
     REDIS_URL,
@@ -271,44 +292,53 @@ def _run_library_rules(r: redis.Redis, case_id: str) -> None:
         return not cos or case_company in cos or "*" in cos
 
     rules = [rl for rl in rules if _applies(rl)]
+
+    # Respect the Sigma opt-out (per-case override else global), same as the API
+    # run endpoints: when disabled, Sigma rules are skipped; native + custom
+    # rules still run.
+    if not rule_eval.sigma_enabled_for_case(r, case_id):
+        rules = [rl for rl in rules if not rule_eval.is_sigma_rule(rl)]
+
     if not rules:
         logger.info("[detections] case %s — no library rules to run", case_id)
         return
     matches = []
+    errors = []
     for rule in rules:
-        idx = (
-            f"fo-case-{case_id}-{rule['artifact_type']}"
-            if rule.get("artifact_type")
-            else f"fo-case-{case_id}-*"
-        )
-        body = {
-            "query": {"query_string": {"query": rule.get("query", ""), "default_operator": "AND"}},
-            "size": 5,
-            "_source": ["timestamp", "message", "host", "user", "fo_id", "artifact_type"],
-            "sort": [{"timestamp": {"order": "desc"}}],
-        }
         try:
-            resp = _es_search(idx, body)
-            count = resp["hits"]["total"]["value"]
-            if count >= int(rule.get("threshold", 1)):
-                matches.append(
-                    {
-                        "rule": rule,
-                        "match_count": count,
-                        "sample_events": [h["_source"] for h in resp["hits"]["hits"]],
-                    }
-                )
+            match = rule_eval.evaluate(case_id, rule)
+            if match:
+                matches.append(match)
         except Exception as exc:
+            # Record the failure so a broken rule (rejected query, invalid
+            # artifact_type, …) is distinguishable from a rule that simply
+            # found nothing.
             logger.debug("[detections] rule %s skipped: %s", rule.get("name"), exc)
+            errors.append({"rule": rule.get("name", ""), "error": str(exc)[:300]})
+
+    # Preserve cached LLM analyses from a previous (manual) run — overwriting
+    # the record must not wipe them.
+    run_key = rk.case_alert_run(case_id)
+    analyses: dict = {}
+    raw_prev = r.get(run_key)
+    if raw_prev:
+        try:
+            prev = json.loads(raw_prev)
+            if isinstance(prev.get("analyses"), dict):
+                analyses = prev["analyses"]
+        except (ValueError, TypeError):
+            pass
+
     run = {
         "ran_at": datetime.now(UTC).isoformat(),
         "rules_checked": len(rules),
         "matches": matches,
-        "analyses": {},
+        "errors": errors,
+        "analyses": analyses,
         "auto": True,
     }
-    r.set(rk.case_alert_run(case_id), json.dumps(run))
-    r.expire(rk.case_alert_run(case_id), 7 * 86400)
+    r.set(run_key, json.dumps(run))
+    r.expire(run_key, 7 * 86400)
 
     # Index each fired rule as a `detection` timeline event so detections are
     # searchable in the timeline like everything else. Deterministic _id
@@ -318,7 +348,7 @@ def _run_library_rules(r: redis.Redis, case_id: str) -> None:
         for m in matches:
             rule = m["rule"]
             rid = rule.get("id") or rule.get("name", "")
-            sev = (rule.get("sigma_level") or "medium").lower()
+            sev = rule_eval.rule_severity(rule)
             ts = ""
             if m.get("sample_events"):
                 ts = m["sample_events"][0].get("timestamp", "")
@@ -360,7 +390,7 @@ def _fire_alert_webhooks(r: redis.Redis, case_id: str, matches: list, ran_at: st
     summary = [
         {
             "rule_name": (m.get("rule") or {}).get("name", "?"),
-            "level": (m.get("rule") or {}).get("level", ""),
+            "level": rule_eval.rule_severity(m.get("rule") or {}),
             "match_count": m.get("match_count", 0),
         }
         for m in matches[:20]
@@ -384,6 +414,13 @@ def _fire_alert_webhooks(r: redis.Redis, case_id: str, matches: list, ran_at: st
     )
 
 
+# Debounce window for the deferred detection chain. The lock TTL must cover the
+# schedule countdown — a shorter TTL lets a second chain start while one is
+# still pending, which used to double-run detections and double-fire webhooks.
+_DETECTION_COUNTDOWN = 20
+_DETECTION_LOCK_TTL = 30  # > countdown, so the lock outlives each scheduled hop
+
+
 def _auto_run_alert_rules(r: redis.Redis, case_id: str) -> None:
     """Schedule a deferred detection-rules run for a case.
 
@@ -392,13 +429,20 @@ def _auto_run_alert_rules(r: redis.Redis, case_id: str) -> None:
     so detections fire ONCE after the last job finishes — not per-job.
     """
     # Debounce — only the first completion within a window schedules a chain.
-    if not r.set(rk.case_alert_run_lock(case_id), "1", ex=15, nx=True):
+    # The token identifies the owning chain so hops can extend the lock and a
+    # superseded chain can bow out instead of running in parallel.
+    token = uuid.uuid4().hex
+    if not r.set(rk.case_alert_run_lock(case_id), token, ex=_DETECTION_LOCK_TTL, nx=True):
         return
     # Defer execution — give the queue time to drain.
     try:
-        maybe_run_detections.apply_async(args=[case_id], countdown=20)
+        maybe_run_detections.apply_async(
+            args=[case_id], kwargs={"_token": token}, countdown=_DETECTION_COUNTDOWN
+        )
     except Exception as exc:
         logger.warning("[detections] case %s — could not schedule deferred run: %s", case_id, exc)
+        # Nothing will run — release the lock so the next completion can retry.
+        r.delete(rk.case_alert_run_lock(case_id))
 
 
 # ── ZIP auto-expansion helpers ────────────────────────────────────────────────
@@ -409,7 +453,17 @@ JOB_TTL = 604800  # 7 days — matches api/services/jobs.py
 
 
 def _is_fo_zip(path: Path) -> bool:
-    """Return True if the file is a ZIP archive that should be expanded into child jobs."""
+    """Return True if the file is a ZIP archive that should be expanded into child jobs.
+
+    Only ``*.zip`` names qualify — matching the direct-upload path in
+    api/routers/ingest.py, which expands by extension. A bare ``is_zipfile()``
+    check also matches ZIP-based *documents* (.docx/.xlsx/.pptx): a harvested
+    invoice.docx in a bundle was being exploded into docProps/core.xml &
+    friends, each becoming its own junk ingest job (and, before the plist
+    parser hardened its claims, one "<null>" plist event per XML part).
+    """
+    if path.suffix.lower() != ".zip":
+        return False
     try:
         return _zipfile.is_zipfile(str(path))
     except Exception:
@@ -678,24 +732,55 @@ def _expand_tar_into_child_jobs(
     return count
 
 
+def _release_detection_lock(r: redis.Redis, case_id: str, token: str) -> None:
+    """Delete the debounce lock only if this chain still owns it."""
+    try:
+        if r.get(rk.case_alert_run_lock(case_id)) == token:
+            r.delete(rk.case_alert_run_lock(case_id))
+    except Exception:  # noqa: BLE001 - lock hygiene must never fail the task
+        pass
+
+
 @app.task(bind=True, name="ingest.maybe_run_detections", queue="ingest")
-def maybe_run_detections(self, case_id: str, _attempts: int = 0):
+def maybe_run_detections(self, case_id: str, _attempts: int = 0, _token: str | None = None):
     """Deferred detection runner — chains itself until the case is idle, then
     fires every library rule once. Triggered by job-completion hooks."""
     r = get_redis()
-    if _case_has_active_jobs(r, case_id):
-        if _attempts >= 60:  # safety cap — ~20 minutes max chain
-            logger.warning(
-                "[detections] case %s — gave up waiting (still active after 60 retries)", case_id
-            )
-            return {"status": "abandoned"}
-        # Still ingesting — re-check in 20 s.
-        maybe_run_detections.apply_async(
-            args=[case_id], kwargs={"_attempts": _attempts + 1}, countdown=20
-        )
-        return {"status": "deferred", "attempt": _attempts + 1}
-    # Idle — fire library rules + watchlist sweep in one pass.
+    lock_key = rk.case_alert_run_lock(case_id)
+    if _token is None:
+        # Direct invocation (no scheduler token): take the lock ourselves; if
+        # another chain holds it this run would be a duplicate — skip.
+        _token = uuid.uuid4().hex
+        if not r.set(lock_key, _token, ex=_DETECTION_LOCK_TTL, nx=True):
+            return {"status": "skipped", "reason": "locked"}
+    release = False
     try:
+        if _case_has_active_jobs(r, case_id):
+            if _attempts >= 60:  # safety cap — ~20 minutes max chain
+                logger.warning(
+                    "[detections] case %s — gave up waiting (still active after 60 retries)",
+                    case_id,
+                )
+                # Release happens in the finally block below.
+                release = True
+                return {"status": "abandoned"}
+            # Still ingesting — re-check in 20 s. Re-acquire (extend) the
+            # debounce lock for the next hop; if it lapsed and another chain
+            # claimed it, bow out — parallel chains double-run detections and
+            # double-fire webhooks.
+            if r.get(lock_key) == _token:
+                r.set(lock_key, _token, ex=_DETECTION_LOCK_TTL)
+            elif not r.set(lock_key, _token, ex=_DETECTION_LOCK_TTL, nx=True):
+                logger.info("[detections] case %s — chain superseded by a newer schedule", case_id)
+                return {"status": "superseded", "attempt": _attempts}
+            maybe_run_detections.apply_async(
+                args=[case_id],
+                kwargs={"_attempts": _attempts + 1, "_token": _token},
+                countdown=_DETECTION_COUNTDOWN,
+            )
+            return {"status": "deferred", "attempt": _attempts + 1}
+        # Idle — fire library rules + watchlist sweep in one pass.
+        release = True
         # Per-case auto-run flag: operator can disable detection auto-run.
         if r.hget(f"case:{case_id}", "auto_detections") == "0":
             logger.info("[detections] case %s — auto-detections disabled, skipping", case_id)
@@ -719,8 +804,11 @@ def maybe_run_detections(self, case_id: str, _attempts: int = 0):
         # Chain the API-side tail: AI risk analysis (plan-gated).
         _trigger_finalize_chain(case_id)
     finally:
-        # Release the schedule lock so the next ingest cycle can chain again.
-        r.delete(rk.case_alert_run_lock(case_id))
+        # Release the schedule lock so the next ingest cycle can chain again —
+        # but only if this chain still owns it (a superseding chain's lock is
+        # not ours to delete).
+        if release:
+            _release_detection_lock(r, case_id, _token)
     return {"status": "completed"}
 
 
@@ -788,6 +876,9 @@ def _run_watchlist(r: redis.Redis, case_id: str) -> None:
             _q = f"({_q}) AND {not_clause}"
         body = {
             "size": 0,
+            # Without this ES stops counting at 10 000 — a busy watchlist hit
+            # would report exactly 10 000 forever.
+            "track_total_hits": True,
             "query": {
                 "query_string": {
                     "query": _q,
@@ -1001,6 +1092,8 @@ def process_artifact(
             return {"status": "COMPLETED", "events_indexed": 0, "child_jobs": child_count}
 
         # ── 3. Find matching plugin ───────────────────────────────────────────
+        # Pick up plugins uploaded/edited via the API since this child started.
+        _maybe_reload_plugins(r)
         # Honour per-job plugin override stored at upload/reingest time.
         plugin_hint = r.hget(f"job:{job_id}", "plugin_hint") or ""
         if plugin_hint:
@@ -1440,6 +1533,51 @@ def _is_valid_timestamp(ts: str) -> bool:
 _validation_warnings: dict[str, int] = {}
 
 
+def _event_is_hollow(event: dict) -> bool:
+    """True when an event carries zero forensic content and must be dropped.
+
+    This is the signature of a plugin that claimed a file it cannot actually
+    parse and emitted a row anyway — e.g. the plist parser dumping
+    ``core.xml: <null>`` for an OOXML part, or a JSON ``null`` literal becoming
+    ``config.json | key: <null>``. The message ends in a null marker AND no
+    payload field adds anything beyond what the message already prints
+    (filenames / key names restated in the message don't count as content).
+    Enforced centrally so no ingest source (direct upload, ZIP/TAR bundle
+    expansion, S3 triage pull) can put hollow rows on a timeline.
+    """
+    msg = event.get("message")
+    if not isinstance(msg, str):
+        return False
+    s = msg.strip().lower()
+    if not s:
+        return False
+    tail = s.rsplit(":", 1)[-1].rsplit("=", 1)[-1].rsplit("|", 1)[-1].strip()
+    if tail not in ("<null>", "null", "none"):
+        return False
+    # Message reports a null — verify no payload field carries real content.
+    for k, v in event.items():
+        if k in (
+            "message",
+            "timestamp",
+            "timestamp_desc",
+            "artifact_type",
+            "fo_id",
+            "host",
+            "user",
+            "process",
+            "network",
+        ):
+            continue
+        values = v.values() if isinstance(v, dict) else (v if isinstance(v, list) else [v])
+        for x in values:
+            if x is None or x == "":
+                continue
+            if isinstance(x, str) and x.lower() in s:
+                continue  # filename / key name already printed in the message
+            return False  # real content — the row is worth keeping
+    return True
+
+
 def _looks_like_stringified_dict(s: str) -> bool:
     """Heuristic — a 'message' that is just str(some_dict) is lazy."""
     if not isinstance(s, str) or len(s) < 8:
@@ -1512,12 +1650,23 @@ def _validate_event(event: dict, plugin_name: str, job_id: str) -> dict:
     Enforce the event contract. Mutates and returns the event.
 
     Rules:
+      0. Hollow events (message is a null-value dump, no payload content) are
+         rejected outright — a parser must never put "<null>" rows on a timeline.
       1. message must be a non-empty string (loader fills generic if missing).
       2. message must not be a naive stringified dict (lazy parsing).
       3. For STRUCTURED_ARTIFACTS, raw must be a non-empty dict.
       4. Drop None values in enrichment dicts so ES mapping stays clean.
     """
     from citadel_contracts import STRUCTURED_ARTIFACTS
+
+    if _event_is_hollow(event):
+        _validation_warnings[f"{plugin_name}:hollow_event"] = (
+            _validation_warnings.get(f"{plugin_name}:hollow_event", 0) + 1
+        )
+        raise ValueError(
+            f"hollow event rejected (message={event.get('message')!r}) — "
+            "plugin emitted a null-content row"
+        )
 
     art_type = event.get("artifact_type", "generic")
     msg = event.get("message", "")
