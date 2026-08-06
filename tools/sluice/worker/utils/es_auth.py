@@ -43,8 +43,26 @@ def install_es_auth() -> None:
         return
     mgr = urllib.request.HTTPPasswordMgrWithDefaultRealm()
     mgr.add_password(None, ES_URL, _USER, _PASSWORD)
+
+    # Preemptive auth for the ES host. HTTPBasicAuthHandler only retries AFTER
+    # a 401 — and ES answers 401 early then closes the connection, so a client
+    # still streaming a >1MB bulk body gets a broken pipe instead of the 401 it
+    # could answer. That is exactly what dropped 69k hayabusa hits: batches
+    # under ~1MB squeaked through, bigger ones never got the retry.
+    class _ESPreemptiveAuth(urllib.request.BaseHandler):
+        def http_request(self, req):  # noqa: N802 - urllib handler API
+            if req.full_url.startswith(ES_URL) and "Authorization" not in req.headers:
+                import base64
+
+                cred = base64.b64encode(f"{_USER}:{_PASSWORD}".encode()).decode()
+                req.add_header("Authorization", f"Basic {cred}")
+            return req
+
     urllib.request.install_opener(
-        urllib.request.build_opener(urllib.request.HTTPBasicAuthHandler(mgr))
+        urllib.request.build_opener(
+            _ESPreemptiveAuth(),
+            urllib.request.HTTPBasicAuthHandler(mgr),
+        )
     )
     _installed = True
     logger.info("Installed scoped Elasticsearch basic-auth for %s", ES_URL)

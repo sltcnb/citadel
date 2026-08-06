@@ -35,7 +35,9 @@ from __future__ import annotations
 import logging
 import multiprocessing
 import os
+import queue as _queue
 import signal
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -300,7 +302,26 @@ def run_limited(
         proc.start()
     finally:
         _cur._config["daemon"] = _saved_daemon
-    proc.join(timeout)
+    # Drain the result queue WHILE the child runs — never join first.
+    # multiprocessing.Queue.put() hands big payloads to a feeder thread that
+    # flushes through a ~64KB pipe; the child only exits once that flush is
+    # read. join-before-read deadlocks every run whose result exceeds the pipe
+    # buffer (a 50MB Hayabusa CSV → hundreds of MB of pickled hits): the binary
+    # would finish, the child would hang flushing at 0% CPU, and the run died
+    # at the wall-clock timeout with its results complete but undelivered.
+    deadline = time.monotonic() + timeout
+    result_msg = None
+    while True:
+        try:
+            result_msg = queue.get(timeout=0.5)
+            break
+        except _queue.Empty:
+            if not proc.is_alive():
+                break  # child exited/crashed without delivering — exitcode path below
+            if time.monotonic() > deadline:
+                break  # real wall-clock timeout
+    # With the payload drained the child's feeder can flush and exit.
+    proc.join(max(5.0, deadline - time.monotonic()))
 
     if proc.is_alive():
         logger.warning(
@@ -326,15 +347,15 @@ def run_limited(
             f"mem_limit={mem_bytes // 1024 // 1024}MB)"
         )
 
-    try:
-        status, payload = queue.get_nowait()
-    except Exception:
+    if result_msg is None:
         # Child died without ever reporting (e.g. killed between setrlimit and
         # the try/except installing) — treat as a limit hit rather than hang.
         raise ResourceLimitExceeded(
             f"parser exited (code={exitcode}) without producing a result — "
             "likely killed for exceeding a resource limit"
-        ) from None
+        )
+
+    status, payload = result_msg
 
     if status == "limit":
         raise ResourceLimitExceeded(payload)
