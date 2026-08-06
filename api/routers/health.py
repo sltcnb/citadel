@@ -3,6 +3,7 @@
 import urllib.request
 
 from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 
 from config import settings
 
@@ -41,12 +42,19 @@ async def liveness():
 
 @router.get("/health/ready")
 def readiness():
-    """Readiness probe — checks ES and Redis connectivity."""
+    """Readiness probe — checks ES and Redis connectivity.
+
+    Returns HTTP 503 when a dependency is down so the k8s httpGet probe
+    (which only honours the status code) actually removes the pod from
+    rotation; the body still details which dependency failed."""
     es_ok = _check_es()
     redis_ok = _check_redis()
-    status = "ready" if (es_ok and redis_ok) else "not_ready"
-    return {
-        "status": status,
+    ready = es_ok and redis_ok
+    body = {
+        "status": "ready" if ready else "not_ready",
         "elasticsearch": "ok" if es_ok else "unavailable",
         "redis": "ok" if redis_ok else "unavailable",
     }
+    if not ready:
+        return JSONResponse(status_code=503, content=body)
+    return body

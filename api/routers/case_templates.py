@@ -19,11 +19,12 @@ import re
 import uuid
 from datetime import UTC, datetime
 
+import redis_keys as rk
 from auth.dependencies import get_current_user, require_admin, require_case_access
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from services.redis_mutate import mutate_json
 
 from config import get_redis
-from services.redis_mutate import mutate_json
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["case-templates"])
@@ -437,11 +438,15 @@ def apply_template(
     new_tags = list({*existing_tags, *tpl["tags"]})
     r.hset(f"case:{case_id}", "tags", json.dumps(new_tags))
 
-    # 3) Write the report skeleton into analyst notes (don't overwrite if non-empty)
-    notes_key = f"case:{case_id}:notes"
-    existing_notes = r.get(notes_key)
+    # 3) Write the report skeleton into analyst notes (don't overwrite if non-empty).
+    # Same hash + record shape routers/notes.py uses, so the skeleton shows up in
+    # the notes editor, in reports and in archive exports.
+    existing_notes = r.hget(rk.case_notes(case_id), "body")
     if not existing_notes:
-        r.set(notes_key, tpl["notes"])
+        r.hset(
+            rk.case_notes(case_id),
+            mapping={"body": tpl["notes"], "updated_at": datetime.now(UTC).isoformat()},
+        )
 
     return {
         "template": tpl["id"],

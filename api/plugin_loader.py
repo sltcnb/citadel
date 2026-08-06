@@ -70,6 +70,12 @@ class PluginLoader:
         else:
             logger.debug("Custom ingester directory %s not found — skipping", self.ingester_dir)
 
+        # Sort descending by PLUGIN_PRIORITY so high-priority specific parsers
+        # are always tried before generic fallbacks (log2timeline, plaso).
+        # getattr default=50 keeps old plugins (pre-PLUGIN_PRIORITY) working
+        # without a full container rebuild.
+        self._plugin_classes.sort(key=lambda c: getattr(c, "PLUGIN_PRIORITY", 50), reverse=True)
+
         self._loaded = True
         logger.info(
             "Loaded %d plugin class(es): %s",
@@ -117,6 +123,17 @@ class PluginLoader:
                     return plugin_class
             except Exception as exc:
                 logger.warning("Plugin %s.can_handle() raised: %s", plugin_class.__name__, exc)
+        return None
+
+    def get_plugin_by_name(self, name: str) -> type | None:
+        """Return a plugin class by exact PLUGIN_NAME, ignoring can_handle."""
+        if not self._loaded:
+            self.load()
+        name_lower = name.lower()
+        for plugin_class in self._plugin_classes:
+            if plugin_class.PLUGIN_NAME.lower() == name_lower:
+                return plugin_class
+        logger.warning("No plugin named %r found", name)
         return None
 
     def list_plugins(self) -> list[dict]:

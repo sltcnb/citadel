@@ -23,6 +23,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import urllib.error
 from datetime import UTC, datetime
 
 from config import get_redis
@@ -86,11 +87,39 @@ def _release_lock(r, token: str) -> None:
         pass
 
 
+# One cheap existence check per process; ES being down must not be re-probed
+# on every request, but a transient failure must not be cached either.
+_es_index_checked = False
+
+
+def _ensure_es_index() -> None:
+    """Create the audit index explicitly, once per process.
+
+    Left to auto-creation (the first ``PUT _doc``), the index inherits the ES
+    default ``number_of_replicas: 1`` — on a single-node cluster that replica
+    can never be allocated, so the cluster sits yellow forever with one
+    permanently unassigned shard."""
+    global _es_index_checked
+    if _es_index_checked:
+        return
+    from services.elasticsearch import es_request
+
+    try:
+        es_request("GET", f"/{ES_INDEX}")
+    except urllib.error.HTTPError as exc:
+        if exc.code != 404:
+            raise
+        es_request("PUT", f"/{ES_INDEX}",
+                   {"settings": {"index": {"number_of_replicas": 0}}})
+    _es_index_checked = True
+
+
 def _index_es(record: dict) -> None:
     """Best-effort durable index into Elasticsearch. Never raises."""
     try:
         from services.elasticsearch import es_request
 
+        _ensure_es_index()
         es_request("PUT", f"/{ES_INDEX}/_doc/{record['seq']}", record)
     except Exception as exc:  # noqa: BLE001 — ES is optional for audit durability
         logger.warning("audit: ES indexing failed (kept in Redis) for seq=%s: %s",

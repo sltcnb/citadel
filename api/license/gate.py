@@ -65,11 +65,14 @@ def check_company_limit() -> None:
     if max_companies is None:
         return
     try:
+        import json as _json
+
         import redis_keys as _rk
 
         from config import get_redis as _get_redis
 
-        n = _get_redis().scard(_rk.COMPANIES_SET) if hasattr(_rk, "COMPANIES_SET") else 0
+        raw = _get_redis().get(_rk.COMPANIES)
+        n = len(_json.loads(raw)) if raw else 0
     except Exception:
         n = 0
     if n >= max_companies:

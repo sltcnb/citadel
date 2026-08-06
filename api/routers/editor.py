@@ -131,6 +131,17 @@ def _write(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
+def _bump_plugins_version() -> None:
+    """Signal ingest workers that plugin/ingester source changed on the shared
+    volume so they reload their plugin loader before the next parse."""
+    try:
+        from routers.plugins import bump_plugins_version
+
+        bump_plugins_version()
+    except Exception:  # noqa: BLE001 - the write already succeeded; best-effort
+        pass
+
+
 def _validate(content: str) -> dict:
     with tempfile.NamedTemporaryFile(suffix=".py", mode="w", delete=False, encoding="utf-8") as tf:
         tf.write(content)
@@ -175,6 +186,7 @@ def get_ingester(name: str):
 def save_ingester(name: str, body: FileWrite):
     path = _safe(INGESTER_DIR, name, INGESTER_SUFFIX)
     _write(path, body.content)
+    _bump_plugins_version()
     return {"saved": True, "name": name}
 
 
@@ -184,6 +196,7 @@ def delete_ingester(name: str):
     if not path.exists():
         raise HTTPException(404, "File not found")
     path.unlink()
+    _bump_plugins_version()
 
 
 @router.patch("/editor/ingesters/{name}/priority")
@@ -203,6 +216,7 @@ def patch_ingester_priority(name: str, body: dict):
     else:
         new_content = f"PLUGIN_PRIORITY = {priority}\n" + content
     path.write_text(new_content, encoding="utf-8")
+    _bump_plugins_version()
     return {"name": name, "priority": priority}
 
 
@@ -275,6 +289,7 @@ def save_builtin_ingester(name: str, body: FileWrite):
     """Overwrite a built-in plugin file on the plugins PVC."""
     path = _safe_plugin(PLUGINS_DIR, name, PLUGIN_SUFFIX)
     _write(path, body.content)
+    _bump_plugins_version()
     return {"saved": True, "name": name, "builtin": True}
 
 
@@ -285,6 +300,7 @@ def delete_builtin_ingester(name: str):
     if not path.exists():
         raise HTTPException(404, "File not found")
     path.unlink()
+    _bump_plugins_version()
 
 
 # ── Built-in module YAML registry files (editable) ────────────────────────────

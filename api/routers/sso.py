@@ -233,6 +233,11 @@ def provision_user(email: str, name: str, provider: str) -> bool:
     conf = _sso_conf()
     if not conf["auto_provision"]:
         return False
+    # Auto-provisioning consumes a seat — enforce the plan's user limit just
+    # like the admin create-user endpoint does (raises HTTP 402 when full).
+    from license.gate import check_user_limit
+
+    check_user_limit()
     random_pw = secrets.token_urlsafe(32)
     service.create_user(email, random_pw, role=conf["default_role"])
     try:
@@ -434,6 +439,11 @@ def sso_callback(
     # 4. Find-or-provision the Citadel user.
     try:
         ok = provision_user(email, name, provider)
+    except HTTPException as exc:
+        if exc.status_code == 402:
+            return _error_redirect("seat_limit_reached")
+        logger.exception("SSO: user provisioning failed")
+        return _error_redirect("provisioning_failed")
     except Exception:
         logger.exception("SSO: user provisioning failed")
         return _error_redirect("provisioning_failed")
@@ -441,9 +451,16 @@ def sso_callback(
         return _error_redirect("user_not_provisioned")
 
     # 5. Mint a Citadel JWT and bounce back to the Login page via fragment.
+    #    An account flagged must_change_password gets NO access token — only a
+    #    short-lived pw-change challenge, exactly like the password login path.
     try:
         user = service.get_user(email) or {}
         role = user.get("role", _sso_conf()["default_role"])
+        if service.must_change_password(email):
+            challenge = service.create_pw_change_challenge(email)
+            return _login_redirect(
+                f"sso_pw_token={urllib.parse.quote(challenge)}"
+            )
         jwt_token = service.create_token(email, role)
     except Exception:
         logger.exception("SSO: token minting failed")

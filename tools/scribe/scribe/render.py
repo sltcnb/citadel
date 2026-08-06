@@ -184,6 +184,10 @@ def render_markdown(data: dict, tpl: dict | None = None, language: str | None = 
     notes = data.get("notes") or ""
     ai_report = data.get("ai_report")
     agg = data.get("aggregates") or {}
+    # True totals (ES track_total_hits) — `pinned`/`flagged` are bounded samples,
+    # so len() would cap the reported counts at the sample size.
+    flagged_total = data.get("flagged_count", len(flagged))
+    pinned_total = data.get("pinned_count", len(pinned))
 
     out: list[str] = []
     name = case.get("name", case.get("case_id", "Case"))
@@ -227,13 +231,13 @@ def render_markdown(data: dict, tpl: dict | None = None, language: str | None = 
         if agg.get("total_events"):
             total_fmt = f"{int(agg['total_events']):,}"
             out.append(f"- **{L('total_events', n=total_fmt)}**")
-        out.append(f"- **{L('flagged_review', n=len(flagged))}**")
+        out.append(f"- **{L('flagged_review', n=flagged_total)}**")
         if agg.get("cti"):
             out.append(f"- **{L('cti_matched', n=len(agg['cti']))}**")
         if wl.get("hits"):
             out.append(f"- **{L('wl_hits', n=len(wl['hits']))}**")
         if pinned:
-            out.append(f"- **{L('pinned_curated', n=len(pinned))}**")
+            out.append(f"- **{L('pinned_curated', n=pinned_total)}**")
         out.append("")
 
     if sections.get("overview", True) and agg:
@@ -385,8 +389,9 @@ def render_markdown(data: dict, tpl: dict | None = None, language: str | None = 
         out.append("")
         for ev in flagged[:max_flagged]:
             out.append(f"- {_event_line(ev)}")
-        if len(flagged) > max_flagged:
-            out.append(f"_{L('and_more', n=len(flagged) - max_flagged)}_")
+        shown = min(len(flagged), max_flagged)
+        if flagged_total > shown:
+            out.append(f"_{L('and_more', n=flagged_total - shown)}_")
         out.append("")
 
     techs = mitre.get("techniques", []) if sections.get("mitre", True) else []
@@ -605,7 +610,7 @@ def _cti_table(items: list[dict], L: Labels) -> str:
     )
 
 
-def _event_table(events: list[dict], cap: int, L: Labels) -> str:
+def _event_table(events: list[dict], cap: int, L: Labels, total: int | None = None) -> str:
     rows = []
     for ev in events[:cap]:
         f = _ev_fields(ev)
@@ -619,7 +624,13 @@ def _event_table(events: list[dict], cap: int, L: Labels) -> str:
             f"<td>{_e(f['msg'])}{('<div class=note>' + _e(f['note']) + '</div>') if f['note'] else ''}</td>"
             "</tr>"
         )
-    extra = f'<div class="muted">{_e(L("and_more", n=len(events) - cap))}</div>' if len(events) > cap else ""
+    # `events` is a bounded sample; `total` (when given) is the true ES count,
+    # so "and N more" reflects everything, not just the sample's remainder.
+    shown = min(len(events), cap)
+    grand = max(total if total is not None else len(events), shown)
+    extra = (
+        f'<div class="muted">{_e(L("and_more", n=grand - shown))}</div>' if grand > shown else ""
+    )
     return (
         f"<table class=evt><thead><tr><th>{_e(L('h_time'))}</th><th>{_e(L('h_type'))}</th>"
         f"<th>{_e(L('h_host'))}</th><th>{_e(L('h_user'))}</th><th>{_e(L('h_source'))}</th><th>{_e(L('h_message'))}</th>"
@@ -680,6 +691,10 @@ def render_html(data: dict, tpl: dict | None = None, language: str | None = None
     agg = data.get("aggregates") or {}
     name = case.get("name", case.get("case_id", "Case"))
     max_flagged = int(tpl.get("max_flagged") or 50)
+    # True totals (ES track_total_hits) — `pinned`/`flagged` are bounded samples,
+    # so len() would cap the reported counts at the sample size.
+    flagged_total = data.get("flagged_count", len(flagged))
+    pinned_total = data.get("pinned_count", len(pinned))
 
     title_prefix = tpl.get("title_prefix")
     if not title_prefix or title_prefix == TEMPLATE_DEFAULTS["title_prefix"]:
@@ -721,13 +736,13 @@ def render_html(data: dict, tpl: dict | None = None, language: str | None = None
         cards = []
         if agg.get("total_events"):
             cards.append((L("c_events"), f"{int(agg['total_events']):,}"))
-        cards.append((L("flagged_events"), len(flagged)))
+        cards.append((L("flagged_events"), flagged_total))
         if cti:
             cards.append((L("threat_intel_matches"), len(cti)))
         if wl.get("hits"):
             cards.append((L("watchlist_hits"), len(wl["hits"])))
         if pinned:
-            cards.append((L("key_evidence"), len(pinned)))
+            cards.append((L("key_evidence"), pinned_total))
         b.append(_stat_cards(cards))
 
     if sections.get("overview", True) and agg:
@@ -750,6 +765,50 @@ def render_html(data: dict, tpl: dict | None = None, language: str | None = None
         b.append(f"<h2>{_e(L('module_analysis'))}</h2>")
         b.append(f'<p class="meta">{_e(L("module_blurb"))}</p>')
         b.append(_module_table(modules, L))
+
+    findings = data.get("findings") or {}
+    f_items = findings.get("items") or []
+    if sections.get("findings", True) and f_items:
+        b.append("<h2>Findings</h2>")
+        blurb = (
+            "The unified findings store — every analysis surface's saved output "
+            "(IOCs, anomalies, MITRE coverage, kill chains, modules, co-pilot, "
+            f"manual). {findings.get('total', len(f_items))} total."
+        )
+        b.append(f'<p class="meta">{_e(blurb)}</p>')
+        by_kind = findings.get("by_kind") or {}
+        by_sev = findings.get("by_severity") or {}
+        tallies = []
+        if by_kind:
+            tallies.append("by kind: " + ", ".join(f"{k} ({n})" for k, n in by_kind.items()))
+        if by_sev:
+            tallies.append("by severity: " + ", ".join(f"{k} ({n})" for k, n in by_sev.items()))
+        if tallies:
+            b.append(f'<p class="meta">{_e(" · ".join(tallies))}</p>')
+        # Group the listed findings by kind, most-severe first within each.
+        grouped: dict[str, list] = {}
+        for it in f_items:
+            grouped.setdefault(it.get("kind", "other"), []).append(it)
+        for kind, rows in grouped.items():
+            b.append(f"<h3>{_e(kind)} ({len(rows)})</h3>")
+            body_rows = []
+            for it in rows[:50]:
+                title = (it.get("message") or (it.get("finding") or {}).get("title") or "").strip()
+                body_rows.append(
+                    "<tr>"
+                    f"<td><span class=tag>{_e(it.get('severity', 'informational'))}</span></td>"
+                    f"<td class=mono>{_e(_ts(it.get('timestamp', '')))}</td>"
+                    f"<td>{_e(title)}</td>"
+                    f"<td>{_e(it.get('source_feature', ''))}</td>"
+                    "</tr>"
+                )
+            b.append(
+                f"<table><thead><tr><th>{_e(L('severity'))}</th><th>{_e(L('h_time'))}</th>"
+                f"<th>{_e(L('h_message'))}</th><th>{_e(L('h_source'))}</th>"
+                f"</tr></thead><tbody>{''.join(body_rows)}</tbody></table>"
+            )
+            if len(rows) > 50:
+                b.append(f'<div class="muted">{_e(L("and_more", n=len(rows) - 50))}</div>')
 
     saved = data.get("saved_searches") or []
     if sections.get("saved_searches", True) and saved:
@@ -814,11 +873,11 @@ def render_html(data: dict, tpl: dict | None = None, language: str | None = None
 
     if sections.get("pinned", True) and pinned:
         b.append(f"<h2>{_e(L('key_evidence'))}</h2>")
-        b.append(_event_table(pinned, 500, L))
+        b.append(_event_table(pinned, 500, L, total=pinned_total))
 
     if sections.get("flagged", True) and flagged:
         b.append(f"<h2>{_e(L('flagged_events'))}</h2>")
-        b.append(_event_table(flagged, max_flagged, L))
+        b.append(_event_table(flagged, max_flagged, L, total=flagged_total))
 
     techs = mitre.get("techniques", []) if sections.get("mitre", True) else []
     if techs:

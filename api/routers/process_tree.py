@@ -26,11 +26,25 @@ router = APIRouter(tags=["process-tree"])
 # OS-agnostic "this is a process creation event" predicate.
 # Windows : evtx.event_id ∈ (4688, 1) — Sysmon Windows reuses ID 1.
 # Linux   : audit_event with audit.syscall ∈ (execve, execveat).
+# EID 1 is scoped to the Sysmon channel: other channels (Application, etc.)
+# also have an event ID 1 that has nothing to do with process creation —
+# same disambiguation killchain._evtx_source applies.
 PROCESS_CREATION_FILTER = {
     "bool": {
         "should": [
             {"term": {"evtx.event_id": 4688}},
-            {"term": {"evtx.event_id": 1}},  # Sysmon (Windows + Linux port)
+            {
+                "bool": {
+                    "must": [
+                        {"term": {"evtx.event_id": 1}},  # Sysmon (Windows + Linux port)
+                        {
+                            "wildcard": {
+                                "evtx.channel": {"value": "*sysmon*", "case_insensitive": True}
+                            }
+                        },
+                    ]
+                }
+            },
             {
                 "bool": {
                     "must": [
@@ -76,7 +90,7 @@ def process_tree(
     selected_host = host or (hosts[0] if hosts else None)
 
     if not selected_host:
-        return {"hosts": [], "selected_host": None, "nodes": [], "roots": []}
+        return {"hosts": [], "selected_host": None, "nodes": [], "roots": [], "truncated": False}
 
     must = [
         {"term": {"host.hostname.keyword": selected_host}},
@@ -101,6 +115,11 @@ def process_tree(
         res = es_req("POST", f"/fo-case-{case_id}-*/_search", body)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Process tree query failed: {exc}")
+
+    # If the host has more creation events than `size`, the tree is built from
+    # the first `size` chronologically — tell the caller it's partial.
+    total_hits = (res.get("hits", {}).get("total") or {}).get("value", 0)
+    truncated = total_hits > size
 
     nodes_by_pid: dict[int, dict] = {}
     children: dict[int, list[int]] = defaultdict(list)
@@ -166,4 +185,5 @@ def process_tree(
         "selected_host": selected_host,
         "nodes": list(nodes_by_pid.values()),
         "roots": roots,
+        "truncated": truncated,
     }

@@ -17,7 +17,8 @@ from concurrent.futures import TimeoutError as FuturesTimeout
 from datetime import UTC, datetime
 
 import redis_keys as rk
-from fastapi import APIRouter
+from auth.dependencies import require_analyst_plus
+from fastapi import APIRouter, Depends
 
 from config import get_redis_with_timeout as _get_redis
 from config import settings
@@ -344,22 +345,19 @@ def _get_cases_metrics() -> dict:
         scanned = 0
         while True:
             cursor, keys = r.scan(cursor, match="job:*", count=100)
-            for key in keys:
-                if scanned >= 1000:
-                    break
-                scanned += 1
-                total_jobs += 1
-                try:
-                    raw = r.get(key)
-                    if raw:
-                        job = json.loads(raw)
-                        status = job.get("status", "")
-                        if status in ("running", "pending"):
-                            active_jobs += 1
-                        elif status == "failed":
-                            failed_jobs += 1
-                except Exception:
-                    pass
+            keys = keys[: 1000 - scanned]
+            scanned += len(keys)
+            total_jobs += len(keys)
+            if keys:
+                # Jobs are Redis hashes — one pipelined HGET status round trip
+                pipe = r.pipeline(transaction=False)
+                for key in keys:
+                    pipe.hget(key, "status")
+                for status in pipe.execute():
+                    if status in ("PENDING", "QUEUED", "UPLOADING", "RUNNING"):
+                        active_jobs += 1
+                    elif status == "FAILED":
+                        failed_jobs += 1
             if cursor == 0 or scanned >= 1000:
                 break
 
@@ -454,13 +452,24 @@ _DEFAULT_API = {
 # ── Endpoint ──────────────────────────────────────────────────────────────────
 
 
-@router.get("/dashboard")
+# Infra metrics expose internal service topology and tenant-wide counts —
+# not for guests (the router is mounted under require_analyst_or_admin, which
+# admits them, so the stricter gate goes on the endpoint itself).
+@router.get("/dashboard", dependencies=[Depends(require_analyst_plus)])
 def metrics_dashboard():
     """
     Return comprehensive real-time metrics from all services.
     Each section runs with a hard timeout so the endpoint always responds
     within a few seconds even when backends are slow or down.
     """
+    # 10 s process-local cache: the dashboard is polled by every open browser,
+    # and the Celery section is a broker BROADCAST — uncached it made every call
+    # cost a full broadcast round-trip (measured ~7 s live) just to refresh
+    # numbers that are fine 10 s stale.
+    cached = _dashboard_cache_get()
+    if cached is not None:
+        return cached
+
     # Run all sections in parallel, each with its own deadline.
     # NOTE: we must NOT use `with ThreadPoolExecutor(...) as pool:` here because
     # the context-manager calls shutdown(wait=True) on exit — which blocks until
@@ -468,16 +477,8 @@ def metrics_dashboard():
     # we collect results first, then shut the pool down in the background so slow
     # threads (e.g. Celery inspector waiting for broker broadcast) can't stall the
     # HTTP response.
-    # Celery worker inspection is a broker BROADCAST — under thread contention
-    # with the other 6 collectors its reply round-trip blew past the deadline
-    # and the section returned zeros (even though workers were up). Run it FIRST,
-    # synchronously, on its own, where the broadcast completes promptly.
-    try:
-        celery_metrics = _get_celery_metrics()
-    except Exception:
-        celery_metrics = _DEFAULT_CELERY
-
-    pool = ThreadPoolExecutor(max_workers=6)
+    pool = ThreadPoolExecutor(max_workers=7)
+    f_celery = pool.submit(_get_celery_metrics)
     f_system = pool.submit(_get_system_metrics)
     f_es = pool.submit(_get_elasticsearch_metrics)
     f_redis = pool.submit(_get_redis_metrics)
@@ -497,13 +498,35 @@ def metrics_dashboard():
         "elasticsearch": _get(f_es, _DEFAULT_ES),
         "redis": _get(f_redis, _DEFAULT_REDIS),
         "minio": _get(f_minio, _DEFAULT_MINIO),
-        "celery": celery_metrics,
+        # Celery's broker broadcast now shares the same deadline — a slow reply
+        # degrades to zeros instead of stalling the whole endpoint.
+        "celery": _get(f_celery, _DEFAULT_CELERY),
         "cases": _get(f_cases, _DEFAULT_CASES),
         "api": _get(f_api, _DEFAULT_API),
     }
+    _dashboard_cache_put(result)
     # Let any still-running threads finish in the background — don't block.
     pool.shutdown(wait=False)
     return result
+
+
+_DASH_CACHE_TTL = 10.0
+_dash_cache: dict = {"at": 0.0, "data": None}
+
+
+def _dashboard_cache_get() -> dict | None:
+    import time as _t
+
+    if _dash_cache["data"] is not None and _t.monotonic() - _dash_cache["at"] < _DASH_CACHE_TTL:
+        return _dash_cache["data"]
+    return None
+
+
+def _dashboard_cache_put(data: dict) -> None:
+    import time as _t
+
+    _dash_cache["at"] = _t.monotonic()
+    _dash_cache["data"] = data
 
 
 # ── Time-series history ────────────────────────────────────────────────────────

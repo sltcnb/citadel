@@ -61,9 +61,35 @@ def create_token(username: str, role: str) -> str:
         hours = int(get_platform_config()["jwt_expire_hours"])
     except Exception:
         hours = settings.JWT_EXPIRE_HOURS
-    expire = datetime.now(UTC) + timedelta(hours=hours)
-    payload = {"sub": username, "role": role, "exp": expire, "jti": str(uuid.uuid4())}
-    return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
+    now = datetime.now(UTC)
+    expire = now + timedelta(hours=hours)
+    payload = {
+        "sub": username,
+        "role": role,
+        "exp": expire,
+        "iat": now.timestamp(),
+        "jti": str(uuid.uuid4()),
+    }
+    token = jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
+    _seed_session_activity(payload)
+    return token
+
+
+def _seed_session_activity(payload: dict) -> None:
+    """Start the session-idle clock for a freshly minted access token when the
+    ``session_idle_minutes`` platform setting is enabled. Fail-open: a Redis or
+    config hiccup at login must not break token creation."""
+    try:
+        from routers.platform_settings import get_platform_config
+
+        minutes = int(get_platform_config().get("session_idle_minutes") or 0)
+        if minutes <= 0:
+            return
+        jti = payload.get("jti")
+        if jti:
+            _redis().setex(f"fo:session:active:{jti}", minutes * 60, "1")
+    except Exception:
+        pass
 
 
 def create_stream_token(username: str, role: str) -> str:
@@ -75,7 +101,13 @@ def create_stream_token(username: str, role: str) -> str:
     JWT bounds that exposure. It carries the same claims as a normal access token
     (sub, role, jti), so decode_token / get_current_user accept it as-is."""
     expire = datetime.now(UTC) + timedelta(seconds=60)
-    payload = {"sub": username, "role": role, "exp": expire, "jti": str(uuid.uuid4())}
+    payload = {
+        "sub": username,
+        "role": role,
+        "exp": expire,
+        "iat": datetime.now(UTC).timestamp(),
+        "jti": str(uuid.uuid4()),
+    }
     return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
 
 
@@ -110,6 +142,57 @@ def is_token_revoked(payload: dict) -> bool:
         return False
 
 
+# ── Per-user token invalidation ───────────────────────────────────────────────
+# Revoking every outstanding token for a user (password change, role change)
+# cannot enumerate issued jtis, so instead the user record carries a
+# ``tokens_valid_after`` epoch timestamp: any token minted BEFORE that instant
+# is rejected at validation. Compared as floats (sub-second precision) so a
+# token minted in the same second as the change is still correctly invalidated,
+# while the fresh token issued right after the change (later timestamp) passes.
+
+
+def revoke_user_tokens(username: str) -> None:
+    """Invalidate every token issued for ``username`` up to now."""
+    import time
+
+    _redis().hset(rk.user_key(username), "tokens_valid_after", repr(time.time()))
+
+
+def tokens_valid_for_user(user: dict, payload: dict) -> bool:
+    """True unless the token predates the user's ``tokens_valid_after`` stamp.
+
+    Tokens minted before this mechanism existed carry no ``iat`` — they pass
+    while no invalidation was recorded, and are rejected once one is (the user
+    simply re-logs-in after a password/role change)."""
+    tva = (user or {}).get("tokens_valid_after")
+    if not tva:
+        return True
+    try:
+        tva_f = float(tva)
+    except (TypeError, ValueError):
+        return True
+    try:
+        iat_f = float(payload.get("iat") or 0)
+    except (TypeError, ValueError):
+        iat_f = 0.0
+    return iat_f >= tva_f
+
+
+def token_fresh_for_user(username: str, payload: dict) -> bool:
+    """Same check as :func:`tokens_valid_for_user` but reads the stamp FRESH
+    from Redis (one cheap HGET). Used on the identity-cache hit path, where the
+    cached user dict may be up to a few seconds stale — a password/role change
+    must invalidate promptly, like jti revocation does. Fails open on Redis
+    errors, matching is_token_revoked."""
+    if not username:
+        return True
+    try:
+        raw = _redis().hget(rk.user_key(username), "tokens_valid_after")
+    except Exception:
+        return True
+    return tokens_valid_for_user({"tokens_valid_after": raw}, payload)
+
+
 # ── Forced password change ──────────────────────────────────────────────────
 # A user flagged must_change_password cannot obtain a full access token until
 # they rotate their password. Used to retire the default bootstrap-admin
@@ -139,10 +222,15 @@ def create_pw_change_challenge(username: str) -> str:
 
 
 def decode_pw_change_challenge(token: str) -> Optional[str]:
-    """Return the username if ``token`` is a valid password-change challenge."""
+    """Return the username if ``token`` is a valid password-change challenge.
+
+    Challenges are single-use: the jti is revoked on a successful password
+    change, and revoked challenges are rejected here."""
     try:
         payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
     except Exception:
+        return None
+    if is_token_revoked(payload):
         return None
     if payload.get("pwc") and payload.get("sub"):
         return payload["sub"]
@@ -223,7 +311,12 @@ def confirm_totp_enrollment(username: str, code: str) -> Optional[list[str]]:
 
 
 def verify_totp(username: str, code: str) -> bool:
-    """Accept a current TOTP code OR a one-time backup code (consumed on use)."""
+    """Accept a current TOTP code OR a one-time backup code (consumed on use).
+
+    A valid TOTP code stays cryptographically valid for up to ~90s
+    (valid_window=1), so a replay cache (Redis, keyed by user+code, 90s TTL)
+    rejects a second presentation of the same code within that window. If Redis
+    is unreachable the cache check fails open — TOTP itself still verifies."""
     import pyotp
 
     u = get_user(username)
@@ -232,24 +325,60 @@ def verify_totp(username: str, code: str) -> bool:
     secret = u.get("totp_secret", "")
     code = (code or "").strip()
     if secret and pyotp.TOTP(secret).verify(code, valid_window=1):
+        if not _mark_totp_code_used(username, code):
+            return False  # same code already presented within the valid window
         return True
     return _consume_backup_code(username, code, u)
 
 
-def _consume_backup_code(username: str, code: str, user: dict) -> bool:
-    norm = code.replace("-", "").replace(" ", "")
+def _mark_totp_code_used(username: str, code: str) -> bool:
+    """Atomically claim (user, code) for the TOTP validity window. Returns False
+    if the code was already used (replay). Fails open on Redis errors."""
     try:
-        hashes = json.loads(user.get("totp_backup") or "[]")
-    except (json.JSONDecodeError, TypeError):
-        hashes = []
-    for h in list(hashes):
-        try:
-            if verify_password(norm, h):
-                hashes.remove(h)
-                _redis().hset(rk.user_key(username), "totp_backup", json.dumps(hashes))
+        key = f"fo:totp:used:{username}:{code}"
+        return bool(_redis().set(key, "1", nx=True, ex=90))
+    except Exception:
+        return True
+
+
+def _consume_backup_code(username: str, code: str, user: dict) -> bool:
+    """Consume a one-time backup code atomically.
+
+    The read-check-remove-write on the ``totp_backup`` JSON list runs under
+    WATCH/MULTI so two concurrent logins presenting the SAME code cannot both
+    succeed (the loser gets a WatchError, retries against fresh state, and no
+    longer finds the code)."""
+    from redis import WatchError
+
+    norm = code.replace("-", "").replace(" ", "")
+    key = rk.user_key(username)
+    r = _redis()
+    for _ in range(3):
+        with r.pipeline() as pipe:
+            try:
+                pipe.watch(key)
+                raw = pipe.hget(key, "totp_backup")
+                try:
+                    hashes = json.loads(raw or "[]")
+                except (json.JSONDecodeError, TypeError):
+                    hashes = []
+                match = None
+                for h in list(hashes):
+                    try:
+                        if verify_password(norm, h):
+                            match = h
+                            break
+                    except Exception:
+                        continue
+                if match is None:
+                    return False
+                hashes.remove(match)
+                pipe.multi()
+                pipe.hset(key, "totp_backup", json.dumps(hashes))
+                pipe.execute()
                 return True
-        except Exception:
-            continue
+            except WatchError:
+                continue  # concurrent mutation — re-read and try again
     return False
 
 
@@ -323,6 +452,8 @@ def create_user(
     }
     r.hset(key, mapping=user)
     r.sadd(_USERS_SET, username)
+    if groups:
+        _sync_group_members_for_user(username, groups)
     return _public(user)
 
 
@@ -333,6 +464,7 @@ def delete_user(username: str) -> bool:
         return False
     r.delete(key)
     r.srem(_USERS_SET, username)
+    _sync_group_members_for_user(username, [])  # drop from every group's members
     return True
 
 
@@ -361,19 +493,29 @@ def update_user(
     key = rk.user_key(username)
     if not r.exists(key):
         raise ValueError(f"User '{username}' not found")
+    credentials_changed = False
     if role is not None:
         if role not in VALID_ROLES:
             raise ValueError(f"Invalid role '{role}'. Must be one of: {', '.join(VALID_ROLES)}")
         r.hset(key, "role", role)
+        # A role change must take effect immediately: outstanding tokens carry
+        # the OLD role claim, so invalidate them — the user re-logs-in.
+        credentials_changed = True
     if password is not None:
         r.hset(key, "hashed_password", hash_password(password))
         r.hdel(key, "must_change_password")  # rotating the password clears the force-change flag
+        # Invalidate sessions minted under the old (possibly compromised) password.
+        credentials_changed = True
     if companies is not None:
         r.hset(key, "companies", json.dumps(companies))
     if groups is not None:
         r.hset(key, "groups", json.dumps(groups))
     if extra_permissions is not None:
         r.hset(key, "extra_permissions", json.dumps(_clean_perms(extra_permissions)))
+    if credentials_changed:
+        revoke_user_tokens(username)
+    if groups is not None:
+        _sync_group_members_for_user(username, groups)
     return _public(r.hgetall(key))
 
 
@@ -384,6 +526,7 @@ def update_password(username: str, new_password: str) -> bool:
         return False
     r.hset(key, "hashed_password", hash_password(new_password))
     r.hdel(key, "must_change_password")
+    revoke_user_tokens(username)
     return True
 
 
@@ -393,6 +536,7 @@ def change_role(username: str, new_role: str) -> bool:
     if not r.exists(key):
         return False
     r.hset(key, "role", new_role)
+    revoke_user_tokens(username)
     return True
 
 
@@ -447,6 +591,58 @@ def _slugify(value: str) -> str:
 # A single JSON document {id: group} keyed at _GROUPS_KEY. Group shape:
 #   {id, name, description, roles, permissions, companies, members}
 # Writes go through mutate_json for atomic read-modify-write under contention.
+#
+# Membership is recorded in TWO places: ``user["groups"]`` (CANONICAL — this is
+# what rbac.effective_permissions / effective_companies enforce) and
+# ``group["members"]`` (what the UI's members picker edits and the effective
+# view reports). The two are kept in sync by every write path below and by the
+# user CRUD above, so editing either side grants/revokes access identically.
+
+
+def _sync_group_members_for_user(username: str, groups: list[str]) -> None:
+    """Make every group's ``members`` list consistent with a user's canonical
+    ``groups`` field (add to the listed groups, remove from all others).
+    Best-effort: a store failure is logged, never fatal to the user write."""
+    wanted = {str(g) for g in (groups or [])}
+
+    def _sync(store: dict) -> dict:
+        for gid, g in store.items():
+            members = {str(m) for m in (g.get("members") or [])}
+            if gid in wanted:
+                members.add(username)
+            else:
+                members.discard(username)
+            g["members"] = sorted(members)
+        return store
+
+    try:
+        mutate_json(_redis(), _GROUPS_KEY, _sync, default={})
+    except Exception:
+        logger.warning("group members sync failed for user '%s'", username)
+
+
+def _sync_user_groups_for_members(group_id: str, members: list[str]) -> None:
+    """Make the canonical ``user["groups"]`` consistent with a group's edited
+    ``members`` list: listed users gain the membership, everyone else loses it.
+    Best-effort: a failure is logged, never fatal to the group write."""
+    wanted = {str(m) for m in (members or [])}
+    try:
+        r = _redis()
+        for username in r.smembers(_USERS_SET):
+            key = rk.user_key(username)
+            try:
+                groups = set(json.loads(r.hget(key, "groups") or "[]"))
+            except (json.JSONDecodeError, TypeError):
+                groups = set()
+            new = set(groups)
+            if username in wanted:
+                new.add(group_id)
+            else:
+                new.discard(group_id)
+            if new != groups:
+                r.hset(key, "groups", json.dumps(sorted(new)))
+    except Exception:
+        logger.warning("user groups sync failed for group '%s'", group_id)
 
 
 def list_groups() -> list[dict]:
@@ -509,6 +705,8 @@ def create_group(
         return store
 
     mutate_json(_redis(), _GROUPS_KEY, _add, default={})
+    if group["members"]:
+        _sync_user_groups_for_members(group_id, group["members"])
     return group
 
 
@@ -542,6 +740,10 @@ def update_group(
         return store
 
     mutate_json(_redis(), _GROUPS_KEY, _patch, default={})
+    if members is not None:
+        # The members picker was edited — push the change into the canonical
+        # user["groups"] field so enforcement matches the group view.
+        _sync_user_groups_for_members(group_id, result["g"]["members"])
     return result["g"]
 
 
@@ -556,4 +758,6 @@ def delete_group(group_id: str) -> bool:
         return store
 
     mutate_json(_redis(), _GROUPS_KEY, _del, default={})
+    if existed["v"]:
+        _sync_user_groups_for_members(group_id, [])  # strip from every user's groups
     return existed["v"]

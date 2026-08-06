@@ -16,7 +16,9 @@ import redis_keys as rk
 from auth.dependencies import require_admin, require_case_access
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
+from license.gate import require_feature
 from pydantic import BaseModel
+from services import report_jobs
 from services.elasticsearch import _request as es_req
 
 from config import get_redis
@@ -63,6 +65,19 @@ def _fetch_events(case_id: str, field: str, size: int = 200) -> list[dict]:
         return [h["_source"] for h in r.get("hits", {}).get("hits", [])]
     except Exception:
         return []
+
+
+def _fetch_event_count(case_id: str, field: str) -> int:
+    """Exact match count for a boolean flag (track_total_hits — no 10k cap).
+    `_fetch_events` returns a bounded sample, so counts displayed in the report
+    ("flagged for review: N") must come from here to stay truthful."""
+    body = {"query": {"term": {field: True}}, "size": 0, "track_total_hits": True}
+    try:
+        r = es_req("POST", f"/fo-case-{case_id}-*/_search", body)
+        total = r.get("hits", {}).get("total") or {}
+        return int(total.get("value", 0))
+    except Exception:
+        return 0
 
 
 def _fetch_saved_searches(case_id: str, per_query_samples: int = 5) -> list[dict]:
@@ -275,14 +290,18 @@ def _fetch_redis_json(key: str) -> dict:
 
 
 def _fetch_notes(case_id: str) -> str:
-    raw = get_redis().get(f"case:{case_id}:notes")
-    if not raw:
-        return ""
-    s = raw.decode() if isinstance(raw, bytes) else raw
+    """Analyst notes live in the `fo:notes:{case_id}` HASH written by
+    routers/notes.py (fields: body, updated_at). Reports used to read the legacy
+    `case:{case_id}:notes` string key, so UI-written notes never made it into
+    any report."""
     try:
-        return json.loads(s).get("body", s) if s.startswith("{") else s
+        data = get_redis().hgetall(rk.case_notes(case_id)) or {}
     except Exception:
-        return s
+        return ""
+    body = data.get("body", "")
+    if isinstance(body, bytes):
+        body = body.decode()
+    return body or ""
 
 
 def _fetch_redis_list_json(key: str, limit: int = 10) -> list[dict]:
@@ -441,6 +460,8 @@ def _build_report_data(case: dict, case_id: str) -> dict:
 
     pinned = _fetch_events(case_id, "is_pinned")
     flagged = _fetch_events(case_id, "is_flagged")
+    pinned_count = _fetch_event_count(case_id, "is_pinned")
+    flagged_count = _fetch_event_count(case_id, "is_flagged")
     modules = _fetch_module_runs(case_id)
     saved = _fetch_saved_searches(case_id)
     killchains = _fetch_killchains(case_id)
@@ -455,8 +476,8 @@ def _build_report_data(case: dict, case_id: str) -> dict:
     modules_with_hits = [m for m in modules if int(m.get("total_hits") or 0) > 0]
     manifest = {
         "generated_at": datetime.now(UTC).isoformat(),
-        "flagged_count": len(flagged),
-        "pinned_count": len(pinned),
+        "flagged_count": flagged_count,
+        "pinned_count": pinned_count,
         "module_run_count": len(modules),
         "module_hit_run_count": len(modules_with_hits),
         "saved_search_count": len([s for s in saved if s.get("query")]),
@@ -478,6 +499,8 @@ def _build_report_data(case: dict, case_id: str) -> dict:
         "findings": findings,
         "pinned": pinned,
         "flagged": flagged,
+        "pinned_count": pinned_count,
+        "flagged_count": flagged_count,
         "mitre": _fetch_mitre(case_id),
         "modules": modules,
         "saved_searches": saved,
@@ -602,6 +625,45 @@ def report_docx(case_id: str, review: bool = False, language: str | None = None,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={"Content-Disposition": f'attachment; filename="{_safe_name(case, case_id)}-report.docx"'},
     )
+
+
+# ── AI report generation job (background — survives drawer close / navigation) ──
+
+
+class AiReportJobIn(BaseModel):
+    run_ids: list[str] | None = None
+    language: str | None = None
+
+
+@router.post(
+    "/cases/{case_id}/ai/report/job",
+    status_code=202,
+    dependencies=[Depends(require_feature("ai_assist"))],
+)
+def start_ai_report_job(case_id: str, body: AiReportJobIn | None = None, case: dict = Depends(require_case_access)):
+    """Start AI report generation OFF the request path.
+
+    The LLM call behind this can run for minutes; the synchronous endpoint
+    (pilot's POST /cases/{id}/ai/report) dies with the client's fetch when the
+    analyst closes the report drawer. The job runs in a background daemon
+    thread (same pattern as the post-ingestion finalize chain) and tracks its
+    state in Redis — poll GET /cases/{case_id}/ai/report/status for the
+    outcome. The sync endpoint stays for older clients.
+    """
+    from pilot import service as pilot_service
+
+    body = body or AiReportJobIn()
+    req = pilot_service.FinalReportRequest(run_ids=body.run_ids, language=body.language)
+    started = report_jobs.start_job(case_id, pilot_service.generate_final_report, case_id, req, case)
+    if not started:
+        return {"case_id": case_id, "status": "running", "detail": "report generation already in progress"}
+    return {"case_id": case_id, "status": "pending"}
+
+
+@router.get("/cases/{case_id}/ai/report/status")
+def ai_report_job_status(case_id: str, case: dict = Depends(require_case_access)):
+    """Latest generation-job state for the case ('idle' when never run)."""
+    return report_jobs.get_job(case_id) or {"case_id": case_id, "status": "idle"}
 
 
 # ── AI LLM report export (the narrative deliverable, any format) ───────────────

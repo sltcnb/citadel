@@ -169,6 +169,7 @@ def delete_case(case_id: str, background: bool = True) -> bool:
     r.delete(
         f"case:{case_id}",
         rk.case_notes(case_id),
+        f"case:{case_id}:notes",  # legacy pre-hash notes key (older cases)
         rk.case_saved_searches(case_id),
         rk.case_alert_rules(case_id),
         rk.case_alert_run(case_id),

@@ -5,7 +5,7 @@ MinIO listing/deletion is mocked; the DB known-key set is injected.
 
 from datetime import UTC, datetime, timedelta
 
-
+import config
 from services import storage, storage_reconcile as sr
 
 
@@ -13,6 +13,14 @@ class _Obj:
     def __init__(self, name, age_hours=100):
         self.object_name = name
         self.last_modified = datetime.now(UTC) - timedelta(hours=age_hours)
+
+
+class _StubRedis:
+    """Minimal stand-in for the Redis client find_orphans touches directly
+    (``smembers("cases:all")`` for the live-case guard)."""
+
+    def smembers(self, key):
+        return set()
 
 
 def _setup(monkeypatch, objects, known):
@@ -26,6 +34,9 @@ def _setup(monkeypatch, objects, known):
     )
     monkeypatch.setattr(storage, "delete_object", lambda k: deleted.append(k))
     monkeypatch.setattr(sr, "known_object_keys", lambda: set(known))
+    # commit 6e1c66f added a live-case lookup (config.get_redis().smembers)
+    # to find_orphans — stub it so tests don't need a real Redis.
+    monkeypatch.setattr(config, "get_redis", lambda: _StubRedis())
     return deleted
 
 

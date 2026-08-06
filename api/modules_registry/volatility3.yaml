@@ -12,7 +12,11 @@ input_extensions:
   - .lime
   - .dd
   - .img
-  - .bin
+  - .e01
+  - .elf
+  # NB: no .bin — too ambiguous (Defender WPP tracing, generic firmware blobs);
+  # auto-launch matched 36 antivirus .bin files as "memory images". Real memory
+  # dumps use the extensions above.
 input_filenames: []
 available: true
 category: Memory Forensics

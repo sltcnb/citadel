@@ -1,17 +1,35 @@
 """Plugin management endpoints."""
 
+import logging
 import sys
 from pathlib import Path
 
+import redis_keys as rk
 from auth.dependencies import require_admin
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
-from config import settings
+from config import get_redis, settings
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["plugins"])
 
 # Lazy-load the plugin loader to avoid import issues at startup
 _loader = None
+
+
+def bump_plugins_version() -> None:
+    """Bump the shared plugins generation counter.
+
+    Ingest workers compare this key before choosing a parser and reload their
+    plugin loader when it changed — without it, an uploaded/edited plugin never
+    reaches long-lived Celery children (their loader is per-process static).
+    Best-effort: the plugin file is already on the shared volume, so a Redis
+    hiccup must not fail the upload."""
+    try:
+        get_redis().incr(rk.PLUGINS_VERSION)
+    except Exception:  # noqa: BLE001
+        logger.warning("Failed to bump plugins version — workers may not reload plugins")
 
 
 def get_loader():
@@ -64,6 +82,7 @@ async def upload_plugin(file: UploadFile = File(...)):
     _loader = None
     loader = get_loader()
     plugins = loader.list_plugins()
+    bump_plugins_version()  # signal ingest workers to reload too
 
     return {
         "message": f"Plugin '{safe_name}' uploaded and loaded",
@@ -80,6 +99,7 @@ def reload_plugins():
     try:
         loader = get_loader()
         plugins = loader.list_plugins()
+        bump_plugins_version()  # signal ingest workers to reload too
         return {
             "message": "Plugins reloaded",
             "plugins": plugins,

@@ -100,6 +100,7 @@ def scan_anomalies(
     series: dict[tuple, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     after = None
     rounds = 0
+    truncated = False
     while True:
         if after:
             body["aggs"]["by"]["composite"]["after"] = after
@@ -131,7 +132,12 @@ def scan_anomalies(
             series[(host, eid)][day_str] = count
         after = res["aggregations"]["by"].get("after_key")
         rounds += 1
-        if not after or rounds >= 20:
+        if not after:
+            break
+        if rounds >= 20:
+            # 20 rounds × 10k composite buckets = 200k series cap. Stopping
+            # here means later (host, event_id) series were never scored.
+            truncated = True
             break
 
     if not series:
@@ -140,7 +146,7 @@ def scan_anomalies(
             es_req("DELETE", f"/{_es_index(case_id)}")
         except Exception:
             pass
-        return {"scanned": 0, "anomalies": 0}
+        return {"scanned": 0, "anomalies": 0, "truncated": truncated}
 
     # Score: for each series, treat last `days` baseline + score each day in that window
     anomalies: list[dict] = []
@@ -183,7 +189,7 @@ def scan_anomalies(
     except Exception:
         pass
     if not anomalies:
-        return {"scanned": len(series), "anomalies": 0}
+        return {"scanned": len(series), "anomalies": 0, "truncated": truncated}
 
     lines = []
     import uuid as _u
@@ -253,4 +259,5 @@ def scan_anomalies(
         "anomalies": indexed,
         "failed": failed,
         "error": str(first_error) if first_error else None,
+        "truncated": truncated,
     }

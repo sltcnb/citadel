@@ -37,3 +37,7 @@ pytsk3==20260715
 # Report export — DOCX (pure python) + PDF (WeasyPrint; needs pango/cairo, see Dockerfile)
 python-docx==1.2.0
 weasyprint==69.0
+# Sigma HQ sync (api/services/sigma_sync.py) — without these the feature is dead
+# (sigma_available: false); the sync UI reports converter availability honestly.
+pysigma==1.5.0
+pysigma-backend-elasticsearch==2.1.0

@@ -3,7 +3,10 @@ name: Hindsight
 description: >-
   Chrome, Firefox and Edge browser forensics — history, downloads, cookies,
   form data, cache, and login data extracted from browser profile databases.
-input_extensions: [".db", ".sqlite"]
+# Match by filename, not extension: ".db" alone pulls in any application's
+# SQLite store (antivirus AMSP .db files made auto-launch burn 2h50m parsing
+# irrelevant databases). Browser databases have stable, well-known filenames.
+input_extensions: []
 input_filenames:
   - History
   - places.sqlite

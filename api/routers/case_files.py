@@ -79,6 +79,20 @@ _DISK_IMAGE_EXTS = {
 _MAX_VIEW_BYTES = 5 * 1024 * 1024  # 5 MB
 _MAX_SEARCH_BYTES = 2 * 1024 * 1024  # 2 MB per file during search
 
+# How many job records the file-listing endpoints pull at once. list_case_jobs
+# defaults to 500, which silently truncated big cases; 5000 covers realistic
+# case sizes while bounding response payload. When the case has more jobs than
+# the cap, responses carry "truncated": true so the UI can say so.
+_JOB_LIST_CAP = 5000
+
+
+def _list_jobs_capped(case_id: str) -> tuple[list[dict], bool]:
+    """Return (jobs, truncated) — jobs capped at _JOB_LIST_CAP, truncated=True
+    when the case holds more jobs than the cap."""
+    jobs = job_svc.list_case_jobs(case_id, limit=_JOB_LIST_CAP)
+    truncated = job_svc.count_case_jobs(case_id) > len(jobs)
+    return jobs, truncated
+
 # Decompression-bomb cap for single-member extraction. A crafted archive can
 # declare a small member while inflating to gigabytes, so we both reject members
 # whose *declared* size exceeds the cap and abort mid-copy once the *actual*
@@ -146,7 +160,7 @@ def _file_category(filename: str) -> str:
 @router.get("/cases/{case_id}/files")
 def list_case_files(case_id: str, _case: dict = Depends(require_case_access)):
     """List all files ingested into a case with readability metadata."""
-    jobs = job_svc.list_case_jobs(case_id)
+    jobs, truncated = _list_jobs_capped(case_id)
     files = []
     for job in jobs:
         fname = job.get("original_filename", "")
@@ -166,7 +180,7 @@ def list_case_files(case_id: str, _case: dict = Depends(require_case_access)):
                 "source_zip": job.get("source_zip", ""),
             }
         )
-    return {"case_id": case_id, "files": files, "total": len(files)}
+    return {"case_id": case_id, "files": files, "total": len(files), "truncated": truncated}
 
 
 # ── Download raw file ────────────────────────────────────────────────────────
@@ -471,12 +485,19 @@ def search_file_contents(
     except re.error as exc:
         raise HTTPException(status_code=400, detail=f"Invalid regex: {exc}")
 
-    jobs = job_svc.list_case_jobs(case_id)
+    jobs, truncated = _list_jobs_capped(case_id)
     results = []
     files_searched = 0
+    skipped_not_searched = 0
 
     for job in jobs:
         if job.get("status") != "COMPLETED":
+            # SKIPPED files (no parser matched) are outside the search scope —
+            # count them so the response can say they were not searched.
+            if job.get("status") == "SKIPPED" and _is_readable(
+                job.get("original_filename", "")
+            ):
+                skipped_not_searched += 1
             continue
         fname = job.get("original_filename", "")
         if not _is_readable(fname):
@@ -549,13 +570,21 @@ def search_file_contents(
                 }
             )
 
-    return {
+    response: dict = {
         "case_id": case_id,
         "query": body.query,
         "files_searched": files_searched,
         "files_matched": len(results),
         "results": results,
+        "truncated": truncated,
     }
+    if skipped_not_searched:
+        response["skipped_files_not_searched"] = skipped_not_searched
+        response["note"] = (
+            f"{skipped_not_searched} skipped file(s) not searched "
+            "(only COMPLETED files are searched)"
+        )
+    return response
 
 
 # ── Disk image list ───────────────────────────────────────────────────────────
@@ -564,7 +593,7 @@ def search_file_contents(
 @router.get("/cases/{case_id}/disk-images")
 def list_disk_images(case_id: str, _case: dict = Depends(require_case_access)):
     """List all disk image files ingested into a case."""
-    jobs = job_svc.list_case_jobs(case_id)
+    jobs, truncated = _list_jobs_capped(case_id)
     images = [
         {
             "job_id": job.get("job_id"),
@@ -577,7 +606,12 @@ def list_disk_images(case_id: str, _case: dict = Depends(require_case_access)):
         for job in jobs
         if _is_disk_image(job.get("original_filename", ""))
     ]
-    return {"case_id": case_id, "disk_images": images, "total": len(images)}
+    return {
+        "case_id": case_id,
+        "disk_images": images,
+        "total": len(images),
+        "truncated": truncated,
+    }
 
 
 # ── Disk image directory browser ──────────────────────────────────────────────

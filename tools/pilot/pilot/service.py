@@ -975,7 +975,8 @@ _SEARCH_ASSIST_PROMPT = """You are an expert Elasticsearch query builder for For
 
 ### Network
 - network.src_ip (ip), network.src_port, network.dst_ip (ip), network.dst_port
-- network.dst_domain, network.dst_host, network.protocol, network.action, network.bytes, network.direction
+- network.protocol, network.action, network.bytes, network.direction
+- DNS names live in parser-specific fields: dns.query_name (pcap), suricata.dns.rrname (suricata), zeek.query (zeek)
 
 ### HTTP
 - http.method, http.request_path, http.status_code, http.user_agent, http.referer, http.host, http.response_size
@@ -1127,7 +1128,7 @@ For convenience these aliases resolve to the canonical fields above:
 - parent_pid → process.parent_pid
 - src_ip → network.src_ip, src_port → network.src_port
 - dst_ip → network.dst_ip, dst_port → network.dst_port
-- dst_domain → network.dst_domain
+- dst_domain → dns.query_name (also try suricata.dns.rrname / zeek.query — DNS fields are parser-specific)
 - protocol → network.protocol, action → network.action
 - http_method → http.method, http_status → http.status_code, http_path → http.request_path
 - user_agent → http.user_agent
@@ -2151,7 +2152,7 @@ At every step return ONE JSON object — no markdown, no commentary outside it:
 
   {
     "thought": "what you're trying to verify and why",
-    "action":  "search" | "aggregate" | "inspect" | "time_window" | "correlate" | "mitre_hits" | "entity_graph" | "stack_rare" | "cti_seen_before" | "findings" | "save_finding" | "conclude",
+    "action":  "set_hypotheses" | "search" | "aggregate" | "inspect" | "time_window" | "correlate" | "mitre_hits" | "entity_graph" | "stack_rare" | "cti_seen_before" | "detection_rules" | "watchlist" | "module_runs" | "list_modules" | "launch_module" | "read_module_result" | "findings" | "save_finding" | "conclude",
 
     // action=search — full Elasticsearch query_string against fo-case-{id}-*
     "query":   "host.hostname:DESKTOP-* AND artifact_type:evtx",
@@ -2471,7 +2472,8 @@ Stop conditions:
     fails, switch tools / fields / artifact_types and keep investigating.
   - The diversify-nudge warns you after 1+ stale steps with concrete
     alternatives. Use them.
-  - 50-step safety cap. You should rarely approach it — most cases need
+  - Your step budget is bounded — the "This is step N of M" line each turn
+    tells you the ceiling. You should rarely approach it — most cases need
     8-15 steps to reach a defensible answer. If you genuinely run out of
     angles after 5+ stale steps, then conclude "inconclusive" with what
     you tried — that is a valid answer.
@@ -3426,8 +3428,11 @@ def _tool_module_runs(case_id: str, step: dict) -> dict:
     r = _redis()
     out = []
     try:
-        keys = r.keys(f"fo:case:{case_id}:module-run:*") or []
-        for k in keys[:50]:
+        # scan_iter, not KEYS — KEYS blocks Redis while it walks the whole
+        # keyspace, which stalls every other consumer on a busy instance.
+        for i, k in enumerate(r.scan_iter(f"fo:case:{case_id}:module-run:*", count=200)):
+            if i >= 50:
+                break
             raw = r.get(k) or "{}"
             try:
                 run = json.loads(raw)
@@ -3511,6 +3516,48 @@ def _tool_stack_rare(case_id: str, step: dict) -> dict:
     }
 
 
+def _case_company(case_id: str) -> str:
+    """The case's company tag ('' = unscoped/shared). Used to tenant-tag Pilot
+    memory records so one company's IOCs/verdicts never leak to another.
+    Fails open to '' (shared) — in single-tenant deployments every case is
+    unscoped anyway, so behaviour there is unchanged."""
+    try:
+        from services.cases import get_case
+
+        case = get_case(case_id)
+        return str((case or {}).get("company", "") or "")
+    except Exception:
+        return ""
+
+
+def _memory_scope(case_id: str) -> set[str]:
+    """Companies whose memory records this case may see: its own + shared ('')."""
+    return {_case_company(case_id), ""}
+
+
+def _cited_evidence_text(transcript: list[dict]) -> str:
+    """Lower-cased haystack of the run's fo_id-cited tool output (inspect events,
+    search/time_window/correlate samples). Used to vet LLM-emitted indicators
+    before persisting them to cross-case memory — an IOC the model asserts but
+    never actually saw in evidence must not poison the shared store."""
+    chunks: list[str] = []
+    for s in transcript or []:
+        if not isinstance(s, dict):
+            continue
+        if not (s.get("fo_id") or s.get("sample_ids") or s.get("action") == "inspect"):
+            continue
+        ev = s.get("event")
+        if isinstance(ev, dict):
+            try:
+                chunks.append(json.dumps(ev, default=str)[:4000])
+            except Exception:
+                pass
+        sample = s.get("sample")
+        if isinstance(sample, list):
+            chunks.extend(str(x)[:500] for x in sample[:50])
+    return "\n".join(chunks).lower()
+
+
 def _tool_cti_seen_before(case_id: str, step: dict) -> dict:
     """Cross-case memory: have these IOCs appeared in OTHER cases before? The
     'this C2/hash burned us last quarter' institutional-memory signal."""
@@ -3523,7 +3570,10 @@ def _tool_cti_seen_before(case_id: str, step: dict) -> dict:
     if not values:
         return {"query_status": "invalid", "query_error": "values (list of IOCs) required"}
     try:
-        hits = _pm.seen_before(values, current_case=case_id)
+        # Tenant scoping: only surface this case's company + shared records.
+        hits = _pm.seen_before(
+            values, current_case=case_id, companies=_memory_scope(case_id)
+        )
     except Exception as exc:
         return {"query_status": "invalid", "query_error": f"lookup failed: {exc}"}
     return {
@@ -4369,6 +4419,29 @@ _AGENT_ACTIVE_KEY = lambda case_id: f"case:{case_id}:ai:agent_active"
 _AGENT_LOG_KEY = lambda case_id, run_id: f"case:{case_id}:ai:agent_log:{run_id}"
 _AGENT_CANCEL_KEY = lambda case_id, run_id: f"case:{case_id}:ai:agent_cancel:{run_id}"
 
+# Co-operative cancel flag lifetime. A single step can exceed 120s (90s LLM
+# timeout + query-broaden ladder + tool time), so a shorter TTL could drop the
+# flag before the worker's next inter-step check ever sees it.
+_AGENT_CANCEL_TTL = 900  # 15 min
+
+# How long a finished run stays in the active-run hash so a reopened panel can
+# render the transition. Without an expiry the hash kept every run forever and
+# /ai/agent/active reported long-dead runs as recent.
+_AGENT_ACTIVE_TTL = 900  # 15 min
+
+
+def _terminal_run_expired(meta: dict) -> bool:
+    """True when a run reached a terminal state more than _AGENT_ACTIVE_TTL
+    seconds ago — those entries are pruned from the active-run hash."""
+    if not meta or meta.get("status") not in ("done", "error", "stalled"):
+        return False
+    stamp = meta.get("finished_at") or meta.get("last_beat") or meta.get("started_at") or ""
+    try:
+        dt = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
+        return (datetime.now(UTC) - dt).total_seconds() > _AGENT_ACTIVE_TTL
+    except Exception:
+        return False
+
 
 def _register_active_run(
     case_id: str, run_id: str, circumstance: str, max_steps: int, parent_run_idx: int | None
@@ -4392,6 +4465,10 @@ def _register_active_run(
             }
         ),
     )
+    # Backstop TTL on the whole hash: refreshed by every heartbeat/update, so
+    # once all runs finish the key dies _AGENT_ACTIVE_TTL after the last touch
+    # instead of lingering forever.
+    r.expire(_AGENT_ACTIVE_KEY(case_id), _AGENT_ACTIVE_TTL)
 
 
 def _update_active_run(case_id: str, run_id: str, **patch) -> None:
@@ -4409,6 +4486,9 @@ def _update_active_run(case_id: str, run_id: str, **patch) -> None:
     # with the process; Redis state would otherwise say "running" forever).
     cur["last_beat"] = datetime.now(UTC).isoformat()
     r.hset(_AGENT_ACTIVE_KEY(case_id), run_id, json.dumps(cur))
+    # Sliding TTL — see _register_active_run. Every touch is a heartbeat, so an
+    # in-flight run keeps the hash alive; a finished one fades out.
+    r.expire(_AGENT_ACTIVE_KEY(case_id), _AGENT_ACTIVE_TTL)
 
 
 _AGENT_STALL_SECONDS = 180  # > LLM timeout (90s) + tool time, with margin
@@ -4691,6 +4771,17 @@ def _autolaunch_modules(case_id: str) -> str:
 
     if not launched:
         return ""
+    # Auto-launches consume the same per-case launch budget that
+    # _tool_launch_module enforces — otherwise the Pilot gets cap autolaunches
+    # PLUS cap manual launches per 10-min window.
+    try:
+        r = _redis()
+        launch_key = f"case:{case_id}:ai:agent_launches"
+        count = int(r.incrby(launch_key, len(launched)))
+        if count == len(launched):
+            r.expire(launch_key, 600)  # 10-min window (same as _tool_launch_module)
+    except Exception:
+        pass
     return (
         "\nCitadel AUTO-LAUNCHED these analysis modules for this investigation "
         "(running in the background): " + ", ".join(launched) + ".\n"
@@ -5011,6 +5102,10 @@ def _agent_run(
     # can suggest *new* angles, not the same dead ends.
     tried_artifact_types: set[str] = set()
     tried_tools: set[str] = set()
+    # Set when the run aborts because the per-step LLM call failed — an
+    # infrastructure failure, NOT an analytical outcome (see the fallback
+    # conclude block after the loop).
+    llm_error: str | None = None
 
     for step_no in range(1, max_steps + 1):
         # Stale-progress detection — but NO force-conclude. Instead, the
@@ -5398,6 +5493,9 @@ def _agent_run(
         except Exception as exc:
             err_step = {"step": step_no, "action": "error", "thought": f"LLM failed: {exc}"}
             transcript.append(err_step)
+            # Track the real stop cause so the fallback below doesn't mislabel
+            # an LLM outage as "stopped at the step cap".
+            llm_error = f"LLM call failed at step {step_no}: {exc}"
             if run_id:
                 _append_step_log(case_id, run_id, err_step)
                 _update_active_run(case_id, run_id, step_count=len(transcript))
@@ -5702,30 +5800,58 @@ def _agent_run(
             }
             for h in declared_h
         ]
-        forced = {
-            "step": len(transcript) + 1,
-            "action": "conclude",
-            "thought": "Forced conclude — investigation hit the step cap.",
-            "verdict": (
-                "Investigation stopped at the step cap without a definitive "
-                "answer. The agent gathered evidence but did not converge on "
-                "a verdict. Review the investigation path; consider rerunning "
-                "with a narrower scenario or running missing module scans."
-            ),
-            "incident_confirmed": "inconclusive",
-            "linked_summary": "",
-            "evidence": [],
-            "indicators": [],
-            "mitre_techniques": [],
-            "hypotheses": synth_h,
-            "next_steps": [
-                "Review the investigation trace for promising leads.",
-                "If hypotheses remain untested, launch relevant scanners "
-                "(Hayabusa / Sigma / YARA) and rerun the agent.",
-            ],
-            "confidence": 15,
-            "stopped_by": "max_steps_guard",
-        }
+        if llm_error:
+            # Infrastructure failure — the LLM backend died mid-run. Say so
+            # plainly: this is NOT an analytical conclusion, and the partial
+            # evidence was never evaluated.
+            forced = {
+                "step": len(transcript) + 1,
+                "action": "conclude",
+                "thought": "Run aborted by an LLM infrastructure failure.",
+                "verdict": (
+                    f"Investigation stopped early — {llm_error}. "
+                    "This is an infrastructure failure, not an analytical "
+                    "conclusion: the evidence gathered so far was not fully "
+                    "evaluated. Retry the run once the LLM backend is healthy."
+                ),
+                "incident_confirmed": "inconclusive",
+                "linked_summary": "",
+                "evidence": [],
+                "indicators": [],
+                "mitre_techniques": [],
+                "hypotheses": synth_h,
+                "next_steps": [
+                    "Retry the investigation once the LLM backend is reachable.",
+                    "Check Settings → AI Analysis / the LLM provider status.",
+                ],
+                "confidence": 0,
+                "stopped_by": "llm_error",
+            }
+        else:
+            forced = {
+                "step": len(transcript) + 1,
+                "action": "conclude",
+                "thought": "Forced conclude — investigation hit the step cap.",
+                "verdict": (
+                    "Investigation stopped at the step cap without a definitive "
+                    "answer. The agent gathered evidence but did not converge on "
+                    "a verdict. Review the investigation path; consider rerunning "
+                    "with a narrower scenario or running missing module scans."
+                ),
+                "incident_confirmed": "inconclusive",
+                "linked_summary": "",
+                "evidence": [],
+                "indicators": [],
+                "mitre_techniques": [],
+                "hypotheses": synth_h,
+                "next_steps": [
+                    "Review the investigation trace for promising leads.",
+                    "If hypotheses remain untested, launch relevant scanners "
+                    "(Hayabusa / Sigma / YARA) and rerun the agent.",
+                ],
+                "confidence": 15,
+                "stopped_by": "max_steps_guard",
+            }
         final = forced
         transcript.append(forced)
         if run_id:
@@ -5740,7 +5866,9 @@ def _agent_run(
         "step_count": len(transcript),
         "max_steps": max_steps,
         "stopped_reason": (
-            "concluded"
+            "llm_error"
+            if llm_error
+            else "concluded"
             if (final and final.get("action") == "conclude")
             else "cancelled"
             if any(s.get("action") == "cancelled" for s in transcript)
@@ -5752,20 +5880,30 @@ def _agent_run(
         "run_id": run_id or "",  # stable key for feedback & cross-refs
     }
     # Confidence calibration (#8) + cross-case memory (#5): annotate the verdict
-    # with confidence bands and persist surfaced IOCs/TTPs/verdict to the global
-    # Pilot memory so future cases get the "seen before" signal. Best-effort —
-    # never let it break a completed run.
+    # with confidence bands and persist surfaced IOCs/TTPs/verdict to the
+    # Pilot memory so future cases get the "seen before" signal. Records are
+    # tagged with the case's company so one tenant's memory never leaks to
+    # another. Indicators are only persisted when they actually appear in the
+    # run's cited evidence — LLM-asserted IOCs with no evidence backing would
+    # poison the shared memory. Best-effort — never let it break a run.
     try:
         from services import pilot_memory as _pm
 
         if final and final.get("action") == "conclude":
+            company = _case_company(case_id)
+            evidence_text = _cited_evidence_text(transcript)
             result_doc["final"] = _pm.calibrate_verdict(final)
             for ioc in (final.get("indicators") or [])[:50]:
-                _pm.remember(case_id, "ioc", ioc, {"run_id": run_id or ""})
+                if str(ioc).strip().lower() not in evidence_text:
+                    continue  # agent-asserted, not evidence-cited — skip
+                _pm.remember(case_id, "ioc", ioc, {"run_id": run_id or ""}, company=company)
             for ttp in (final.get("mitre_techniques") or [])[:50]:
-                _pm.remember(case_id, "ttp", ttp, {"run_id": run_id or ""})
+                _pm.remember(case_id, "ttp", ttp, {"run_id": run_id or ""}, company=company)
             if final.get("verdict"):
-                _pm.remember(case_id, "verdict", final["verdict"][:300], {"run_id": run_id or ""})
+                _pm.remember(
+                    case_id, "verdict", final["verdict"][:300],
+                    {"run_id": run_id or ""}, company=company,
+                )
             final = result_doc["final"]
     except Exception as exc:
         logger.warning("Pilot memory/calibration hook failed: %s", exc)
@@ -5934,7 +6072,7 @@ def launch_agent_run(
 @router.post(
     "/cases/{case_id}/ai/agent/start", dependencies=[Depends(require_feature("ai_assist"))]
 )
-def ai_agent_start(case_id: str, req: CaseAgentRequest):
+def ai_agent_start(case_id: str, req: CaseAgentRequest, case: dict = Depends(require_case_access)):
     """Kick off an agent run in the background. Returns {run_id}; poll
     /ai/agent/active and /ai/agent/progress/{run_id} to watch it."""
     return launch_agent_run(
@@ -5949,17 +6087,22 @@ def ai_agent_start(case_id: str, req: CaseAgentRequest):
 @router.get(
     "/cases/{case_id}/ai/agent/active", dependencies=[Depends(require_feature("ai_assist"))]
 )
-def ai_agent_active(case_id: str):
+def ai_agent_active(case_id: str, case: dict = Depends(require_case_access)):
     """List in-flight + recently-finished agent runs for this case. Includes
     runs that finished in the last few minutes so the panel can render the
     transition smoothly when reopened."""
     raw = _redis().hgetall(_AGENT_ACTIVE_KEY(case_id)) or {}
     out = []
-    for v in raw.values():
+    for run_id, v in raw.items():
         try:
-            out.append(_mark_if_stalled(case_id, json.loads(v)))
+            meta = _mark_if_stalled(case_id, json.loads(v))
         except Exception:
             continue
+        if _terminal_run_expired(meta):
+            # Finished long ago — prune so the hash doesn't grow unboundedly.
+            _clear_active_run(case_id, meta.get("run_id") or run_id)
+            continue
+        out.append(meta)
     out.sort(key=lambda x: x.get("started_at", ""), reverse=True)
     return {"runs": out}
 
@@ -5968,7 +6111,9 @@ def ai_agent_active(case_id: str):
     "/cases/{case_id}/ai/agent/progress/{run_id}",
     dependencies=[Depends(require_feature("ai_assist"))],
 )
-def ai_agent_progress(case_id: str, run_id: str, since: int = 0):
+def ai_agent_progress(
+    case_id: str, run_id: str, since: int = 0, case: dict = Depends(require_case_access)
+):
     """Return persisted agent steps since index `since` (poll-friendly).
     Also returns the active-hash entry so the panel knows status + count."""
     r = _redis()
@@ -5994,11 +6139,13 @@ def ai_agent_progress(case_id: str, run_id: str, since: int = 0):
     "/cases/{case_id}/ai/agent/cancel/{run_id}",
     dependencies=[Depends(require_feature("ai_assist"))],
 )
-def ai_agent_cancel(case_id: str, run_id: str):
+def ai_agent_cancel(case_id: str, run_id: str, case: dict = Depends(require_case_access)):
     """Co-operative cancel — sets a flag the worker checks between steps.
-    Effective at the next inter-step boundary (within ~5-10s)."""
+    Effective at the next inter-step boundary. The TTL must comfortably exceed
+    the worst-case single step (90s LLM timeout + broaden ladder), or the flag
+    could evaporate before the worker ever checks it."""
     r = _redis()
-    r.set(_AGENT_CANCEL_KEY(case_id, run_id), "1", ex=120)
+    r.set(_AGENT_CANCEL_KEY(case_id, run_id), "1", ex=_AGENT_CANCEL_TTL)
     return {"cancelling": True, "run_id": run_id}
 
 
@@ -6044,7 +6191,7 @@ def _ids_surfaced_in_run(run: dict) -> list[str]:
     "/cases/{case_id}/ai/agent/{run_idx}/flag_evidence",
     dependencies=[Depends(require_feature("ai_assist"))],
 )
-def ai_agent_flag_evidence(case_id: str, run_idx: int):
+def ai_agent_flag_evidence(case_id: str, run_idx: int, case: dict = Depends(require_case_access)):
     """Flag every event surfaced during an agent run so they show up in the
     case's flagged filter. Idempotent — re-flagging is a no-op.
 
@@ -6258,7 +6405,7 @@ def ai_agent_feedback(
 @router.get(
     "/cases/{case_id}/ai/agent/feedback", dependencies=[Depends(require_feature("ai_assist"))]
 )
-def ai_agent_feedback_list(case_id: str):
+def ai_agent_feedback_list(case_id: str, case: dict = Depends(require_case_access)):
     """All feedback entries for this case, keyed by run index."""
     raw = _redis().hgetall(_AGENT_FEEDBACK_KEY(case_id)) or {}
     out = {}
@@ -6654,12 +6801,27 @@ def generate_final_report(case_id: str, body: FinalReportRequest = None, case: d
                 "hostnames": {"terms": {"field": "host.hostname.keyword", "size": 20}},
                 "usernames": {"terms": {"field": "user.name.keyword", "size": 20}},
                 "processes": {"terms": {"field": "process.name.keyword", "size": 20}},
-                "domains": {"terms": {"field": "network.dst_domain.keyword", "size": 20}},
+                "domains_dns": {"terms": {"field": "dns.query_name.keyword", "size": 20}},
+                "domains_suricata": {"terms": {"field": "suricata.dns.rrname.keyword", "size": 20}},
+                "domains_zeek": {"terms": {"field": "zeek.query.keyword", "size": 20}},
                 "hashes": {"terms": {"field": "process.hash_sha256.keyword", "size": 10}},
-                "cmdlines": {"terms": {"field": "process.cmdline.keyword", "size": 10}},
+                "cmdlines": {"terms": {"field": "process.command_line.keyword", "size": 10}},
             },
         }
         aggs = _es_req("POST", f"/{index}/_search", agg_body).get("aggregations", {})
+        # No parser emits network.dst_domain; DNS names live in per-parser fields.
+        # Merge the three spellings into one domain list.
+        merged_domains: dict[str, int] = {}
+        for k in ("domains_dns", "domains_suricata", "domains_zeek"):
+            for b in aggs.pop(k, {}).get("buckets", []):
+                merged_domains[b["key"]] = merged_domains.get(b["key"], 0) + b["doc_count"]
+        if merged_domains:
+            aggs["domains"] = {
+                "buckets": [
+                    {"key": k, "doc_count": v}
+                    for k, v in sorted(merged_domains.items(), key=lambda kv: -kv[1])
+                ]
+            }
         lines = []
         label_map = {
             "src_ips": "Source IPs",

@@ -64,11 +64,11 @@ def test_forged_first_hop_cannot_mint_a_fresh_bucket(fake_redis, monkeypatch):
     req_b = _request("198.51.100.77, 10.0.0.9")  # different forged hop, attempt B
 
     for _ in range(5):
-        auth_router._check_login_rate_limit(req_a)
-        auth_router._check_login_rate_limit(req_b)
+        auth_router._record_login_failure(req_a)
+        auth_router._record_login_failure(req_b)
 
     key = rk.login_ratelimit("10.0.0.9")
-    # All 10 attempts (5 x each forged identity) landed in the one real-peer bucket.
+    # All 10 failures (5 x each forged identity) landed in the one real-peer bucket.
     assert fake_redis.get(key) == "10"
 
 
@@ -86,11 +86,41 @@ def test_forged_first_hop_still_gets_rate_limited(fake_redis, monkeypatch):
     allowed = 0
     with pytest.raises(HTTPException) as exc_info:
         for req in forged_attempts:
+            # A failed attempt = read-only gate + failure count (login flow).
             auth_router._check_login_rate_limit(req)
+            auth_router._record_login_failure(req)
             allowed += 1
 
     assert exc_info.value.status_code == 429
     assert allowed == 3  # limit enforced across the shared bucket, not per forged IP
+
+
+def test_successful_logins_do_not_burn_the_budget(fake_redis, monkeypatch):
+    """The read-only gate must never increment the counter: a user logging in
+    successfully over and over (e.g. behind a shared NAT) is never throttled."""
+    monkeypatch.setattr(
+        ps,
+        "get_platform_config",
+        lambda: {"login_rate_limit": 3, "login_rate_window_seconds": 60},
+    )
+    req = _request(None)
+    for _ in range(20):
+        auth_router._check_login_rate_limit(req)  # must never raise
+    assert fake_redis.get(rk.login_ratelimit("10.0.0.9")) is None
+
+
+def test_429_message_reflects_the_configured_window(fake_redis, monkeypatch):
+    monkeypatch.setattr(
+        ps,
+        "get_platform_config",
+        lambda: {"login_rate_limit": 1, "login_rate_window_seconds": 300},
+    )
+    req = _request(None)
+    auth_router._record_login_failure(req)
+    with pytest.raises(HTTPException) as exc_info:
+        auth_router._check_login_rate_limit(req)
+    assert exc_info.value.status_code == 429
+    assert "5 minutes" in exc_info.value.detail
 
 
 def test_resolve_client_ip_trusts_only_the_configured_proxy_hops():
