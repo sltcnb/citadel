@@ -1,0 +1,38 @@
+id: json_file
+name: JSON / Structured Text File
+description: >-
+  Indexes structured config files as searchable events and emits metadata-only
+  events for opaque text blobs. Produces one event per top-level element for
+  JSON, one per top-level key for YAML, and one per row for CSV; plain text
+  files yield a single event carrying size, mtime, sha256, and line count.
+  Fallback for readable structured files not claimed by specific parsers.
+supported_extensions:
+  - .json
+  - .yaml
+  - .yml
+  - .txt
+  - .log
+  - .conf
+  - .cfg
+  - .ini
+  - .toml
+  - .xml
+  - .config
+  - .csv
+  - .ps1
+  - .psm1
+  - .sh
+  - .bat
+  - .cmd
+  - .py
+supported_mime_types:
+  - text/plain
+  - text/html
+  - text/xml
+  - text/csv
+  - application/json
+  - application/yaml
+artifact_type: file
+author: ForensicsOperator
+version: "1.0.0"
+tags: [json, yaml, csv, config, text, metadata, fallback]

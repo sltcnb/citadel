@@ -37,9 +37,32 @@ spec:
                 name: {{ include "citadel.fullname" . }}-config
             - secretRef:
                 name: {{ .Values.secret.existingSecret | default (printf "%s-secret" (include "citadel.fullname" .)) }}
+          env:
+            # Chunked-upload assembly dir — MUST live on the shared uploads PVC
+            # so every api replica sees chunks written by the others (mirrors
+            # CHUNK_DIR=/app/uploads/_chunks in k8s/api/deployment.yaml).
+            - name: CHUNK_DIR
+              value: "/app/uploads/_chunks"
           livenessProbe:
             {{- toYaml .Values.api.livenessProbe | nindent 12 }}
           readinessProbe:
             {{- toYaml .Values.api.readinessProbe | nindent 12 }}
           resources:
             {{- toYaml .Values.api.resources | nindent 12 }}
+          volumeMounts:
+            - name: plugins
+              mountPath: /app/babel
+            - name: uploads
+              mountPath: /app/uploads
+            - name: modules
+              mountPath: /app/anvil
+      volumes:
+        - name: plugins
+          persistentVolumeClaim:
+            claimName: {{ include "citadel.fullname" . }}-plugins
+        - name: uploads
+          persistentVolumeClaim:
+            claimName: {{ include "citadel.fullname" . }}-uploads
+        - name: modules
+          persistentVolumeClaim:
+            claimName: {{ include "citadel.fullname" . }}-modules

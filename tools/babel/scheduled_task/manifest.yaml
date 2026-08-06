@@ -1,0 +1,14 @@
+id: scheduled_task
+name: Windows Scheduled Task
+description: >-
+  Parses Windows Scheduled Task definition files: UTF-16 XML documents named
+  after the task (no extension) collected under persistence/tasks/ paths.
+  Extracts task identity, principal (with SID resolution), triggers, actions,
+  and enabled state. Routed by the application/x-windows-task MIME type or by
+  a tasks/scheduled_tasks path component with an XML or UTF-16 BOM header.
+supported_extensions: []
+supported_mime_types: ["application/x-windows-task"]
+artifact_type: persistence
+author: ForensicsOperator
+version: "1.0.0"
+tags: [windows, scheduled-task, persistence, xml, task-scheduler]

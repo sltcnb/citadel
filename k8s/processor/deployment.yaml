@@ -55,14 +55,24 @@ spec:
         # Seed built-in plugins into the shared PVC on every start.
         # Uses cp -r (overwrite) so image updates always propagate.
         # Studio customizations use /app/sluice/ (separate volume) — not affected.
+        # Runs as root: the PVC may hold legacy ROOT-owned files from pre-hardening
+        # pods — a non-root seed silently fails (`|| true`) and image plugin updates
+        # never reach the worker/API (found live: PVC held July-5 plugins). After
+        # copying, ownership is reset to the runtime UID so the API can still write
+        # custom plugins into the volume.
         - name: seed-plugins
           image: __FO_PROCESSOR_IMAGE__
           imagePullPolicy: __FO_PULL_POLICY__
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+            runAsNonRoot: false
           command:
             - sh
             - -c
             - |
               cp -r /app/babel_builtin/. /app/babel/ 2>/dev/null || true
+              chown -R 1000:1000 /app/babel 2>/dev/null || true
               echo "Built-in plugins seeded: $(ls /app/babel)"
           volumeMounts:
             - name: plugins-volume
@@ -70,11 +80,16 @@ spec:
         - name: seed-modules
           image: __FO_PROCESSOR_IMAGE__
           imagePullPolicy: __FO_PULL_POLICY__
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+            runAsNonRoot: false
           command:
             - sh
             - -c
             - |
               cp -rn /app/anvil_builtin/. /app/anvil/ 2>/dev/null || true
+              chown -R 1000:1000 /app/anvil 2>/dev/null || true
               echo "Built-in modules seeded: $(ls /app/anvil)"
           volumeMounts:
             - name: modules-volume

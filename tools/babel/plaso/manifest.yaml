@@ -1,0 +1,13 @@
+id: plaso
+name: Plaso Storage
+description: >-
+  Parses Plaso storage files (.plaso), which are SQLite databases holding
+  serialized timeline event data. Exports events to JSON via psort when
+  available, falling back to direct SQLite reading otherwise. Maps plaso
+  parser names (winevt, winprefetch, winreg, ...) to Citadel artifact types.
+supported_extensions: [".plaso"]
+supported_mime_types: ["application/x-sqlite3"]
+artifact_type: timeline
+author: ForensicsOperator
+version: "1.0.0"
+tags: [plaso, psort, timeline, sqlite, storage]

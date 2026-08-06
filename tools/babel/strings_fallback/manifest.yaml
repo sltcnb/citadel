@@ -1,0 +1,14 @@
+id: strings
+name: Strings Fallback
+description: >-
+  Last-resort handler for any file not matched by a specific plugin. Extracts
+  printable ASCII strings (>= 6 chars) from the raw bytes and indexes only a
+  small preview, keeping the full content in MinIO via the source_file
+  pointer. Files that look like pure noise (random compressed or encrypted
+  blobs) yield nothing rather than flooding the timeline.
+supported_extensions: []
+supported_mime_types: []
+artifact_type: binary_files
+author: ForensicsOperator
+version: "1.0.0"
+tags: [strings, fallback, binary, catch-all, preview]

@@ -51,3 +51,20 @@ spec:
           {{- end }}
           resources:
             {{- toYaml .Values.processor.resources | nindent 12 }}
+          volumeMounts:
+            - name: plugins
+              mountPath: /app/babel
+            - name: uploads
+              mountPath: /app/uploads
+            - name: modules
+              mountPath: /app/anvil
+      volumes:
+        - name: plugins
+          persistentVolumeClaim:
+            claimName: {{ include "citadel.fullname" . }}-plugins
+        - name: uploads
+          persistentVolumeClaim:
+            claimName: {{ include "citadel.fullname" . }}-uploads
+        - name: modules
+          persistentVolumeClaim:
+            claimName: {{ include "citadel.fullname" . }}-modules

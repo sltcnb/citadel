@@ -1,0 +1,21 @@
+id: archive
+name: Archive Extractor
+description: >-
+  Recursively extracts ZIP and TAR-family archives (.zip, .tar, .tgz, .tar.gz,
+  .tar.bz2, .tar.xz) and processes each contained file through the full
+  plugin-selection pipeline, so nested forensic artifacts are parsed by their
+  dedicated plugin rather than the strings fallback. Enforces configurable
+  safety limits against zip-bomb and decompression-bomb attacks.
+supported_extensions: [".zip", ".tar", ".tgz"]
+supported_mime_types:
+  - application/zip
+  - application/x-zip-compressed
+  - application/x-tar
+  - application/gzip
+  - application/x-gzip
+  - application/x-bzip2
+  - application/x-xz
+artifact_type: generic
+author: ForensicsOperator
+version: "1.0.0"
+tags: [archive, zip, tar, gzip, extraction, recursive]

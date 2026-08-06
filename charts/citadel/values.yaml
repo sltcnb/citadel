@@ -133,7 +133,10 @@ ingress:
     api: /api
   tls:
     enabled: true
-    secretName: citadel-tls
+    # foctl (deploy helm / deploy k8s) creates this TLS secret. Deploying the
+    # chart by hand? Create it yourself first:
+    #   kubectl create secret tls forensics-tls --cert=tls.crt --key=tls.key -n <ns>
+    secretName: forensics-tls
 
 # ── Secrets (JWT + MinIO creds) ────────────────────────────────────────────────
 # Rendered into a Secret and injected (envFrom) into api + processor. To reuse
@@ -142,6 +145,10 @@ secret:
   create: true
   existingSecret: ""        # set to use your own Secret instead of creating one
   jwtSecret: ""             # REQUIRED for stable sessions; auto-generated if empty (changes each upgrade!)
+  # Shared token for in-cluster service calls (worker → API finalize chain).
+  # foctl passes config.json's internal_service_token here so it stays stable;
+  # if left empty the template falls back to randAlphaNum (changes each upgrade).
+  internalServiceToken: ""
   authEnabled: "true"
   # REQUIRED — no insecure default. The chart fails closed (see secret.yaml,
   # which uses `required`) until you set these via --set / a values override,
@@ -172,6 +179,26 @@ containerSecurityContext:
 # CNI that enforces NetworkPolicy. Off by default to avoid surprises.
 networkPolicy:
   enabled: false
+
+# ── Shared persistent storage (plugins / uploads / modules) ───────────────────
+# The API and processor pods share three PVCs, mirroring k8s/storage/*.pvc.yaml:
+#   plugins  — Babel parser plugins (mounted at /app/babel)
+#   uploads  — chunked-upload assembly + triage staging (mounted at /app/uploads;
+#              the API's CHUNK_DIR lives here so every replica sees all chunks)
+#   modules  — custom Studio modules (mounted at /app/anvil)
+# Single-node clusters (k3s/k3d/minikube/kind): ReadWriteOnce is enough — pods
+# on one node may share an RWO volume. Multi-node: set accessMode to
+# ReadWriteMany and storageClassName to an RWX-capable class (nfs-client,
+# longhorn, ...).
+persistence:
+  accessMode: ReadWriteOnce
+  storageClassName: ""        # empty = cluster default storage class
+  plugins:
+    size: 1Gi
+  uploads:
+    size: 500Gi
+  modules:
+    size: 500Mi
 
 # ── Substrate wiring (ConfigMap env) ───────────────────────────────────────────
 # These URLs are injected into every component via the chart ConfigMap. When a

@@ -1,0 +1,15 @@
+id: wer
+name: Windows Error Reporting
+description: >-
+  Parses Windows Error Reporting (.wer) crash report files, both the UTF-16
+  XML form (WERReportMetadata) and the INI-like key=value form written for
+  archived reports. Extracts application name and path, event type, and the
+  crash timestamp (converted from FILETIME). Also claims queued reports named
+  WER.<guid>.tmp.xml under ReportQueue/ReportArchive by inspecting the XML
+  root element.
+supported_extensions: [".wer"]
+supported_mime_types: ["application/x-windows-wer"]
+artifact_type: process
+author: ForensicsOperator
+version: "1.0.0"
+tags: [windows, wer, crash, error-reporting, xml]

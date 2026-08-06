@@ -33,14 +33,21 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       initContainers:
+        # Runs as root: the PVC may hold legacy ROOT-owned files from pre-hardening
+        # pods — a non-root seed silently fails and module updates never propagate.
         - name: seed-modules
           image: __FO_API_IMAGE__
           imagePullPolicy: __FO_PULL_POLICY__
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+            runAsNonRoot: false
           command:
             - sh
             - -c
             - |
               cp -rn /app/anvil_builtin/. /app/anvil/ 2>/dev/null || true
+              chown -R 1000:1000 /app/anvil 2>/dev/null || true
               echo "Built-in modules seeded: $(ls /app/anvil)"
           volumeMounts:
             - name: modules-volume

@@ -35,11 +35,12 @@ USAGE:
   ./foctl deploy k8s --restart     Re-apply manifests + restart pods only
   ./foctl deploy k8s --setup-traefik  Also apply kube-system Traefik config
 
-  ./foctl status  [docker|k8s]     Health check
+  ./foctl status  [docker|k8s|helm]  Health check
   ./foctl logs    <svc> [mode]     Stream logs: api | processor | frontend | all
   ./foctl update  [docker|k8s]     Rebuild images + redeploy
   ./foctl destroy [docker|k8s]     Tear everything down (confirms first)
   ./foctl config                   Show parsed configuration
+  ./foctl ensure-env [--yes]       Create/repair .env (used by 'make dev')
 
 All Kubernetes settings are in config.json.
 Docker settings are in .env (created from .env.example on first run).
@@ -169,8 +170,22 @@ SECRET_GENERATORS = {
     # Redis requires auth (--requirepass); URL-safe so it folds cleanly into
     # redis://:<pass>@host URLs without escaping.
     "redis_password":   lambda: _secrets.token_urlsafe(32),
+    # Elasticsearch bootstrap password for the built-in `elastic` superuser and
+    # the password foctl sets for the built-in `kibana_system` user (Kibana pod).
+    "es_password":      lambda: _secrets.token_urlsafe(32),
+    "kibana_password":  lambda: _secrets.token_urlsafe(32),
     # Shared token for in-cluster service calls (worker → API finalize chain).
     "internal_service_token": lambda: _secrets.token_hex(32),
+}
+
+# Docker mode: .env vars the compose files fail closed on (${VAR:?...}). Any
+# that are empty/missing after copying .env.example are generated once into
+# .env by ensure_env_file(), then stay stable across redeploys.
+ENV_SECRET_GENERATORS = {
+    "JWT_SECRET":       SECRET_GENERATORS["jwt_secret"],
+    "ELASTIC_PASSWORD": SECRET_GENERATORS["es_password"],
+    "KIBANA_PASSWORD":  SECRET_GENERATORS["kibana_password"],
+    "REDIS_PASSWORD":   SECRET_GENERATORS["redis_password"],
 }
 
 
@@ -249,6 +264,7 @@ def auto_resources():
             return plan[svc][kind][axis]
 
         es_lim_mib = _mib(rq("elasticsearch", "limits", "memory"), 1024)
+        redis_lim_mib = _mib(rq("redis", "limits", "memory"), 8192)
         return {
             "api_memory_request": rq("api", "requests", "memory"),
             "api_memory_limit":   rq("api", "limits", "memory"),
@@ -266,6 +282,14 @@ def auto_resources():
             "minio_memory_limit":   rq("minio", "limits", "memory"),
             "minio_cpu_request":    rq("minio", "requests", "cpu"),
             "minio_cpu_limit":      rq("minio", "limits", "cpu"),
+            "redis_memory_request": rq("redis", "requests", "memory"),
+            "redis_memory_limit":   rq("redis", "limits", "memory"),
+            "redis_cpu_request":    rq("redis", "requests", "cpu"),
+            "redis_cpu_limit":      rq("redis", "limits", "cpu"),
+            # Redis maxmemory tracks the container limit (~75%, leaving COW
+            # headroom for AOF rewrites) — coupled so a resized limit can never
+            # leave maxmemory above the cgroup ceiling (was hardcoded 6144mb).
+            "redis_maxmemory_mb":   max(128, int(redis_lim_mib * 0.75)),
             # ES heap = half the container limit (off-heap headroom) — coupled to
             # the limit below so it can never exceed it (was OOMKilling). ES heap
             # >31g loses compressed-oops, so cap there.
@@ -296,6 +320,8 @@ def build_substitutions(cfg, pull_policy):
         "__FO_MINIO_ACCESS_KEY__": cfg.get("secrets", {}).get("minio_access_key", "minioadmin"),
         "__FO_MINIO_SECRET_KEY__": cfg.get("secrets", {}).get("minio_secret_key", "minioadmin"),
         "__FO_REDIS_PASSWORD__":   cfg.get("secrets", {}).get("redis_password", ""),
+        "__FO_ES_PASSWORD__":      cfg.get("secrets", {}).get("es_password", ""),
+        "__FO_KIBANA_PASSWORD__":  cfg.get("secrets", {}).get("kibana_password", ""),
         "__FO_JWT_SECRET__":              cfg["secrets"].get("jwt_secret", "CHANGE_ME_IN_PRODUCTION"),
         "__FO_INTERNAL_SERVICE_TOKEN__":  cfg["secrets"].get("internal_service_token", ""),
         "__FO_ADMIN_USERNAME__":          cfg["secrets"].get("admin_username", "admin"),
@@ -332,6 +358,12 @@ def build_substitutions(cfg, pull_policy):
         "__FO_MINIO_MEMORY_LIMIT__":    res.get("minio_memory_limit", "4Gi"),
         "__FO_MINIO_CPU_REQUEST__":     res.get("minio_cpu_request", "250m"),
         "__FO_MINIO_CPU_LIMIT__":       res.get("minio_cpu_limit", "1000m"),
+        # Redis resources (defaults preserve the previous hardcoded 4Gi/8Gi sizing)
+        "__FO_REDIS_MEMORY_REQUEST__":  res.get("redis_memory_request", "4Gi"),
+        "__FO_REDIS_MEMORY_LIMIT__":    res.get("redis_memory_limit", "8Gi"),
+        "__FO_REDIS_CPU_REQUEST__":     res.get("redis_cpu_request", "1000m"),
+        "__FO_REDIS_CPU_LIMIT__":       res.get("redis_cpu_limit", "2000m"),
+        "__FO_REDIS_MAXMEMORY__":       f"{res.get('redis_maxmemory_mb', 6144)}mb",
         # Frontend resources
         "__FO_FRONTEND_MEMORY_REQUEST__":  res.get("frontend_memory_request", "128Mi"),
         "__FO_FRONTEND_MEMORY_LIMIT__":    res.get("frontend_memory_limit", "512Mi"),
@@ -995,9 +1027,13 @@ def dlq_replay(index=None, replay_all=False):
 
 def wait_for_elasticsearch():
     step("Waiting for Elasticsearch (up to 3 minutes)")
+    # xpack security is enabled, so every call authenticates as the built-in
+    # `elastic` user. The password comes from the ES pod's own ELASTIC_PASSWORD
+    # env (injected from elasticsearch-secret) — never passed on argv.
     for i in range(36):
         r = run(["kubectl", "exec", "-n", NS, "elasticsearch-0", "--",
-                 "curl", "-sf",
+                 "sh", "-c",
+                 'curl -sf -u "elastic:$ELASTIC_PASSWORD" '
                  "http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s"],
                 capture=True, check=False)
         if r.returncode == 0:
@@ -1009,16 +1045,46 @@ def wait_for_elasticsearch():
     warn("Elasticsearch took too long — it may still be starting up")
 
 
+def set_kibana_system_password(cfg):
+    """Set the built-in `kibana_system` user's password inside ES to the
+    kibana_password stored in elasticsearch-secret (what the Kibana pod
+    authenticates with). Without this Kibana crash-loops on fresh deploys —
+    nothing else ever sets that user's password. The password is piped via
+    stdin so it never appears in argv."""
+    pw = cfg.get("secrets", {}).get("kibana_password", "")
+    if not pw:
+        warn("No kibana_password in config.json secrets — skipping kibana_system setup")
+        return
+    step("Setting kibana_system password in Elasticsearch")
+    r = run(["kubectl", "exec", "-n", NS, "-i", "elasticsearch-0", "--",
+             "sh", "-c",
+             'curl -sf -u "elastic:$ELASTIC_PASSWORD" -X POST '
+             "http://localhost:9200/_security/user/kibana_system/_password "
+             '-H "Content-Type: application/json" -d @-'],
+            stdin_text=json.dumps({"password": pw}), capture=True, check=False)
+    if r.returncode != 0:
+        warn("Could not set the kibana_system password — Kibana may not connect.\n"
+             "     Retry with: ./foctl deploy k8s --no-build")
+        return
+    ok("kibana_system password set")
+    # Kibana may have crash-looped while its password was unset — restart it so
+    # it reconnects with the now-valid credentials.
+    run(["kubectl", "rollout", "restart", "deployment/kibana", "-n", NS],
+        capture=True, check=False)
+
+
 def apply_es_template():
     tmpl = ROOT / "elasticsearch" / "index_templates" / "fo-cases-template.json"
     if not tmpl.exists():
         return
     step("Applying Elasticsearch index template")
-    r = run(["kubectl", "exec", "-n", NS, "elasticsearch-0", "--",
-             "curl", "-sf", "-X", "PUT",
-             "http://localhost:9200/_index_template/fo-cases-template",
-             "-H", "Content-Type: application/json",
-             "-d", tmpl.read_text()], capture=True, check=False)
+    # Authenticated (xpack security on); template piped via stdin, not argv.
+    r = run(["kubectl", "exec", "-n", NS, "-i", "elasticsearch-0", "--",
+             "sh", "-c",
+             'curl -sf -u "elastic:$ELASTIC_PASSWORD" -X PUT '
+             "http://localhost:9200/_index_template/fo-cases-template "
+             '-H "Content-Type: application/json" -d @-'],
+            stdin_text=tmpl.read_text(), capture=True, check=False)
     if r.returncode != 0:
         warn("Could not apply template yet — retry with --no-build")
         return
@@ -1034,17 +1100,23 @@ def apply_es_template():
 # In-pod alias back-fill runs entirely inside one kubectl exec (avoids spawning
 # hundreds of kubectl calls over SSH, which gets killed by the connection).
 _BACKFILL_PY = r"""
-import json, sys, urllib.request, urllib.error
+import base64, json, os, sys, urllib.request, urllib.error
 
 aliases = json.loads(sys.stdin.read())  # {name: {type:alias, path:dotted}}
 if not aliases:
     print('NO_ALIASES'); sys.exit(0)
 
+# xpack security is on: authenticate with the api pod's own ES credentials
+# (injected from elasticsearch-secret) — never passed on argv.
+_user = os.environ.get('ELASTICSEARCH_USERNAME', 'elastic')
+_pass = os.environ.get('ELASTICSEARCH_PASSWORD', '')
+_auth = 'Basic ' + base64.b64encode(f'{_user}:{_pass}'.encode()).decode()
+
 def es(method, path, body=None):
     req = urllib.request.Request(
         'http://elasticsearch:9200' + path, method=method,
         data=(json.dumps(body).encode() if body else None),
-        headers={'Content-Type': 'application/json'} if body else {},
+        headers={'Content-Type': 'application/json', 'Authorization': _auth},
     )
     try:
         with urllib.request.urlopen(req, timeout=15) as r:
@@ -1159,30 +1231,58 @@ def check_docker():
     ok(f"{' '.join(dc_cmd())} found")
 
 
-def ensure_env_file():
+def _fill_env_secrets(path):
+    """Generate values for any empty/placeholder secret vars in .env.
+
+    The compose files fail closed on these (${VAR:?...}), so a .env copied
+    from .env.example cannot start. Values are written back to .env so they
+    stay STABLE across redeploys — same contract as ensure_secrets() for k8s.
+    Returns the list of variable names that were generated."""
+    lines     = path.read_text().splitlines()
+    seen      = set()
+    generated = []
+    for i, line in enumerate(lines):
+        m = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", line)
+        if not m:
+            continue
+        key, val = m.group(1), m.group(2).strip().strip("\"'")
+        seen.add(key)
+        gen = ENV_SECRET_GENERATORS.get(key)
+        if gen and val in _PLACEHOLDERS:
+            lines[i] = f"{key}={gen()}"
+            generated.append(key)
+    # Append any required vars missing from the file entirely.
+    for key, gen in ENV_SECRET_GENERATORS.items():
+        if key not in seen:
+            lines.append(f"{key}={gen()}")
+            generated.append(key)
+    if generated:
+        path.write_text("\n".join(lines) + "\n")
+        ok(f"Generated secrets → saved to .env (stable across redeploys): "
+           f"{', '.join(generated)}")
+    return generated
+
+
+def ensure_env_file(yes=False):
     if ENV_FILE.exists():
         ok(".env found")
+        _fill_env_secrets(ENV_FILE)   # heal an older .env with empty secrets
     elif (ROOT / ".env.example").exists():
         shutil.copy(ROOT / ".env.example", ENV_FILE)
         # .env will hold generated secrets — restrict it to the owner.
         os.chmod(ENV_FILE, 0o600)
         warn(".env was not found — created from .env.example")
-        warn("Review settings and update secrets before production use.")
-        input("\n     Press Enter to continue with defaults, or Ctrl-C to edit .env first...")
+        _fill_env_secrets(ENV_FILE)
+        if not yes:
+            warn("Review settings before exposing to the network.")
+            input("\n     Press Enter to continue, or Ctrl-C to edit .env first...")
     else:
         die(".env not found and .env.example is missing. Create .env manually (see README).")
-    with open(ENV_FILE) as f:
-        for line in f:
-            if line.startswith("JWT_SECRET="):
-                jwt = line.split("=", 1)[1].strip().strip("\"'")
-                if not jwt or jwt == "CHANGE_ME_IN_PRODUCTION":
-                    warn("JWT_SECRET in .env is not set — update before exposing to the network.")
-                break
 
 
-def deploy_docker():
+def deploy_docker(yes=False):
     check_docker()
-    ensure_env_file()
+    ensure_env_file(yes=yes)
     if not COMPOSE_FILE.exists():
         die(f"docker-compose.prod.yml not found in {ROOT}")
     step("Building and starting all services (first build may take several minutes)")
@@ -1200,7 +1300,41 @@ def deploy_docker():
     else:
         print()
         warn("API did not respond in 120 s. Check: ./foctl logs api docker")
+    _docker_set_kibana_password()
     _summary_docker()
+
+
+def _env_value(key):
+    if ENV_FILE.exists():
+        for line in ENV_FILE.read_text().splitlines():
+            if line.startswith(f"{key}="):
+                return line.split("=", 1)[1].strip().strip("\"'")
+    return ""
+
+
+def _docker_set_kibana_password():
+    """Set the built-in kibana_system user's password inside ES so Kibana can
+    connect — docker-mode mirror of set_kibana_system_password() (k8s flow).
+    The password is piped via stdin so it never appears in argv."""
+    pw = _env_value("KIBANA_PASSWORD")
+    if not pw:
+        return
+    step("Setting kibana_system password in Elasticsearch")
+    dc = dc_cmd()
+    r = run(dc + ["-f", str(COMPOSE_FILE), "--env-file", str(ENV_FILE),
+                  "exec", "-T", "elasticsearch", "sh", "-c",
+                  'curl -sf -u "elastic:$ELASTIC_PASSWORD" -X POST '
+                  "http://localhost:9200/_security/user/kibana_system/_password "
+                  '-H "Content-Type: application/json" -d @-'],
+            stdin_text=json.dumps({"password": pw}), capture=True, check=False)
+    if r.returncode != 0:
+        warn("Could not set the kibana_system password yet — Kibana may not connect.\n"
+             "     See the KIBANA_PASSWORD note in .env.example to set it by hand.")
+        return
+    ok("kibana_system password set")
+    # Kibana may have crash-looped while its password was unset.
+    run(dc + ["-f", str(COMPOSE_FILE), "--env-file", str(ENV_FILE),
+              "restart", "kibana"], capture=True, check=False)
 
 
 def cmd_status_docker():
@@ -1286,8 +1420,12 @@ def print_summary(cfg):
 {cert_note}
        Web UI:    https://{hostname}{port_str}/
        API docs:  https://{hostname}{port_str}/api/v1/docs
-       Kibana:    https://{hostname}{port_str}/kibana/
-       MinIO:     https://{hostname}{port_str}/minio/
+
+  Kibana and the MinIO console are NOT exposed on the public FQDN (no auth in
+  front of them). Reach them via port-forward from an admin workstation:
+
+       kubectl -n {NS} port-forward svc/kibana-service 5601:5601   # → http://localhost:5601
+       kubectl -n {NS} port-forward svc/minio-service 9001:9001    # → http://localhost:9001
 
   Useful commands:
 
@@ -1504,6 +1642,7 @@ def _deploy_k8s_flow(cfg, no_build=False, no_cache=False, restart=False,
 
     apply_all_manifests(cfg, pull_policy, setup_traefik=setup_traefik)
     wait_for_elasticsearch()
+    set_kibana_system_password(cfg)
     apply_es_template()
     rollout_restart_apps()
     clear_stale_celery_tasks()
@@ -1521,7 +1660,9 @@ def _usage():
   Usage:  ./foctl <command> [args]
 
   DEPLOY
-    deploy docker               Docker Compose — builds images, starts all services
+    deploy docker [--yes]       Docker Compose — builds images, starts all services
+                                (.env auto-created with generated secrets; --yes skips
+                                the review prompt for non-interactive installs)
     deploy k8s   [flags]        Deploy to the current kubectl context
     deploy k8s-new [flags]      Create a local k3d cluster then deploy
 
@@ -1533,11 +1674,12 @@ def _usage():
                                 WARNING: restarts Traefik, breaks Tailscale DNS until re-applied
 
   OPERATIONS  (mode auto-detected if omitted)
-    status  [docker|k8s]        Service / pod health overview
+    status  [docker|k8s|helm]   Service / pod health overview
     logs    <svc> [mode]        Stream logs — api | processor | frontend | all
     update  [docker|k8s]        Rebuild images + redeploy
     destroy [docker|k8s]        Remove all services and data (confirms first)
     config                      Show parsed config.json + redacted .env
+    ensure-env [--yes]          Create/repair .env (used by 'make dev')
 
   DEAD-LETTER QUEUE  (poison tasks parked after exhausting retries)
     dead-letter list             List dead-lettered tasks, newest first
@@ -1577,6 +1719,14 @@ def deploy_helm(cfg, no_build=False, no_cache=False):
     acc      = cfg.get("access", {})
     release  = cfg.get("release", "citadel")
 
+    # The traefik ingress terminates TLS with the 'forensics-tls' secret (same
+    # name the k8s raw-manifest flow uses) — create it up front so the chart's
+    # Ingress doesn't point at a missing secret. Other ingress classes
+    # terminate TLS themselves (ingress.tls.enabled=false).
+    if acc.get("hostname") and acc.get("ingress_class", "traefik") == "traefik":
+        _ensure_namespace()
+        setup_tls_secret(cfg)
+
     # String values → --set-string (URLs/repos must not be type-coerced).
     str_sets = {
         "global.image.registry":        registry,
@@ -1590,6 +1740,10 @@ def deploy_helm(cfg, no_build=False, no_cache=False):
         "config.minioEndpoint":         sub.get("minio_endpoint", "minio-service:9000"),
         "config.minioBucket":           sub.get("minio_bucket", "forensics-cases"),
         "secret.jwtSecret":             sec.get("jwt_secret", ""),
+        # Passed explicitly (like the k8s mode secret) so it stays stable
+        # across `helm upgrade` — the template's randAlphaNum fallback would
+        # rotate it every render and break the worker → API finalize chain.
+        "secret.internalServiceToken":  sec.get("internal_service_token", ""),
         "secret.minioAccessKey":        sec.get("minio_access_key", "minioadmin"),
         "secret.minioSecretKey":        sec.get("minio_secret_key", "minioadmin"),
         "secret.authEnabled":           str(cfg.get("auth", {}).get("auth_enabled", True)).lower(),
@@ -1662,7 +1816,7 @@ def main():
         flags = rest[1:]
 
         if mode == "docker":
-            deploy_docker()
+            deploy_docker(yes="--yes" in flags or "-y" in flags)
 
         elif mode == "helm":
             ensure_secrets()
@@ -1694,11 +1848,13 @@ def main():
         if not mode:
             mode = _detect_mode()
         if not mode:
-            die("No active deployment detected. Pass 'docker' or 'k8s' explicitly.")
+            die("No active deployment detected. Pass 'docker', 'k8s' or 'helm' explicitly.")
         if mode == "docker":
             cmd_status_docker()
         elif mode == "k8s":
             cmd_status_k8s()
+        elif mode == "helm":
+            cmd_status_helm(load_config())
         else:
             die(f"Unknown mode '{mode}'")
 
@@ -1764,6 +1920,10 @@ def main():
 
     elif cmd == "config":
         cmd_config()
+
+    elif cmd == "ensure-env":
+        # Create/repair .env for the raw `docker compose` path (make dev).
+        ensure_env_file(yes="--yes" in rest or "-y" in rest)
 
     elif cmd == "dead-letter":
         if not rest:

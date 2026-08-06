@@ -226,10 +226,18 @@ def _detect_format(path: Path) -> str | None:
                     return "klog"
                 try:
                     obj = json.loads(stripped)
+                    # Require a Kubernetes/containerd signature — bare
+                    # timestamp+message matches ANY application's JSON logs
+                    # (generic .jsonl uploads were being routed here instead of
+                    # the ndjson plugin, same over-claim class as hayabusa).
                     if (
                         isinstance(obj, dict)
                         and ("time" in obj or "ts" in obj or "timestamp" in obj)
-                        and ("msg" in obj or "message" in obj)
+                        and ("msg" in obj or "message" in obj or "log" in obj)
+                        and any(
+                            k in obj
+                            for k in ("stream", "logtag", "kubernetes", "pod", "namespace", "container")
+                        )
                     ):
                         return "json"
                 except (json.JSONDecodeError, ValueError):
@@ -260,6 +268,15 @@ class K3sPlugin(BasePlugin):
     def can_handle(cls, file_path: Path, mime_type: str) -> bool:
         if file_path.name.lower() in _KNOWN_NAMES:
             return True
+        # Containerd-JSON detection (below) matches plain container logs too —
+        # but those are the docker plugin's territory when collected under
+        # Talon's containers/ layout or with a docker_* name. Defer, or every
+        # docker container log gets parsed as k8s events.
+        parts = {p.lower() for p in file_path.parts}
+        if "containers" in parts and ("logs" in parts or "inspect" in parts):
+            return False
+        if file_path.name.lower().startswith("docker"):
+            return False
         return _detect_format(file_path) is not None
 
     def parse(self) -> Generator[dict[str, Any], None, None]:

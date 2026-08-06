@@ -1,0 +1,13 @@
+id: wlan_profile
+name: WLAN Profile
+description: >-
+  Parses Windows Wireless LAN profile XML files collected from wifi_profiles/
+  directories. Each file is one saved network; extracts SSID, authentication,
+  encryption, connection type, and non-secret connection metadata. Never
+  extracts WPA keys from <keyMaterial>.
+supported_extensions: [".xml"]
+supported_mime_types: ["application/x-wlan-profile"]
+artifact_type: wlan_profile
+author: ForensicsOperator
+version: "1.0.0"
+tags: [windows, wlan, wifi, wireless, network, xml]

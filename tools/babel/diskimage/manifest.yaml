@@ -1,0 +1,16 @@
+id: diskimage
+name: Disk Image
+description: >-
+  Walks the filesystem of a raw (.dd, .img, .raw, .001) or EWF (.e01, .ex01)
+  disk image and indexes every file and directory entry as a forensic event
+  with name, path, size, inode, and timestamps. Powers the directory-browser
+  endpoint, which renders a live file tree without re-mounting the image.
+  Requires pytsk3, plus pyewf for EWF images.
+supported_extensions: [".dd", ".img", ".raw", ".001", ".e01", ".ex01", ".l01", ".lx01"]
+supported_mime_types:
+  - application/x-raw-disk-image
+  - application/x-ewf
+artifact_type: diskimage
+author: ForensicsOperator
+version: "1.0.0"
+tags: [diskimage, forensic-image, ewf, e01, raw, filesystem, pytsk3]

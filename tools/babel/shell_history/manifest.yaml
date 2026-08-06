@@ -1,0 +1,20 @@
+id: shell_history
+name: Shell History
+description: >-
+  Parses command-line history files: bash_history (with optional #TIMESTAMP
+  prefix lines), zsh_history (extended ": EPOCH:ELAPSED;COMMAND" format or
+  plain), fish_history (YAML-like cmd/when blocks), and PowerShell
+  CONSOLEHOST_HISTORY.TXT. Yields one event per command with its timestamp
+  when available.
+supported_extensions: []
+supported_mime_types: ["text/x-shell-history"]
+artifact_type: shell_history
+handled_filenames:
+  - .bash_history
+  - .zsh_history
+  - .history
+  - fish_history
+  - CONSOLEHOST_HISTORY.TXT
+author: ForensicsOperator
+version: "1.0.0"
+tags: [shell, history, bash, zsh, fish, powershell, commands]

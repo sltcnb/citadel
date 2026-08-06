@@ -1,0 +1,22 @@
+id: windows_triage
+name: Windows Triage
+description: >-
+  Structured parsing of live Windows triage output collected by fo-harvester:
+  systeminfo, netstat, tasklist, services, installed software, and startup
+  items. Also handles Windows Firewall logs (pfirewall.log) and IIS W3C
+  access logs (u_ex*.log / u_in*.log). Each file type maps to a dedicated
+  artifact type (system_info, network_conn, process, service, ...).
+supported_extensions: []
+supported_mime_types: ["text/x-windows-triage"]
+artifact_type: triage
+handled_filenames:
+  - systeminfo.txt
+  - netstat.txt
+  - tasklist.txt
+  - services.txt
+  - installed_software.txt
+  - startup_items.txt
+  - pfirewall.log
+author: ForensicsOperator
+version: "1.0.0"
+tags: [windows, triage, systeminfo, netstat, tasklist, services, iis, firewall]
