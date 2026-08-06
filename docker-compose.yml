@@ -130,12 +130,19 @@ services:
       # Set FO_PUBLIC_URL to your machine's LAN IP for the Collector page.
       # Example: FO_PUBLIC_URL=http://192.168.1.100:8000
       - FO_PUBLIC_URL=${FO_PUBLIC_URL:-}
+      # Chunked-upload assembly dir — /app/babel is mounted READ-ONLY below, so
+      # the default CHUNK_DIR (/app/babel/_chunks) would 500 every chunked
+      # upload. Keep it on the writable uploads volume like prod compose does.
+      - CHUNK_DIR=/app/uploads/_chunks
     volumes:
       - ./tools/babel:/app/babel:ro
       - ./tools/sluice:/app/sluice
       - ./tools/anvil:/app/anvil
       - ./api:/app
       - ./tools/talon:/app/collector:ro
+      # Writable chunk-assembly scratch (bind-mounting ./api over /app means a
+      # path under /app would dump upload chunks into the working tree).
+      - uploads_data:/app/uploads
     depends_on:
       elasticsearch:
         condition: service_healthy
@@ -288,3 +295,5 @@ volumes:
   es_data:
   redis_data:
   minio_data:
+  # API chunk-assembly scratch (CHUNK_DIR=/app/uploads/_chunks).
+  uploads_data:

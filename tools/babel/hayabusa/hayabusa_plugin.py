@@ -7,8 +7,10 @@ fast forensics and threat hunting tool. Run it externally and upload the output:
   hayabusa.exe csv-timeline  -d <evtx_dir> -o results.csv
   hayabusa.exe json-timeline -d <evtx_dir> -o results.jsonl --JSONL-output
 
-Both CSV and JSONL output formats are supported. The plugin auto-detects JSONL
-by extension (.jsonl) and Hayabusa CSV by sniffing the header row.
+Both CSV and JSONL output formats are supported. The plugin sniffs BOTH formats:
+Hayabusa CSV by the header row, Hayabusa JSONL by requiring the first non-empty
+line to be a JSON object carrying Hayabusa markers. A generic .jsonl file is
+left for the ndjson plugin — claiming it here would silently produce 0 events.
 """
 
 from __future__ import annotations
@@ -24,7 +26,6 @@ from babel.base_plugin import BasePlugin, PluginContext, PluginFatalError, Plugi
 
 # Columns unique to Hayabusa output — used to distinguish from generic CSVs
 _HAYABUSA_REQUIRED_COLS = {"RuleTitle", "Level", "EvtxFile"}
-
 LEVEL_INT = {
     "critical": 5,
     "high": 4,
@@ -52,10 +53,41 @@ class HayabusaPlugin(BasePlugin):
     def can_handle(cls, file_path: Path, mime_type: str) -> bool:
         ext = file_path.suffix.lower()
         if ext == ".jsonl":
-            return True
+            return cls._is_hayabusa_jsonl(file_path)
         if ext == ".csv":
             return cls._is_hayabusa_csv(file_path)
         return False
+
+    @classmethod
+    def _is_hayabusa_jsonl(cls, path: Path) -> bool:
+        """Sniff the first non-empty line: it must be a JSON object carrying
+        Hayabusa markers (RuleTitle/ruleTitle, or Level alongside a
+        Hayabusa-specific field like EvtxFile/RuleFile).
+
+        Without this check the plugin claimed EVERY .jsonl file by extension
+        alone, shadowing the generic ndjson plugin and silently producing 0
+        events for ordinary JSON-lines logs.
+        """
+        try:
+            with open(path, encoding="utf-8-sig", errors="replace") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                    except json.JSONDecodeError:
+                        return False
+                    if not isinstance(obj, dict):
+                        return False
+                    keys = set(obj)
+                    if "RuleTitle" in keys or "ruleTitle" in keys:
+                        return True
+                    hayabusa_fields = {"EvtxFile", "RuleFile", "evtxFile", "ruleFile"}
+                    return "Level" in keys and bool(keys & hayabusa_fields)
+            return False  # empty file
+        except Exception:
+            return False
 
     @classmethod
     def _is_hayabusa_csv(cls, path: Path) -> bool:

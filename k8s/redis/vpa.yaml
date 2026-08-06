@@ -19,6 +19,10 @@ spec:
           memory: "512Mi"
           cpu: "100m"
         maxAllowed:
-          memory: "6Gi"      # hard ceiling — don't let Redis eat the whole node
+          # Ceiling for VPA recommendations. The deployment's redis limit is
+          # allocator-sized (__FO_REDIS_MEMORY_LIMIT__, default 8Gi) — if you
+          # raise redis's weight in config/resources.yaml beyond ~8Gi, raise
+          # this too or the VPA will cap Redis back down.
+          memory: "8Gi"
           cpu: "2"
         controlledValues: RequestsAndLimits

@@ -1,0 +1,56 @@
+# Shared PVCs mounted by BOTH the api and processor deployments — the helm
+# equivalent of k8s/storage/{plugins,uploads,modules}-pvc.yaml. Without these,
+# each pod gets container-local storage: plugin/module seeding is lost across
+# pods and the API's CHUNK_DIR falls back to the container filesystem, which
+# breaks chunked uploads at api.replicaCount > 1 (one replica receives a chunk
+# the finalizing replica can't see).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "citadel.fullname" . }}-plugins
+  labels:
+    {{- include "citadel.labels" . | nindent 4 }}
+    app.kubernetes.io/component: plugins
+spec:
+  accessModes:
+    - {{ .Values.persistence.accessMode }}
+  {{- if .Values.persistence.storageClassName }}
+  storageClassName: {{ .Values.persistence.storageClassName | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.plugins.size }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "citadel.fullname" . }}-uploads
+  labels:
+    {{- include "citadel.labels" . | nindent 4 }}
+    app.kubernetes.io/component: uploads
+spec:
+  accessModes:
+    - {{ .Values.persistence.accessMode }}
+  {{- if .Values.persistence.storageClassName }}
+  storageClassName: {{ .Values.persistence.storageClassName | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.uploads.size }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "citadel.fullname" . }}-modules
+  labels:
+    {{- include "citadel.labels" . | nindent 4 }}
+    app.kubernetes.io/component: modules
+spec:
+  accessModes:
+    - {{ .Values.persistence.accessMode }}
+  {{- if .Values.persistence.storageClassName }}
+  storageClassName: {{ .Values.persistence.storageClassName | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.modules.size }}

@@ -1,14 +1,16 @@
 id: hayabusa
-name: Hayabusa (CSV output ingester)
+name: Hayabusa (CSV/JSONL output ingester)
 description: >-
-  Ingests pre-generated Hayabusa CSV output files. Use this ingester if you
-  have already run Hayabusa externally and want to import results into the
-  timeline. For on-demand Hayabusa execution, use the Hayabusa Module instead.
-supported_extensions: [".csv"]
-supported_mime_types: ["text/csv", "text/plain"]
+  Ingests pre-generated Hayabusa CSV or JSONL timeline output files. Use this
+  ingester if you have already run Hayabusa externally and want to import
+  results into the timeline. For on-demand Hayabusa execution, use the Hayabusa
+  Module instead. Content is sniffed: only files actually produced by Hayabusa
+  are claimed — generic .jsonl logs stay with the ndjson ingester.
+supported_extensions: [".csv", ".jsonl"]
+supported_mime_types: ["text/csv", "text/plain", "application/json", "application/x-ndjson"]
 handled_filenames:
   - hayabusa_results.csv
 artifact_type: hayabusa
 author: ForensicsOperator
-version: "1.0.0"
-tags: [hayabusa, csv, sigma, evtx, threat-hunting]
+version: "1.1.0"
+tags: [hayabusa, csv, jsonl, sigma, evtx, threat-hunting]

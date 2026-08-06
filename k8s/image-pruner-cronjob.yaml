@@ -48,7 +48,21 @@ spec:
                 - -c
                 - |
                   echo "[image-pruner] Starting at $(date)"
-                  chroot /host k3s ctr images prune --all 2>&1 | head -50
+                  # Do NOT use `ctr images prune --all`: it deletes every image
+                  # with no RUNNING container. The platform images are built
+                  # locally and deployed with imagePullPolicy: Never, so if all
+                  # platform pods happen to be down when this runs (crash-loop,
+                  # eviction, node reboot), the prune deletes the only copy and
+                  # the stack can never start again (Init:ErrImageNeverPull).
+                  # Everything else is re-pullable from a registry, so prune
+                  # per-image and skip the locally-built citadel/* images.
+                  chroot /host sh -c '
+                    for ref in $(k3s ctr images ls -q); do
+                      case "$ref" in
+                        docker.io/citadel/*) echo "keep (pull-policy Never): $ref" ;;
+                        *) k3s ctr images rm "$ref" >/dev/null 2>&1 && echo "pruned: $ref" || true ;;
+                      esac
+                    done'
                   echo "[image-pruner] Done at $(date). Disk usage:"
                   chroot /host df -h /
               securityContext:

@@ -31,6 +31,38 @@ helm upgrade --install citadel charts/citadel -n citadel --create-namespace \
 
 `ingress.className`: `traefik` (default; TLS + http→https redirect) · `tailscale` (`--set ingress.tls.enabled=false`) · `nginx`/other (Traefik-only bits skipped) · or `--set ingress.enabled=false` and route your own Ingress to `citadel-frontend:80` (`/`) and `citadel-api:8000` (`/api`).
 
+## Elasticsearch / Kibana passwords
+
+On a first deploy foctl generates `es_password` (the built-in `elastic`
+superuser) and `kibana_password` (the built-in `kibana_system` user) into
+`config.json`'s `secrets` block — stable across redeploys — and substitutes them
+into `elasticsearch-secret`. After ES first reports ready, foctl also sets the
+`kibana_system` password inside ES via the `_security` API, which is what lets
+the Kibana pod connect (nothing else ever sets that password).
+
+Docker mode gets the same treatment via `.env`: `ELASTIC_PASSWORD` /
+`KIBANA_PASSWORD` are generated on first `./foctl deploy docker` (or
+`./foctl ensure-env`), and foctl sets the `kibana_system` password once the
+stack is up.
+
+**Rotating (k8s):** note that `ELASTIC_PASSWORD` is only a *bootstrap* value —
+changing `es_password` in `config.json` does not change the password inside an
+existing ES data volume. To rotate:
+
+```bash
+# 1. set the new password inside ES
+kubectl exec -n <ns> elasticsearch-0 -- sh -c \
+  'curl -sf -u "elastic:$ELASTIC_PASSWORD" -X POST \
+   http://localhost:9200/_security/user/elastic/_password \
+   -H "Content-Type: application/json" -d "{\"password\": \"NEW_VALUE\"}"'
+# 2. put NEW_VALUE in config.json secrets.es_password and redeploy
+./foctl deploy k8s --no-build
+```
+
+Rotate `kibana_password` the same way against
+`_security/user/kibana_system/_password`, then redeploy (foctl re-sets it on
+every deploy, so a redeploy alone heals drift).
+
 ## SSO (Google / Microsoft)
 
 Off until configured. Set provider client id/secret plus `SSO_REDIRECT_BASE`, optional `SSO_ALLOWED_DOMAINS`, `SSO_DEFAULT_ROLE`, `SSO_AUTO_PROVISION`, and redeploy. Register the redirect URI `{SSO_REDIRECT_BASE}/api/v1/auth/sso/{google|microsoft}/callback`. The platform verifies the provider's `id_token` against its JWKS before issuing a session.

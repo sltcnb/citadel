@@ -68,6 +68,63 @@ def test_utmp_does_not_grab_unrelated_files():
     assert not UtmpPlugin.can_handle(Path("/evidence/access.log"), "text/plain")
 
 
+# ── plist must never claim foreign XML (the docProps/core.xml junk-row bug) ────
+
+_OOXML_CORE = (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+    '<cp:coreProperties '
+    'xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" '
+    'xmlns:dc="http://purl.org/dc/elements/1.1/">'
+    "<dc:title>Invoice Q3</dc:title><dc:creator>jdoe</dc:creator>"
+    "</cp:coreProperties>\n"
+)
+
+_XML_PLIST = (
+    '<?xml version="1.0" encoding="UTF-8"?>\n'
+    '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
+    '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+    '<plist version="1.0"><dict><key>Label</key>'
+    "<string>com.apple.x</string></dict></plist>\n"
+)
+
+
+def test_plist_refuses_ooxml_core_xml(tmp_path):
+    from babel.plist.plist_plugin import PlistPlugin
+
+    f = tmp_path / "core.xml"
+    f.write_text(_OOXML_CORE)
+    # Whatever the MIME detector hands over — text/xml from python-magic or
+    # the octet-stream fallback — plist must not claim an OOXML part.
+    for mime in ("text/xml", "application/xml", "application/octet-stream"):
+        assert not PlistPlugin.can_handle(f, mime), mime
+
+
+def test_plist_forced_parse_of_foreign_xml_fails_loud(tmp_path):
+    from babel.base_plugin import PluginFatalError
+    from babel.plist.plist_plugin import PlistPlugin
+
+    f = tmp_path / "core.xml"
+    f.write_text(_OOXML_CORE)
+    # Even if a router ever forces foreign XML onto plist, parse() must raise —
+    # never emit the "<null>" event plistlib's silent None would produce.
+    try:
+        list(PlistPlugin(_ctx(f)).parse())
+    except PluginFatalError:
+        return
+    raise AssertionError("plist.parse() emitted events for foreign XML instead of raising")
+
+
+def test_plist_still_claims_real_plists(tmp_path):
+    from babel.plist.plist_plugin import PlistPlugin
+
+    f = tmp_path / "com.apple.loginwindow.plist"
+    f.write_text(_XML_PLIST)
+    assert PlistPlugin.can_handle(f, "text/xml")  # claimed by content, not MIME
+    events = list(PlistPlugin(_ctx(f)).parse())
+    assert events and events[0]["artifact_type"] == "plist"
+    assert "<null>" not in events[0]["message"]
+
+
 if __name__ == "__main__":
     import tempfile
 

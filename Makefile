@@ -19,6 +19,7 @@ help:
 
 # -- Local development (no Kubernetes) -----------------------------------------
 dev:
+	@./foctl ensure-env --yes   # create .env with generated secrets on first run
 	docker compose up --build
 
 dev-down:

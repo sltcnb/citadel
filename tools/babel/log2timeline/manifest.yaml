@@ -1,0 +1,48 @@
+id: log2timeline
+name: Log2Timeline (Plaso)
+description: >-
+  Universal timeline ingester powered by log2timeline/plaso. Runs log2timeline
+  on the source file, exports events via psort, and yields each event into the
+  case timeline. Acts as the primary ingester for formats with no dedicated
+  Citadel plugin (EVT, ASL, utmp/wtmp, ESE databases) and as a deeper-context
+  fallback for formats that do. Requires the plaso suite in the processor image.
+supported_extensions:
+  - .asl
+  - .csv
+  - .dat
+  - .db
+  - .db3
+  - .edb
+  - .esedb
+  - .evt
+  - .evtx
+  - .hive
+  - .json
+  - .lnk
+  - .log
+  - .pcap
+  - .pcapng
+  - .pf
+  - .plist
+  - .sqlite
+  - .txt
+  - .utmp
+  - .utmpx
+  - .wtmp
+supported_mime_types: []
+artifact_type: log2timeline
+handled_filenames:
+  - $MFT
+  - NTUSER.DAT
+  - SYSTEM
+  - SOFTWARE
+  - SAM
+  - SECURITY
+  - USRCLASS.DAT
+  - places.sqlite
+  - History
+  - Cookies
+  - Web Data
+author: ForensicsOperator
+version: "1.0.0"
+tags: [plaso, log2timeline, timeline, super-timeline, fallback]

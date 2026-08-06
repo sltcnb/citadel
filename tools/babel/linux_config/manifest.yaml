@@ -1,0 +1,33 @@
+id: linux_config
+name: Linux/macOS Config
+description: >-
+  Structured parsing of Linux/macOS system configuration files: passwd, shadow,
+  group, hosts, sudoers, SSH artifacts (authorized_keys, known_hosts,
+  sshd_config), crontabs, fstab/mtab/mounts, ld.so.preload, shell startup
+  files, systemd units, and generic .conf/.cfg/.ini-style config. Each file
+  type maps to a dedicated artifact type for pivot analysis.
+supported_extensions: [".cfg", ".cnf", ".conf", ".gitconfig", ".ini", ".netrc", ".ovpn"]
+supported_mime_types:
+  - text/x-crontab
+  - text/x-unix-config
+artifact_type: config_file
+handled_filenames:
+  - passwd
+  - shadow
+  - group
+  - gshadow
+  - hosts
+  - sudoers
+  - authorized_keys
+  - authorized_keys2
+  - known_hosts
+  - sshd_config
+  - ssh_config
+  - crontab
+  - fstab
+  - mtab
+  - mounts
+  - ld.so.preload
+author: ForensicsOperator
+version: "1.0.0"
+tags: [linux, macos, config, ssh, cron, sudoers, persistence, systemd]

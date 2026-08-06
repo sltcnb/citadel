@@ -19,7 +19,7 @@
     "_comment_context": "The kubectl context to use. Leave empty to use whatever kubectl is currently pointing at.",
     "context": "",
 
-    "_comment_auto_k3d": "Set to true ONLY if you have no cluster at all and want deploy.py to create a local one using k3d (requires Docker).",
+    "_comment_auto_k3d": "Set to true ONLY if you have no cluster at all and want foctl to create a local one using k3d (requires Docker).",
     "auto_create_k3d": false,
 
     "_comment_name": "Used as the k3d cluster name when auto_create_k3d is true. Ignored otherwise.",
@@ -46,6 +46,9 @@
     "minio_secret_key": "",
     "jwt_secret": "",
     "redis_password": "",
+    "_comment_es": "Elasticsearch: es_password is the bootstrap password for the built-in 'elastic' superuser; kibana_password is what foctl sets for the built-in 'kibana_system' user after ES first boots (the Kibana pod authenticates with it). Both are generated on first deploy like the others.",
+    "es_password": "",
+    "kibana_password": "",
     "admin_username": "admin",
     "admin_password": "",
 
@@ -60,7 +63,7 @@
     "jwt_expire_hours": 8
   },
 
-  "_comment_resources": "Resources are AUTO-SIZED — helm mode runs scripts/allocate_resources.py (detects host RAM/CPU, honours config/resources.yaml's max_pct_of_host + headroom + weights); k8s mode uses sane defaults. Add an optional 'resources' block here only to override specific values (e.g. elasticsearch_heap_mb, *_storage_gi).",
+  "_comment_resources": "Resources are AUTO-SIZED — helm mode runs scripts/allocate_resources.py (detects host RAM/CPU, honours config/resources.yaml's max_pct_of_host + headroom + weights); k8s (raw-manifest) mode runs the SAME allocator inside foctl. Add an optional 'resources' block here only to override specific values (e.g. elasticsearch_heap_mb, *_storage_gi).",
 
   "images": {
     "_comment": "Leave registry empty to auto-load images directly into the cluster (k3s, k3d, minikube, kind). Set registry to push/pull via a registry, e.g. 'docker.io/youruser/' (trailing slash required).",

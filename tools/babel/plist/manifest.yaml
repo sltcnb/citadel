@@ -1,0 +1,14 @@
+id: plist
+name: Apple Property List
+description: >-
+  Parses any Apple Property List (.plist) file, both XML and binary (bplist)
+  formats, using stdlib plistlib. Each top-level key becomes one event, with
+  nested dicts and lists preserved verbatim in the raw field. Claims files by
+  content (bplist magic or <plist> root) so foreign XML dialects are not
+  mis-parsed. Runs after the iOS plugin so iOS-specific plists win first.
+supported_extensions: [".plist"]
+supported_mime_types: ["application/x-plist"]
+artifact_type: plist
+author: ForensicsOperator
+version: "1.0.0"
+tags: [plist, apple, macos, ios, bplist, xml]

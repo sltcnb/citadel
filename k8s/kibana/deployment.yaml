@@ -35,10 +35,9 @@ spec:
               value: "/kibana"
             - name: SERVER_REWRITEBASEPATH
               value: "true"
-            # ES now requires auth. Kibana authenticates as the built-in
-            # kibana_system user. OPERATOR ACTION: after ES first boots, set the
-            # kibana_system password (via the _security API) and store it in
-            # elasticsearch-secret.kibana_password.
+            # ES requires auth. Kibana authenticates as the built-in
+            # kibana_system user; foctl sets that user's password inside ES
+            # (via the _security API) to this value after ES first boots.
             - name: ELASTICSEARCH_USERNAME
               value: "kibana_system"
             - name: ELASTICSEARCH_PASSWORD
