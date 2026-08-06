@@ -8,7 +8,7 @@ saved_searches router's storage shape (a JSON list under one Redis key).
 
 import json
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 import redis_keys as rk
 from auth.dependencies import require_case_access
@@ -30,7 +30,11 @@ class TimelineViewIn(BaseModel):
     to_ts: str = ""
     columns: list[str] = Field(default_factory=list)
     sort_field: str = "timestamp"
-    sort_order: str = "desc"
+    # Default mirrors the timeline endpoint (routers/search.py: sort_order="asc")
+    # so a view saved without an explicit sort replays the same ordering the
+    # endpoint would have used. The frontend always sends sort_order explicitly
+    # (Timeline.jsx state defaults to 'desc'), so this only affects API clients.
+    sort_order: str = "asc"
 
 
 @router.get("/cases/{case_id}/timeline-views")
@@ -58,7 +62,7 @@ def create_timeline_view(
         "columns": body.columns,
         "sort_field": body.sort_field,
         "sort_order": body.sort_order,
-        "created_at": datetime.utcnow().isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
     }
     views.append(new)
     r.set(key, json.dumps(views))

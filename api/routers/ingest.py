@@ -43,10 +43,52 @@ router = APIRouter(tags=["ingest"])
 # Must be on a shared PVC so that chunks written by one API replica are visible
 # to whichever replica receives the final chunk.
 # In K8s: set CHUNK_DIR=/app/uploads/_chunks (uploads-pvc, 500Gi).
-# In Docker: defaults to /app/babel/_chunks (plugins named volume).
+# In Docker: both compose files set CHUNK_DIR=/app/uploads/_chunks (writable
+# uploads volume) — the /app/babel/_chunks default only suits the legacy layout
+# where /app/babel was a writable plugins volume.
 import os as _os
 
 _CHUNK_DIR = Path(_os.environ.get("CHUNK_DIR", "/app/babel/_chunks"))
+
+# Chunked-upload integrity limits.
+# 50 MB client chunks × 10 000 = 500 GB ceiling — far past any legit file.
+_MAX_CHUNKS = 10_000
+# Abandoned chunk assemblies (client never sent the final chunk) are swept
+# once they're older than this, opportunistically at chunk-finalize time.
+_CHUNK_STALE_SECONDS = 24 * 3600
+_CHUNK_META_SUFFIX = ".chunks.json"
+
+
+class _DuplicateChunk(Exception):
+    """A chunk index was resent for the same upload_id."""
+
+
+def _load_chunk_meta(meta_path: Path) -> dict:
+    """Per-upload chunk ledger: which chunk indexes were received and how many
+    bytes they carried. Missing/corrupt ledger → empty upload."""
+    try:
+        data = json.loads(meta_path.read_text())
+        if isinstance(data, dict) and isinstance(data.get("indexes"), list):
+            indexes = [int(i) for i in data["indexes"]]
+            return {"indexes": indexes, "bytes": int(data.get("bytes", 0))}
+    except Exception:  # noqa: BLE001 - corrupt ledger is treated as a fresh upload
+        pass
+    return {"indexes": [], "bytes": 0}
+
+
+def _sweep_stale_chunks() -> None:
+    """Delete chunk-assembly files (and their ledgers) older than
+    _CHUNK_STALE_SECONDS. Best-effort; called when an upload finalizes."""
+    try:
+        cutoff = datetime.now(UTC).timestamp() - _CHUNK_STALE_SECONDS
+        for p in _ensure_chunk_dir().iterdir():
+            try:
+                if p.is_file() and p.stat().st_mtime < cutoff:
+                    p.unlink()
+            except OSError:
+                pass
+    except OSError:
+        pass
 
 
 def _ensure_chunk_dir() -> Path:
@@ -187,6 +229,9 @@ def _ingest_one_async(
             logger.debug("Skipping empty auxiliary file: %s", filename)
         else:
             logger.warning("Skipping empty file: %s", filename)
+            # Surface the drop — a 0-byte upload is usually a collection error
+            # and must not vanish into a server log only.
+            errors.append({"filename": filename, "error": "Empty file (0 bytes) — skipped"})
         try:
             os.unlink(tmp_path)
         except OSError:
@@ -348,6 +393,7 @@ def _handle_zip_async(
 
     pre_count = len(dispatched)
     bg_entries: list = []  # entries to hand to the background task
+    nested_skipped: list = []  # nested archives we refuse to recurse into
 
     with zf:
         for info in zf.infolist():
@@ -360,6 +406,7 @@ def _handle_zip_async(
                 continue
             if base_name.lower().endswith(".zip"):
                 logger.info("Skipping nested zip '%s' inside '%s'", base_name, zip_name)
+                nested_skipped.append(entry_name)
                 continue
             if _is_auxiliary(base_name):
                 logger.debug("Skipping auxiliary file '%s' in '%s'", base_name, zip_name)
@@ -389,8 +436,24 @@ def _handle_zip_async(
             }
             dispatched.append(entry_rec)
 
+    if nested_skipped:
+        # One per-archive note listing the nested zips we refused to recurse
+        # into — previously they vanished with only a server log line.
+        names = ", ".join(nested_skipped[:10])
+        if len(nested_skipped) > 10:
+            names += f", … (+{len(nested_skipped) - 10} more)"
+        errors.append(
+            {
+                "filename": zip_name,
+                "error": f"{len(nested_skipped)} nested archive(s) not extracted: {names}",
+            }
+        )
+
     if len(dispatched) == pre_count:
-        errors.append({"filename": zip_name, "error": "Zip archive contained no processable files"})
+        if not errors:
+            errors.append(
+                {"filename": zip_name, "error": "Zip archive contained no processable files"}
+            )
         try:
             os.unlink(zip_tmp_path)
         except OSError:
@@ -432,31 +495,84 @@ async def ingest_chunk(
     if not re.fullmatch(r"[0-9a-f\-]{8,64}", upload_id):
         raise HTTPException(status_code=400, detail="Invalid upload_id")
 
+    # Bounds validation — a bad index/count would otherwise silently corrupt
+    # the assembled file (negative index appends anyway, total=0 never
+    # finalizes, etc.).
+    if not 1 <= total_chunks <= _MAX_CHUNKS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid total_chunks {total_chunks} (must be 1..{_MAX_CHUNKS})",
+        )
+    if not 0 <= chunk_index < total_chunks:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid chunk_index {chunk_index} (must be 0..{total_chunks - 1})",
+        )
+
     safe_name = re.sub(r"[^\w.\-]", "_", filename)[:200]
     try:
         tmp_path = str(safe_join(_ensure_chunk_dir(), f"{upload_id}_{safe_name}"))
     except UnsafePathError:
         raise HTTPException(status_code=400, detail="Invalid filename")
+    meta_path = Path(tmp_path + _CHUNK_META_SUFFIX)
 
     loop = asyncio.get_event_loop()
     try:
         data = await chunk.read()
 
         # Blocking disk write (chunks can be tens of MB) — keep it off the loop.
+        # The ledger write stays in the same executor call so the append and the
+        # bookkeeping can't drift apart.
         def _append():
+            meta = _load_chunk_meta(meta_path)
+            if chunk_index in meta["indexes"]:
+                raise _DuplicateChunk(chunk_index)
             with open(tmp_path, "ab") as f:
                 f.write(data)
+            meta["indexes"].append(chunk_index)
+            meta["bytes"] += len(data)
+            meta_path.write_text(json.dumps(meta))
+            return meta
 
-        await loop.run_in_executor(None, _append)
+        meta = await loop.run_in_executor(None, _append)
+    except _DuplicateChunk as exc:
+        # Same upload_id + same chunk index — the append already happened once;
+        # appending again would corrupt the assembly.
+        raise HTTPException(
+            status_code=409,
+            detail=f"Chunk {exc.args[0]} already received for this upload_id",
+        ) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to store chunk: {exc}")
 
     # Not the last chunk — acknowledge and wait for more
     if chunk_index < total_chunks - 1:
-        return {"status": "partial", "chunk": chunk_index, "received": chunk_index + 1}
+        return {"status": "partial", "chunk": chunk_index, "received": len(meta["indexes"])}
 
-    # Final chunk — hand off to normal ingest pipeline
+    # ── Final chunk — verify assembly integrity before handoff ───────────────
+    missing = [i for i in range(total_chunks) if i not in meta["indexes"]]
+    if missing:
+        # Leave the partial assembly on disk — the client may still send the
+        # missing chunk(s) and retry the final one.
+        raise HTTPException(
+            status_code=400,
+            detail=f"Upload incomplete: {len(missing)} chunk(s) missing (first: {missing[:5]})",
+        )
     size = os.path.getsize(tmp_path)
+    if meta["bytes"] != size:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Assembly corrupt: ledger bytes {meta['bytes']} != file size {size}",
+        )
+
+    # Assembly is complete and verified — drop the ledger and sweep abandoned
+    # uploads (older than 24h) while we're here.
+    try:
+        meta_path.unlink()
+    except OSError:
+        pass
+    _sweep_stale_chunks()
+
     dispatched: list = []
     errors: list = []
 
@@ -490,10 +606,13 @@ async def ingest_chunk(
             pass
         raise HTTPException(status_code=500, detail=f"Server error: {exc}")
 
-    if errors:
+    if errors and not dispatched:
         raise HTTPException(status_code=400, detail=errors[0]["error"])
 
-    return {"case_id": case_id, "jobs": dispatched}
+    response: dict = {"case_id": case_id, "jobs": dispatched}
+    if errors:
+        response["errors"] = errors
+    return response
 
 
 # ── Endpoint ───────────────────────────────────────────────────────────────────
@@ -589,7 +708,7 @@ async def ingest_files(
     if not dispatched and errors:
         raise HTTPException(
             status_code=400,
-            detail="All files failed to ingest",
+            detail={"message": "All files failed to ingest", "errors": errors},
             headers={"X-Ingest-Errors": str(len(errors))},
         )
 
@@ -634,9 +753,25 @@ def reingest_job(
     if job.get("case_id") != case_id:
         raise HTTPException(status_code=404, detail="Job does not belong to this case")
 
+    # Guard against double dispatch: a job already queued or in flight must not
+    # be re-enqueued — wait for it to reach a terminal state first.
+    if job.get("status") in ("PENDING", "QUEUED", "UPLOADING", "RUNNING"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Job is still active (status: {job.get('status')}) — cannot reingest yet",
+        )
+
     minio_key = job.get("minio_object_key", "")
     if not minio_key:
-        raise HTTPException(status_code=400, detail="Job has no stored file — cannot reingest")
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Job has no stored file — cannot reingest. If this job came from an "
+                "S3 import and failed before upload completed, use "
+                "POST /jobs/{job_id}/retry instead (retry restarts the S3 transfer "
+                "phase; reingest only re-parses an already-stored file)."
+            ),
+        )
 
     filename = job.get("original_filename", "")
 
@@ -669,19 +804,20 @@ def cancel_case_ingestion(case_id: str, _case: dict = Depends(require_case_acces
     status will reflect COMPLETED normally — interrupting active I/O mid-stream
     is not safe without checkpointing.
     """
-    from config import get_redis as _get_redis
-
     case = get_case(case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
 
-    r = _get_redis()
-    all_jobs = job_svc.list_case_jobs(case_id)
+    # Iterate ALL job IDs (same pattern as delete_all_case_jobs) — the old code
+    # used list_case_jobs()'s default 500-record page, leaving older
+    # PENDING/UPLOADING jobs running on big cases.
     active_statuses = {"PENDING", "UPLOADING"}
     cancelled = []
-    for job in all_jobs:
+    for jid in job_svc.list_case_job_ids(case_id):
+        job = job_svc.get_job(jid)
+        if not job:
+            continue
         if job.get("status") in active_statuses:
-            jid = job["job_id"]
             job_svc.update_job(
                 jid,
                 status="CANCELLED",

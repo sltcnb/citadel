@@ -12,6 +12,7 @@ a pure function so it's unit-testable without Elasticsearch.
 
 from __future__ import annotations
 
+from services.elasticsearch import DNS_NAME_KEYWORD_FIELDS
 from services.elasticsearch import es_request as es_req
 
 # Allowlisted stackable fields (keyword sub-fields) — bounds the agg surface and
@@ -20,14 +21,21 @@ from services.elasticsearch import es_request as es_req
 KNOWN_STACK_FIELDS = [
     {"field": "process.name.keyword", "label": "Process names"},
     {"field": "process.command_line.keyword", "label": "Command lines"},
-    {"field": "process.executable.keyword", "label": "Executable paths"},
-    {"field": "process.parent.name.keyword", "label": "Parent processes"},
+    # Real fields, cross-checked against the index template, sigil's
+    # field_inventory.json, and the babel parsers that emit them:
+    {"field": "process.path.keyword", "label": "Executable paths"},
+    {"field": "process.parent_name.keyword", "label": "Parent processes"},
     {"field": "service.name.keyword", "label": "Services"},
-    {"field": "registry.key.keyword", "label": "Registry keys"},
+    {"field": "registry.key_path.keyword", "label": "Registry keys"},
     {"field": "user.name.keyword", "label": "User accounts"},
     {"field": "network.dst_ip", "label": "Destination IPs"},
-    {"field": "network.dst_domain.keyword", "label": "Destination domains"},
-    {"field": "dns.question.name.keyword", "label": "DNS queries"},
+    # No parser emits network.dst_domain — stack the DNS names parsers DO emit
+    # (pcap dns.query_name / suricata.dns.rrname / zeek.query), merged.
+    {
+        "field": "dns.query_name.keyword",
+        "fields": DNS_NAME_KEYWORD_FIELDS,
+        "label": "DNS queries",
+    },
     {"field": "file.path.keyword", "label": "File paths"},
 ]
 _ALLOWED = {f["field"] for f in KNOWN_STACK_FIELDS}
@@ -77,12 +85,10 @@ def compute_rare(buckets: list[dict], max_hosts: int, total_hosts: int | None = 
     return out
 
 
-def stack_field(
-    case_id: str, field: str, target_host: str, max_hosts: int = 2, size: int = 1000
-) -> dict:
-    """Stack `field` across the case and return the values rare-yet-present on
-    `target_host`. One ES terms agg with cardinality(host) + filter(target) subs."""
-    body = {
+def _stack_agg_body(field: str, target_host: str, size: int) -> dict:
+    """One stacking query: terms agg on `field` with cardinality(host) +
+    filter(target) sub-aggs, plus case-wide distinct-host count."""
+    return {
         "size": 0,
         "query": {"match_all": {}},
         "aggs": {
@@ -97,10 +103,55 @@ def stack_field(
             },
         },
     }
-    resp = es_req("POST", f"/{_case_index(case_id)}/_search", body)
-    aggs = resp.get("aggregations") or {}
-    buckets = aggs.get("vals", {}).get("buckets", [])
-    total_hosts = (aggs.get("total_hosts") or {}).get("value") or None
+
+
+def _merge_stack_buckets(buckets: list[dict]) -> list[dict]:
+    """Merge same-key buckets from per-field stacking aggs into one list.
+
+    doc_count / on_target sum exactly. host_count takes the MAX across fields:
+    the true cross-field union cardinality isn't derivable from per-field
+    cardinalities, and max errs toward surfacing a value (analyst reviews it)
+    rather than hiding a genuinely rare one."""
+    merged: dict = {}
+    for b in buckets:
+        m = merged.setdefault(
+            b["key"],
+            {
+                "key": b["key"],
+                "doc_count": 0,
+                "host_count": {"value": 0},
+                "on_target": {"doc_count": 0},
+            },
+        )
+        m["doc_count"] += b.get("doc_count", 0)
+        m["host_count"]["value"] = max(
+            m["host_count"]["value"], (b.get("host_count") or {}).get("value", 0)
+        )
+        m["on_target"]["doc_count"] += (b.get("on_target") or {}).get("doc_count", 0)
+    return list(merged.values())
+
+
+def stack_field(
+    case_id: str, field: str, target_host: str, max_hosts: int = 2, size: int = 1000
+) -> dict:
+    """Stack `field` across the case and return the values rare-yet-present on
+    `target_host`. Fields with several real-world spellings (e.g. DNS query
+    names across pcap/suricata/zeek) declare a ``fields`` list and are stacked
+    per spelling, then merged."""
+    entry = next((e for e in KNOWN_STACK_FIELDS if e["field"] == field), None)
+    agg_fields = (entry or {}).get("fields") or [field]
+
+    buckets: list[dict] = []
+    total_hosts = None
+    for agg_field in agg_fields:
+        body = _stack_agg_body(agg_field, target_host, size)
+        resp = es_req("POST", f"/{_case_index(case_id)}/_search", body)
+        aggs = resp.get("aggregations") or {}
+        total_hosts = (aggs.get("total_hosts") or {}).get("value") or total_hosts
+        buckets.extend(aggs.get("vals", {}).get("buckets", []))
+    if len(agg_fields) > 1:
+        buckets = _merge_stack_buckets(buckets)
+
     return {
         "field": field,
         "target_host": target_host,

@@ -128,6 +128,10 @@ def _load_modules_from_registry() -> list[dict]:
                 "tags": data.get("tags") or [],
                 # ES-only modules query Elasticsearch directly (no source files).
                 "run_on_events": bool(data.get("run_on_events", False)),
+                "run_on_files": bool(data.get("run_on_files", False)),
+                # Integration settings the module needs (e.g. Cuckoo API URL) —
+                # the UI uses this to exclude unconfigured modules from run-all.
+                "config_keys": data.get("config_keys") or [],
             }
             if not module["available"]:
                 module["unavailable_reason"] = data.get("unavailable_reason", "Unavailable")
@@ -284,6 +288,8 @@ def _get_custom_modules() -> list[dict]:
 
     for f in sorted(CUSTOM_MODULES_DIR.glob("*_module.py")):
         module_id = f.stem[: -len("_module")]
+        if module_id.startswith("test_"):
+            continue  # never expose test fixtures (e.g. test_base_module.py) as modules
         if module_id in built_in_ids:
             continue
         builtin_category = _BUILTIN_MODULE_CATEGORIES.get(module_id)
@@ -415,6 +421,14 @@ def recommend_modules(case_id: str, _acl: dict = Depends(require_case_access)):
     "strings") accept anything — they're returned as generic suggestions
     rather than ranked matches so specific tools surface first.
     """
+    # 15 s per-case cache: sources only change on ingest, and the drawer calls
+    # this on every open (~0.5 s on a 500-file case — list_case_sources itself
+    # is the bulk of the cost).
+    import time as _t
+
+    hit = _recommend_cache.get(case_id)
+    if hit and _t.monotonic() - hit[0] < 15.0:
+        return hit[1]
     sources = list_case_sources(case_id).get("sources", [])
     filenames = [
         s["original_filename"]
@@ -455,11 +469,19 @@ def recommend_modules(case_id: str, _acl: dict = Depends(require_case_access)):
 
     recommended.sort(key=lambda m: (-m["matched_files"], m["name"].lower()))
     generic.sort(key=lambda m: m["name"].lower())
-    return {
+    result = {
         "recommended": recommended,
         "generic": generic,
         "total_sources": len(filenames),
     }
+    if len(_recommend_cache) > 100:
+        _recommend_cache.clear()
+    _recommend_cache[case_id] = (_t.monotonic(), result)
+    return result
+
+
+# Short per-case cache for recommend_modules (see its docstring).
+_recommend_cache: dict = {}
 
 
 @router.post("/cases/{case_id}/module-runs", status_code=201)
@@ -557,7 +579,7 @@ def create_module_run(
     source_files = kept
 
     run_id = uuid.uuid4().hex
-    run_svc.create_module_run(run_id, case_id, req.module_id, source_files)
+    run_svc.create_module_run(run_id, case_id, req.module_id, source_files, req.params)
 
     try:
         from services.celery_dispatch import dispatch_module
@@ -626,7 +648,9 @@ def retry_module_run(run_id: str, current_user: dict = Depends(get_current_user)
     try:
         from services.celery_dispatch import dispatch_module
 
-        dispatch_module(run_id, case_id, module_id, source_files, {})
+        # Re-dispatch with the params stored at creation — retrying with {}
+        # silently dropped e.g. custom YARA rules or the Cuckoo timeout.
+        dispatch_module(run_id, case_id, module_id, source_files, run.get("params") or {})
     except Exception as exc:
         logger.error("Celery dispatch failed for module run retry %s: %s", run_id, exc)
         run_svc.update_module_run(run_id, status="FAILED", error=str(exc))
@@ -957,7 +981,7 @@ def create_standalone_run(req: StandaloneRunRequest):
     ]
 
     run_id = uuid.uuid4().hex
-    run_svc.create_module_run(run_id, MALWARE_CASE_ID, req.module_id, source_files)
+    run_svc.create_module_run(run_id, MALWARE_CASE_ID, req.module_id, source_files, req.params)
 
     try:
         from services.celery_dispatch import dispatch_module
@@ -1100,7 +1124,7 @@ def clear_malwoverview_config():
 
 
 @router.get("/module-runs/{run_id}/log-stream")
-async def stream_module_log(run_id: str):
+async def stream_module_log(run_id: str, current_user: dict = Depends(get_current_user)):
     """
     Server-Sent Events stream of log lines for a running module.
 
@@ -1110,10 +1134,14 @@ async def stream_module_log(run_id: str):
     Log lines are written to the fo:module_log:{run_id} Redis list by
     the module task at key milestones. The SSE endpoint drains the list
     incrementally and closes when status is COMPLETED or FAILED.
+
+    Auth: EventSource cannot set headers, so the browser passes a short-lived
+    stream token as ?_token= — get_current_user accepts it like any JWT.
     """
     run = run_svc.get_module_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Module run not found")
+    _check_run_case_access(run, current_user)
 
     async def event_generator():
         r = get_redis()
@@ -1256,13 +1284,21 @@ from fastapi.responses import RedirectResponse  # noqa: E402
 
 
 @router.get("/cases/{case_id}/modules/{run_id}/artifacts/{filename}")
-def download_module_artifact(case_id: str, run_id: str, filename: str):
+def download_module_artifact(
+    case_id: str, run_id: str, filename: str, _acl: dict = Depends(require_case_access)
+):
     """
     Return a short-lived presigned download URL for a module output artifact
     (e.g. a de4dot-deobfuscated .NET binary).
     The client is redirected directly to MinIO so no large binary passes through
     the API server.
     """
+    # The presigned URL inherits whatever case_id/run_id the caller put in the
+    # path — verify the run actually belongs to this (access-checked) case so
+    # the endpoint can't mint download URLs for another company's artifacts.
+    run = run_svc.get_module_run(run_id)
+    if not run or run.get("case_id") != case_id:
+        raise HTTPException(status_code=404, detail="Module run not found in this case")
     key = f"cases/{case_id}/modules/{run_id}/artifacts/{filename}"
     try:
         url = storage.get_presigned_url(key, expires_seconds=3600)
@@ -1273,7 +1309,9 @@ def download_module_artifact(case_id: str, run_id: str, filename: str):
 
 
 @router.post("/cases/{case_id}/modules/{run_id}/artifacts/{filename}/reingest")
-def reingest_module_artifact(case_id: str, run_id: str, filename: str):
+def reingest_module_artifact(
+    case_id: str, run_id: str, filename: str, _acl: dict = Depends(require_case_access)
+):
     """
     Re-ingest a module output artifact (e.g. a de4dot-deobfuscated binary) back
     into the case timeline as a new ingest job.
@@ -1284,9 +1322,12 @@ def reingest_module_artifact(case_id: str, run_id: str, filename: str):
     from services import jobs as job_svc
     from services.celery_dispatch import dispatch_ingest
 
-    case = get_case(case_id)
-    if not case:
-        raise HTTPException(status_code=404, detail="Case not found")
+    # require_case_access already 404s an unknown case and 403s another
+    # company's; also pin the run to this case so a run_id from elsewhere
+    # can't write an ingest job into this case.
+    run = run_svc.get_module_run(run_id)
+    if not run or run.get("case_id") != case_id:
+        raise HTTPException(status_code=404, detail="Module run not found in this case")
 
     minio_key = f"cases/{case_id}/modules/{run_id}/artifacts/{filename}"
     job_id = uuid.uuid4().hex

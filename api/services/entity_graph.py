@@ -177,7 +177,9 @@ def build_graph(
 
     ``focus`` optionally scopes the query to events touching that host/user so
     the returned graph is that entity's neighbourhood. Returns
-    ``{"nodes": [...], "edges": [...]}``; on ES error returns an empty graph.
+    ``{"nodes": [...], "edges": [...], "error": None}``; on ES error the graph
+    is empty and ``error`` carries the failure message so callers can tell
+    "no data" apart from "query failed" (instead of a silent empty graph).
     """
     limit = max(1, min(int(limit), 200))
     sub_limit = max(1, min(int(sub_limit), 100))
@@ -189,15 +191,19 @@ def build_graph(
     }
     try:
         res = es_request("POST", f"/fo-case-{case_id}-*/_search", body)
-    except (urllib.error.HTTPError, Exception):
-        return {"nodes": [], "edges": []}
-    return assemble_graph(res.get("aggregations", {}))
+    except (urllib.error.HTTPError, Exception) as exc:
+        return {"nodes": [], "edges": [], "error": str(exc) or type(exc).__name__}
+    graph = assemble_graph(res.get("aggregations", {}))
+    graph["error"] = None
+    return graph
 
 
 def list_entities(case_id: str, limit: int = DEFAULT_LIMIT) -> dict[str, Any]:
     """List the top hosts and users in a case for a focus picker.
 
-    Returns ``{"hosts": [{value, count}], "users": [{value, count}]}``.
+    Returns ``{"hosts": [{value, count}], "users": [{value, count}],
+    "error": None}``; on ES error both lists are empty and ``error`` carries
+    the failure message (instead of a silent empty picker).
     """
     limit = max(1, min(int(limit), 500))
     body = {
@@ -209,8 +215,8 @@ def list_entities(case_id: str, limit: int = DEFAULT_LIMIT) -> dict[str, Any]:
     }
     try:
         res = es_request("POST", f"/fo-case-{case_id}-*/_search", body)
-    except (urllib.error.HTTPError, Exception):
-        return {"hosts": [], "users": []}
+    except (urllib.error.HTTPError, Exception) as exc:
+        return {"hosts": [], "users": [], "error": str(exc) or type(exc).__name__}
     aggs = res.get("aggregations", {})
 
     def _picker(name: str) -> list[dict[str, Any]]:
@@ -222,4 +228,4 @@ def list_entities(case_id: str, limit: int = DEFAULT_LIMIT) -> dict[str, Any]:
             out.append({"value": val, "count": int(b.get("doc_count", 0))})
         return out
 
-    return {"hosts": _picker("hosts"), "users": _picker("users")}
+    return {"hosts": _picker("hosts"), "users": _picker("users"), "error": None}

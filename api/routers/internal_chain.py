@@ -81,7 +81,7 @@ def _run_finalize_chain(case_id: str) -> dict:
     try:
         from license import get_license
 
-        if not get_license().has_feature("ai_assist"):
+        if not get_license().is_feature_enabled("ai_assist"):
             result["ai_risk"] = {"skipped": "ai_assist not enabled in license plan"}
             _comms.info("[citadel → Pilot] case %s — AI risk skipped (plan lacks ai_assist)", case_id)
         else:

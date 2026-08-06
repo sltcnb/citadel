@@ -99,8 +99,8 @@ def retry_job(job_id: str, current_user: dict = Depends(get_current_user)):
     Retry a failed ingest job.
 
     Re-dispatches the Celery task with the original arguments and resets the
-    job status to PENDING.  Only jobs whose current status is FAILED can be
-    retried.
+    job status to PENDING.  Only jobs whose current status is FAILED or
+    CANCELLED can be retried — retrying a PENDING job would double-enqueue it.
     """
     job = job_svc.get_job(job_id)
     if not job:
@@ -108,10 +108,11 @@ def retry_job(job_id: str, current_user: dict = Depends(get_current_user)):
 
     _check_job_case_access(job, current_user)
 
-    if job.get("status") not in ("FAILED", "PENDING"):
+    if job.get("status") not in ("FAILED", "CANCELLED"):
         raise HTTPException(
             status_code=409,
-            detail=f"Only FAILED or PENDING jobs can be retried (current status: {job.get('status')})",
+            detail="Only FAILED or CANCELLED jobs can be retried "
+            f"(current status: {job.get('status')})",
         )
 
     case_id = job.get("case_id")

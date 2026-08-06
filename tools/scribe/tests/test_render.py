@@ -82,3 +82,45 @@ def test_manifest_states_derived_ai_assessment():
 def test_manifest_states_absent_ai():
     md = _manifest_md({"has_ai": False})
     assert "No AI narrative" in md
+
+
+# ── Findings section in the HTML/PDF report ──────────────────────────────────
+# The markdown renderer had the unified-findings section but render_html (which
+# report.pdf is rendered from) dropped it entirely.
+
+_FINDINGS = {
+    "items": [
+        {
+            "kind": "ioc",
+            "severity": "high",
+            "timestamp": "2026-06-09T08:00:00Z",
+            "message": "Malicious IP 203.0.113.7 contacted",
+            "source_feature": "cti_match",
+        },
+        {
+            "kind": "anomaly",
+            "severity": "medium",
+            "timestamp": "2026-06-09T09:00:00Z",
+            "message": "Beaconing detected on master2",
+            "source_feature": "anomaly",
+        },
+    ],
+    "total": 2,
+    "by_kind": {"ioc": 1, "anomaly": 1},
+    "by_severity": {"high": 1, "medium": 1},
+}
+
+
+def test_html_has_findings_section():
+    h = render_html(dict(_DATA, findings=_FINDINGS), merge_template(None))
+    assert "<h2>Findings</h2>" in h
+    assert "ioc (1)" in h and "anomaly (1)" in h       # grouped by kind
+    assert "Malicious IP 203.0.113.7 contacted" in h
+    assert "Beaconing detected on master2" in h
+
+
+def test_html_findings_toggle_off():
+    t = merge_template({"sections": {"findings": False}})
+    h = render_html(dict(_DATA, findings=_FINDINGS), t)
+    assert "anomaly (1)" not in h                    # no kind-group headers
+    assert "Beaconing detected on master2" not in h  # no finding rows

@@ -70,38 +70,69 @@ def _resolve_client_ip(xff_header: str | None, direct_peer: str, trusted_hops: i
     return hops[-trusted_hops] or direct_peer
 
 
-def _check_login_rate_limit(request: Request) -> None:
-    """Block IPs that exceed the configured login attempts per window
-    (admin-tunable via platform settings; defaults to 10 / 60s)."""
+def _login_rate_config() -> tuple[int, int]:
+    """(limit, window_seconds) from platform settings; defaults 10 / 60s."""
     try:
         from routers.platform_settings import get_platform_config
 
         _cfg = get_platform_config()
-        limit = int(_cfg["login_rate_limit"])
-        window = int(_cfg["login_rate_window_seconds"])
+        return int(_cfg["login_rate_limit"]), int(_cfg["login_rate_window_seconds"])
     except Exception:
-        limit, window = 10, 60
+        return 10, 60
+
+
+def _login_rate_bucket(request: Request) -> str:
     direct_peer = request.client.host if request.client else "unknown"
     client_ip = _resolve_client_ip(
         request.headers.get("X-Forwarded-For"),
         direct_peer,
         settings.TRUSTED_PROXY_HOPS,
     )
-    key = rk.login_ratelimit(client_ip)
+    return rk.login_ratelimit(client_ip)
+
+
+def _window_hint(window: int) -> str:
+    """Human-readable window for the 429 message ("2 minutes" / "45 seconds")."""
+    if window % 60 == 0:
+        minutes = window // 60
+        return f"{minutes} minute" + ("s" if minutes != 1 else "")
+    return f"{window} second" + ("s" if window != 1 else "")
+
+
+def _check_login_rate_limit(request: Request) -> None:
+    """Block IPs that exceeded the configured FAILED login attempts per window
+    (admin-tunable via platform settings; defaults to 10 / 60s).
+
+    Read-only — the counter is only incremented by _record_login_failure()
+    after an attempt actually fails, so successful logins never burn the
+    budget (a user behind a shared NAT isn't locked out by their own
+    successes, and an attacker can't pre-burn a victim's bucket either… the
+    counter only moves on failures)."""
+    limit, window = _login_rate_config()
+    key = _login_rate_bucket(request)
+    try:
+        count = int(_get_redis().get(key) or 0)
+    except Exception as exc:
+        logger.warning("Rate-limit check failed (Redis unavailable?): %s", exc)
+        return
+    if count >= limit:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many failed login attempts. Try again in {_window_hint(window)}.",
+        )
+
+
+def _record_login_failure(request: Request) -> None:
+    """Count one failed login attempt against the client IP's windowed bucket."""
+    _, window = _login_rate_config()
+    key = _login_rate_bucket(request)
     try:
         redis = _get_redis()
         count = redis.incr(key)
         if count == 1:
             redis.expire(key, window)
-        if count > limit:
-            raise HTTPException(
-                status_code=429,
-                detail="Too many login attempts. Try again in a minute.",
-            )
-    except HTTPException:
-        raise
     except Exception as exc:
-        logger.warning("Rate-limit check failed (Redis unavailable?): %s", exc)
+        logger.warning("Rate-limit failure count failed (Redis unavailable?): %s", exc)
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -201,8 +232,12 @@ async def login(request: Request, body: LoginRequest):
     """Primary login endpoint. Returns a token, or an MFA challenge if the
     account has TOTP enabled (complete via /auth/login/totp)."""
     _check_login_rate_limit(request)
+    # Attribute the audit record to the attempted identity even though this
+    # request is unauthenticated (no bearer token to derive the actor from).
+    request.scope["audit_actor"] = body.username
     user = authenticate(body.username, body.password)
     if not user:
+        _record_login_failure(request)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password",
@@ -236,7 +271,9 @@ async def login_totp(request: Request, body: TotpLoginRequest):
     username = decode_mfa_challenge(body.mfa_token)
     if not username:
         raise HTTPException(status_code=401, detail="MFA session expired — sign in again")
+    request.scope["audit_actor"] = username
     if not verify_totp(username, body.code):
+        _record_login_failure(request)
         raise HTTPException(status_code=401, detail="Invalid authentication code")
     user = get_user(username)
     if not user:
@@ -255,6 +292,7 @@ async def login_change_password(request: Request, body: ChangePasswordChallengeR
     username = decode_pw_change_challenge(body.pw_token)
     if not username:
         raise HTTPException(status_code=401, detail="Session expired — sign in again")
+    request.scope["audit_actor"] = username
     user = get_user(username)
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
@@ -265,6 +303,9 @@ async def login_change_password(request: Request, body: ChangePasswordChallengeR
             detail="New password must differ from the current password",
         )
     update_user(username, password=body.new_password)  # also clears must_change_password
+    # Consume the challenge: it is single-use (jti revocation) so a captured
+    # pw_token cannot be replayed to set another password later.
+    revoke_token(body.pw_token)
     token = create_token(username, user["role"])
     return TokenResponse(
         access_token=token, token_type="bearer", username=username, role=user["role"],
@@ -275,8 +316,10 @@ async def login_change_password(request: Request, body: ChangePasswordChallengeR
 async def token(request: Request, form: OAuth2PasswordRequestForm = Depends()):
     """OAuth2-compatible endpoint for tooling (Swagger UI, curl, etc.)."""
     _check_login_rate_limit(request)
+    request.scope["audit_actor"] = form.username
     user = authenticate(form.username, form.password)
     if not user:
+        _record_login_failure(request)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password",

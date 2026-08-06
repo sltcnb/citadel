@@ -19,6 +19,12 @@ def _now_iso() -> str:
 MODULE_RUN_TTL = 604800  # 7 days
 MALWARE_RUNS_MAX = 200  # keep last 200 standalone runs
 
+# A RUNNING run whose started_at is older than this can no longer have a live
+# worker behind it: the Celery hard time limit (~3h) would have killed the task
+# long ago. Same threshold for a PENDING run whose queue message was lost.
+STALE_RUN_SECONDS = 4 * 3600
+STALE_RUN_ERROR = "worker lost — run never completed; safe to retry"
+
 # Sentinel case_id used for runs that are not tied to a specific case
 MALWARE_CASE_ID = "__malware__"
 
@@ -28,6 +34,7 @@ def create_module_run(
     case_id: str,
     module_id: str,
     source_files: list,
+    params: dict | None = None,
 ) -> dict:
     r = get_redis()
     run = {
@@ -36,6 +43,9 @@ def create_module_run(
         "module_id": module_id,
         "status": "PENDING",
         "source_files": json.dumps(source_files),
+        # Persisted so a retry can re-dispatch the run exactly as launched —
+        # params used to live only in the (possibly lost) queue message.
+        "params": json.dumps(params or {}),
         # created_at is set here and never reset (retries only clear started_at/
         # completed_at), so the list stays in launch order even for runs that
         # failed at dispatch and therefore never got a started_at.
@@ -69,7 +79,7 @@ def get_module_run(run_id: str) -> dict | None:
     data = r.hgetall(rk.module_run(run_id))
     if not data:
         return None
-    return _deserialize(data)
+    return _reap_stale_run(_deserialize(data))
 
 
 def list_case_module_runs(case_id: str) -> list[dict]:
@@ -77,10 +87,50 @@ def list_case_module_runs(case_id: str) -> list[dict]:
     run_ids = r.smembers(rk.case_module_runs(case_id))
     runs = []
     for rid in run_ids:
-        run = get_module_run(rid)
+        run = get_module_run(rid)  # get_module_run reaps zombie runs
         if run:
             runs.append(run)
     return sorted(runs, key=_run_sort_key, reverse=True)
+
+
+def _reap_stale_run(run: dict) -> dict:
+    """Fail a zombie run left behind by a dead worker.
+
+    A worker dying mid-run leaves the record RUNNING forever; a lost queue
+    message leaves it PENDING forever. Neither is ever touched again — cancel
+    only sets a flag nothing reads and bulk-delete skips "active" runs — so
+    the record would stick in the UI indefinitely. Past STALE_RUN_SECONDS no
+    live worker can still own the run (the Celery hard limit kills tasks at
+    ~3h), so mark it FAILED with a retry-safe error. Cheap: the Redis write
+    only happens for runs that qualify; update_module_run preserves the TTL.
+    """
+    status = run.get("status")
+    stamp = run.get("started_at") if status == "RUNNING" else (
+        run.get("created_at") if status == "PENDING" else None
+    )
+    if not stamp:
+        return run
+    try:
+        ts = datetime.fromisoformat(stamp)
+    except (ValueError, TypeError):
+        return run
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=UTC)
+    if (datetime.now(UTC) - ts).total_seconds() <= STALE_RUN_SECONDS:
+        return run
+
+    completed_at = _now_iso()
+    update_module_run(
+        run["run_id"], status="FAILED", error=STALE_RUN_ERROR, completed_at=completed_at
+    )
+    logger.warning(
+        "Reaped stale module run %s (%s, %s since %s)",
+        run["run_id"],
+        run.get("module_id"),
+        status,
+        stamp,
+    )
+    return {**run, "status": "FAILED", "error": STALE_RUN_ERROR, "completed_at": completed_at}
 
 
 def _run_sort_key(run: dict) -> tuple[str, str]:
@@ -164,7 +214,13 @@ def _deserialize(data: dict) -> dict:
                 data[field] = json.loads(data[field])
             except (json.JSONDecodeError, TypeError):
                 data[field] = {} if field == "hits_by_level" else None
-    for field in ("total_hits",):
+    if "params" in data and isinstance(data["params"], str):
+        try:
+            data["params"] = json.loads(data["params"])
+        except (json.JSONDecodeError, TypeError):
+            data["params"] = {}
+    data.setdefault("params", {})  # records written before params was stored
+    for field in ("total_hits", "indexed_count"):
         if field in data:
             try:
                 data[field] = int(data[field])

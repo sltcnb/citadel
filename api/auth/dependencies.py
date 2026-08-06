@@ -8,7 +8,14 @@ from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError
 
 from auth import rbac
-from auth.service import decode_token, get_user, groups_index, is_token_revoked
+from auth.service import (
+    decode_token,
+    get_user,
+    groups_index,
+    is_token_revoked,
+    token_fresh_for_user,
+    tokens_valid_for_user,
+)
 from config import settings
 
 _oauth2 = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token", auto_error=False)
@@ -40,6 +47,48 @@ def _cache_put(token: str, user: dict) -> None:
     if len(_USER_CACHE) > _USER_CACHE_MAX:
         _USER_CACHE.clear()  # cheap bound; entries are short-lived anyway
     _USER_CACHE[token] = (time.monotonic(), user)
+
+
+# ── Session idle timeout (platform setting ``session_idle_minutes``) ──────────
+# When enabled (> 0), a token is only valid while its holder keeps making
+# requests: each validated request touches an activity key whose TTL is the
+# idle window. The touch is throttled to at most one Redis write per minute per
+# token (a second NX marker key), so the hot path stays at one EXISTS.
+# Fail-open on any Redis/config error — a flaky Redis must not log everyone out.
+
+_TOUCH_MARKER_TTL = 60  # seconds between activity-key refreshes per token
+
+
+def _session_idle_expired(payload: dict) -> bool:
+    """True if the token is idle-expired under the session_idle_minutes setting.
+
+    Side effect on False: refreshes the token's activity key (throttled)."""
+    jti = payload.get("jti")
+    if not jti:
+        return False
+    try:
+        from routers.platform_settings import get_platform_config
+
+        minutes = int(get_platform_config().get("session_idle_minutes") or 0)
+    except Exception:
+        return False
+    if minutes <= 0:
+        return False
+    try:
+        from config import get_redis
+
+        r = get_redis()
+        active_key = f"fo:session:active:{jti}"
+        if not r.exists(active_key):
+            # No activity recorded within the window (or the token predates the
+            # setting being enabled) — the session has timed out.
+            return True
+        # Throttled touch: refresh the TTL at most once a minute per token.
+        if r.set(f"fo:session:touch:{jti}", "1", nx=True, ex=_TOUCH_MARKER_TTL):
+            r.setex(active_key, minutes * 60, "1")
+        return False
+    except Exception:
+        return False
 
 
 async def get_current_user(
@@ -86,10 +135,18 @@ async def get_current_user(
                     detail="Scoped tokens are not valid for API access",
                     headers={"WWW-Authenticate": "Bearer"},
                 )
-            if is_token_revoked(payload):
+            if is_token_revoked(payload) or not token_fresh_for_user(
+                payload.get("sub"), payload
+            ):
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Token has been revoked",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            if _session_idle_expired(payload):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Session expired due to inactivity — sign in again",
                     headers={"WWW-Authenticate": "Bearer"},
                 )
         except JWTError:
@@ -122,6 +179,19 @@ async def get_current_user(
         user = get_user(username)
         if not user:
             raise HTTPException(status_code=401, detail="User not found")
+        if not tokens_valid_for_user(user, payload):
+            # Password/role changed after this token was minted — re-login.
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token has been revoked",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        if _session_idle_expired(payload):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Session expired due to inactivity — sign in again",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
         # Defensive: backfill role for pre-RBAC accounts still in Redis.
         # The startup migration normally handles this; this guard covers edge cases.
         if not user.get("role"):
@@ -326,6 +396,12 @@ def require_upload_access(
     user = get_user(username)
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
+    if not tokens_valid_for_user(user, payload):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been revoked",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     if not user.get("role"):
         user["role"] = "guest"  # least privilege — no admin backfill on this path
     return require_case_access(case_id, user)

@@ -56,20 +56,24 @@ def _check_harvest_run_access(raw: dict, current_user: dict) -> None:
 
 
 def _get_categories() -> dict:
-    """Return HARVEST_CATEGORIES from the task module (or a static copy)."""
+    """Return HARVEST_CATEGORIES from the worker task module when it is
+    importable (dev/monolith deployments), else the static mirror below.
+
+    The worker module pulls in celery/redis/robustness, so in the API container
+    the import fails cleanly and the mirror is used."""
     try:
-        # processor tasks aren't installed in the API container;
-        # fall back to a static definition that mirrors the task module.
-        raise ImportError
+        from harvest_task import HARVEST_CATEGORIES
     except ImportError:
         return _STATIC_CATEGORIES
+    return {name: defn.get("description", "") for name, defn in HARVEST_CATEGORIES.items()}
 
 
 def _get_levels() -> dict:
     try:
-        raise ImportError
+        from harvest_task import LEVEL_CATEGORIES
     except ImportError:
         return _STATIC_LEVELS
+    return LEVEL_CATEGORIES
 
 
 # ── Static mirrors of the task-module constants ───────────────────────────────
@@ -80,12 +84,18 @@ _STATIC_CATEGORIES: dict = {
     "eventlogs": "Windows Event Log files (.evtx)",
     "prefetch": "Prefetch / Superfetch execution artifacts (.pf)",
     "mft": "NTFS Master File Table ($MFT, $LogFile)",
+    "jumplists": "Jump Lists + Recent — per-user file-access & app-launch timeline",
+    "thumbcache": "Thumbnail / icon cache DBs — proves files existed & were viewed",
+    "timeline_activity": "Toast notification history (wpndatabase.db)",
+    "windows_search": "Windows Search index (Windows.edb) — indexed file metadata",
+    "recyclebin": "Recycle Bin — deleted-file metadata ($I) and content ($R), all SIDs",
     "persistence": "Scheduled tasks and WMI repository",
     "network": "Network configuration: hosts, WLAN profiles, firewall logs",
     "usb_devices": "USB plug history (setupapi logs)",
     "browser_chrome": "Google Chrome browser artifacts",
     "browser_firefox": "Mozilla Firefox browser artifacts",
     "browser_edge": "Microsoft Edge browser artifacts",
+    "downloads": "Every user's Downloads folder (top-level files)",
     "browser_ie": "Internet Explorer WebCache",
     "credentials": "LSA secrets, DPAPI, Credential Manager",
     "email_outlook": "Outlook .pst / .ost databases",
@@ -143,6 +153,8 @@ _STATIC_LEVELS: dict = {
         "wer_crashes",
         "logs",
         "execution",
+        "jumplists",
+        "recyclebin",
     ],
     "complete": [
         "registry",
@@ -157,11 +169,17 @@ _STATIC_LEVELS: dict = {
         "wer_crashes",
         "logs",
         "execution",
+        "jumplists",
+        "thumbcache",
+        "timeline_activity",
+        "windows_search",
+        "recyclebin",
         "filesystem",
         "browser_chrome",
         "browser_firefox",
         "browser_edge",
         "browser_ie",
+        "downloads",
         "email_outlook",
         "email_thunderbird",
         "teams",
@@ -199,11 +217,17 @@ _STATIC_LEVELS: dict = {
         "wer_crashes",
         "logs",
         "execution",
+        "jumplists",
+        "thumbcache",
+        "timeline_activity",
+        "windows_search",
+        "recyclebin",
         "filesystem",
         "browser_chrome",
         "browser_firefox",
         "browser_edge",
         "browser_ie",
+        "downloads",
         "email_outlook",
         "email_thunderbird",
         "teams",
@@ -321,7 +345,7 @@ def start_harvest(case_id: str, req: HarvestRequest, _case: dict = Depends(requi
     (visible in the normal Jobs list under the case).
     """
     # Validate level
-    if req.level not in _STATIC_LEVELS:
+    if req.level not in _get_levels():
         raise HTTPException(
             status_code=400,
             detail=f"Invalid level '{req.level}'. Must be: small, complete, exhaustive",
@@ -329,7 +353,8 @@ def start_harvest(case_id: str, req: HarvestRequest, _case: dict = Depends(requi
 
     # Validate categories
     if req.categories:
-        unknown = [c for c in req.categories if c not in _STATIC_CATEGORIES]
+        known = _get_categories()
+        unknown = [c for c in req.categories if c not in known]
         if unknown:
             raise HTTPException(status_code=400, detail=f"Unknown categories: {unknown}")
 
@@ -432,16 +457,12 @@ def cancel_run(run_id: str, current_user: dict = Depends(get_current_user)):
     if current_status not in ("PENDING", "RUNNING"):
         return {"run_id": run_id, "status": current_status}
 
-    task_id = raw.get("task_id")
-    if task_id:
-        try:
-            # Best-effort revoke via Redis; harvest_task will check at next opportunity
-            import redis as _redis_lib
+    # Cooperative cancel: the worker polls this flag at category boundaries
+    # (same pattern as module runs — rk.module_cancel) and stops cleanly.
+    # The old `celery.revoked` Redis-list push was a placebo: nothing read it.
+    import redis_keys as rk
 
-            _r = _redis_lib.Redis.from_url(REDIS_URL, decode_responses=True)
-            _r.lpush("celery.revoked", task_id)
-        except Exception:
-            pass
+    r.set(rk.harvest_cancel(run_id), "1", ex=RUN_TTL)
 
     r.hset(
         f"harvest_run:{run_id}",

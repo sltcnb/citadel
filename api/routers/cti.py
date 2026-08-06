@@ -942,7 +942,8 @@ def add_feed(body: FeedCreate):
         "created_at": datetime.now(UTC).isoformat(),
     }
     mutate_json(r, FEEDS_KEY, lambda feeds: feeds + [feed], [])
-    return feed
+    # Redact the secret in the response (the stored record keeps its key).
+    return {**feed, "api_key_set": bool(feed["api_key"]), "api_key": None}
 
 
 @router.put("/cti/feeds/{feed_id}")
@@ -966,7 +967,11 @@ def update_feed(feed_id: str, body: FeedUpdate):
     mutate_json(r, FEEDS_KEY, _apply, [])
     if "feed" not in found:
         raise HTTPException(status_code=404, detail="Feed not found")
-    return found["feed"]
+    # Redact the secret in the response (the stored record keeps its key).
+    updated = dict(found["feed"])
+    if "api_key" in updated:
+        updated["api_key_set"] = bool(updated.pop("api_key"))
+    return updated
 
 
 @router.delete("/cti/feeds/{feed_id}", status_code=204)

@@ -137,8 +137,11 @@ def findings_summary(case_id: str) -> dict:
         "size": 0,
         "track_total_hits": True,
         "aggs": {
-            "by_kind": {"terms": {"field": "kind", "size": 50}},
-            "by_severity": {"terms": {"field": "severity", "size": 10}},
+            # kind/severity are dynamically mapped text fields; the exact-value
+            # .keyword subfield is what a terms agg can group on (plain "kind"
+            # 400s with "Fielddata is disabled" and the summary silently read 0).
+            "by_kind": {"terms": {"field": "kind.keyword", "size": 50}},
+            "by_severity": {"terms": {"field": "severity.keyword", "size": 10}},
         },
     }
     try:

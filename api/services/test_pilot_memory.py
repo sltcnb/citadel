@@ -279,3 +279,55 @@ def test_count_never_goes_negative(fake_redis, monkeypatch):
     counts["n"] = 50
     status = pm.case_watch_status("case1")
     assert status["new_events"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# Tenant scoping (company tags)
+# --------------------------------------------------------------------------- #
+
+
+def test_remember_tags_company_and_recall_filters(fake_redis):
+    pm.remember("caseA", "ioc", "1.2.3.4", company="acme")
+    pm.remember("caseB", "ioc", "5.6.7.8", company="globex")
+    pm.remember("caseC", "ioc", "9.9.9.9")  # shared/global (no company)
+
+    rec = pm.recall("ioc", "1.2.3.4")[0]
+    assert rec["company"] == "acme"
+
+    # Unrestricted reader sees everything.
+    assert len(pm.recall("ioc")) == 3
+    # acme-scoped reader: own company + shared records only.
+    vals = {r["value"] for r in pm.recall("ioc", companies={"acme", ""})}
+    assert vals == {"1.2.3.4", "9.9.9.9"}
+    # globex-scoped reader likewise.
+    vals = {r["value"] for r in pm.recall("ioc", companies={"globex", ""})}
+    assert vals == {"5.6.7.8", "9.9.9.9"}
+
+
+def test_recall_ioc_company_scope(fake_redis):
+    pm.remember("caseB", "ioc", "4.4.4.4", company="globex")
+    out = pm.recall_ioc("4.4.4.4", companies={"acme", ""})
+    assert out["seen"] is False
+    assert out["count"] == 0
+    out = pm.recall_ioc("4.4.4.4", companies={"globex", ""})
+    assert out["seen"] is True
+    assert out["count"] == 1
+
+
+def test_seen_before_company_scope(fake_redis):
+    pm.remember("caseA", "ioc", "2.2.2.2", company="acme")
+    pm.remember("caseB", "ioc", "3.3.3.3", company="globex")
+    # A case in acme must not learn that globex ever saw 3.3.3.3.
+    hits = pm.seen_before(
+        ["2.2.2.2", "3.3.3.3"], current_case="caseC", companies={"acme", ""}
+    )
+    assert [h["value"] for h in hits] == ["2.2.2.2"]
+
+
+def test_single_tenant_unscoped_records_visible_to_all(fake_redis):
+    # All-empty-company deployment: records are shared, every scope sees them.
+    pm.remember("caseX", "ioc", "7.7.7.7")
+    assert pm.recall("ioc", companies={""}) != []
+    assert pm.recall("ioc", companies={"acme", ""}) != []
+    hits = pm.seen_before(["7.7.7.7"], current_case="caseY", companies={""})
+    assert len(hits) == 1

@@ -87,6 +87,10 @@ def module_cancel(run_id: str) -> str:
     return f"fo:module_cancel:{run_id}"
 
 
+def harvest_cancel(run_id: str) -> str:
+    return f"fo:harvest_cancel:{run_id}"
+
+
 # ── YARA ──────────────────────────────────────────────────────────────────────
 YARA_RULES_SET = "fo:yara_rules"
 
@@ -144,3 +148,6 @@ def llm_usage_daily(day: int) -> str:
 ARCHIVE_SETTINGS = "fo:archive_settings"
 COMPANIES = "fo:companies"
 METRICS_HISTORY = "fo:metrics:snapshots"
+# Plugins generation counter — bumped (INCR) here on plugin upload/edit;
+# ingest workers reload their plugin loader when it changes.
+PLUGINS_VERSION = "fo:plugins:version"

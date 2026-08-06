@@ -88,7 +88,12 @@ async def _stream(case_id: str, request: Request) -> AsyncGenerator[bytes, None]
         while True:
             if await request.is_disconnected():
                 break
-            msg = pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+            # redis-py's get_message(timeout=…) blocks up to `timeout` seconds;
+            # run it in a thread so a quiet channel doesn't stall the event loop
+            # for every other viewer/request on this worker.
+            msg = await asyncio.to_thread(
+                pubsub.get_message, ignore_subscribe_messages=True, timeout=1.0
+            )
             if msg and msg.get("type") == "message":
                 data = msg.get("data")
                 if isinstance(data, bytes):

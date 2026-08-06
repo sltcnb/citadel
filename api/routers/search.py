@@ -57,17 +57,21 @@ def get_timeline(
         except (json.JSONDecodeError, ValueError):
             sa = None
 
-    result = es.search_events(
-        case_id=case_id,
-        artifact_type=artifact_type,
-        from_ts=from_ts,
-        to_ts=to_ts,
-        page=page,
-        size=size,
-        sort_field=sort_field,
-        sort_order=sort_order,
-        search_after=sa,
-    )
+    try:
+        result = es.search_events(
+            case_id=case_id,
+            artifact_type=artifact_type,
+            from_ts=from_ts,
+            to_ts=to_ts,
+            page=page,
+            size=size,
+            sort_field=sort_field,
+            sort_order=sort_order,
+            search_after=sa,
+        )
+    except es.SearchError as exc:
+        # A query ES rejects is an error, not "0 results".
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     hits = result.get("hits", {})
     total = hits.get("total", {}).get("value", 0)
@@ -143,7 +147,8 @@ def search(
     if event_id is not None:
         extra_filters.append({"term": {"evtx.event_id": event_id}})
     if channel:
-        extra_filters.append({"term": {"evtx.channel.keyword": channel}})
+        # evtx.channel is a plain keyword in the template — no .keyword sub-field.
+        extra_filters.append({"term": {"evtx.channel": channel}})
     if src_ip:
         extra_filters.append({"term": {"network.src_ip": src_ip}})
     if dest_ip:
@@ -151,28 +156,42 @@ def search(
     if status_code is not None:
         extra_filters.append({"term": {"http.status_code": status_code}})
     if http_method:
-        extra_filters.append({"term": {"http.method.keyword": http_method}})
+        # http.method is a plain keyword too.
+        extra_filters.append({"term": {"http.method": http_method}})
     if domain:
-        extra_filters.append({"term": {"dns.question.name.keyword": domain}})
+        # No parser emits ECS dns.question.name — match the fields parsers
+        # actually emit (pcap / suricata / zeek), any of them.
+        extra_filters.append(
+            {
+                "bool": {
+                    "should": [{"term": {f: domain}} for f in es.DNS_NAME_KEYWORD_FIELDS],
+                    "minimum_should_match": 1,
+                }
+            }
+        )
     if flagged is not None:
         extra_filters.append({"term": {"is_flagged": flagged}})
     if tags:
         extra_filters.append({"terms": {"tags": tags}})
 
-    result = es.search_events(
-        case_id=case_id,
-        query=q,
-        artifact_type=artifact_type,
-        from_ts=from_ts,
-        to_ts=to_ts,
-        extra_filters=extra_filters,
-        page=page,
-        size=size,
-        regexp=regexp,
-        sort_field=sort_field,
-        sort_order=sort_order,
-        search_after=sa,
-    )
+    try:
+        result = es.search_events(
+            case_id=case_id,
+            query=q,
+            artifact_type=artifact_type,
+            from_ts=from_ts,
+            to_ts=to_ts,
+            extra_filters=extra_filters,
+            page=page,
+            size=size,
+            regexp=regexp,
+            sort_field=sort_field,
+            sort_order=sort_order,
+            search_after=sa,
+        )
+    except es.SearchError as exc:
+        # A query ES rejects is an error, not "0 results".
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     hits = result.get("hits", {})
     total = hits.get("total", {}).get("value", 0)
@@ -213,10 +232,34 @@ def get_facets(
         if _qerr:
             raise HTTPException(status_code=400, detail=f"Invalid query: {_qerr}")
 
-    aggs = es.get_search_facets(
+    try:
+        aggs = _facets_cached(case_id, q, artifact_type, from_ts, to_ts)
+    except es.SearchError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"case_id": case_id, "facets": aggs}
+
+
+# Short per-(case, params) cache: facet computation fans out a dozen terms aggs
+# over the whole case index (~800 ms on a 500k-event case) and the UI refetches
+# it on every filter tweak — 10 s staleness is invisible to analysts.
+_FACETS_TTL = 10.0
+_facets_cache: dict = {}
+
+
+def _facets_cached(case_id: str, q, artifact_type, from_ts, to_ts) -> dict:
+    import time as _t
+
+    key = (case_id, q, artifact_type, from_ts, to_ts)
+    hit = _facets_cache.get(key)
+    if hit and _t.monotonic() - hit[0] < _FACETS_TTL:
+        return hit[1]
+    value = es.get_search_facets(
         case_id, query=q, artifact_type=artifact_type, from_ts=from_ts, to_ts=to_ts
     )
-    return {"case_id": case_id, "facets": aggs}
+    if len(_facets_cache) > 200:
+        _facets_cache.clear()
+    _facets_cache[key] = (_t.monotonic(), value)
+    return value
 
 
 @router.get("/cases/{case_id}/events/{fo_id}")
@@ -226,6 +269,51 @@ def get_event(case_id: str, fo_id: str, _acl: dict = Depends(require_case_access
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
     return event
+
+
+@router.get("/cases/{case_id}/events/{fo_id}/source")
+def get_source_event(case_id: str, fo_id: str, _acl: dict = Depends(require_case_access)):
+    """Resolve the ORIGINAL event that produced a detection.
+
+    Detection docs (hayabusa, and any module hit carrying channel + record_id)
+    keep the source event's coordinates but not its fo_id. Rather than stamping
+    links at index time (expensive for 70k-hit runs, and impossible for docs
+    already indexed), resolve lazily on click: look up the evtx event sharing
+    channel + record_id + host. Returns the source doc, or 404 when the source
+    file was never ingested into this case.
+    """
+    event = es.get_event_by_id(case_id, fo_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Detection not found")
+    hay = event.get("hayabusa") or {}
+    channel = str(hay.get("channel") or "").strip()
+    record_id = hay.get("record_id")
+    computer = str(hay.get("computer") or (event.get("host") or {}).get("hostname") or "").strip()
+    if not channel or record_id in (None, ""):
+        raise HTTPException(
+            status_code=422,
+            detail="This event carries no source coordinates (channel/record_id) — only hayabusa detections can be traced back.",
+        )
+    must = [
+        {"term": {"evtx.channel": channel}},
+        {"term": {"evtx.record_id": int(record_id) if str(record_id).isdigit() else record_id}},
+    ]
+    if computer:
+        must.append({"term": {"host.hostname.keyword": computer}})
+    body = {
+        "query": {"bool": {"must": must}},
+        "size": 1,
+        "_source": {"excludes": ["raw.xml", "raw.line"]},
+    }
+    resp = es._request("POST", f"/fo-case-{case_id}-evtx/_search", body)
+    hits = resp.get("hits", {}).get("hits", [])
+    if not hits:
+        raise HTTPException(
+            status_code=404,
+            detail="Source event not found in this case — the original log file may not have been ingested.",
+        )
+    src = hits[0]
+    return {"fo_id": src.get("_id"), "event": src.get("_source", {})}
 
 
 class TagUpdate(BaseModel):
@@ -261,7 +349,9 @@ def flag_event(case_id: str, fo_id: str, _acl: dict = Depends(require_case_acces
     new_flag = not event.get("is_flagged", False)
     index = event.get("_index", f"fo-case-{case_id}-generic")
     doc_id = event.get("_id", fo_id)
-    es.update_event(case_id, index, doc_id, {"is_flagged": new_flag})
+    success = es.update_event(case_id, index, doc_id, {"is_flagged": new_flag})
+    if not success:
+        raise HTTPException(status_code=500, detail="Update failed")
     return {"fo_id": fo_id, "is_flagged": new_flag}
 
 
@@ -285,7 +375,9 @@ def pin_event(
     patch = {"is_pinned": new_pinned}
     if body.note is not None:
         patch["pin_note"] = body.note
-    es.update_event(case_id, index, doc_id, patch)
+    success = es.update_event(case_id, index, doc_id, patch)
+    if not success:
+        raise HTTPException(status_code=500, detail="Update failed")
     return {"fo_id": fo_id, "is_pinned": new_pinned, "pin_note": body.note or ""}
 
 
@@ -301,7 +393,9 @@ def list_pinned(
     body = {
         "query": {"term": {"is_pinned": True}},
         "size": size,
-        "sort": [{"timestamp": {"order": "asc", "unmapped_type": "keyword", "missing": "_last"}}],
+        # Newest pin first — ascending order used to drop the newest pins once
+        # a case had more than `size` of them.
+        "sort": [{"timestamp": {"order": "desc", "unmapped_type": "keyword", "missing": "_last"}}],
     }
     try:
         res = es_req("POST", f"/fo-case-{case_id}-*/_search", body)
@@ -325,7 +419,9 @@ def note_event(
         raise HTTPException(status_code=404, detail="Event not found")
     index = event.get("_index", f"fo-case-{case_id}-generic")
     doc_id = event.get("_id", fo_id)
-    es.update_event(case_id, index, doc_id, {"analyst_note": body.note})
+    success = es.update_event(case_id, index, doc_id, {"analyst_note": body.note})
+    if not success:
+        raise HTTPException(status_code=500, detail="Update failed")
     return {"fo_id": fo_id, "analyst_note": body.note}
 
 
@@ -348,6 +444,10 @@ def get_iocs(
     index = f"fo-case-{case_id}-*"
 
     # Canonical (preferred) field path per IOC category. Probe is best-effort.
+    # A list value means "several real spellings across parsers" — each is
+    # probed/aggregated and the buckets merged (no parser emits the ECS
+    # dns.question.name or network.dst_domain, so domains spans the three DNS
+    # fields parsers DO emit: pcap / suricata / zeek).
     IOC_FIELDS = {
         "src_ips": "network.src_ip",
         "dst_ips": "network.dst_ip",
@@ -355,7 +455,7 @@ def get_iocs(
         "usernames": "user.name",
         "processes": "process.name",
         "executables": "process.executable_name",
-        "domains": "network.dst_domain",
+        "domains": ["dns.query_name", "suricata.dns.rrname", "zeek.query"],
         "urls": "http.request_path",
         "user_agents": "http.user_agent",
         "cmdlines": "process.command_line",
@@ -385,20 +485,43 @@ def get_iocs(
         except Exception:
             return f"{canonical}.keyword"
 
-    resolved = {key: pick_agg_path(canon) for key, canon in IOC_FIELDS.items()}
-    body = {
-        "size": 0,
-        "aggs": {key: {"terms": {"field": path, "size": size}} for key, path in resolved.items()},
-    }
+    resolved: dict[str, str | list[str]] = {}
+    for key, canon in IOC_FIELDS.items():
+        if isinstance(canon, list):
+            resolved[key] = [pick_agg_path(c) for c in canon]
+        else:
+            resolved[key] = pick_agg_path(canon)
+
+    aggs: dict[str, dict] = {}
+    for key, path in resolved.items():
+        if isinstance(path, list):
+            for i, p in enumerate(path):
+                aggs[f"{key}__{i}"] = {"terms": {"field": p, "size": size}}
+        else:
+            aggs[key] = {"terms": {"field": path, "size": size}}
+    body = {"size": 0, "aggs": aggs}
 
     try:
         result = es_req("POST", f"/{index}/_search", body)
-        aggs = result.get("aggregations", {})
+        aggs_res = result.get("aggregations", {})
 
         def buckets(key):
+            paths = resolved[key]
+            if isinstance(paths, list):
+                # Merge the per-spelling terms aggs (sum counts per value).
+                merged: dict = {}
+                for i in range(len(paths)):
+                    for b in aggs_res.get(f"{key}__{i}", {}).get("buckets", []):
+                        if b.get("key") in (None, "", "-"):
+                            continue
+                        merged[b["key"]] = merged.get(b["key"], 0) + b["doc_count"]
+                return [
+                    {"value": k, "count": c}
+                    for k, c in sorted(merged.items(), key=lambda kv: -kv[1])[:size]
+                ]
             return [
                 {"value": b["key"], "count": b["doc_count"]}
-                for b in aggs.get(key, {}).get("buckets", [])
+                for b in aggs_res.get(key, {}).get("buckets", [])
                 if b.get("key") not in (None, "", "-")
             ]
 

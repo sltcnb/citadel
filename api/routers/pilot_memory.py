@@ -8,15 +8,16 @@ Thin HTTP layer over services.pilot_memory:
   GET  /cases/{case_id}/pilot/watch               case_watch_status
   POST /cases/{case_id}/pilot/watch/reviewed      mark_reviewed
 
-Global recall is gated with get_current_user (any authenticated analyst) because
-institutional memory is cross-case by design; the case-scoped routes use
-require_case_access so a company-restricted analyst can't touch another company's
-case. Follows the dependency conventions in routers/anomaly.py.
+Global recall is gated with get_current_user (any authenticated analyst) and
+filtered to the caller's company scope (+ shared records) — institutional
+memory is cross-case by design, but never cross-tenant; the case-scoped routes
+use require_case_access so a company-restricted analyst can't touch another
+company's case. Follows the dependency conventions in routers/anomaly.py.
 """
 
 from __future__ import annotations
 
-from auth.dependencies import get_current_user, require_case_access
+from auth.dependencies import get_company_filter, get_current_user, require_case_access
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from services import pilot_memory
@@ -28,20 +29,31 @@ class SeenBody(BaseModel):
     values: list[str] = []
 
 
+def _user_memory_scope(user: dict):
+    """Company scope for memory reads: None for unrestricted users (admins),
+    otherwise the user's companies plus '' (shared/global records)."""
+    flt = get_company_filter(user)
+    if flt is None:
+        return None
+    return set(flt) | {""}
+
+
 @router.get("/pilot/memory")
 def get_memory(
-    _user: dict = Depends(get_current_user),
+    user: dict = Depends(get_current_user),
     kind: str | None = Query(None),
     value: str | None = Query(None),
 ):
-    """Recall global cross-case memory. When ``value`` is an IOC, also return the
-    human-readable 'appeared in N prior cases' summary."""
+    """Recall cross-case memory, scoped to the caller's company (+ shared
+    records). When ``value`` is an IOC, also return the human-readable
+    'appeared in N prior cases' summary."""
     if kind is not None and kind not in pilot_memory.KINDS:
         return {"records": [], "ioc": None, "error": f"invalid kind {kind!r}"}
-    records = pilot_memory.recall(kind=kind, value=value)
+    scope = _user_memory_scope(user)
+    records = pilot_memory.recall(kind=kind, value=value, companies=scope)
     ioc = None
     if value and (kind in (None, "ioc")):
-        ioc = pilot_memory.recall_ioc(value)
+        ioc = pilot_memory.recall_ioc(value, companies=scope)
     return {"records": records, "ioc": ioc, "count": len(records)}
 
 
@@ -49,11 +61,13 @@ def get_memory(
 def post_seen(
     case_id: str,
     body: SeenBody,
-    _acl: dict = Depends(require_case_access),
+    case: dict = Depends(require_case_access),
 ):
     """Return which of the supplied IOCs were seen in OTHER cases (cross-case
-    hits only — the current case is excluded)."""
-    hits = pilot_memory.seen_before(body.values, current_case=case_id)
+    hits only — the current case is excluded). Scoped to the case's company
+    (+ shared records) so another tenant's hits never leak."""
+    scope = {str(case.get("company", "") or ""), ""}
+    hits = pilot_memory.seen_before(body.values, current_case=case_id, companies=scope)
     return {"case_id": case_id, "hits": hits, "count": len(hits)}
 
 

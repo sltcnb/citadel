@@ -1,4 +1,11 @@
-"""Elasticsearch service — index management and querying."""
+"""Elasticsearch service — index management and querying.
+
+The authoritative index template for fo-case-* indices lives at
+``elasticsearch/index_templates/fo-cases-template.json`` (applied to the
+cluster out-of-band, verified live). Keep field references here in sync with
+that file — e.g. ``evtx.channel`` and ``http.method`` are plain keywords with
+NO ``.keyword`` sub-field.
+"""
 
 from __future__ import annotations
 
@@ -37,68 +44,46 @@ def _install_es_auth() -> None:
 
 _install_es_auth()
 
-INDEX_TEMPLATE = {
-    "index_patterns": ["fo-case-*"],
-    "template": {
-        "settings": {
-            "number_of_shards": 1,
-            "number_of_replicas": 0,
-            "refresh_interval": "5s",
-            "index.mapping.total_fields.limit": 2000,
-            "codec": "best_compression",
-        },
-        "mappings": {
-            "dynamic": "true",
-            "properties": {
-                "fo_id": {"type": "keyword"},
-                "case_id": {"type": "keyword"},
-                "artifact_type": {"type": "keyword"},
-                "source_file": {"type": "keyword", "index": False},
-                "ingest_job_id": {"type": "keyword"},
-                "ingested_at": {"type": "date"},
-                "timestamp": {"type": "date"},
-                "timestamp_desc": {"type": "keyword"},
-                "message": {
-                    "type": "text",
-                    "fields": {"keyword": {"type": "keyword", "ignore_above": 512}},
-                },
-                "tags": {"type": "keyword"},
-                "analyst_note": {"type": "text"},
-                "is_flagged": {"type": "boolean"},
-                # Unified findings substrate — every analysis surface writes its
-                # output as a `finding` event into fo-case-{id}-finding. Explicit
-                # keyword mappings so kind/severity/source aggregate cleanly.
-                "finding_id": {"type": "keyword"},
-                "kind": {"type": "keyword"},
-                "severity": {"type": "keyword"},
-                "severity_int": {"type": "integer"},
-                "source_feature": {"type": "keyword"},
-                "evidence": {"type": "keyword"},
-                "techniques": {"type": "keyword"},
-                "finding": {"type": "object", "dynamic": True},
-                "host": {"type": "object", "dynamic": True},
-                "user": {"type": "object", "dynamic": True},
-                "process": {"type": "object", "dynamic": True},
-                "network": {"type": "object", "dynamic": True},
-                "http": {"type": "object", "dynamic": True},
-                "error": {"type": "object", "dynamic": True},
-                "access_log": {"type": "object", "dynamic": True},
-                "mitre": {"type": "object", "dynamic": True},
-                "evtx": {"type": "object", "dynamic": True},
-                "prefetch": {"type": "object", "dynamic": True},
-                "mft": {"type": "object", "dynamic": True},
-                "registry": {"type": "object", "dynamic": True},
-                "lnk": {"type": "object", "dynamic": True},
-                "login_event": {"type": "object", "dynamic": True},
-                "antivirus": {"type": "object", "dynamic": True},
-                "plaso": {"type": "object", "dynamic": True},
-                "raw": {"type": "object", "enabled": False},
-            },
-        },
-    },
-    "priority": 100,
-    "composed_of": [],
-}
+
+class SearchError(RuntimeError):
+    """Elasticsearch REJECTED a search/facet query (HTTP 400).
+
+    Distinct from "no data": a missing index (404 / index_not_found) is a
+    legitimate empty result, but a 400 means the query itself is broken —
+    reporting it as "0 results" is how bad queries stay indistinguishable
+    from queries that genuinely matched nothing. Routers translate this into
+    an HTTP 400 (same pattern as rule_eval.RuleEvalError).
+    """
+
+
+def _es_error_reason(exc: urllib.error.HTTPError) -> str:
+    """Extract Elasticsearch's own reason string from an HTTPError body."""
+    try:
+        err = json.loads(exc.read() or b"{}")
+        error = err.get("error", {})
+        root = error.get("root_cause") or []
+        return (root[0].get("reason") if root else None) or error.get("reason") or str(exc)
+    except Exception:
+        return str(exc)
+
+
+def _is_missing_index(exc: urllib.error.HTTPError, reason: str = "") -> bool:
+    """True when the failure just means the case has no such index (legit empty)."""
+    return (
+        exc.code == 404
+        or "index_not_found" in reason
+        or "no such index" in reason
+        or "index_not_found" in str(exc)
+    )
+
+
+# DNS query-name fields actually emitted by the parsers (verified against
+# tools/babel): pcap → dns.query_name, Suricata → suricata.dns.rrname,
+# Zeek dns.log → zeek.query. ECS's ``dns.question.name`` only appears in the
+# rosetta fieldmap for an artifact_type no parser produces, so querying it
+# alone always matches nothing. All three are dynamically mapped text+keyword.
+DNS_NAME_FIELDS = ["dns.query_name", "suricata.dns.rrname", "zeek.query"]
+DNS_NAME_KEYWORD_FIELDS = [f"{f}.keyword" for f in DNS_NAME_FIELDS]
 
 
 def es_request(method: str, path: str, body: dict | None = None) -> dict:
@@ -230,7 +215,12 @@ def build_bool_query(
     return {"bool": bool_body}
 
 
-def paginate(page: int, size: int, max_window: int = 10000) -> dict:
+# Elasticsearch's default max_result_window — shallow `from` paging cannot go
+# past this; callers must switch to search_after cursor pagination.
+MAX_RESULT_WINDOW = 10000
+
+
+def paginate(page: int, size: int, max_window: int = MAX_RESULT_WINDOW) -> dict:
     """Return ``{"from": ..., "size": ...}`` clamped so ``from + size`` never
     exceeds ``max_window``. ``from`` is clamped to ``max(0, max_window - size)``."""
     frm = page * size
@@ -245,15 +235,6 @@ def total_hits_setting(threshold: int | None = None) -> dict:
     With no threshold → exact count (``True``); with an int → cap the count at
     that value (cheaper for huge unfiltered result sets)."""
     return {"track_total_hits": threshold if threshold is not None else True}
-
-
-def apply_index_template() -> None:
-    """Apply the shared index template for all fo-case-* indices."""
-    try:
-        _request("PUT", "/_index_template/fo-cases-template", INDEX_TEMPLATE)
-        logger.info("Applied fo-cases-template")
-    except Exception as exc:
-        logger.warning("Could not apply index template: %s", exc)
 
 
 def list_case_indices(case_id: str) -> list[str]:
@@ -283,8 +264,8 @@ def count_case_events(case_id: str) -> int:
 
 def bulk_case_stats(case_ids: list[str]) -> dict[str, dict]:
     """
-    Return event_count and artifact_types for multiple cases in two ES calls
-    instead of 2N. Used by the case list endpoint to avoid per-case queries.
+    Return event_count and artifact_types for multiple cases in a single
+    _cat/indices call. Used by the case list endpoint to avoid per-case queries.
     """
     if not case_ids:
         return {}
@@ -292,9 +273,9 @@ def bulk_case_stats(case_ids: list[str]) -> dict[str, dict]:
     id_set = set(case_ids)
     result: dict[str, dict] = {cid: {"event_count": 0, "artifact_types": []} for cid in case_ids}
 
-    # One _cat/indices call for artifact types across all cases
+    # One _cat/indices call for event counts and artifact types across all cases
     try:
-        indices = _request("GET", "/_cat/indices/fo-case-*?format=json&h=index")
+        indices = _request("GET", "/_cat/indices/fo-case-*?format=json&h=index,docs.count")
         for entry in indices:
             name = entry.get("index", "")
             # index format: fo-case-{case_id}-{artifact_type}
@@ -307,29 +288,10 @@ def bulk_case_stats(case_ids: list[str]) -> dict[str, dict]:
             cid, atype = rest[:dash], rest[dash + 1 :]
             if cid in id_set:
                 result[cid]["artifact_types"].append(atype)
-    except Exception:
-        pass
-
-    # One _msearch call for event counts (header + body pairs in ndjson)
-    try:
-        lines = []
-        for cid in case_ids:
-            lines.append(json.dumps({"index": f"fo-case-{cid}-*"}))
-            lines.append(
-                json.dumps({"query": {"match_all": {}}, "size": 0, "track_total_hits": True})
-            )
-        ndjson = "\n".join(lines) + "\n"
-        url = f"{ES_URL}/_msearch"
-        req = urllib.request.Request(
-            url,
-            data=ndjson.encode(),
-            headers={"Content-Type": "application/x-ndjson"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            msearch = json.loads(resp.read())
-        for cid, response in zip(case_ids, msearch.get("responses", [])):
-            result[cid]["event_count"] = response.get("hits", {}).get("total", {}).get("value", 0)
+                try:
+                    result[cid]["event_count"] += int(entry.get("docs.count") or 0)
+                except (TypeError, ValueError):
+                    pass
     except Exception:
         pass
 
@@ -341,7 +303,7 @@ _SEARCH_FIELDS = [
     "host.hostname",
     "user.name",
     "process.name",
-    "process.cmdline",
+    "process.command_line",
     "process.args",
     "network.src_ip",
     "network.dst_ip",
@@ -483,13 +445,25 @@ def search_events(
         filter=filter_clauses,
     )
 
+    if sort_field == "_severity":
+        # Unified severity sort across artifact types — hayabusa.level_int
+        # (long), finding severity_int, or text levels normalized to 1-5.
+        # Sorting on a single field can't work: no field exists on every doc
+        # (evtx.level is plain keyword, hayabusa nests under hayabusa.*).
+        sort_clause: list = [
+            {"_script": {"type": "number", "order": sort_order, "script": {"source": _SEVERITY_SORT_SCRIPT}}},
+            {"_doc": {"order": "asc"}},
+        ]
+    else:
+        sort_clause = [
+            {sort_field: {"order": sort_order, "unmapped_type": "keyword", "missing": "_last"}},
+            {"_doc": {"order": "asc"}},
+        ]
+
     body = {
         "query": es_query,
         "size": size,
-        "sort": [
-            {sort_field: {"order": sort_order, "unmapped_type": "keyword", "missing": "_last"}},
-            {"_doc": {"order": "asc"}},
-        ],
+        "sort": sort_clause,
         "_source": {"excludes": ["raw.xml"]},
         # Always report the EXACT total — no 10k (or 100k) cap. For match_all this
         # is cheap (Lucene knows the segment doc counts); for filtered queries the
@@ -501,6 +475,15 @@ def search_events(
     if search_after:
         body["search_after"] = search_after
     else:
+        # Shallow `from` paging only works inside the 10k max_result_window.
+        # Beyond it, reject loudly instead of silently clamping `from` (which
+        # used to make every page past the window repeat the same last page).
+        if page * size + size > MAX_RESULT_WINDOW:
+            raise SearchError(
+                f"page {page} with size {size} exceeds the {MAX_RESULT_WINDOW}-result "
+                "window — use search_after cursor pagination (next_search_after) "
+                "to page deeper"
+            )
         # `size` is already in `body`; only the clamped `from` is needed here.
         body["from"] = paginate(page, size)["from"]
 
@@ -508,8 +491,15 @@ def search_events(
         result = _request("POST", f"/{index}/_search", body)
         return result
     except urllib.error.HTTPError as exc:
-        if exc.code in (400, 404):
+        if exc.code == 404:
+            # Case has no indices yet — a legitimate empty result.
             return {"hits": {"total": {"value": 0}, "hits": []}}
+        if exc.code == 400:
+            reason = _es_error_reason(exc)
+            if _is_missing_index(exc, reason):
+                return {"hits": {"total": {"value": 0}, "hits": []}}
+            # A rejected query is a broken query, not "0 results" — surface it.
+            raise SearchError(f"Elasticsearch rejected the search query: {reason}") from exc
         raise
 
 
@@ -524,6 +514,44 @@ def _iso_to_epoch_ms(ts: str | None) -> int | None:
         return int(datetime.fromisoformat(s).timestamp() * 1000)
     except (ValueError, TypeError):
         return None
+
+
+def _merge_term_buckets(aggs: list[dict], size: int) -> list[dict]:
+    """Merge several same-purpose terms aggs (multi-field facet) into a single
+    bucket list: doc_count summed per key, sorted desc, capped at ``size``."""
+    merged: dict[Any, int] = {}
+    for agg in aggs:
+        for b in agg.get("buckets", []):
+            merged[b["key"]] = merged.get(b["key"], 0) + b.get("doc_count", 0)
+    return [
+        {"key": k, "doc_count": c}
+        for k, c in sorted(merged.items(), key=lambda kv: -kv[1])[:size]
+    ]
+
+
+# Painless script backing the unified severity sort (`_severity` sort field):
+# level_int when present, otherwise text levels mapped to 1-5.
+_SEVERITY_SORT_SCRIPT = (
+    "if (doc.containsKey('hayabusa.level_int') && !doc['hayabusa.level_int'].empty) "
+    "  return doc['hayabusa.level_int'].value; "
+    "if (doc.containsKey('severity_int') && !doc['severity_int'].empty) "
+    "  return doc['severity_int'].value; "
+    "if (doc.containsKey('level_int') && !doc['level_int'].empty) "
+    "  return doc['level_int'].value; "
+    "def t = null; "
+    "if (doc.containsKey('evtx.level') && !doc['evtx.level'].empty) t = doc['evtx.level'].value; "
+    "else if (doc.containsKey('hayabusa.level') && !doc['hayabusa.level'].empty) t = doc['hayabusa.level'].value; "
+    "else if (doc.containsKey('detection.level') && !doc['detection.level'].empty) t = doc['detection.level'].value; "
+    "else if (doc.containsKey('level') && !doc['level'].empty) t = doc['level'].value; "
+    "else if (doc.containsKey('severity') && !doc['severity'].empty) t = doc['severity'].value; "
+    "if (t == null) return 0; "
+    "t = t.toString().toLowerCase(); "
+    "if (t.contains('crit')) return 5; "
+    "if (t.contains('high') || t.contains('error') || t.contains('err')) return 4; "
+    "if (t.contains('med') || t.contains('warn')) return 3; "
+    "if (t.contains('low')) return 2; "
+    "return 1;"
+)
 
 
 def get_search_facets(
@@ -545,7 +573,17 @@ def get_search_facets(
     index = build_index_expression(case_id, artifact_type)
 
     must = (
-        [{"query_string": {"query": query, "fields": _SEARCH_FIELDS}}]
+        [
+            {
+                "query_string": {
+                    # Same slash-escaping search_events applies — a stray '/'
+                    # otherwise turns the facet query into an unparseable Lucene
+                    # regexp and ES 400s the whole panel.
+                    "query": escape_lucene_query(query, preserve_regex=True),
+                    "fields": _SEARCH_FIELDS,
+                }
+            }
+        ]
         if query
         else [{"match_all": {}}]
     )
@@ -581,23 +619,48 @@ def get_search_facets(
             "by_hostname": {"terms": {"field": "host.hostname.keyword", "size": 20}},
             "by_username": {"terms": {"field": "user.name.keyword", "size": 20}},
             "by_event_id": {"terms": {"field": "evtx.event_id", "size": 30}},
-            "by_channel": {"terms": {"field": "evtx.channel.keyword", "size": 20}},
+            # evtx.channel / http.method are plain keywords in the template —
+            # there is NO .keyword sub-field to aggregate on.
+            "by_channel": {"terms": {"field": "evtx.channel", "size": 20}},
             # Network / web facets — empty (and hidden) for evtx-only cases, but
             # make the filter panel useful for access-log / network data.
             "by_src_ip": {"terms": {"field": "network.src_ip", "size": 20}},
             "by_dest_ip": {"terms": {"field": "network.dst_ip", "size": 20}},
             "by_status_code": {"terms": {"field": "http.status_code", "size": 20}},
-            "by_http_method": {"terms": {"field": "http.method.keyword", "size": 10}},
-            "by_domain": {"terms": {"field": "dns.question.name.keyword", "size": 20}},
+            "by_http_method": {"terms": {"field": "http.method", "size": 10}},
+            # One terms agg per real DNS-name field; merged into by_domain below.
+            "by_domain__pcap": {"terms": {"field": "dns.query_name.keyword", "size": 20}},
+            "by_domain__suricata": {"terms": {"field": "suricata.dns.rrname.keyword", "size": 20}},
+            "by_domain__zeek": {"terms": {"field": "zeek.query.keyword", "size": 20}},
             "events_over_time": events_over_time,
         },
     }
 
     try:
         result = _request("POST", f"/{index}/_search", body)
-        return result.get("aggregations", {})
-    except Exception:
-        return {}
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return {}
+        if exc.code == 400:
+            reason = _es_error_reason(exc)
+            if _is_missing_index(exc, reason):
+                return {}
+            # Consistent with search_events: a rejected query is an error,
+            # not an empty facet panel.
+            raise SearchError(f"Elasticsearch rejected the facet query: {reason}") from exc
+        raise
+    aggs = result.get("aggregations", {})
+    aggs["by_domain"] = {
+        "buckets": _merge_term_buckets(
+            [
+                aggs.pop("by_domain__pcap", {}),
+                aggs.pop("by_domain__suricata", {}),
+                aggs.pop("by_domain__zeek", {}),
+            ],
+            size=20,
+        )
+    }
+    return aggs
 
 
 def get_event_by_id(case_id: str, fo_id: str) -> dict | None:

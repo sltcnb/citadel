@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 
 import redis_keys as rk
-from auth.dependencies import require_admin
+from auth.dependencies import require_admin, require_analyst_plus
 from fastapi import APIRouter, Depends, HTTPException
-from license.gate import require_feature
+from license.gate import check_company_limit, require_feature
 from pydantic import BaseModel, Field
 
 from config import get_redis
@@ -33,9 +33,11 @@ class CompanyIn(BaseModel):
     name: str = Field(..., min_length=1, max_length=128)
 
 
-@router.get("/companies")
+@router.get("/companies", dependencies=[Depends(require_analyst_plus)])
 def list_companies():
-    """Return all registered company names. Readable by all authenticated users."""
+    """Return all registered company names. Restricted to non-guest roles —
+    the tenant list is cross-company metadata (mounted under
+    require_analyst_or_admin, which admits guests)."""
     return {"companies": _load(get_redis())}
 
 
@@ -45,7 +47,8 @@ def list_companies():
     dependencies=[Depends(require_admin), Depends(require_feature("multitenancy"))],
 )
 def add_company(body: CompanyIn):
-    """Add a company to the registry (admin only)."""
+    """Add a company to the registry (admin only, plan company cap enforced)."""
+    check_company_limit()
     r = get_redis()
     companies = _load(r)
     if body.name in companies:

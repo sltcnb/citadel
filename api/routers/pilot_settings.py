@@ -49,6 +49,8 @@ KNOWN_TOOLS = (
     "entity_graph",
     "stack_rare",
     "cti_seen_before",
+    "findings",
+    "save_finding",
     "detection_rules",
     "watchlist",
     "module_runs",
@@ -123,7 +125,9 @@ class PilotConfigIn(BaseModel):
     allow_module_launch: bool = True
     module_launch_cap: int = 3
     web_search_enabled: bool = False
-    web_search_provider: str = "model"
+    # Must match _defaults() — a GET→PUT round trip built from this model's
+    # defaults must not silently switch the stored provider.
+    web_search_provider: str = "tavily"
     web_search_api_key: str = ""  # blank = keep stored
     web_search_max_results: int = 5
 

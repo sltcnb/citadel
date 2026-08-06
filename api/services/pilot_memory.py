@@ -4,9 +4,11 @@ Cross-case Pilot memory, confidence calibration, and continuous co-pilot.
 Three loosely-coupled gamechangers that turn the Pilot agent from a per-case
 assistant into one with institutional memory and self-awareness:
 
-#5  Cross-case memory  — persist IOCs / TTPs / verdicts across cases in a global
+#5  Cross-case memory  — persist IOCs / TTPs / verdicts across cases in a
     Redis store, so "this C2 burned us before" can fire proactively on a brand
-    new case (remember / recall / recall_ioc / seen_before).
+    new case (remember / recall / recall_ioc / seen_before). Records carry the
+    writing case's ``company`` tag ("" = shared/global); readers pass a company
+    scope so one tenant never sees another tenant's memory.
 
 #8  Confidence calibration — a PURE scorer for Pilot hypotheses that weighs
     for- vs against-evidence into a 0..1 score + low/medium/high band, plus a
@@ -62,12 +64,21 @@ def _norm(value: str) -> str:
 # --------------------------------------------------------------------------- #
 
 
-def remember(case_id: str, kind: str, value: str, meta: dict | None = None) -> dict:
+def remember(
+    case_id: str,
+    kind: str,
+    value: str,
+    meta: dict | None = None,
+    company: str = "",
+) -> dict:
     """Append/upsert ``value`` into the global ``kind`` store.
 
     Dedups by the normalised value. Tracks first/last case, the full case set,
     a sighting count, last_seen, and the latest meta. Returns the stored record.
-    """
+
+    ``company`` tenant-tags the record (the writing case's company; ``""`` —
+    the default — means shared/global). Records keep the company they were
+    created with; readers filter on it (see :func:`recall`)."""
     if kind not in KINDS:
         raise ValueError(f"invalid kind {kind!r}; expected one of {KINDS}")
     val = (value or "").strip()
@@ -92,6 +103,7 @@ def remember(case_id: str, kind: str, value: str, meta: dict | None = None) -> d
         rec = {
             "value": val,
             "kind": kind,
+            "company": company or "",
             "first_case": case_id,
             "last_case": case_id,
             "cases": [case_id],
@@ -117,13 +129,29 @@ def remember(case_id: str, kind: str, value: str, meta: dict | None = None) -> d
     return rec
 
 
-def recall(kind: str | None = None, value: str | None = None) -> list[dict]:
+def _visible(rec: dict, companies) -> bool:
+    """Tenant filter for memory reads. ``companies`` is None (unrestricted —
+    admins / single-tenant code paths) or a collection of company tags the
+    caller may see; shared records (empty company) are visible to everyone.
+    Legacy records without a company tag count as shared."""
+    if companies is None:
+        return True
+    return (rec.get("company") or "") in companies
+
+
+def recall(
+    kind: str | None = None,
+    value: str | None = None,
+    companies=None,
+) -> list[dict]:
     """Look up memory records.
 
     - ``value`` given (with or without ``kind``) → exact records matching it.
     - only ``kind`` → every record of that kind.
     - neither → every record across all kinds.
-    """
+
+    ``companies``: None → unrestricted; otherwise only records whose company
+    tag is in the collection (include ``""`` to keep shared/global records)."""
     r = get_redis()
     kinds = [kind] if kind else list(KINDS)
     out: list[dict] = []
@@ -137,24 +165,28 @@ def recall(kind: str | None = None, value: str | None = None) -> list[dict]:
             raw = r.hget(key, field)
             if raw:
                 try:
-                    out.append(json.loads(raw))
+                    rec = json.loads(raw)
+                    if _visible(rec, companies):
+                        out.append(rec)
                 except (json.JSONDecodeError, TypeError):
                     pass
         else:
             for raw in (r.hgetall(key) or {}).values():
                 try:
-                    out.append(json.loads(raw))
+                    rec = json.loads(raw)
+                    if _visible(rec, companies):
+                        out.append(rec)
                 except (json.JSONDecodeError, TypeError):
                     pass
     return out
 
 
-def recall_ioc(value: str) -> dict:
+def recall_ioc(value: str, companies=None) -> dict:
     """Human-readable recall for a single IOC.
 
     Returns ``{seen: bool, count: int, cases: [...], message: str, record: {}}``.
     """
-    recs = recall("ioc", value)
+    recs = recall("ioc", value, companies=companies)
     if not recs:
         return {
             "seen": False,
@@ -177,16 +209,22 @@ def recall_ioc(value: str) -> dict:
     }
 
 
-def seen_before(values: list[str], current_case: str | None = None) -> list[dict]:
+def seen_before(
+    values: list[str],
+    current_case: str | None = None,
+    companies=None,
+) -> list[dict]:
     """Given IOCs from a (new) case, return those seen in OTHER cases.
 
     The proactive "this C2 burned us before" signal: a value is only returned if
     it appears in at least one case that is NOT ``current_case``. When
     ``current_case`` is None, any previously-remembered value is returned.
-    """
+
+    ``companies``: tenant scope — only records from those companies (plus
+    shared ``""`` records) are considered; None = unrestricted."""
     hits: list[dict] = []
     for v in values or []:
-        recs = recall("ioc", v)
+        recs = recall("ioc", v, companies=companies)
         if not recs:
             continue
         rec = recs[0]

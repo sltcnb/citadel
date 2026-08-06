@@ -391,6 +391,8 @@ def assemble_chain(
     must = [{"term": {"host.hostname.keyword": host}}]
     filt = [{"range": {"timestamp": {"gte": gte, "lte": lte}}}]
     body = {
+        # Hard cap on window events. If the host has more, the chain is built
+        # from the first 5000 chronologically and flagged `truncated`.
         "size": 5000,
         "query": build_bool_query(must=must, filter=filt),
         "sort": [
@@ -405,7 +407,10 @@ def assemble_chain(
         logger.warning("killchain window query failed: %s", exc)
         res = {}
 
-    events = [h.get("_source", {}) for h in res.get("hits", {}).get("hits", [])]
+    raw_hits = res.get("hits", {}).get("hits", [])
+    total_hits = (res.get("hits", {}).get("total") or {}).get("value", len(raw_hits))
+    window_truncated = total_hits > len(raw_hits)
+    events = [h.get("_source", {}) for h in raw_hits]
 
     # Process ancestry: for any process events in the window, pull parent-PID
     # ancestors for the same host (they may sit just outside the window but are
@@ -415,6 +420,7 @@ def assemble_chain(
         events = _dedup_events(events + ancestor_events)
 
     chain = order_tactics(events)
+    chain["truncated"] = window_truncated
 
     if anchor_event is None:
         # Synthesize a minimal anchor from host+timestamp.

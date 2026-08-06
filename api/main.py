@@ -245,7 +245,15 @@ _CASE_ID_RE = _re.compile(r"/cases/([^/]+)")
 
 def _audit_actor_from_scope(scope) -> tuple[str, str]:
     """Best-effort (actor, role) from the bearer / ?_token, without raising.
-    Returns ("anonymous", "") when no valid token is present."""
+    Returns ("anonymous", "") when no valid token is present.
+
+    Unauthenticated flows that carry a username in their request body (login,
+    forced password change) stash it on ``scope["audit_actor"]`` during routing
+    so the audit trail attributes the attempt to a real identity instead of
+    "anonymous"."""
+    stashed = scope.get("audit_actor")
+    if stashed:
+        return stashed, ""
     token = ""
     for k, v in scope.get("headers", []):
         if k == b"authorization":
@@ -271,11 +279,20 @@ def _audit_actor_from_scope(scope) -> tuple[str, str]:
 
 
 def _client_ip_from_scope(scope) -> str:
+    """Real client IP for the audit trail.
+
+    Uses the same trusted-proxy resolution as the login rate limiter
+    (routers.auth._resolve_client_ip): only the trailing TRUSTED_PROXY_HOPS XFF
+    entries were appended by our own proxy chain, so the leftmost entry —
+    fully client-controlled and forgeable — is never trusted."""
+    xff = ""
     for k, v in scope.get("headers", []):
         if k == b"x-forwarded-for":
-            return v.decode("latin-1").split(",")[0].strip()
+            xff = v.decode("latin-1")
+            break
     client = scope.get("client")
-    return client[0] if client else ""
+    direct = client[0] if client else ""
+    return auth_router._resolve_client_ip(xff or None, direct, settings.TRUSTED_PROXY_HOPS)
 
 
 def _record_audit(scope, method: str, path: str, status_code: int) -> None:
@@ -397,11 +414,25 @@ class CoreHTTPMiddleware:
         if not token:
             return None
         try:
-            from auth.service import decode_token
+            from auth.service import decode_token, get_user
 
             if settings.AUTH_ENABLED:
                 payload = decode_token(token)
-                if payload.get("role") == "guest" and not _guest_path_allowed(method, path):
+                # Enforce against the FRESH role from the user record, not the
+                # JWT claim: the claim stays stale until token expiry, so a
+                # guest promoted mid-session would otherwise stay write-blocked
+                # (and a demoted guest would keep writing). Route dependencies
+                # already read the fresh role — the guard must match.
+                role = payload.get("role")
+                sub = payload.get("sub")
+                if sub:
+                    try:
+                        fresh = get_user(sub)
+                        if fresh:
+                            role = fresh.get("role") or role
+                    except Exception:  # noqa: BLE001 — fall back to the claim
+                        pass
+                if role == "guest" and not _guest_path_allowed(method, path):
                     return JSONResponse(
                         status_code=403,
                         content={
