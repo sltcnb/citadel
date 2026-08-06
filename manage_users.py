@@ -8,7 +8,7 @@ this script is the only way to create or delete accounts.
 
 Usage
 -----
-  python manage_users.py create <username> [--role admin|analyst] [--password <pwd>]
+  python manage_users.py create <username> [--role admin|analyst|developer|guest] [--password <pwd>]
   python manage_users.py delete <username>
   python manage_users.py list
   python manage_users.py reset-password <username> [--password <pwd>]
@@ -17,8 +17,10 @@ Usage
 
 Roles
 -----
-  analyst  — default; full read/write access to cases, timeline, modules
-  admin    — same as analyst + can view all system info (future: user mgmt via API)
+  analyst   — default; full read/write access to cases, timeline, modules
+  admin     — full platform access incl. user management
+  developer — analyst + Studio / rule editor
+  guest     — read-only, case-scoped self-service
 
 Configuration
 -------------
@@ -93,7 +95,9 @@ def _hash_password(password: str) -> str:
 _USERS_SET = "fo:users"
 _USER_KEY  = "fo:user:{username}"
 
-VALID_ROLES = ("admin", "analyst")
+VALID_ROLES = ("admin", "analyst", "developer", "guest")
+
+MIN_PASSWORD_LEN = 8
 
 # ── Colours ───────────────────────────────────────────────────────────────────
 
@@ -223,14 +227,21 @@ def _public(user: dict) -> dict:
 def _read_password(prompt: str = "Password") -> str:
     while True:
         pw = getpass.getpass(f"{prompt}: ")
-        if len(pw) < 8:
-            _warn("Password must be at least 8 characters. Try again.")
+        if len(pw) < MIN_PASSWORD_LEN:
+            _warn(f"Password must be at least {MIN_PASSWORD_LEN} characters. Try again.")
             continue
         confirm = getpass.getpass("Confirm password: ")
         if pw != confirm:
             _warn("Passwords do not match. Try again.")
             continue
         return pw
+
+
+def _check_password_arg(password: str | None) -> None:
+    """Enforce the same minimum length the API enforces for --password input."""
+    if password is not None and len(password) < MIN_PASSWORD_LEN:
+        _err(f"--password must be at least {MIN_PASSWORD_LEN} characters.")
+        sys.exit(1)
 
 
 # ── Commands ──────────────────────────────────────────────────────────────────
@@ -244,6 +255,7 @@ def cmd_create(r: redis_lib.Redis, args: argparse.Namespace) -> None:
         sys.exit(1)
 
     password = args.password or _read_password()
+    _check_password_arg(args.password)
 
     user = {
         "username":        username,
@@ -304,7 +316,13 @@ def cmd_reset_password(r: redis_lib.Redis, args: argparse.Namespace) -> None:
         sys.exit(1)
 
     password = args.password or _read_password(f"New password for '{username}'")
-    r.hset(_USER_KEY.format(username=username), "hashed_password", _hash_password(password))
+    _check_password_arg(args.password)
+    key = _USER_KEY.format(username=username)
+    r.hset(key, "hashed_password", _hash_password(password))
+    # Match the API's update_user: rotating the password clears the
+    # force-change flag and invalidates sessions minted under the old password.
+    r.hdel(key, "must_change_password")
+    r.hset(key, "tokens_valid_after", repr(time.time()))
     _ok(f"Password updated for '{username}'")
 
 
@@ -316,7 +334,11 @@ def cmd_change_role(r: redis_lib.Redis, args: argparse.Namespace) -> None:
         _err(f"User '{username}' does not exist.")
         sys.exit(1)
 
-    r.hset(_USER_KEY.format(username=username), "role", new_role)
+    key = _USER_KEY.format(username=username)
+    r.hset(key, "role", new_role)
+    # Match the API's change_role: outstanding tokens carry the old role claim,
+    # so invalidate them — the user re-logs-in.
+    r.hset(key, "tokens_valid_after", repr(time.time()))
     _ok(f"Role for '{username}' changed to '{new_role}'")
 
 
