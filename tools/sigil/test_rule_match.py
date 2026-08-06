@@ -68,7 +68,7 @@ def test_shadow_copy_deletion_fires_only_on_shadow_tampering():
 
 
 def test_brute_force_respects_threshold():
-    rule = _load_rule("02_authentication.yaml", "Brute Force — Multiple Failed Logons")
+    rule = _load_rule("02_authentication.yaml", "Brute Force — Repeated Failed Logons")
     pos_fired, pos_count = rule_fires(rule, _load_events("positive.jsonl"))
     neg_fired, neg_count = rule_fires(rule, _load_events("negative.jsonl"))
     assert pos_count >= 10 and pos_fired, (

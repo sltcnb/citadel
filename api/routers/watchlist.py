@@ -68,8 +68,13 @@ def _build_query(kind: str, value: str) -> str:
     if kind == "domain":
         return f'(network.dst_domain:"{v}" OR http.host:"{v}" OR browser_report.url:*{v}*)'
     if kind == "hash":
-        # Match any of the three common hash fields
-        return f'(process.hash_md5:"{v}" OR process.hash_sha1:"{v}" OR process.hash_sha256:"{v}")'
+        # Match process hash fields AND file hash fields (file.sha256/sha1/md5
+        # per elasticsearch/index_templates/fo-cases-template.json) so a
+        # file-hash watchlist entry actually fires.
+        return (
+            f'(process.hash_md5:"{v}" OR process.hash_sha1:"{v}" OR process.hash_sha256:"{v}"'
+            f' OR file.md5:"{v}" OR file.sha1:"{v}" OR file.sha256:"{v}")'
+        )
     if kind == "cmdline":
         return f'process.command_line:"{v}"'
     if kind == "regex":

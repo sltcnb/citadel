@@ -49,7 +49,13 @@ def _clean(text, limit: int = 160) -> str:
 
 
 def _rule_severity(rule: dict) -> str:
-    return str(rule.get("sigma_level") or rule.get("severity") or "medium").lower()
+    # Native sigil rules carry `level`, Sigma rules `sigma_level`, some custom
+    # rules only `severity` — fall back across all three so a rule ranks the
+    # same here as it reports in the timeline/webhook (worker-side twin:
+    # rule_eval.rule_severity in tools/sluice/worker).
+    return str(
+        rule.get("level") or rule.get("sigma_level") or rule.get("severity") or "medium"
+    ).lower()
 
 
 def select_rules_to_triage(matches: list[dict], limit: int = DEFAULT_TRIAGE_LIMIT) -> list[dict]:
@@ -153,6 +159,11 @@ def trigger_triage(case_id: str, matches: list[dict], limit: int = DEFAULT_TRIAG
         except (ValueError, TypeError):
             existing = {}
     for e in entries:
+        prev = existing.get(e["rule_id"])
+        # A failed re-triage (LLM down) must not clobber a successful run
+        # mapping for the same rule — keep the good entry.
+        if "error" in e and prev and prev.get("run_id"):
+            continue
         existing[e["rule_id"]] = e
     r.set(key, json.dumps(existing))
     r.expire(key, 7 * 86400)

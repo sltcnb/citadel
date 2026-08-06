@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -12,6 +13,7 @@ from typing import Dict, List, Optional
 import redis_keys as rk
 
 from config import get_redis
+from services.redis_mutate import mutate_json
 
 try:
     from sigma.backends.elasticsearch import LuceneBackend
@@ -21,9 +23,16 @@ try:
 except ImportError:
     _SIGMA_AVAILABLE = False
 
+try:
+    import yaml  # type: ignore
+
+    _YAML_AVAILABLE = True
+except ImportError:
+    _YAML_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
-SIGMA_LOCAL_PATH = Path("/tmp/sigma_rules")
+SIGMA_LOCAL_PATH = Path(os.getenv("SIGMA_LOCAL_PATH", "/tmp/sigma_rules"))
 
 
 class SigmaSyncService:
@@ -32,7 +41,12 @@ class SigmaSyncService:
     def __init__(self):
         self.redis = get_redis()
         self.backend = LuceneBackend() if _SIGMA_AVAILABLE else None
-        self.rules_key = rk.GLOBAL_SIGMA_RULES
+        # Synced rules live in the global alert library — every runner
+        # (run-library, case check, worker auto-run) reads that key, so rules
+        # stored anywhere else would never be evaluated. They keep their
+        # sigma_* metadata and are tagged sigma_source=sigma_hq so the
+        # /sigma/* endpoints can still find (and clear) them.
+        self.library_key = rk.GLOBAL_ALERT_RULES
         self.last_sync_key = rk.GLOBAL_SIGMA_LAST_SYNC
 
     def sync_sigma_rules(
@@ -82,25 +96,69 @@ class SigmaSyncService:
                 errors.append({"rule_id": rule.id, "rule_title": rule.title, "error": str(e)})
                 logger.warning("Failed to convert rule %s: %s", rule.title, e)
 
-        # Store in Redis
-        existing_rules = json.loads(self.redis.get(self.rules_key) or "[]")
-        existing_ids = {r.get("sigma_id") for r in existing_rules}
+        # Merge into the global alert library (dedup by sigma_id, then by name
+        # so a rule already seeded from the bundled YAMLs isn't duplicated).
+        self._merge_legacy_store()
+        library: list[dict] = json.loads(self.redis.get(self.library_key) or "[]")
+        existing_sigma_ids = {r.get("sigma_id") for r in library}
+        existing_names = {r.get("name", "").lower() for r in library}
+        existing_ids = {r.get("id") for r in library}
 
-        new_rules = [r for r in converted_rules if r["sigma_id"] not in existing_ids]
-        existing_rules.extend(new_rules)
+        new_rules = []
+        for rule in converted_rules:
+            if rule["sigma_id"] in existing_sigma_ids or rule["name"].lower() in existing_names:
+                continue
+            # 8-char random ids can collide with seeded library rules.
+            while rule["id"] in existing_ids:
+                rule["id"] = str(uuid.uuid4())[:8]
+            existing_ids.add(rule["id"])
+            existing_names.add(rule["name"].lower())
+            existing_sigma_ids.add(rule["sigma_id"])
+            new_rules.append(rule)
 
-        self.redis.set(self.rules_key, json.dumps(existing_rules))
+        if new_rules:
+            mutate_json(self.redis, self.library_key, lambda cur: cur + new_rules, [])
         self.redis.set(self.last_sync_key, datetime.now(UTC).isoformat())
 
-        logger.info("Sync complete: %d new rules, %d total", len(new_rules), len(existing_rules))
+        total = len(self.list_rules())
+        logger.info("Sync complete: %d new rules, %d total", len(new_rules), total)
 
         return {
             "imported": len(new_rules),
             "skipped": len(converted_rules) - len(new_rules),
             "errors": len(errors),
-            "total_rules": len(existing_rules),
+            "total_rules": total,
             "error_details": errors[:10],  # First 10 errors only
         }
+
+    def _merge_legacy_store(self) -> None:
+        """One-time move of rules synced before they lived in the global library."""
+        legacy: list[dict] = json.loads(self.redis.get(rk.GLOBAL_SIGMA_RULES) or "[]")
+        if not legacy:
+            return
+
+        def _merge(existing: list[dict]) -> list[dict]:
+            sigma_ids = {r.get("sigma_id") for r in existing}
+            names = {r.get("name", "").lower() for r in existing}
+            merged = list(existing)
+            for rule in legacy:
+                if rule.get("sigma_id") in sigma_ids or rule.get("name", "").lower() in names:
+                    continue
+                rule = dict(rule)
+                rule.setdefault("sigma_source", "sigma_hq")
+                rule.setdefault("rule_type", "sigma")
+                merged.append(rule)
+            return merged
+
+        mutate_json(self.redis, self.library_key, _merge, [])
+        self.redis.delete(rk.GLOBAL_SIGMA_RULES)
+        logger.info("Migrated %d legacy synced Sigma rules into the global library", len(legacy))
+
+    def list_rules(self) -> list[dict]:
+        """Synced Sigma HQ rules, as stored in the global alert library."""
+        self._merge_legacy_store()
+        library: list[dict] = json.loads(self.redis.get(self.library_key) or "[]")
+        return [r for r in library if r.get("sigma_source") == "sigma_hq"]
 
     def _download_sigma_rules(self) -> Path:
         """Download Sigma HQ rules from GitHub."""
@@ -144,12 +202,46 @@ class SigmaSyncService:
         tags: Optional[List[str]],
         levels: Optional[List[str]],
     ) -> bool:
-        """Filter rules based on criteria."""
+        """Filter rules based on criteria (all provided filters must match)."""
         if path.suffix not in (".yml", ".yaml"):
             return False
 
         if "deprecated" in path.parts:
             return False
+
+        if not (categories or tags or levels):
+            return True
+
+        if not _YAML_AVAILABLE:
+            logger.warning("PyYAML not installed — cannot apply sync filters to %s", path)
+            return False
+
+        # Filters were requested — read the rule header to evaluate them.
+        try:
+            data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except Exception:
+            return False
+        if not isinstance(data, dict):
+            return False
+
+        if levels and str(data.get("level", "")).lower() not in {
+            str(lvl).lower() for lvl in levels
+        }:
+            return False
+
+        if tags:
+            rule_tags = {str(t).lower() for t in data.get("tags") or []}
+            if not rule_tags & {str(t).lower() for t in tags}:
+                return False
+
+        if categories:
+            logsource = data.get("logsource") or {}
+            # Sigma categories are either the logsource category or the
+            # repository folder the rule ships in (e.g. rules/windows/malware).
+            haystack = {str(logsource.get("category", "")).lower()}
+            haystack.update(p.lower() for p in path.parts)
+            if not haystack & {str(c).lower() for c in categories}:
+                return False
 
         return True
 
@@ -257,7 +349,7 @@ class SigmaSyncService:
     def get_sync_status(self) -> Dict:
         """Get last sync status."""
         last_sync = self.redis.get(self.last_sync_key)
-        rule_count = len(json.loads(self.redis.get(self.rules_key) or "[]"))
+        rule_count = len(self.list_rules())
 
         return {
             "last_sync": last_sync,
@@ -266,9 +358,17 @@ class SigmaSyncService:
         }
 
     def clear_sigma_rules(self) -> Dict:
-        """Clear all synced Sigma rules."""
-        count = len(json.loads(self.redis.get(self.rules_key) or "[]"))
-        self.redis.delete(self.rules_key)
+        """Clear all synced Sigma rules (from the library and the legacy store)."""
+        counts: dict = {}
+
+        def _purge(existing: list[dict]) -> list[dict]:
+            kept = [r for r in existing if r.get("sigma_source") != "sigma_hq"]
+            counts["cleared"] = len(existing) - len(kept)
+            return kept
+
+        mutate_json(self.redis, self.library_key, _purge, [])
+        counts["cleared"] += len(json.loads(self.redis.get(rk.GLOBAL_SIGMA_RULES) or "[]"))
+        self.redis.delete(rk.GLOBAL_SIGMA_RULES)  # legacy pre-merge store
         self.redis.delete(self.last_sync_key)
 
-        return {"cleared": count}
+        return {"cleared": counts["cleared"]}
