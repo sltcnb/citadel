@@ -126,6 +126,24 @@ function SingleRunResult({ result, rule, caseId, analysis, analyzing, onAnalyze 
     window.open(`/cases/${caseId}?q=${encodeURIComponent(query)}`, '_blank')
   }
 
+  // Matched, but identical to a recent alert still inside the cooldown window.
+  if (result.suppressed_only) {
+    return (
+      <div className="border-t px-4 py-3 text-xs bg-gray-50 border-gray-200">
+        <div className="flex items-center gap-2">
+          <Clock size={12} className="text-gray-400" />
+          <span className="font-semibold text-gray-500">
+            Matched — suppressed by cooldown
+            ({Math.round(result.cooldown_minutes || 60)} min window)
+          </span>
+        </div>
+        <p className="text-[10px] text-gray-500 mt-1">
+          Identical to the previous alert on this rule — counted as suppressed, not re-alerted.
+        </p>
+      </div>
+    )
+  }
+
   return (
     <div className={`border-t px-4 py-3 text-xs space-y-2 ${result.fired ? 'bg-yellow-50 border-yellow-200' : 'bg-green-50 border-green-200'}`}>
       <div className="flex items-center gap-2">
@@ -133,6 +151,12 @@ function SingleRunResult({ result, rule, caseId, analysis, analyzing, onAnalyze 
           ? <><AlertTriangle size={12} className="text-yellow-600" /><span className="font-semibold text-yellow-700">{result.match_count.toLocaleString()} match{result.match_count !== 1 ? 'es' : ''} found</span></>
           : <><CheckCircle size={12} className="text-green-600" /><span className="font-semibold text-green-700">No matches — all clear</span></>
         }
+        {result.fired && result.suppressed_count > 0 && (
+          <span className="badge bg-gray-100 text-gray-500 border border-gray-200 text-[10px]"
+            title="Identical matches already alerted within the cooldown window">
+            {result.suppressed_count} suppressed
+          </span>
+        )}
       </div>
 
       {result.fired && (
@@ -206,9 +230,12 @@ function LibraryRulesList({ rules, caseId, onSearchQuery }) {
       setResults(p => ({
         ...p,
         [rule.id]: {
-          fired:         r.fired,
-          match_count:   r.match?.match_count ?? 0,
-          sample_events: r.match?.sample_events || [],
+          fired:             r.fired,
+          match_count:       r.match?.match_count ?? 0,
+          sample_events:     r.match?.sample_events || [],
+          suppressed_only:   !!r.match?.suppressed_only,
+          suppressed_count:  r.match?.suppressed_count || 0,
+          cooldown_minutes:  r.match?.cooldown_minutes,
         },
       }))
     } catch (e) {
@@ -269,7 +296,12 @@ function LibraryRulesList({ rules, caseId, onSearchQuery }) {
                     <span className="text-[10px] text-gray-500 flex-shrink-0">{rule.artifact_type}</span>
                   )}
                   {result && !result.error && (
-                    result.fired
+                    result.suppressed_only
+                      ? <span className="badge bg-gray-100 text-gray-500 border border-gray-200 text-[10px] flex-shrink-0"
+                          title="Identical match already alerted within the cooldown window">
+                          suppressed
+                        </span>
+                      : result.fired
                       ? <span className="badge bg-yellow-100 text-yellow-700 border border-yellow-200 text-[10px] flex-shrink-0">
                           {result.match_count} hit{result.match_count !== 1 ? 's' : ''}
                         </span>
@@ -376,7 +408,7 @@ export default function AlertRules({ caseId, onSearchQuery }) {
   const [checking, setChecking]         = useState(false)
   const [run, setRun]                   = useState(null)
   const [showForm, setShowForm]         = useState(false)
-  const [form, setForm]                 = useState({ name:'', description:'', artifact_type:'', query:'', threshold:1 })
+  const [form, setForm]                 = useState({ name:'', description:'', artifact_type:'', query:'', threshold:1, cooldown_minutes:'' })
   const [expandedMatch, setExpandedMatch] = useState(null)
   // Rule type filter
   const [ruleTypeFilter, setRuleTypeFilter] = useState('custom')
@@ -429,9 +461,14 @@ export default function AlertRules({ caseId, onSearchQuery }) {
   async function createRule(e) {
     e.preventDefault()
     if (!form.name.trim() || !form.query.trim()) return
-    const r = await api.alertRules.create(caseId, form)
+    // Empty cooldown input = inherit the 60-minute default; otherwise minutes.
+    const payload = {
+      ...form,
+      cooldown_minutes: form.cooldown_minutes === '' ? null : Number(form.cooldown_minutes) || null,
+    }
+    const r = await api.alertRules.create(caseId, payload)
     setRules(p => [...p, r])
-    setForm({ name:'', description:'', artifact_type:'', query:'', threshold:1 })
+    setForm({ name:'', description:'', artifact_type:'', query:'', threshold:1, cooldown_minutes:'' })
     setShowForm(false)
   }
 
@@ -448,9 +485,12 @@ export default function AlertRules({ caseId, onSearchQuery }) {
       setCaseRuleResults(p => ({
         ...p,
         [rule.id]: {
-          fired:         r.fired,
-          match_count:   r.match?.match_count ?? 0,
-          sample_events: r.match?.sample_events || [],
+          fired:             r.fired,
+          match_count:       r.match?.match_count ?? 0,
+          sample_events:     r.match?.sample_events || [],
+          suppressed_only:   !!r.match?.suppressed_only,
+          suppressed_count:  r.match?.suppressed_count || 0,
+          cooldown_minutes:  r.match?.cooldown_minutes,
         },
       }))
     } catch (e) {
@@ -486,7 +526,10 @@ export default function AlertRules({ caseId, onSearchQuery }) {
       const types = ruleTypeFilter !== 'all' ? [ruleTypeFilter] : []
       const freshRun = await api.alertRules.runLibrary(caseId, types)
       setRun(freshRun)
-      if (freshRun.matches?.length) analyzeAll(freshRun.matches)
+      // Suppressed-only matches are "already alerted inside the cooldown" —
+      // they get a gray badge, not an AI investigation.
+      const firing = (freshRun.matches || []).filter(m => !m.suppressed_only)
+      if (firing.length) analyzeAll(firing)
     } catch (e) { showToast('Check failed: ' + e.message, 'error') }
     finally { setChecking(false) }
   }
@@ -536,6 +579,7 @@ export default function AlertRules({ caseId, onSearchQuery }) {
         artifact_type: r.artifact_type || '',
         query:         r.query || '',
         threshold:     r.threshold || 1,
+        cooldown_minutes: '',
       })
       setShowAiForm(false)
       setShowForm(true)
@@ -550,12 +594,31 @@ export default function AlertRules({ caseId, onSearchQuery }) {
   // ── Helpers ───────────────────────────────────────────────────────────────
 
   const matches = run?.matches || []
+  const firedMatches = matches.filter(m => !m.suppressed_only)
+  const suppressedTotal = run?.suppressed_total
+    ?? matches.reduce((n, m) => n + (m.suppressed_count || 0), 0)
   const filteredLibraryRules = filterAlertRules(libraryRules, { provenance: ruleTypeFilter })
 
   // "Check All" match card (has AnalysisBlock for library rules)
   function CheckAllMatchCard({ m, i }) {
     const analysis    = analyses[m.rule.id]
     const isAnalyzing = analyzingIds.has(m.rule.id)
+    // Fully inside the cooldown window: already alerted earlier — a quiet gray
+    // record, not an expandable firing card.
+    if (m.suppressed_only) {
+      return (
+        <div className="mt-2 border border-gray-200 rounded-lg overflow-hidden bg-gray-50">
+          <div className="w-full flex items-center justify-between px-3 py-2 text-xs">
+            <span className="font-medium text-gray-500">{m.rule.name}</span>
+            <span className="badge bg-gray-100 text-gray-500 border border-gray-200"
+              title={`Identical match already alerted within the ${Math.round(m.cooldown_minutes || 60)}-minute cooldown window`}>
+              <Clock size={9} className="mr-0.5" />
+              {m.suppressed_count} suppressed (cooldown)
+            </span>
+          </div>
+        </div>
+      )
+    }
     return (
       <div className="mt-2 border border-yellow-200 rounded-lg overflow-hidden">
         <button
@@ -569,6 +632,12 @@ export default function AlertRules({ caseId, onSearchQuery }) {
             <span className="badge bg-yellow-100 text-yellow-700 border border-yellow-200">
               {m.match_count.toLocaleString()} match{m.match_count !== 1 ? 'es' : ''}
             </span>
+            {m.suppressed_count > 0 && (
+              <span className="badge bg-gray-100 text-gray-500 border border-gray-200 text-[10px]"
+                title="Identical matches already alerted within the cooldown window">
+                {m.suppressed_count} suppressed
+              </span>
+            )}
             {expandedMatch === i ? <ChevronUp size={12} className="text-gray-500" /> : <ChevronDown size={12} className="text-gray-500" />}
           </div>
         </button>
@@ -637,7 +706,7 @@ export default function AlertRules({ caseId, onSearchQuery }) {
               ? <><Loader2 size={12} className="animate-spin" /> Checking…</>
               : <><Play size={12} /> {ruleTypeFilter !== 'all' ? `Check ${ruleTypeFilter.charAt(0).toUpperCase() + ruleTypeFilter.slice(1)}` : 'Check All'} ({filteredLibraryRules.length})</>}
           </button>
-          <button onClick={runTriage} disabled={triaging || !run?.matches?.length}
+          <button onClick={runTriage} disabled={triaging || !run?.matches?.some(m => !m.suppressed_only)}
             className="btn-ghost text-xs text-fuchsia-600 hover:text-fuchsia-700"
             title="Spawn a scoped Pilot investigation for the top fired rules — opens pre-triaged alerts with verdicts instead of raw hits">
             {triaging
@@ -715,6 +784,19 @@ export default function AlertRules({ caseId, onSearchQuery }) {
                 className="input w-full text-xs" />
             </div>
           </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-1 block">
+                Cooldown (minutes) <span className="text-gray-500 normal-case font-normal">— optional, default 60</span>
+              </label>
+              <input type="number" min="1" step="1" value={form.cooldown_minutes}
+                onChange={e => setForm(p => ({...p, cooldown_minutes: e.target.value}))}
+                placeholder="60"
+                title="After this rule fires, identical matches on the same entity are suppressed for this long (counted as suppressed, not re-alerted)"
+                className="input w-full text-xs" />
+              <p className="text-[10px] text-gray-500 mt-0.5">Identical re-matches within this window are counted as suppressed, not re-alerted.</p>
+            </div>
+          </div>
           <div className="flex gap-2 pt-1">
             <button type="submit" className="btn-primary text-xs"><Plus size={12} /> Create Rule</button>
             <button type="button" onClick={() => setShowForm(false)} className="btn-ghost text-xs">Cancel</button>
@@ -724,16 +806,23 @@ export default function AlertRules({ caseId, onSearchQuery }) {
 
       {/* Check All results */}
       {run?.rules_checked !== undefined && (
-        <div className={`card p-4 mb-4 ${matches.length > 0 ? 'border-yellow-300 bg-yellow-50' : 'border-green-300 bg-green-50'}`}>
+        <div className={`card p-4 mb-4 ${firedMatches.length > 0 ? 'border-yellow-300 bg-yellow-50' : 'border-green-300 bg-green-50'}`}>
           <div className="flex items-center gap-2 mb-2">
-            {matches.length > 0
+            {firedMatches.length > 0
               ? <AlertTriangle size={14} className="text-yellow-600" />
               : <CheckCircle size={14} className="text-green-600" />}
             <span className="text-sm font-semibold text-gray-800">
-              {matches.length > 0
-                ? `${matches.length} rule${matches.length !== 1 ? 's' : ''} triggered`
+              {firedMatches.length > 0
+                ? `${firedMatches.length} rule${firedMatches.length !== 1 ? 's' : ''} triggered`
                 : 'All clear — no rules triggered'}
             </span>
+            {suppressedTotal > 0 && (
+              <span className="badge bg-gray-100 text-gray-500 border border-gray-200 text-[10px]"
+                title="Identical matches already alerted within each rule's cooldown window">
+                <Clock size={9} className="mr-0.5" />
+                {suppressedTotal} suppressed (cooldown)
+              </span>
+            )}
             <span className="text-xs text-gray-500 ml-auto flex items-center gap-1">
               <Clock size={10} />
               {run.ran_at ? new Date(run.ran_at).toLocaleString() : 'just now'}
@@ -787,6 +876,12 @@ export default function AlertRules({ caseId, onSearchQuery }) {
                       <span className="badge bg-gray-100 text-gray-500 border border-gray-200 text-[10px]">{rule.artifact_type}</span>
                     )}
                     <span className="badge bg-gray-100 text-gray-500 border border-gray-200 text-[10px]">≥{rule.threshold}</span>
+                    {rule.cooldown_minutes > 0 && (
+                      <span className="badge bg-gray-100 text-gray-500 border border-gray-200 text-[10px]"
+                        title="Identical matches are suppressed for this long after the rule fires">
+                        <Clock size={8} className="mr-0.5" />{rule.cooldown_minutes}m cooldown
+                      </span>
+                    )}
                   </div>
                   {rule.description && <p className="text-xs text-gray-500 mb-1">{rule.description}</p>}
                   <code className="text-[10px] text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded">{rule.query}</code>
@@ -797,9 +892,12 @@ export default function AlertRules({ caseId, onSearchQuery }) {
                     if (!res) return null
                     return res.error
                       ? <span className="text-[10px] text-red-500 max-w-[260px] truncate" title={res.error}>{res.error}</span>
-                      : res.fired
-                        ? <span className="badge bg-yellow-100 text-yellow-700 border border-yellow-200 text-[10px]">{res.match_count} hit{res.match_count !== 1 ? 's' : ''}</span>
-                        : <span className="badge bg-green-50 text-green-600 border border-green-200 text-[10px]">clean</span>
+                      : res.suppressed_only
+                        ? <span className="badge bg-gray-100 text-gray-500 border border-gray-200 text-[10px]"
+                            title="Identical match already alerted within the cooldown window">suppressed</span>
+                        : res.fired
+                          ? <span className="badge bg-yellow-100 text-yellow-700 border border-yellow-200 text-[10px]">{res.match_count} hit{res.match_count !== 1 ? 's' : ''}</span>
+                          : <span className="badge bg-green-50 text-green-600 border border-green-200 text-[10px]">clean</span>
                   })()}
                   <button
                     onClick={() => runCaseRule(rule)}

@@ -34,6 +34,8 @@ def _valid_body(**overrides) -> PlatformConfigIn:
         "default_report_language": "fr",
         "max_upload_gib": 5,
         "session_idle_minutes": 15,
+        "retention_archive_after_days": 45,
+        "retention_purge_after_days": 60,
     }
     base.update(overrides)
     return PlatformConfigIn(**base)
@@ -48,6 +50,8 @@ def test_defaults_when_unset(fake_redis):
     assert cfg["default_report_language"] == "en"
     assert cfg["max_upload_gib"] == 2
     assert cfg["session_idle_minutes"] == 0
+    assert cfg["retention_archive_after_days"] == 0  # off by default
+    assert cfg["retention_purge_after_days"] == 30
 
 
 def test_put_persists_and_get_reflects(fake_redis):
@@ -83,6 +87,20 @@ def test_range_validation_session_idle_allows_zero(fake_redis):
 
     with pytest.raises(HTTPException):
         update_platform_config(_valid_body(session_idle_minutes=-5))
+
+
+def test_retention_validation(fake_redis):
+    # 0 disables the retention scheduler; negative is rejected.
+    out = update_platform_config(_valid_body(retention_archive_after_days=0))
+    assert out["retention_archive_after_days"] == 0
+
+    with pytest.raises(HTTPException) as exc:
+        update_platform_config(_valid_body(retention_archive_after_days=-1))
+    assert exc.value.status_code == 422
+
+    # Purge delay must be >= 1 day.
+    with pytest.raises(HTTPException):
+        update_platform_config(_valid_body(retention_purge_after_days=0))
 
 
 def test_range_validation_rejects_bad_language(fake_redis):

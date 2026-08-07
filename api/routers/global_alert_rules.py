@@ -143,6 +143,9 @@ def _load_default_rules() -> list[dict]:
                 for opt in ("level", "mitre"):
                     if rule.get(opt):
                         entry[opt] = rule[opt]
+                # 0 is meaningful for cooldown (always fire) — test for None, not truthiness.
+                if rule.get("cooldown_minutes") is not None:
+                    entry["cooldown_minutes"] = rule["cooldown_minutes"]
                 # Lossy conversions (unsupported modifiers) are flagged so the
                 # analyst knows the stored query is approximate.
                 if conv_notes:
@@ -246,6 +249,7 @@ class AlertRuleIn(BaseModel):
     sigma_yaml: str = ""  # raw Sigma YAML (optional for legacy rules)
     rule_type: str = "custom"  # 'custom' | 'sigma' | 'legacy'
     companies: list[str] = []  # [] = platform-wide; non-empty = restricted to these companies
+    cooldown_minutes: float | None = None  # suppress identical re-fires (default 60; 0 = always fire)
 
 
 class AlertRuleUpdate(BaseModel):
@@ -258,6 +262,7 @@ class AlertRuleUpdate(BaseModel):
     sigma_yaml: str | None = None
     rule_type: str | None = None
     companies: list[str] | None = None
+    cooldown_minutes: float | None = None
 
 
 # ── Library CRUD ──────────────────────────────────────────────────────────────
@@ -998,7 +1003,9 @@ def run_library_against_case(
 
     for rule in rules:
         try:
-            match = rule_eval.evaluate(case_id, rule)
+            # Cooldown dedup: identical re-matches inside the window come back
+            # suppressed_only — persisted for the UI, but not a new alert.
+            match = rule_eval.evaluate_with_cooldown(case_id, rule, r)
             if match:
                 matches.append(match)
         except Exception as exc:  # noqa: BLE001 - one bad rule must not stop the sweep
@@ -1011,6 +1018,7 @@ def run_library_against_case(
         "ran_at": datetime.now(UTC).isoformat(),
         "rules_checked": len(rules),
         "matches": matches,
+        "suppressed_total": sum(m.get("suppressed_count", 0) for m in matches),
         "analyses": {},
     }
     run_key = rk.case_alert_run(case_id)
@@ -1035,14 +1043,14 @@ def run_single_rule_against_case(
         return {"match": None, "rules_checked": 0, "fired": False, "skipped": "sigma_disabled"}
 
     try:
-        match = rule_eval.evaluate(case_id, rule)
+        match = rule_eval.evaluate_with_cooldown(case_id, rule, r)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     return {
         "match": match,
         "rules_checked": 1,
-        "fired": match is not None,
+        "fired": match is not None and not match.get("suppressed_only"),
     }
 
 
@@ -1077,6 +1085,9 @@ def triage_alerts(
     except (ValueError, TypeError):
         raise HTTPException(status_code=500, detail="Stored rule run is corrupt.")
     matches = run.get("matches", [])
+    # Cooldown-suppressed matches are records of "we already alerted on this",
+    # not new findings — triaging them would redo work the analyst has seen.
+    matches = [m for m in matches if not m.get("suppressed_only")]
     if not matches:
         return {"triaged": [], "detail": "No fired rules to triage."}
     entries = trigger_triage(case_id, matches, limit=limit)

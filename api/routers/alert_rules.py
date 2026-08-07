@@ -71,6 +71,8 @@ class AlertRuleIn(BaseModel):
     artifact_type: str = ""
     query: str
     threshold: int = 1
+    # Optional per-rule alert cooldown override (minutes); absent = default 60.
+    cooldown_minutes: float | None = None
 
 
 @router.get("/cases/{case_id}/alert-rules")
@@ -105,13 +107,16 @@ def run_single_rule(case_id: str, rule_id: str, _acl: dict = Depends(require_cas
     try:
         # Shared evaluator: plain threshold or a correlation block, and the same
         # "missing index / rejected query == no match" handling this route had.
-        match = rule_eval.evaluate(case_id, rule)
+        # Cooldown dedup applies here too: an identical re-match inside the
+        # window comes back suppressed_only instead of firing again.
+        match = rule_eval.evaluate_with_cooldown(case_id, rule, r)
     except rule_eval.RuleEvalError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    return {"match": match, "rules_checked": 1, "fired": match is not None}
+    fired = match is not None and not match.get("suppressed_only")
+    return {"match": match, "rules_checked": 1, "fired": fired}
 
 
 @router.delete("/cases/{case_id}/alert-rules/{rule_id}", status_code=204)
@@ -197,7 +202,7 @@ def check_rules(case_id: str, _acl: dict = Depends(require_case_access)):
     matches = []
     for rule in rules:
         try:
-            match = rule_eval.evaluate(case_id, rule, sample_size=3)
+            match = rule_eval.evaluate_with_cooldown(case_id, rule, r, sample_size=3)
             if match:
                 matches.append(match)
         except Exception as exc:  # noqa: BLE001 - one bad rule must not stop the sweep
@@ -209,6 +214,9 @@ def check_rules(case_id: str, _acl: dict = Depends(require_case_access)):
         "ran_at": datetime.now(UTC).isoformat(),
         "rules_checked": len(rules),
         "matches": matches,
+        # Aggregate of the per-match suppressed_count so the UI can headline
+        # "3 new, 12 suppressed (cooldown)" without walking every match.
+        "suppressed_total": sum(m.get("suppressed_count", 0) for m in matches),
         "analyses": {},
     }
     _save_run(r, case_id, run)

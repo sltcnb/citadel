@@ -50,6 +50,14 @@ class Settings:
         os.getenv("STORAGE_RECONCILE_INTERVAL_HOURS", "24")
     )
 
+    # ── Case retention lifecycle ──────────────────────────────────────────────
+    # How often the retention scheduler wakes to archive idle cases and purge
+    # long-archived ones. The archive/purge thresholds themselves are admin-
+    # tunable at runtime (Settings → System, fo:config:platform).
+    RETENTION_CHECK_INTERVAL_SECONDS: int = int(
+        os.getenv("RETENTION_CHECK_INTERVAL_SECONDS", "3600")
+    )
+
     # ── Pagination ─────────────────────────────────────────────────────────
     DEFAULT_PAGE_SIZE: int = int(os.getenv("DEFAULT_PAGE_SIZE", "100"))
     MAX_PAGE_SIZE: int = int(os.getenv("MAX_PAGE_SIZE", "1000"))

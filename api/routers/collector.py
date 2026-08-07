@@ -2301,7 +2301,7 @@ def _build_lb_manifest(namespace: str) -> dict:
     }
 
 
-@router.post("/collector/ingress", status_code=201)
+@router.post("/collector/ingress", status_code=201, dependencies=[Depends(require_admin)])
 def create_collector_ingress():
     """
     Create a Kubernetes LoadBalancer Service that exposes the API externally
@@ -2376,7 +2376,7 @@ roleRef:
     )
 
 
-@router.delete("/collector/ingress", status_code=204)
+@router.delete("/collector/ingress", status_code=204, dependencies=[Depends(require_admin)])
 def delete_collector_ingress():
     """Remove the collector LoadBalancer service."""
     if not _is_kubernetes():

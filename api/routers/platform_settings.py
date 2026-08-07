@@ -52,6 +52,8 @@ def _defaults() -> dict:
         "default_report_language": "en",
         "max_upload_gib": 2,
         "session_idle_minutes": 0,  # 0 = disabled (advisory)
+        "retention_archive_after_days": 0,  # 0 = retention scheduler disabled
+        "retention_purge_after_days": 30,
     }
 
 
@@ -89,6 +91,8 @@ class PlatformConfigIn(BaseModel):
     default_report_language: str
     max_upload_gib: int
     session_idle_minutes: int
+    retention_archive_after_days: int
+    retention_purge_after_days: int
 
 
 def _validate(body: PlatformConfigIn) -> dict:
@@ -115,6 +119,22 @@ def _validate(body: PlatformConfigIn) -> dict:
     ):
         errors.append("session_idle_minutes must be >= 0 (0 disables)")
 
+    # retention_archive_after_days: 0 disables the retention scheduler entirely
+    if (
+        not isinstance(body.retention_archive_after_days, int)
+        or isinstance(body.retention_archive_after_days, bool)
+        or body.retention_archive_after_days < 0
+    ):
+        errors.append("retention_archive_after_days must be >= 0 (0 disables)")
+
+    # retention_purge_after_days: purge delay after archive (>= 1)
+    if (
+        not isinstance(body.retention_purge_after_days, int)
+        or isinstance(body.retention_purge_after_days, bool)
+        or body.retention_purge_after_days < 1
+    ):
+        errors.append("retention_purge_after_days must be a positive integer")
+
     lang = (body.default_report_language or "").lower()
     if lang not in LANGUAGE_ALLOWLIST:
         errors.append(
@@ -132,6 +152,8 @@ def _validate(body: PlatformConfigIn) -> dict:
         "default_report_language": lang,
         "max_upload_gib": body.max_upload_gib,
         "session_idle_minutes": body.session_idle_minutes,
+        "retention_archive_after_days": body.retention_archive_after_days,
+        "retention_purge_after_days": body.retention_purge_after_days,
     }
 
 

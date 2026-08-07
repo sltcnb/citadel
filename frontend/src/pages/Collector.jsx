@@ -5,11 +5,12 @@
  * mounted directories (--path), or external drives (--disk).
  * Server-side harvest is available inside the ingestion panel of each case.
  */
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import {
   Monitor, Terminal, FileCode, Download, Check,
   ChevronRight, ChevronLeft, X,
   AlertTriangle, Upload, Copy, FolderOpen,
+  Globe, RefreshCw, Trash2,
 } from 'lucide-react'
 import { api } from '../api/client'
 import ArtifactSelector from '../components/shared/ArtifactSelector'
@@ -19,6 +20,18 @@ import { useToast } from '../hooks/useToast'
 
 function _currentUser() {
   try { return JSON.parse(localStorage.getItem('fo_user')) } catch { return null }
+}
+
+// Trigger a browser download for a fetched Blob.
+function saveBlob(blob, filename) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
 }
 
 // ── Artifact definitions (script mode) ───────────────────────────────────────
@@ -315,6 +328,19 @@ export default function Collector() {
   const [bootstrapB64Copied,      setBootstrapB64Copied]      = useState(false)
   const [bootstrapError,          setBootstrapError]          = useState('')
   const isAdmin = _currentUser()?.role === 'admin'
+  // External access: candidate API URLs for the "Upload to Citadel" step
+  // (null = not probed yet) and the optional K8s LoadBalancer ingress listener.
+  const [netIfaces, setNetIfaces] = useState(null)
+  const [netHint,   setNetHint]   = useState('')
+  const [ingress,     setIngress]     = useState(null)
+  const [ingressNote, setIngressNote] = useState('')   // e.g. "Not running in Kubernetes"
+  const [ingressBusy, setIngressBusy] = useState(false)
+  // Admin quick tools: raw-credential uploader + interpreter cache warming
+  const [downloadingRawUploader, setDownloadingRawUploader] = useState(false)
+  const [warmingEmbeds,          setWarmingEmbeds]          = useState(false)
+  // All-in-one bundle download ('ps1' | 'sh' | '' while busy, last done platform)
+  const [bundleBusy, setBundleBusy] = useState('')
+  const [bundleDone, setBundleDone] = useState('')
   // Authoritative catalog from the backend ({ win, linux, macos }); null until
   // loaded or on failure, in which case the bundled arrays below are the fallback.
   const [catalog, setCatalog] = useState(null)
@@ -361,6 +387,23 @@ export default function Collector() {
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
+
+  // Probe the K8s ingress listener once on load — the endpoint 400s fast when
+  // the API is not running in Kubernetes, in which case we show its hint.
+  const refreshIngress = useCallback(() => {
+    api.collector.getIngress()
+      .then(s => { setIngress(s); setIngressNote('') })
+      .catch(err => { setIngress(null); setIngressNote(err.message || 'Ingress status unavailable') })
+  }, [])
+  useEffect(() => { refreshIngress() }, [refreshIngress])
+
+  // Lazily probe this server's reachable URLs when the user picks direct upload.
+  useEffect(() => {
+    if (uploadMode !== 'citadel' || netIfaces !== null) return
+    api.collector.networkInterfaces()
+      .then(r => { setNetIfaces(r.candidates || []); setNetHint(r.public_url_hint || '') })
+      .catch(() => setNetIfaces([]))
+  }, [uploadMode, netIfaces])
 
   const filteredCases = useMemo(() =>
     caseSearch.trim() ? cases.filter(c => (c.name || '').toLowerCase().includes(caseSearch.toLowerCase())) : cases,
@@ -578,6 +621,101 @@ export default function Collector() {
     }
   }
 
+  // Admin-only: raw-credential uploader (no 3-file slot cap, secret key inside).
+  async function handleDownloadRawUploader() {
+    setDownloadingRawUploader(true)
+    try {
+      const blob = await api.collector.uploaderRaw()
+      saveBlob(blob, 'fo-uploader.zip')
+      showToast('fo-uploader.zip downloaded — it contains the S3 secret key, do not distribute', 'success')
+    } catch (err) {
+      showToast('Failed to download uploader: ' + err.message, 'error')
+    } finally {
+      setDownloadingRawUploader(false)
+    }
+  }
+
+  // All-in-one bundle: single self-contained script with the harvester embedded.
+  async function handleDownloadBundle(platform) {
+    setBundleBusy(platform)
+    setBundleDone('')
+    try {
+      const blob = await api.collector.bundle({
+        categories: [...selected],
+        caseName:   caseName.trim() || undefined,
+        platform,
+      })
+      saveBlob(blob, platform === 'ps1' ? 'fo-bundle.ps1' : 'fo-bundle.sh')
+      setBundleDone(platform)
+    } catch (err) {
+      showToast('Failed to download bundle: ' + err.message, 'error')
+    } finally {
+      setBundleBusy('')
+    }
+  }
+
+  // Admin-only: pre-fetch every portable-Python archive into the server cache.
+  async function handleWarmEmbeds() {
+    setWarmingEmbeds(true)
+    try {
+      const res = await api.collector.warmPythonEmbeds()
+      const failed = Object.entries(res || {}).filter(([, v]) => String(v).startsWith('failed'))
+      if (failed.length > 0) {
+        showToast('Warm-up failed for: ' + failed.map(([k]) => k).join(', '), 'error')
+      } else {
+        showToast('Interpreter cache warmed — bundled downloads are fast now', 'success')
+      }
+      const r = await api.collector.pythonEmbeds().catch(() => null)
+      if (r?.targets) setPythonEmbeds(r.targets)
+    } catch (err) {
+      showToast('Cache warm-up failed: ' + err.message, 'error')
+    } finally {
+      setWarmingEmbeds(false)
+    }
+  }
+
+  async function handleCreateIngress() {
+    setIngressBusy(true)
+    try {
+      const s = await api.collector.createIngress()
+      setIngress(s)
+      setIngressNote('')
+      showToast(
+        s.status === 'ready'
+          ? `Ingress ready — collectors can reach ${s.external_url}`
+          : 'LoadBalancer created — waiting for the external IP…',
+        'success',
+      )
+    } catch (err) {
+      showToast('Failed to create ingress: ' + err.message, 'error')
+    } finally {
+      setIngressBusy(false)
+    }
+  }
+
+  async function handleDeleteIngress() {
+    setIngressBusy(true)
+    try {
+      await api.collector.deleteIngress()
+      setIngress(null)
+      refreshIngress()
+      showToast('Ingress listener removed', 'success')
+    } catch (err) {
+      showToast('Failed to delete ingress: ' + err.message, 'error')
+    } finally {
+      setIngressBusy(false)
+    }
+  }
+
+  async function handleDownloadRbac() {
+    try {
+      const blob = await api.collector.ingressRbac()
+      saveBlob(blob, 'fo-rbac.yaml')
+    } catch (err) {
+      showToast('Failed to download RBAC manifest: ' + err.message, 'error')
+    }
+  }
+
   const stepLabels = ['Platform', 'Artifacts', 'Download']
 
   // ── render ────────────────────────────────────────────────────────────────
@@ -668,6 +806,78 @@ export default function Collector() {
                 : <><Download size={12} /> Download</>
               }
             </button>
+            {isAdmin && (
+              <button
+                onClick={handleDownloadRawUploader}
+                disabled={downloadingRawUploader}
+                className="btn-outline flex-shrink-0 text-xs py-1.5 !border-amber-400 !text-amber-700 hover:!bg-amber-50"
+                title="Admin only — embeds the raw S3 secret key (no 3-file cap). Do not distribute."
+              >
+                {downloadingRawUploader
+                  ? 'Preparing…'
+                  : <><Download size={12} /> With credentials</>
+                }
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* External ingress — Kubernetes LoadBalancer so remote collectors can reach this API */}
+        {ingress && (
+          <div className="mb-5 p-3 bg-white border border-gray-200 rounded-xl shadow-sm">
+            <div className="flex items-center gap-3 flex-wrap">
+              <Globe size={15} className="text-brand-accent flex-shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-brand-text leading-tight">External ingress (Kubernetes)</p>
+                <p className="text-xs text-gray-500">
+                  {ingress.status === 'ready' && (
+                    <>Listening at <code className="text-[11px] bg-gray-100 px-1 py-0.5 rounded">{ingress.external_url}</code> — use this as the Citadel API URL for remote collectors.</>
+                  )}
+                  {ingress.status === 'pending' && 'LoadBalancer created — waiting for the cloud provider to assign an external IP…'}
+                  {ingress.status === 'not_found' && 'No external listener — remote collectors cannot reach this server yet.'}
+                  {ingress.status === 'error' && `Could not query the listener: ${ingress.error || 'unknown error'}`}
+                </p>
+              </div>
+              <button
+                onClick={refreshIngress}
+                disabled={ingressBusy}
+                className="btn-outline flex-shrink-0 text-xs py-1.5"
+                title="Refresh status"
+              >
+                <RefreshCw size={12} />
+              </button>
+              <button
+                onClick={handleDownloadRbac}
+                className="btn-outline flex-shrink-0 text-xs py-1.5"
+                title="Download the RBAC Role+RoleBinding the pod needs to manage this Service (kubectl apply -f fo-rbac.yaml)"
+              >
+                <><Download size={12} /> RBAC</>
+              </button>
+              {(ingress.status === 'not_found' || ingress.status === 'error') && (
+                <button
+                  onClick={handleCreateIngress}
+                  disabled={ingressBusy}
+                  className="btn-primary flex-shrink-0 text-xs py-1.5"
+                >
+                  {ingressBusy ? 'Working…' : 'Create listener'}
+                </button>
+              )}
+              {(ingress.status === 'ready' || ingress.status === 'pending') && (
+                <button
+                  onClick={handleDeleteIngress}
+                  disabled={ingressBusy}
+                  className="btn-outline flex-shrink-0 text-xs py-1.5 !border-red-300 !text-red-600 hover:!bg-red-50"
+                >
+                  {ingressBusy ? 'Working…' : <><Trash2 size={12} /> Remove</>}
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+        {!ingress && ingressNote && (
+          <div className="mb-5 flex items-start gap-2 px-3 py-2 text-[11px] text-gray-500 bg-gray-100 border border-gray-200 rounded-lg">
+            <Globe size={12} className="flex-shrink-0 mt-0.5" />
+            <span><strong>External ingress:</strong> {ingressNote}</span>
           </div>
         )}
 
@@ -1019,6 +1229,35 @@ export default function Collector() {
                       placeholder="https://citadel.your.org"
                       className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-accent/30 focus:border-brand-accent placeholder:text-gray-400" />
                   </div>
+                  {netIfaces && netIfaces.length > 0 && (
+                    <div>
+                      <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-1">
+                        Detected on this server — click to use
+                      </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {netIfaces.map(c => (
+                          <button
+                            key={`${c.iface}-${c.ip}`}
+                            type="button"
+                            onClick={() => setUploadApiUrl(c.url)}
+                            title={c.url}
+                            className={`text-[11px] font-mono px-2 py-1 rounded-md border transition-colors ${
+                              uploadApiUrl === c.url
+                                ? 'border-brand-accent bg-brand-accent/5 text-brand-accent'
+                                : 'border-gray-200 text-gray-600 hover:border-brand-accent/50 hover:text-brand-accent'
+                            }`}
+                          >
+                            {c.ip}{c.label ? ` · ${c.label}` : ''}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {netHint && (
+                    <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2.5 py-1.5">
+                      {netHint}
+                    </p>
+                  )}
                   <p className="text-[11px] text-gray-500">
                     The server embeds a scoped, short-lived upload token minted on your behalf — your
                     session token never leaves the browser and is never written into the package left
@@ -1065,6 +1304,22 @@ export default function Collector() {
                       {includePython === 'win-x64' ? 'python-embed/' : 'python3/'}
                     </code>. run.bat / run.sh detect and use it automatically.
                   </p>
+                )}
+                {isAdmin && pythonEmbeds.length > 0 && (
+                  <div className="flex items-center gap-2 mt-1.5">
+                    <button
+                      type="button"
+                      onClick={handleWarmEmbeds}
+                      disabled={warmingEmbeds || pythonEmbeds.every(t => t.cached)}
+                      className="btn-outline text-[11px] py-1 px-2"
+                      title="Download every portable interpreter into the server cache now, so the first bundled package build doesn't block (~1 min each)."
+                    >
+                      {warmingEmbeds ? 'Warming cache… (can take a few minutes)' : 'Pre-fetch interpreters'}
+                    </button>
+                    <span className="text-[10px] text-gray-500">
+                      {pythonEmbeds.filter(t => t.cached).length}/{pythonEmbeds.length} cached
+                    </span>
+                  </div>
                 )}
               </div>
 
@@ -1139,6 +1394,43 @@ export default function Collector() {
                   <div className="text-gray-500 pt-1"># Output ZIP is created in ./output/ — upload via Case → Ingest</div>
                 </div>
               )}
+            </div>
+            {/* All-in-one bundle — one self-contained script, nothing else to copy */}
+            <div className="card p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                  All-in-one bundle
+                </h3>
+                <span className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded font-medium">Single file</span>
+              </div>
+              <p className="text-xs text-gray-500 mb-3 leading-relaxed">
+                One self-contained script with the collector embedded — no ZIP to copy.
+                Collects the selected artifacts, then{' '}
+                {s3TriageConfigured
+                  ? 'uploads to S3 via a presigned URL (no credentials stored).'
+                  : 'saves the ZIP locally — configure Admin → S3 Triage Upload to enable auto-upload.'}
+                {' '}Requires <strong className="text-gray-500">Python 3</strong> on the target.
+              </p>
+              <div className="flex gap-2">
+                {[
+                  { id: 'ps1', label: 'Windows (.ps1)' },
+                  { id: 'sh',  label: 'Linux / macOS (.sh)' },
+                ].map(p => (
+                  <button
+                    key={p.id}
+                    className={`btn-outline flex-1 justify-center h-9 gap-2 text-xs ${bundleDone === p.id ? '!border-green-500 !text-green-700' : ''}`}
+                    onClick={() => handleDownloadBundle(p.id)}
+                    disabled={selected.size === 0 || !!bundleBusy}
+                  >
+                    {bundleBusy === p.id
+                      ? 'Preparing…'
+                      : bundleDone === p.id
+                      ? <><Check size={13} /> Downloaded</>
+                      : <><Download size={13} /> {p.label}</>
+                    }
+                  </button>
+                ))}
+              </div>
             </div>
             {/* S3 Bootstrap — presigned URLs only, no creds in script — open to analysts */}
             {s3TriageConfigured && (

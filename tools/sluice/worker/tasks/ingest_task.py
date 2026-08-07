@@ -306,7 +306,10 @@ def _run_library_rules(r: redis.Redis, case_id: str) -> None:
     errors = []
     for rule in rules:
         try:
-            match = rule_eval.evaluate(case_id, rule)
+            # Cooldown dedup: a rule that already fired on the same entity/
+            # samples inside its cooldown window comes back suppressed_only —
+            # persisted in the run record but NOT alerted on again.
+            match = rule_eval.evaluate_with_cooldown(case_id, rule, r)
             if match:
                 matches.append(match)
         except Exception as exc:
@@ -315,6 +318,11 @@ def _run_library_rules(r: redis.Redis, case_id: str) -> None:
             # found nothing.
             logger.debug("[detections] rule %s skipped: %s", rule.get("name"), exc)
             errors.append({"rule": rule.get("name", ""), "error": str(exc)[:300]})
+
+    # Matches that actually fire (new entity/signature) vs. matches fully
+    # inside their cooldown window (kept for the run record + UI only).
+    fired = [m for m in matches if not m.get("suppressed_only")]
+    suppressed_total = sum(m.get("suppressed_count", 0) for m in matches)
 
     # Preserve cached LLM analyses from a previous (manual) run — overwriting
     # the record must not wipe them.
@@ -333,6 +341,7 @@ def _run_library_rules(r: redis.Redis, case_id: str) -> None:
         "ran_at": datetime.now(UTC).isoformat(),
         "rules_checked": len(rules),
         "matches": matches,
+        "suppressed_total": suppressed_total,
         "errors": errors,
         "analyses": analyses,
         "auto": True,
@@ -343,9 +352,9 @@ def _run_library_rules(r: redis.Redis, case_id: str) -> None:
     # Index each fired rule as a `detection` timeline event so detections are
     # searchable in the timeline like everything else. Deterministic _id
     # (det-<case>-<rule>) → re-runs upsert instead of duplicating.
-    if matches:
+    if fired:
         det_events = []
-        for m in matches:
+        for m in fired:
             rule = m["rule"]
             rid = rule.get("id") or rule.get("name", "")
             sev = rule_eval.rule_severity(rule)
@@ -375,10 +384,11 @@ def _run_library_rules(r: redis.Redis, case_id: str) -> None:
             logger.warning("[detections] case %s — indexing detections failed: %s", case_id, exc)
 
     logger.info(
-        "[detections] case %s — auto-ran %d rules, %d matches", case_id, len(rules), len(matches)
+        "[detections] case %s — auto-ran %d rules, %d fired, %d suppressed (cooldown)",
+        case_id, len(rules), len(fired), suppressed_total,
     )
-    if matches:
-        _fire_alert_webhooks(r, case_id, matches, run["ran_at"])
+    if fired:
+        _fire_alert_webhooks(r, case_id, fired, run["ran_at"])
 
 
 def _fire_alert_webhooks(r: redis.Redis, case_id: str, matches: list, ran_at: str) -> None:
