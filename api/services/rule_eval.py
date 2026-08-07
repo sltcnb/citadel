@@ -31,6 +31,7 @@ accounts fail at all?"). ``distinct`` and ``min_distinct`` are required.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 from typing import Any
@@ -281,3 +282,143 @@ def _summarise(groups: list[dict], group_by: str, distinct: str, window: str | N
     return (
         f"{group_by} {top['key']} saw {top['distinct']} distinct {distinct}{scope}{extra}"
     )
+
+
+# ── Cooldown (detection dedup) ────────────────────────────────────────────────
+# The same rule firing on the same entity over and over is the top source of
+# alert fatigue. After a rule fires, a marker is recorded in Redis per
+# (case, rule, entity) with the match signature; an identical match inside the
+# cooldown window is counted as suppressed instead of refiring (new detection
+# event, webhook, …). A NEW signature — different samples for a threshold rule,
+# a different group key for a correlation rule — fires normally.
+#
+# The marker key is built here rather than in redis_keys.py so the worker port
+# (tools/sluice/worker/rule_eval.py) can construct the identical key string —
+# both sides must agree on it byte-for-byte.
+
+DEFAULT_COOLDOWN_MINUTES = 60.0
+
+
+def cooldown_minutes_for(rule: dict) -> float:
+    """Effective cooldown in minutes: per-rule override, default 60.
+
+    ``cooldown_minutes`` absent/zero/invalid → the default. Fractional values
+    are accepted (mainly so tests can use sub-second windows).
+    """
+    try:
+        v = float(rule.get("cooldown_minutes") or 0)
+    except (TypeError, ValueError):
+        v = 0
+    return v if v > 0 else DEFAULT_COOLDOWN_MINUTES
+
+
+def cooldown_key(case_id: str, rule_id: str, entity_key: str) -> str:
+    """Redis marker key for one (case, rule, entity) cooldown entry."""
+    digest = hashlib.sha256(entity_key.encode("utf-8", "replace")).hexdigest()[:24]
+    return f"fo:alert_cooldown:{case_id}:{rule_id}:{digest}"
+
+
+def _entities_with_signatures(match: dict) -> list[tuple[str, str]]:
+    """(entity_key, signature) pairs identifying WHAT a fired match hit.
+
+    Correlation rule → one pair per qualifying group; the group key is both the
+    entity and the signature (the same entity re-qualifying is the dup we
+    suppress). Threshold rule → a single "case" entity whose signature is a
+    hash of the sorted sample fo_ids, so the same evidence refiring is
+    suppressed while genuinely new samples fire.
+    """
+    corr = match.get("correlation") or {}
+    groups = corr.get("groups") or []
+    if groups:
+        return [(str(g.get("key") or "case"),) * 2 for g in groups]
+    fo_ids = sorted(
+        str(ev["fo_id"]) for ev in match.get("sample_events", []) if ev.get("fo_id")
+    )
+    sig_src = "|".join(fo_ids) if fo_ids else f"count:{match.get('match_count', 0)}"
+    return [("case", hashlib.sha256(sig_src.encode()).hexdigest())]
+
+
+def evaluate_with_cooldown(case_id: str, rule: dict, r=None, sample_size: int = 5) -> dict | None:
+    """evaluate() plus cooldown dedup — the entry point run paths should use.
+
+    Returns None when the rule did not match at all. A firing match carries:
+      - ``suppressed_count`` / ``suppressed_entities`` — how much of the match
+        was already known inside the cooldown window;
+      - ``cooldown_minutes`` — the window that was applied;
+      - ``suppressed_only: True`` when EVERY entity matched is inside its
+        cooldown: the caller must persist it in the run record (so the UI can
+        show "12 suppressed (cooldown)") but must NOT index a detection event
+        or fire a webhook for it.
+    A correlation match that is partially new is narrowed to the new entities.
+
+    Redis failures fail OPEN: a flaky Redis must never drop a detection.
+    """
+    match = evaluate(case_id, rule, sample_size)
+    if match is None:
+        return None
+    match["suppressed_count"] = 0
+    match["suppressed_entities"] = []
+    match["cooldown_minutes"] = cooldown_minutes_for(rule)
+    if r is None:
+        return match
+    try:
+        return _apply_cooldown(r, case_id, rule, match)
+    except Exception:  # noqa: BLE001 - cooldown is best-effort, detection is not
+        logger.warning(
+            "cooldown check failed for rule %r on case %s — firing anyway",
+            rule.get("name"), case_id,
+        )
+        return match
+
+
+def _apply_cooldown(r, case_id: str, rule: dict, match: dict) -> dict:
+    rule_id = str(rule.get("id") or rule.get("name") or "")
+    # int() truncation plus the 1s floor keeps sub-minute test windows usable.
+    ttl = max(1, int(cooldown_minutes_for(rule) * 60))
+    entities = _entities_with_signatures(match)
+    keys = [cooldown_key(case_id, rule_id, entity_key) for entity_key, _ in entities]
+
+    pipe = r.pipeline(transaction=False)
+    for key in keys:
+        pipe.get(key)
+    markers = pipe.execute()
+
+    new: list[tuple[str, str]] = []
+    suppressed: list[str] = []
+    for (entity_key, sig), marker in zip(entities, markers, strict=True):
+        if isinstance(marker, bytes):
+            marker = marker.decode()
+        if marker is not None and marker == sig:
+            suppressed.append(entity_key)
+        else:
+            new.append((entity_key, sig))
+
+    if new:
+        # Fixed window from the last FIRE — suppressed hits do not extend it,
+        # so a persistent condition re-alerts once per cooldown, not never.
+        pipe = r.pipeline(transaction=False)
+        for entity_key, sig in new:
+            pipe.set(cooldown_key(case_id, rule_id, entity_key), sig, ex=ttl)
+        pipe.execute()
+
+    if suppressed:
+        match["suppressed_count"] = len(suppressed)
+        match["suppressed_entities"] = suppressed[:20]
+
+    if not new:
+        match["suppressed_only"] = True
+        match["match_count"] = 0  # 0 NEW — the raw count is stale evidence
+        match["sample_events"] = []
+        return match
+
+    corr = match.get("correlation")
+    if corr and corr.get("groups") and suppressed:
+        new_keys = {entity_key for entity_key, _ in new}
+        groups = [g for g in corr["groups"] if str(g.get("key") or "case") in new_keys]
+        corr["groups"] = groups[:50]
+        match["match_count"] = len(groups)
+        corr["summary"] = _summarise(
+            groups, corr.get("group_by") or "", corr.get("distinct_field") or "",
+            corr.get("window"),
+        )
+    return match

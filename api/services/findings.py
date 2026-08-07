@@ -158,6 +158,170 @@ def findings_summary(case_id: str) -> dict:
     }
 
 
+# Triage review states. Findings written before triage existed carry no
+# ``triage_status`` field at all — everywhere below treats "field missing" as
+# "open" so the review queue is backwards compatible.
+TRIAGE_STATUSES = ("open", "reviewed", "false_positive")
+
+
+def _open_status_filter() -> dict:
+    """Matches docs whose triage status is open — explicitly OR by absence."""
+    return {
+        "bool": {
+            "should": [
+                {"term": {"triage_status.keyword": "open"}},
+                {"bool": {"must_not": {"exists": {"field": "triage_status"}}}},
+            ],
+            "minimum_should_match": 1,
+        }
+    }
+
+
+def set_triage_status(case_id: str, finding_ids: list[str], status: str) -> int:
+    """Bulk-set the triage status on finding docs. Returns updated count.
+
+    Uses ``update_by_query`` (one round-trip for any id list) with the same
+    ``terms`` on ``finding_id`` matching that :func:`delete_findings` uses, and
+    ``refresh=true`` so the queue reflects the change on the next list call —
+    mirroring how ``update_event`` writes flags back onto event docs.
+    """
+    if status not in TRIAGE_STATUSES:
+        raise ValueError(f"invalid triage status: {status}")
+    if not finding_ids:
+        return 0
+    body = {
+        "query": {"terms": {"finding_id": finding_ids}},
+        "script": {
+            "source": "ctx._source.triage_status = params.status",
+            "lang": "painless",
+            "params": {"status": status},
+        },
+    }
+    try:
+        r = es_req(
+            "POST",
+            f"/{findings_index(case_id)}/_update_by_query?refresh=true&conflicts=proceed",
+            body,
+        )
+        return int(r.get("updated", 0))
+    except Exception:
+        logger.exception("Findings triage update failed")
+        return 0
+
+
+def triage_list(
+    case_id: str,
+    *,
+    status: str | None = None,
+    severity: str | None = None,
+    kind: str | None = None,
+    source: str | None = None,
+    size: int = 500,
+) -> dict:
+    """Filtered triage listing + review-queue counts.
+
+    The hit list honours every filter (status/severity/kind/source); the counts
+    are faceted the standard way — computed over the severity/kind/source
+    filters but NOT the status filter, so every status bucket stays visible
+    while one is selected. ``missing: open`` on the status terms agg folds
+    pre-triage findings into the open bucket.
+    """
+    filters: list[dict] = []
+    # kind/severity/source_feature are dynamically mapped text fields — exact
+    # matching goes through the .keyword subfield (same reason as the summary).
+    if severity:
+        filters.append({"term": {"severity.keyword": severity}})
+    if kind:
+        filters.append({"term": {"kind.keyword": kind}})
+    if source:
+        filters.append({"term": {"source_feature.keyword": source}})
+
+    query_filters = list(filters)
+    if status:
+        query_filters.append(
+            _open_status_filter()
+            if status == "open"
+            else {"term": {"triage_status.keyword": status}}
+        )
+
+    body = {
+        "size": size,
+        "track_total_hits": True,
+        "query": {"bool": {"filter": query_filters}} if query_filters else {"match_all": {}},
+        "sort": [
+            {"severity_int": {"order": "desc", "unmapped_type": "integer"}},
+            {"timestamp": {"order": "desc", "unmapped_type": "date"}},
+        ],
+        "aggs": {
+            # Scope the queue counts to the non-status filters only.
+            "queue": {
+                "filter": {"bool": {"filter": filters}} if filters else {"match_all": {}},
+                "aggs": {
+                    "by_status": {
+                        "terms": {
+                            "field": "triage_status.keyword",
+                            "missing": "open",
+                            "size": 10,
+                        },
+                        "aggs": {
+                            "by_severity": {
+                                "terms": {"field": "severity.keyword", "size": 10}
+                            }
+                        },
+                    },
+                    "by_kind": {"terms": {"field": "kind.keyword", "size": 50}},
+                    "by_source": {"terms": {"field": "source_feature.keyword", "size": 50}},
+                },
+            },
+        },
+    }
+    empty = {
+        "findings": [],
+        "total": 0,
+        "size": size,
+        "counts": {
+            "by_status": {s: 0 for s in TRIAGE_STATUSES},
+            "by_status_severity": {s: {} for s in TRIAGE_STATUSES},
+            "by_kind": {},
+            "by_source": {},
+        },
+    }
+    try:
+        r = es_req("POST", f"/{findings_index(case_id)}/_search", body)
+    except Exception:
+        return empty
+    hits = r.get("hits", {}).get("hits", [])
+    queue = r.get("aggregations", {}).get("queue", {})
+    by_status: dict[str, int] = {}
+    by_status_severity: dict[str, dict[str, int]] = {}
+    for b in queue.get("by_status", {}).get("buckets", []):
+        by_status[b["key"]] = b["doc_count"]
+        by_status_severity[b["key"]] = {
+            sb["key"]: sb["doc_count"]
+            for sb in b.get("by_severity", {}).get("buckets", [])
+        }
+    for s in TRIAGE_STATUSES:
+        by_status.setdefault(s, 0)
+        by_status_severity.setdefault(s, {})
+    return {
+        "findings": [{"_id": h["_id"], **h["_source"]} for h in hits],
+        "total": r.get("hits", {}).get("total", {}).get("value", 0),
+        "size": size,
+        "counts": {
+            "by_status": by_status,
+            "by_status_severity": by_status_severity,
+            "by_kind": {
+                b["key"]: b["doc_count"]
+                for b in queue.get("by_kind", {}).get("buckets", [])
+            },
+            "by_source": {
+                b["key"]: b["doc_count"]
+                for b in queue.get("by_source", {}).get("buckets", [])
+            },
+        },
+    }
+
+
 def delete_findings(
     case_id: str, *, finding_ids: list[str] | None = None, kind: str | None = None
 ) -> int:

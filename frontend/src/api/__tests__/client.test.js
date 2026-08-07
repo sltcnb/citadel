@@ -2,12 +2,13 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { api } from '../client.js'
 
 // Helper to build a fake fetch Response-like object
-function fakeResponse({ status = 200, ok, json, text } = {}) {
+function fakeResponse({ status = 200, ok, json, blob } = {}) {
   return {
     status,
     ok: ok !== undefined ? ok : status >= 200 && status < 300,
     statusText: `Status ${status}`,
     json: json ?? (async () => ({})),
+    blob: blob ?? (async () => new Blob(['fake'])),
   }
 }
 
@@ -277,5 +278,143 @@ describe('api client — newly wired bindings', () => {
     expect(url).toBe('/api/v1/cases/case-1/findings/promote')
     expect(opts.method).toBe('POST')
     expect(JSON.parse(opts.body)).toEqual({ finding_ids: ['f1'], kind: null, filename: null })
+  })
+})
+
+describe('api client — collector bindings', () => {
+  beforeEach(() => {
+    global.fetch = vi.fn()
+    localStorage.clear()
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  function mockOk(payload = {}) {
+    global.fetch.mockResolvedValueOnce(fakeResponse({
+      status: 200, ok: true, json: async () => payload,
+    }))
+  }
+
+  function mockBlob() {
+    const theBlob = new Blob(['zip-bytes'])
+    global.fetch.mockResolvedValueOnce(fakeResponse({
+      status: 200, ok: true, blob: async () => theBlob,
+    }))
+    return theBlob
+  }
+
+  it('warmPythonEmbeds POSTs the target list as a JSON body', async () => {
+    mockOk({ 'win-x64': 'ok (10240 KB)' })
+    const result = await api.collector.warmPythonEmbeds(['win-x64'])
+    const [url, opts] = global.fetch.mock.calls[0]
+    expect(url).toBe('/api/v1/collector/python-embeds/warm')
+    expect(opts.method).toBe('POST')
+    expect(JSON.parse(opts.body)).toEqual(['win-x64'])
+    expect(result).toEqual({ 'win-x64': 'ok (10240 KB)' })
+  })
+
+  it('warmPythonEmbeds() with no args sends no body (server warms all targets)', async () => {
+    mockOk({})
+    await api.collector.warmPythonEmbeds()
+    const [, opts] = global.fetch.mock.calls[0]
+    expect(opts.method).toBe('POST')
+    expect(opts.body).toBeUndefined()
+  })
+
+  it('uploaderRaw GETs /collector/uploader and returns a blob', async () => {
+    const theBlob = mockBlob()
+    const result = await api.collector.uploaderRaw()
+    const [url, opts] = global.fetch.mock.calls[0]
+    expect(url).toBe('/api/v1/collector/uploader')
+    expect(opts.method).toBe('GET')
+    expect(result).toBe(theBlob)
+  })
+
+  it('bundle GETs /collector/bundle with categories, case name and platform', async () => {
+    const theBlob = mockBlob()
+    const result = await api.collector.bundle({
+      categories: ['evtx', 'registry'],
+      caseName: 'ACME IR 01',
+      expiresHours: 48,
+      platform: 'ps1',
+    })
+    const [url, opts] = global.fetch.mock.calls[0]
+    expect(url).toBe(
+      '/api/v1/collector/bundle?categories=evtx%2Cregistry&case_name=ACME+IR+01&expires_hours=48&platform=ps1'
+    )
+    expect(opts.method).toBe('GET')
+    expect(result).toBe(theBlob)
+  })
+
+  it('bundle omits optional params and defaults platform to zip', async () => {
+    mockBlob()
+    await api.collector.bundle()
+    const [url] = global.fetch.mock.calls[0]
+    expect(url).toBe('/api/v1/collector/bundle?expires_hours=24&platform=zip')
+  })
+
+  it('ingressRbac GETs /collector/ingress/rbac and returns a blob', async () => {
+    const theBlob = mockBlob()
+    const result = await api.collector.ingressRbac()
+    const [url, opts] = global.fetch.mock.calls[0]
+    expect(url).toBe('/api/v1/collector/ingress/rbac')
+    expect(opts.method).toBe('GET')
+    expect(result).toBe(theBlob)
+  })
+
+  it('networkInterfaces GETs /network/interfaces', async () => {
+    const payload = { candidates: [], port: 8000, in_kubernetes: false }
+    mockOk(payload)
+    const result = await api.collector.networkInterfaces()
+    const [url, opts] = global.fetch.mock.calls[0]
+    expect(url).toBe('/api/v1/network/interfaces')
+    expect(opts.method).toBe('GET')
+    expect(result).toEqual(payload)
+  })
+
+  it('createIngress POSTs /collector/ingress', async () => {
+    mockOk({ name: 'fo-collector-lb', status: 'pending', external_ip: null })
+    const result = await api.collector.createIngress()
+    const [url, opts] = global.fetch.mock.calls[0]
+    expect(url).toBe('/api/v1/collector/ingress')
+    expect(opts.method).toBe('POST')
+    expect(result.status).toBe('pending')
+  })
+
+  it('getIngress GETs /collector/ingress', async () => {
+    mockOk({ name: 'fo-collector-lb', status: 'ready', external_ip: '1.2.3.4' })
+    const result = await api.collector.getIngress()
+    const [url, opts] = global.fetch.mock.calls[0]
+    expect(url).toBe('/api/v1/collector/ingress')
+    expect(opts.method).toBe('GET')
+    expect(result.external_ip).toBe('1.2.3.4')
+  })
+
+  it('deleteIngress DELETEs /collector/ingress and returns null on 204', async () => {
+    global.fetch.mockResolvedValueOnce(fakeResponse({ status: 204, ok: true }))
+    const result = await api.collector.deleteIngress()
+    const [url, opts] = global.fetch.mock.calls[0]
+    expect(url).toBe('/api/v1/collector/ingress')
+    expect(opts.method).toBe('DELETE')
+    expect(result).toBeNull()
+  })
+
+  it('blob bindings attach the Bearer token when one is stored', async () => {
+    localStorage.setItem('fo_token', 'my-jwt')
+    mockBlob()
+    await api.collector.uploaderRaw()
+    const [, opts] = global.fetch.mock.calls[0]
+    expect(opts.headers['Authorization']).toBe('Bearer my-jwt')
+  })
+
+  it('blob bindings throw the server detail on error', async () => {
+    global.fetch.mockResolvedValueOnce(fakeResponse({
+      status: 404,
+      ok: false,
+      json: async () => ({ detail: 'No S3 triage config saved.' }),
+    }))
+    await expect(api.collector.uploaderRaw()).rejects.toThrow('No S3 triage config saved.')
   })
 })

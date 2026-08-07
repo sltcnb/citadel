@@ -71,6 +71,23 @@ function withParams(path, params) {
   return q ? `${path}?${q}` : path
 }
 
+// Same auth/error handling as request(), but returns the body as a Blob —
+// for the collector endpoints that stream ZIP / script / YAML downloads.
+async function _fetchBlob(path, { method = 'GET', params } = {}) {
+  const qs = params ? `?${new URLSearchParams(params).toString()}` : ''
+  const token = getToken()
+  const res = await fetch(`${BASE}${path}${qs}`, {
+    method,
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+  if (res.status === 401) { _handle401(); return new Promise(() => {}) }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || `HTTP ${res.status}`)
+  }
+  return res.blob()
+}
+
 // Cases
 export const api = {
   cases: {
@@ -663,7 +680,30 @@ export const api = {
     },
     categories: () => request('GET', '/collector/categories'),
     pythonEmbeds: () => request('GET', '/collector/python-embeds'),
-    // Admin-only: POST returns fo-uploader-presigned.zip with 3 pre-signed PUT URLs (no raw credentials).
+    // Admin-only: pre-fetch the portable-Python archives into the server cache so
+    // the first "bundle Python" package build doesn't block on a cold download.
+    // No argument = warm every target. Returns { target_id: "ok (...)" | "failed: ..." }.
+    warmPythonEmbeds: (targets) => request('POST', '/collector/python-embeds/warm', targets ?? null),
+    // Admin-only: fo-uploader.zip with the RAW S3 triage credentials injected —
+    // unlike uploaderPresigned there is no 3-file slot cap, but the secret key
+    // ships inside the ZIP. Do not distribute.
+    uploaderRaw: () => _fetchBlob('/collector/uploader'),
+    // Analyst+: one self-contained script (harvester embedded as base64) that
+    // collects artifacts AND uploads via a presigned URL — or saves locally when
+    // no S3 triage config exists. platform: 'ps1' | 'sh' | 'zip' (both).
+    bundle: ({ categories = [], caseName, expiresHours = 24, platform = 'zip' } = {}) =>
+      _fetchBlob('/collector/bundle', {
+        params: {
+          ...(categories.length > 0 ? { categories: categories.join(',') } : {}),
+          ...(caseName ? { case_name: caseName } : {}),
+          expires_hours: String(expiresHours),
+          platform,
+        },
+      }),
+    // Ready-to-apply RBAC Role+RoleBinding YAML granting the pod's service
+    // account the Services permissions the ingress endpoints need.
+    ingressRbac: () => _fetchBlob('/collector/ingress/rbac'),
+    // Analyst+: POST returns fo-uploader-presigned.zip with 3 pre-signed PUT URLs (no raw credentials).
     uploaderPresigned: async ({ filename, expiresHours = 24, count = 3 } = {}) => {
       const params = new URLSearchParams()
       if (filename)     params.set('filename',      filename)

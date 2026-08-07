@@ -630,6 +630,9 @@ async def _on_startup():
 
     _bootstrap_admin()
     asyncio.create_task(cti.start_cti_scheduler())
+    from services import retention as retention_svc
+
+    asyncio.create_task(retention_svc.start_retention_scheduler())
     asyncio.create_task(_metrics_background_loop())
     asyncio.create_task(_auto_archive_loop())
     asyncio.create_task(_storage_reconcile_loop())

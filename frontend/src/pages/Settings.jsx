@@ -608,6 +608,8 @@ function PlatformSettingsSection() {
         default_report_language:   form.default_report_language,
         max_upload_gib:            Number(form.max_upload_gib),
         session_idle_minutes:      Number(form.session_idle_minutes),
+        retention_archive_after_days: Number(form.retention_archive_after_days ?? 0),
+        retention_purge_after_days:   Number(form.retention_purge_after_days ?? 30),
       }
       const res = await api.platform.setConfig(payload)
       setForm(res)
@@ -671,6 +673,130 @@ function PlatformSettingsSection() {
               className="btn-primary text-sm px-4 py-2 flex items-center gap-2">
               {saving && <Loader2 size={13} className="animate-spin" />}
               Save platform settings
+            </button>
+            {saved && <span className="text-xs text-green-600 flex items-center gap-1"><Check size={13} /> Saved</span>}
+          </div>
+        </form>
+      )}
+
+      {error && (
+        <ErrorBox msg={error} />
+      )}
+    </section>
+  )
+}
+
+/* ── Case retention lifecycle (auto-archive / auto-purge) ────────────────────── */
+
+function CaseRetentionSection() {
+  const [form, setForm]       = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving]   = useState(false)
+  const [saved, setSaved]     = useState(false)
+  const [error, setError]     = useState('')
+
+  useEffect(() => {
+    api.platform.getConfig()
+      .then(setForm)
+      .catch(err => setError(err.message || 'Failed to load retention settings'))
+      .finally(() => setLoading(false))
+  }, [])
+
+  function setF(k, v) { setForm(f => ({ ...f, [k]: v })); setSaved(false) }
+
+  async function save(e) {
+    e?.preventDefault?.()
+    setSaving(true); setSaved(false); setError('')
+    try {
+      // PUT /admin/platform-config takes the full config document — merge the
+      // two retention knobs into the loaded values so the other settings are
+      // preserved verbatim.
+      const payload = {
+        ...form,
+        retention_archive_after_days: Number(form.retention_archive_after_days),
+        retention_purge_after_days:   Number(form.retention_purge_after_days),
+      }
+      const res = await api.platform.setConfig(payload)
+      setForm(res)
+      setSaved(true)
+    } catch (err) {
+      setError(err.message || 'Failed to save')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const enabled = Number(form?.retention_archive_after_days) > 0
+
+  return (
+    <section className="card p-5 space-y-4">
+      <div className="flex items-center gap-2">
+        <Archive size={15} className="text-amber-500" />
+        <h2 className="font-semibold text-brand-text">Case Retention</h2>
+      </div>
+      <p className="text-xs text-gray-500">
+        Automatic lifecycle for idle cases, checked hourly. A case idle for longer than
+        the archive threshold is exported to a <span className="font-mono">.citadel</span> archive
+        in the archive bucket (Settings → Archiving) and marked <em>archived</em>. Once a case has
+        been archived for longer than the purge delay, its local data (Elasticsearch indices and
+        uploaded evidence files) is deleted to reclaim disk — the archive stays restorable in the
+        bucket. Cases with ingestion jobs still running are never touched, and the scheduler is
+        off entirely while the archive threshold is 0. Requires the archive S3 bucket to be
+        configured.
+      </p>
+
+      {loading ? (
+        <div className="flex items-center gap-2 text-gray-500 py-2">
+          <Loader2 size={14} className="animate-spin" /> Loading…
+        </div>
+      ) : form && (
+        <form onSubmit={save} className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Archive cases idle for (days)</label>
+              <input
+                type="number"
+                min={0}
+                value={form.retention_archive_after_days ?? 0}
+                onChange={e => setF('retention_archive_after_days', e.target.value)}
+                className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2"
+              />
+              <p className="text-[10px] text-gray-500 mt-1">
+                Days since last activity before a case is auto-archived. 0 disables the retention scheduler.
+              </p>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Purge archived cases after (days)</label>
+              <input
+                type="number"
+                min={1}
+                value={form.retention_purge_after_days ?? 30}
+                onChange={e => setF('retention_purge_after_days', e.target.value)}
+                className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2"
+              />
+              <p className="text-[10px] text-gray-500 mt-1">
+                Days a case stays archived before its local data is purged.
+              </p>
+            </div>
+          </div>
+
+          {enabled && (
+            <div className="flex items-start gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              <AlertCircle size={14} className="mt-0.5 shrink-0" />
+              <span>
+                <strong>Purge is permanent.</strong> Purging deletes the case&apos;s local data
+                (Elasticsearch indices and evidence files) — the case can only be brought back by
+                restoring its <span className="font-mono">.citadel</span> archive from the archive
+                bucket. If the archive upload fails, the case is left untouched.
+              </span>
+            </div>
+          )}
+
+          <div className="flex items-center gap-3 pt-1">
+            <button type="submit" disabled={saving}
+              className="btn-primary text-sm px-4 py-2 flex items-center gap-2">
+              {saving && <Loader2 size={13} className="animate-spin" />}
+              Save retention settings
             </button>
             {saved && <span className="text-xs text-green-600 flex items-center gap-1"><Check size={13} /> Saved</span>}
           </div>
@@ -2243,6 +2369,9 @@ export default function Settings() {
       <div className="space-y-6">
         {/* Platform runtime knobs (admin-tunable) */}
         <PlatformSettingsSection />
+
+        {/* Case retention lifecycle (auto-archive / auto-purge) */}
+        <CaseRetentionSection />
 
         {/* SSO / Single Sign-On (Google + Microsoft OIDC) */}
         <SSOSettingsSection />

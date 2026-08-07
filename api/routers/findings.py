@@ -14,6 +14,8 @@ uniformly:
 Endpoints (all under ``/api/v1``):
   GET    /cases/{case_id}/findings           list (filter by kind / severity)
   GET    /cases/{case_id}/findings/summary   counts by kind & severity
+  GET    /cases/{case_id}/findings/triage    triage queue (filtered list + counts)
+  POST   /cases/{case_id}/findings/triage    bulk-set triage status by id list
   POST   /cases/{case_id}/findings           save one or many
   DELETE /cases/{case_id}/findings           delete by id list or kind
   POST   /cases/{case_id}/findings/promote   re-ingest a subset (or all) back in
@@ -82,6 +84,11 @@ class DeleteIn(BaseModel):
     kind: str | None = None
 
 
+class TriageIn(BaseModel):
+    finding_ids: list[str]
+    status: str  # open / reviewed / false_positive
+
+
 @router.get("/cases/{case_id}/findings")
 def list_case_findings(
     case_id: str,
@@ -96,6 +103,41 @@ def list_case_findings(
 @router.get("/cases/{case_id}/findings/summary")
 def findings_summary(case_id: str, _acl: dict = Depends(require_case_access)):
     return fnd.findings_summary(case_id)
+
+
+@router.get("/cases/{case_id}/findings/triage")
+def triage_case_findings(
+    case_id: str,
+    _acl: dict = Depends(require_case_access),
+    status: str | None = Query(None),
+    severity: str | None = Query(None),
+    kind: str | None = Query(None),
+    source: str | None = Query(None),
+    size: int = Query(500, le=500),
+):
+    """Triage queue listing — filtered findings plus review-state counts.
+
+    Counts are faceted (status filter excluded from its own buckets) and
+    findings without a stored status count as ``open``.
+    """
+    if status is not None and status not in fnd.TRIAGE_STATUSES:
+        raise HTTPException(status_code=400, detail=f"Invalid triage status: {status}")
+    return fnd.triage_list(
+        case_id, status=status, severity=severity, kind=kind, source=source, size=size
+    )
+
+
+@router.post("/cases/{case_id}/findings/triage")
+def set_findings_triage(
+    case_id: str, body: TriageIn, _acl: dict = Depends(require_case_access)
+):
+    """Bulk-set the triage status (open / reviewed / false_positive) by id list."""
+    if body.status not in fnd.TRIAGE_STATUSES:
+        raise HTTPException(status_code=400, detail=f"Invalid triage status: {body.status}")
+    if not body.finding_ids:
+        raise HTTPException(status_code=400, detail="finding_ids must not be empty")
+    updated = fnd.set_triage_status(case_id, body.finding_ids, body.status)
+    return {"updated": updated, "status": body.status}
 
 
 @router.post("/cases/{case_id}/findings")
