@@ -637,31 +637,63 @@ def pin_source_events(run_id: str, current_user: dict = Depends(get_current_user
 
     from services.elasticsearch import _request as es_req
 
+    # Hit constructors stamp their unique key as "id"; only some also carry
+    # "fo_id" (see worker module_task). Read both with .get() — indexing "fo_id"
+    # directly here KeyErrors (→ 500) on any hit that only has "id".
+    def _hit_doc_id(h: dict):
+        return h.get("fo_id") or h.get("id")
+
+    # record_id is indexed as a numeric field; the single-event resolver casts
+    # digit strings to int so the term matches. Mirror it here for parity.
+    def _rid(v):
+        return int(v) if str(v).isdigit() else v
+
     # 1. Direct evidence ids (hits that already reference a source doc).
-    direct_ids = [str(h["fo_id"] or h["id"]) for h in hits if h.get("fo_id") or h.get("id")]
+    direct_ids = [str(_hit_doc_id(h)) for h in hits if _hit_doc_id(h)]
 
     # 2. Hayabusa hits: resolve record_id (+host) → source evtx doc id.
+    # One terms query instead of a search per hit — a 200-hit run was 200
+    # sequential round-trips, each with a 30s timeout.
     hay = [h for h in hits if h.get("record_id") not in (None, "")]
     resolved_ids: list[str] = []
     unresolved = 0
     if hay:
         evtx_index = f"fo-case-{case_id}-evtx"
+        record_ids = sorted({_rid(h["record_id"]) for h in hay})
+        try:
+            resp = es_req(
+                "POST",
+                f"/{evtx_index}/_search?ignore_unavailable=true",
+                {
+                    "query": {"terms": {"evtx.record_id": record_ids}},
+                    # record_id can repeat across channels on a host, so allow
+                    # several docs per id; capped well under the 10k window.
+                    "size": min(len(record_ids) * 5, 10000),
+                    "_source": ["evtx.record_id", "host.hostname"],
+                },
+            )
+            docs = resp.get("hits", {}).get("hits", [])
+        except Exception:
+            docs = []
+
+        # Index source docs by (record_id, host) and by record_id alone — the
+        # latter a host-agnostic fallback, matching the single-event resolver
+        # which drops the host filter when the computer name is absent.
+        by_pair: dict[tuple, str] = {}
+        by_rid: dict = {}
+        for d in docs:
+            src = d.get("_source") or {}
+            rid = (src.get("evtx") or {}).get("record_id")
+            host = (src.get("host") or {}).get("hostname") or ""
+            by_pair.setdefault((rid, host), d["_id"])
+            by_rid.setdefault(rid, d["_id"])
+
         for h in hay:
-            must = [{"term": {"evtx.record_id": h["record_id"]}}]
-            if h.get("computer"):
-                must.append({"term": {"host.hostname.keyword": h["computer"]}})
-            try:
-                resp = es_req(
-                    "POST",
-                    f"/{evtx_index}/_search",
-                    {"query": {"bool": {"must": must}}, "size": 1, "_source": False},
-                )
-                docs = resp.get("hits", {}).get("hits", [])
-                if docs:
-                    resolved_ids.append(docs[0]["_id"])
-                else:
-                    unresolved += 1
-            except Exception:
+            rid = _rid(h["record_id"])
+            doc_id = by_pair.get((rid, h.get("computer") or "")) or by_rid.get(rid)
+            if doc_id:
+                resolved_ids.append(doc_id)
+            else:
                 unresolved += 1
 
     target_ids = sorted(set(direct_ids + resolved_ids))
