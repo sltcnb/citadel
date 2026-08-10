@@ -610,6 +610,80 @@ def get_module_run(run_id: str, current_user: dict = Depends(get_current_user)):
     return run
 
 
+@router.post("/module-runs/{run_id}/pin-source-events")
+def pin_source_events(run_id: str, current_user: dict = Depends(get_current_user)):
+    """Pin the ORIGINAL events behind a run's top detections into the case.
+
+    A detection on its own is a claim; the original log line is the evidence.
+    For each of the run's preview hits (top 200 by severity) that carries
+    source coordinates — hayabusa record_id+computer, or a direct evidence
+    fo_id — resolve the source event and set is_pinned on it, so the evidence
+    lands in the report next to the analysis. Idempotent.
+    """
+    run = run_svc.get_module_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Module run not found")
+    _check_run_case_access(run, current_user)
+    case_id = run["case_id"]
+
+    hits = run.get("results_preview") or []
+    if isinstance(hits, str):
+        try:
+            hits = json.loads(hits)
+        except (json.JSONDecodeError, TypeError):
+            hits = []
+    if not hits:
+        return {"pinned": 0, "unresolved": 0, "note": "run has no hits"}
+
+    from services.elasticsearch import _request as es_req
+
+    # 1. Direct evidence ids (hits that already reference a source doc).
+    direct_ids = [str(h["fo_id"] or h["id"]) for h in hits if h.get("fo_id") or h.get("id")]
+
+    # 2. Hayabusa hits: resolve record_id (+host) → source evtx doc id.
+    hay = [h for h in hits if h.get("record_id") not in (None, "")]
+    resolved_ids: list[str] = []
+    unresolved = 0
+    if hay:
+        evtx_index = f"fo-case-{case_id}-evtx"
+        for h in hay:
+            must = [{"term": {"evtx.record_id": h["record_id"]}}]
+            if h.get("computer"):
+                must.append({"term": {"host.hostname.keyword": h["computer"]}})
+            try:
+                resp = es_req(
+                    "POST",
+                    f"/{evtx_index}/_search",
+                    {"query": {"bool": {"must": must}}, "size": 1, "_source": False},
+                )
+                docs = resp.get("hits", {}).get("hits", [])
+                if docs:
+                    resolved_ids.append(docs[0]["_id"])
+                else:
+                    unresolved += 1
+            except Exception:
+                unresolved += 1
+
+    target_ids = sorted(set(direct_ids + resolved_ids))
+    pinned = 0
+    if target_ids:
+        resp = es_req(
+            "POST",
+            f"/fo-case-{case_id}-*/_update_by_query?refresh=true&conflicts=proceed",
+            {
+                "query": {"ids": {"values": target_ids}},
+                "script": {"source": "ctx._source.is_pinned = true", "lang": "painless"},
+            },
+        )
+        pinned = int(resp.get("updated") or 0) + int(resp.get("noops") or 0)
+
+    return {
+        "pinned": pinned,
+        "unresolved": unresolved,
+        "hits_considered": len(hits),
+    }
+
+
 @router.post("/module-runs/{run_id}/retry")
 def retry_module_run(run_id: str, current_user: dict = Depends(get_current_user)):
     """Re-dispatch a FAILED or stuck PENDING module run."""

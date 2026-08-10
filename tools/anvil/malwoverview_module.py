@@ -117,13 +117,13 @@ def _legacy_run(run_id, case_id, source_files, params, minio_client, redis_clien
     if not vt_api_key:
         vt_api_key = os.getenv("VT_API_KEY", "").strip()
     if not vt_api_key:
-        return [
-            {
-                "level": "informational",
-                "rule_title": "malwoverview not configured",
-                "description": "Set VirusTotal API key in Settings → Integrations → malwoverview.",
-            }
-        ]
+        # A config problem is a FAILED run, never a "hit" — returning it as a
+        # result indexed "malwoverview not configured" into the timeline and
+        # the findings store as if it were a detection.
+        raise RuntimeError(
+            "malwoverview not configured — set the VirusTotal API key in "
+            "Settings → Integrations → malwoverview."
+        )
 
     mwo_bin = shutil.which("malwoverview") or shutil.which("malwoverview.py")
     bucket = os.getenv("MINIO_BUCKET", "forensics-cases")

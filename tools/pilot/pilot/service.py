@@ -2194,6 +2194,13 @@ At every step return ONE JSON object — no markdown, no commentary outside it:
     //   1. Did the incident actually happen?
     //   2. What's linked to it?
     //   3. What hypotheses did you consider and how did you resolve them?
+    //   4. What does your investigation ADD beyond the analyst's scenario?
+    //      A verdict that merely restates the scenario is a FAILURE — your job
+    //      is new evidence, new links, a refutation, or a precise statement of
+    //      which artifacts were checked and found absent. Never say "no
+    //      evidence found" until you have searched every artifact type that
+    //      could hold it (see the field-coverage list) — and then say exactly
+    //      which ones were empty and which were never collected.
     "incident_confirmed": "yes" | "no" | "partial" | "inconclusive" | "evidence_absent",
     //   evidence_absent = the data needed to test the scenario was never
     //   collected into this case (e.g. AV/EDR logs missing). This is a
@@ -4920,6 +4927,81 @@ def _verify_conclusion(cfg, base_intro, step):
         return None
 
 
+def _evidence_pack_block(case_id: str) -> str:
+    """One compact block with what the platform already established on this case:
+    fired detection rules, module run hit counts, and findings-store totals.
+
+    This is the single highest-signal context for a big case: the agent that
+    starts from it hunts for what is NEW instead of re-deriving (or missing)
+    the obvious. All reads are cheap (Redis + one ES agg), best-effort.
+    """
+    import redis_keys as rk
+    from config import get_redis
+
+    r = get_redis()
+    lines: list[str] = []
+
+    # Fired detection rules from the last library sweep.
+    try:
+        raw = r.get(rk.case_alert_run(case_id))
+        if raw:
+            run = json.loads(raw)
+            matches = run.get("matches") or []
+            if matches:
+                lines.append("Detection rules fired (latest sweep):")
+                for m in matches[:8]:
+                    rule = m.get("rule") or {}
+                    lvl = rule.get("level") or rule.get("sigma_level") or ""
+                    lines.append(
+                        f"  - {rule.get('name', '?')} [{lvl}] ×{m.get('match_count', 0)}"
+                    )
+                if len(matches) > 8:
+                    lines.append(f"  … +{len(matches) - 8} more fired rules")
+    except Exception:  # noqa: BLE001
+        pass
+
+    # Module runs with hits (hayabusa, yara, …).
+    try:
+        from services import module_runs as _mr
+
+        with_hits = [
+            x
+            for x in _mr.list_case_module_runs(case_id)
+            if x.get("status") == "COMPLETED" and (x.get("total_hits") or 0) > 0
+        ]
+        if with_hits:
+            lines.append("Module results already on this case (read_module_result for details):")
+            for x in with_hits[:6]:
+                lvl = x.get("hits_by_level") or {}
+                sev = ", ".join(f"{n} {k}" for k, n in lvl.items() if n)
+                lines.append(
+                    f"  - {x.get('module_id')}: {x.get('total_hits'):,} hits"
+                    + (f" ({sev})" if sev else "")
+                )
+    except Exception:  # noqa: BLE001
+        pass
+
+    # Findings store totals by severity.
+    try:
+        from services import findings as _fnd
+
+        s = _fnd.findings_summary(case_id)
+        if s.get("total"):
+            sev = ", ".join(f"{n} {k}" for k, n in (s.get("by_severity") or {}).items())
+            lines.append(f"Findings store: {s['total']:,} finding(s) ({sev})")
+    except Exception:  # noqa: BLE001
+        pass
+
+    if not lines:
+        return ""
+    return (
+        "\nPlatform knowledge BEFORE this run (established detections — cite them, "
+        "verify them, and hunt for what is NEW rather than re-deriving them):\n"
+        + "\n".join(lines)
+        + "\n"
+    )
+
+
 def _agent_run(
     case_id: str,
     circumstance: str,
@@ -5037,10 +5119,32 @@ def _agent_run(
     except Exception:
         whitelist_block = ""
 
+    # Evidence pack — what the platform already established (fired rules,
+    # module results, findings). Without this the agent re-derives nothing on
+    # big cases and concludes "no evidence" after a handful of searches; with
+    # it, the run starts from the strongest signals and hunts for what is NEW.
+    evidence_block = ""
+    try:
+        evidence_block = _evidence_pack_block(case_id)
+    except Exception:  # noqa: BLE001 - grounding is best-effort, never fatal
+        evidence_block = ""
+
+    # Playbook — a senior-analyst procedure for the recognized scenario type.
+    playbook_block = ""
+    try:
+        from pilot.playbooks import _select_playbook
+
+        _pb = _select_playbook(circumstance)
+        if _pb:
+            playbook_block = f"\n{_pb['procedure']}\n"
+    except Exception:  # noqa: BLE001
+        playbook_block = ""
+
     base_intro = (
         f"Case: {ctx['case_name']}\n"
         f"Events: {ctx['event_count']:,}\n"
         f"Artifact types: {', '.join(ctx['artifact_types']) or 'none'}\n"
+        + evidence_block
         + density_block
         + mitre_block
         + modules_block
@@ -5048,6 +5152,7 @@ def _agent_run(
         + whitelist_block
         + samples_block
         + _field_list_block(ctx)
+        + playbook_block
         + parent_hist
         + f"\nAnalyst scenario{' (follow-up)' if parent_transcript else ''}:\n{circumstance}\n"
     )

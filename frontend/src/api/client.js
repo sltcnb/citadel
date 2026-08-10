@@ -392,6 +392,7 @@ export const api = {
     getRun:           (runId)                   => request('GET',  `/module-runs/${runId}`),
     validateYara:     (rules)                   => request('POST', '/modules/yara/validate', { rules }),
     analyze:          (runId)                   => request('POST', `/module-runs/${runId}/analyze`),
+    pinSourceEvents:  (runId)                   => request('POST', `/module-runs/${runId}/pin-source-events`),
     retryRun:         (runId)                   => request('POST', `/module-runs/${runId}/retry`),
     cancelRun:        (runId)                   => request('POST', `/module-runs/${runId}/cancel`),
     deleteRun:        (runId)                   => request('DELETE', `/module-runs/${runId}`),
