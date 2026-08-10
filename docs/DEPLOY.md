@@ -40,6 +40,21 @@ into `elasticsearch-secret`. After ES first reports ready, foctl also sets the
 `kibana_system` password inside ES via the `_security` API, which is what lets
 the Kibana pod connect (nothing else ever sets that password).
 
+## Kibana dashboards
+
+`k8s/kibana/citadel-dashboards.ndjson` ships two data views (`fo-case-*`, plus
+a detections/findings view) and a starter dashboard (events over time,
+detections by level, top artifact types). Import after deploy:
+
+```sh
+PW=$(kubectl -n citadel get secret elasticsearch-secret -o jsonpath='{.data.elastic_password}' | base64 -d)
+kubectl -n citadel port-forward svc/kibana-service 5601:5601 &
+curl -u "elastic:$PW" -X POST "http://localhost:5601/kibana/api/saved_objects/_import?overwrite=true" \
+     -H "kbn-xsrf: true" -F file=@k8s/kibana/citadel-dashboards.ndjson
+```
+
+(Regenerate with `python3 scripts/build_kibana_assets.py` if you edit it.)
+
 Docker mode gets the same treatment via `.env`: `ELASTIC_PASSWORD` /
 `KIBANA_PASSWORD` are generated on first `./foctl deploy docker` (or
 `./foctl ensure-env`), and foctl sets the `kibana_system` password once the
