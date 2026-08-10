@@ -4,6 +4,7 @@ import {
   Upload,
   Search,
   Bell,
+  Bookmark,
   X,
   ChevronRight,
   AlertTriangle,
@@ -76,6 +77,8 @@ const IngestPanel = lazy(() => import('../components/IngestPanel'))
 const CaseAiPanel = lazy(() => import('../components/CaseAiPanel'))
 import ToolbarMenu from '../components/shared/ToolbarMenu'
 import ErrorBox, { NoticeBox } from '../components/shared/ErrorBox'
+import Toast from '../components/Toast'
+import { useToast } from '../hooks/useToast'
 import { buildToolbarGroups, CASE_CAPABILITIES, readLegacyPanelState } from './caseCapabilities'
 import { CASE_PANELS } from './casePanels'
 import PanelHelp from '../components/shared/PanelHelp'
@@ -1366,6 +1369,7 @@ function ModuleRunCard({
   // Hit-level filters (all optional — undefined = no filtering)
   activeLevels, activeComputers, activeChannels, activeTags, ruleSearch,
 }) {
+  const [toast, showToast] = useToast()
   const zeroDetected = run.status === 'COMPLETED' && run.total_hits === 0
   const [showOutput, setShowOutput] = useState(zeroDetected)
   const [analyzing, setAnalyzing]   = useState(false)
@@ -1517,6 +1521,7 @@ function ModuleRunCard({
 
   return (
     <div className="card overflow-hidden">
+      <Toast toast={toast} />
       {/* ── Card header ───────────────────────────────────────── */}
       <button
         className="w-full flex items-start gap-3 p-3 text-left hover:bg-gray-50 transition-colors"
@@ -1655,6 +1660,25 @@ function ModuleRunCard({
                   title="Show this run's detections in the timeline"
                 >
                   <Search size={12} /> View {run.total_hits.toLocaleString()} in timeline
+                </button>
+                <button
+                  onClick={async () => {
+                    try {
+                      const r = await api.modules.pinSourceEvents(run.run_id)
+                      showToast(
+                        r.pinned > 0
+                          ? `${r.pinned} source event${r.pinned > 1 ? 's' : ''} pinned to the case report${r.unresolved ? ` (${r.unresolved} unresolved)` : ''}`
+                          : 'No source events could be resolved for this run',
+                        r.pinned > 0 ? 'success' : 'error',
+                      )
+                    } catch (e) {
+                      showToast(e.message || 'Pin failed', 'error')
+                    }
+                  }}
+                  className="btn-ghost text-[11px] px-2 py-1 rounded-lg inline-flex items-center gap-1 text-brand-accent"
+                  title="Pin the original log events behind this run's top detections — they land in the report as evidence"
+                >
+                  <Bookmark size={12} /> Pin source events
                 </button>
               </div>
             </div>
