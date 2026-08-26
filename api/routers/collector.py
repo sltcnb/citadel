@@ -1089,7 +1089,9 @@ try {
     Set-Location $workDir
     try {
         if ($Local) {
-            & $python fo-harvester.py --output ".\\output"
+            # $tmpDir is deleted in the finally block — write the ZIP to the
+            # directory the operator invoked the script from instead.
+            & $python fo-harvester.py --output $prevDir.Path
         } else {
             & $python fo-harvester.py
         }
@@ -1216,9 +1218,14 @@ INNER=$(find "$WORKDIR" -maxdepth 1 -mindepth 1 -type d | head -1 || true)
 RUNDIR="${INNER:-$WORKDIR}"
 
 # ── Run collection ─────────────────────────────────────────────────────────────
+# --local: write the ZIP to the directory the operator ran this script from.
+# WORKDIR is removed by the EXIT trap, so anything staged inside it is lost.
 echo "  Running collection..."
 if [ "$LOCAL" -eq 1 ]; then
-    (cd "$RUNDIR" && "$PYTHON" fo-harvester.py --output "./output")
+    LOCAL_OUT=$(pwd)
+    (cd "$RUNDIR" && "$PYTHON" fo-harvester.py --output "$LOCAL_OUT")
+    LOCAL_ZIP=$(find "$LOCAL_OUT" -maxdepth 1 -name "fo-artifacts-*.zip" 2>/dev/null | sort | tail -1 || true)
+    [ -n "$LOCAL_ZIP" ] && echo "  Saved locally: $LOCAL_ZIP"
 else
     (cd "$RUNDIR" && "$PYTHON" fo-harvester.py)
 fi

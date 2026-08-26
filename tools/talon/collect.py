@@ -213,6 +213,22 @@ class _Tee:
         return getattr(self._console, n)
 
 
+def _looks_like_dir(raw: str | Path) -> bool:
+    """True when --output names a directory to write the ZIP into rather than the
+    ZIP itself. Callers vary: the bootstrap and bundle scripts pass a directory
+    (`./output`, `$WORKDIR/output`) and then hunt for fo-artifacts-*.zip inside
+    it, while `--output /tmp/evidence.zip` names the archive directly."""
+    p = Path(raw)
+    if p.is_dir():
+        return True
+    text = str(raw)
+    if text.endswith(("/", "\\")) or text in (".", ".."):
+        return True
+    # A non-existent path with no archive extension is a directory to create,
+    # not a ZIP to write — "--output ./output" on a clean machine lands here.
+    return not p.exists() and p.suffix.lower() not in (".zip", ".7z", ".tar", ".gz")
+
+
 # Module-level handle so signal handlers and the finally block can reach the log.
 _LOG_FH = None
 _LOG_PATH: Path | None = None
@@ -5685,7 +5701,8 @@ def main() -> None:
         "-o",
         type=Path,
         default=None,
-        help="Full path for the output ZIP (overrides config.json output_dir)",
+        help="Output ZIP path, or a directory to write the generated ZIP name into "
+        "(overrides config.json output_dir)",
     )
     parser.add_argument("--api-url", type=str, default=None)
     parser.add_argument("--case-id", type=str, default=None)
@@ -5807,23 +5824,28 @@ def main() -> None:
     case_name = cfg.get("case_name", "") or ""
 
     # Build output path — case_name, hostname, date, OS type in filename
+    os_type = platform.system()
+    if os_type == "Darwin":
+        os_type = "macOS"
+    # Dead-box mode: we can't auto-detect target OS
+    if cfg.get("path") or cfg.get("disk") or args.path if hasattr(args, "path") else False:
+        os_type = "deadbox"
+    date_str = datetime.datetime.now().strftime("%Y-%m-%d")
+    name_parts = ["fo-artifacts"]
+    if case_name:
+        name_parts.append(re.sub(r"[^\w]", "_", case_name)[:40])
+    name_parts += [HOSTNAME, date_str, os_type]
+    filename = "-".join(name_parts) + ".zip"
+
     if args.output:
         output = Path(args.output)
+        # --output may be a directory (the bootstrap/bundle scripts pass one, then
+        # look for fo-artifacts-*.zip inside it). Writing the ZIP straight to that
+        # path dies with "Is a directory" — append the generated filename instead.
+        if _looks_like_dir(args.output):
+            output = output / filename
     else:
-        out_dir = Path(cfg.get("output_dir", "./output"))
-        os_type = platform.system()
-        if os_type == "Darwin":
-            os_type = "macOS"
-        # Dead-box mode: we can't auto-detect target OS
-        if cfg.get("path") or cfg.get("disk") or args.path if hasattr(args, "path") else False:
-            os_type = "deadbox"
-        date_str = datetime.datetime.now().strftime("%Y-%m-%d")
-        name_parts = ["fo-artifacts"]
-        if case_name:
-            name_parts.append(re.sub(r"[^\w]", "_", case_name)[:40])
-        name_parts += [HOSTNAME, date_str, os_type]
-        filename = "-".join(name_parts) + ".zip"
-        output = out_dir / filename
+        output = Path(cfg.get("output_dir", "./output")) / filename
 
     # Tee everything to <output>.collector.log from here on, and arrange for a
     # SIGTERM/SIGINT/OOM-kill to unwind cleanly so the log still gets uploaded.

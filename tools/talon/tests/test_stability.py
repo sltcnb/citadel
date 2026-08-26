@@ -92,3 +92,38 @@ if __name__ == "__main__":
     import pytest
 
     sys.exit(pytest.main([__file__, "-v"]))
+
+
+# ── --output pointing at a directory ──────────────────────────────────────────
+# The bootstrap/bundle scripts pass a directory (`./output`, `$WORKDIR/output`)
+# and then hunt for fo-artifacts-*.zip inside it. Treating that as the ZIP path
+# blew up in package() with "Is a directory" on macOS (/var/folders/.../output).
+
+
+def test_looks_like_dir_existing_directory(tmp_path):
+    out = tmp_path / "output"
+    out.mkdir()
+    assert collect._looks_like_dir(out) is True
+    assert collect._looks_like_dir(str(out)) is True
+
+
+def test_looks_like_dir_missing_extensionless_path(tmp_path):
+    # "--output ./output" on a clean machine: nothing there yet, no .zip suffix.
+    assert collect._looks_like_dir(tmp_path / "output") is True
+    assert collect._looks_like_dir("./output") is True
+    assert collect._looks_like_dir("/var/folders/xy/T/tmp.abc/output") is True
+
+
+def test_looks_like_dir_trailing_separator(tmp_path):
+    assert collect._looks_like_dir(f"{tmp_path}/evidence/") is True
+
+
+def test_looks_like_dir_zip_path_is_a_file(tmp_path):
+    assert collect._looks_like_dir(tmp_path / "evidence.zip") is False
+    assert collect._looks_like_dir("/tmp/evidence.ZIP") is False
+
+
+def test_looks_like_dir_existing_file(tmp_path):
+    f = tmp_path / "evidence"
+    f.write_bytes(b"")
+    assert collect._looks_like_dir(f) is False
