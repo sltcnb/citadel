@@ -52,6 +52,7 @@ talon --collect evtx,registry,prefetch             # selective live collection
 talon --path /mnt/windows --collect registry,evtx  # dead-box: mounted volume
 talon --disk /dev/sdb1 --bitlocker-key 123456-...  # dead-box: raw device + BitLocker
 talon --output /tmp/evidence.zip                   # write a local ZIP
+talon --output /tmp/evidence/                      # a directory works too — the ZIP name is generated inside it
 talon --api-url http://citadel/api/v1 --case-id IR-001 --api-token <tok>   # upload to a case
 talon --fetch "mimikatz*" --fetch "re:\.(ps1|hta)$" --fetch-root C:\Users  # IOC file sweep
 talon --dry-run --verbose                          # preview, collect nothing
