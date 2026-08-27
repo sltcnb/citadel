@@ -285,7 +285,7 @@ class PlistPlugin(BasePlugin):
             with open(fp, "rb") as f:
                 data = plistlib.load(f)
         except Exception as exc:
-            raise PluginFatalError(f"Cannot parse plist: {exc}")
+            raise PluginFatalError(f"Cannot parse plist: {exc}") from exc
 
         # plistlib.load() does not raise on XML that parses but is not a plist —
         # it returns None. Emitting an event for that produces a timeline entry
