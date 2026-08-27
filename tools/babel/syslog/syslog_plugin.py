@@ -46,7 +46,11 @@ _RFC5424_RE = re.compile(
 # Modern rsyslog ISO format (RFC3339), no PRI prefix:
 #   "2026-05-31T00:00:40.248878+02:00 master2 kernel: nftables-drop: IN=..."
 _ISO_SYSLOG_RE = re.compile(
-    r"^(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[+-]\d{2}:?\d{2}|Z)?)\s+"  # ISO ts
+    # macOS install.log writes a TWO-digit UTC offset ("2026-08-25 09:00:00+02"),
+    # so the minutes group has to be optional — with it mandatory the whole file
+    # missed every pattern here and fell through to json_file, which turns an
+    # OS-install/update history into a single file-metadata event.
+    r"^(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[+-]\d{2}(?::?\d{2})?|Z)?)\s+"  # ISO ts
     r"(\S+)\s+"  # hostname
     r"([\w.\-/]+?)(?:\[(\d+)\])?:\s+"  # tag[pid]
     r"(.*)"  # message
@@ -113,6 +117,13 @@ _KNOWN_NAMES = frozenset(
         "setupapi.setup.log",
         # Windows Firewall log
         "pfirewall.log",
+        # ── macOS ─────────────────────────────────────────────────────────────
+        # Talon collects these next to system.log. install.log is the OS/pkg
+        # install and update history; wifi.log is association history.
+        "install.log",
+        "wifi.log",
+        "fsck_apfs.log",
+        "appfirewall.log",
     }
 )
 
@@ -124,6 +135,16 @@ _EXT_ARTIFACT_TYPE: dict[str, str] = {
 
 # IIS W3C log pattern — "YYYY-MM-DD HH:MM:SS ..."
 _IIS_RE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} ")
+
+# macOS /var/log/wifi.log — its own shape, matching none of the syslog RFCs:
+#   "Mon Aug 25 09:00:00.000 <airportd[123]> _handleLinkEvent: en0 associated"
+# Association history is how you place a laptop on a network at a given time,
+# so it is worth a pattern of its own rather than the raw-line fallback.
+_MACOS_WIFI_RE = re.compile(
+    r"^(?P<ts>\w{3}\s+\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\.\d+)\s+"
+    r"<(?P<proc>[\w.\-]+)(?:\[(?P<pid>\d+)\])?>\s*"
+    r"(?P<msg>.*)$"
+)
 
 # filename (lowercase) → artifact_type
 _FILENAME_ARTIFACT_TYPE: dict[str, str] = {
@@ -155,6 +176,12 @@ _FILENAME_ARTIFACT_TYPE: dict[str, str] = {
     "setupapi.setup.log": "usb_log",
     "srttrail.txt": "win_log",
     # AnyDesk / TeamViewer
+    # macOS
+    "install.log": "macos_install_log",
+    "wifi.log": "macos_wifi_log",
+    "fsck_apfs.log": "syslog",
+    "appfirewall.log": "firewall_log",
+    # AnyDesk / TeamViewer
     "anydesk.trace": "remote_access_log",
     "ad_svc.trace": "remote_access_log",
     "connections_incoming.txt": "remote_access_log",
@@ -169,6 +196,22 @@ def _parse_rfc3164_ts(ts_str: str) -> str:
         month = _MONTHS.get(parts[0], "01")
         day = parts[1].zfill(2)
         time_ = parts[2]
+        year = datetime.now(tz=UTC).year
+        return f"{year}-{month}-{day}T{time_}Z"
+    except (IndexError, KeyError):
+        return ""
+
+
+def _parse_macos_wifi_ts(ts_str: str) -> str:
+    """Convert wifi.log's "Mon Aug 25 09:00:00.000" to ISO.
+
+    No year in the format, same as RFC 3164 — assume the current one.
+    """
+    try:
+        parts = ts_str.split()
+        month = _MONTHS.get(parts[1], "01")
+        day = parts[2].zfill(2)
+        time_ = parts[3]
         year = datetime.now(tz=UTC).year
         return f"{year}-{month}-{day}T{time_}Z"
     except (IndexError, KeyError):
@@ -249,6 +292,22 @@ class SyslogPlugin(BasePlugin):
                     }
 
     def _parse_line(self, line: str, atype: str = "syslog") -> dict | None:
+        # macOS wifi.log — checked first because its leading "Mon Aug 25" can
+        # look close enough to RFC 3164 to be mis-split.
+        m = _MACOS_WIFI_RE.match(line)
+        if m:
+            g = m.groupdict()
+            return {
+                "fo_id": str(uuid.uuid4()),
+                "artifact_type": atype,
+                "os": "macos",
+                "timestamp": _parse_macos_wifi_ts(g["ts"]),
+                "timestamp_desc": "Log Time",
+                "message": f"[{g['proc']}] {g['msg']}",
+                "process": {"name": g["proc"], "pid": g.get("pid") or ""},
+                "raw": {"line": line},
+            }
+
         # Try RFC 5424 first (more structured)
         m = _RFC5424_RE.match(line)
         if m:

@@ -1,7 +1,8 @@
 """
 Browser Plugin -- parses browser forensic artifacts from major browsers.
 
-Supports: Chrome, Firefox, Brave, Opera, Edge, Safari.
+Supports: Chrome, Firefox, Brave, Opera, Edge, Safari (desktop), and the macOS
+LaunchServices quarantine store.
 Artifact types: History, Cookies, Downloads, Login Data, Bookmarks, Web Data,
                 places.sqlite, cookies.sqlite, favicons.sqlite, formhistory.sqlite.
 
@@ -35,6 +36,9 @@ from babel.base_plugin import (
 # Chromium / WebKit epoch: microseconds since 1601-01-01 00:00:00 UTC
 _WEBKIT_EPOCH_DELTA_US = 11_644_473_600_000_000  # difference to Unix epoch in us
 
+# Apple Core Data / Cocoa epoch: seconds since 2001-01-01 00:00:00 UTC
+_COCOA_EPOCH_DELTA_S = 978_307_200
+
 
 def _format_bytes(n: int) -> str:
     """Return a compact human-readable file size string (e.g. 1.4 MB)."""
@@ -65,6 +69,22 @@ def _firefox_us_to_iso(us: int | None) -> str:
         return ""
     try:
         dt = datetime.fromtimestamp(us / 1_000_000, tz=UTC)
+        return dt.strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
+    except (OSError, ValueError, OverflowError):
+        return ""
+
+
+def _cocoa_to_iso(s: int | float | None) -> str:
+    """Convert an Apple Core Data / Cocoa timestamp to ISO 8601 UTC.
+
+    Seconds since 2001-01-01, not 1970 — the LaunchServices quarantine DB and
+    Safari's History.db both use it, and reading one as a Unix epoch dates the
+    event to 1970 and drops it off the far end of every timeline.
+    """
+    if s is None or s <= 0:
+        return ""
+    try:
+        dt = datetime.fromtimestamp(float(s) + _COCOA_EPOCH_DELTA_S, tz=UTC)
         return dt.strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
     except (OSError, ValueError, OverflowError):
         return ""
@@ -102,6 +122,19 @@ _HANDLED_FILENAMES: list[str] = [
     "FORMHISTORY.SQLITE",
     "DOWNLOADS.SQLITE",  # Firefox: download history
     "KEY4.DB",  # Firefox: password encryption keys (NSS key store)
+    # ── macOS ─────────────────────────────────────────────────────────────────
+    # LaunchServices quarantine: every file downloaded by any browser or mail
+    # client, with the URL it came from AND the page that referred to it. On a
+    # macOS host it is the single best answer to "where did this come from" —
+    # and it used to route to `strings`, which turns download provenance into a
+    # bag of printable characters. Talon writes it under the collected name;
+    # the live name is the second entry.
+    "QUARANTINE_EVENTS.SQLITE",
+    "COM.APPLE.LAUNCHSERVICES.QUARANTINEEVENTSV2",
+    # Desktop Safari history. Claimed only under the macOS browser layout — see
+    # can_handle — because an iOS extraction uses the same filename and schema
+    # and stays with the ios parser.
+    "HISTORY.DB",
 ]
 
 # Chromium-family filenames (no extension, title-case)
@@ -127,10 +160,25 @@ _FIREFOX_FILES = {
 }
 
 
+# Desktop Safari's history store.
+_SAFARI_FILES = {"HISTORY.DB"}
+
+
+# macOS LaunchServices quarantine store.
+_QUARANTINE_FILES = {
+    "QUARANTINE_EVENTS.SQLITE",
+    "COM.APPLE.LAUNCHSERVICES.QUARANTINEEVENTSV2",
+}
+
+
 def _detect_browser_family(filename_upper: str) -> str:
-    """Return 'chromium' or 'firefox' based on the filename."""
+    """Return 'chromium', 'firefox' or 'macos_quarantine' based on the filename."""
     if filename_upper in _FIREFOX_FILES:
         return "firefox"
+    if filename_upper in _QUARANTINE_FILES:
+        return "macos_quarantine"
+    if filename_upper in _SAFARI_FILES:
+        return "safari"
     return "chromium"
 
 
@@ -161,7 +209,25 @@ class BrowserPlugin(BasePlugin):
         # Microsoft.CDN_2.db, Microsoft.ListSync.db, …) and emitted 0 events,
         # which is worse than letting the generic SQLite/database plugin
         # handle them.
+        if file_path.name.upper() in _SAFARI_FILES:
+            return cls._is_desktop_safari_path(file_path)
         return super().can_handle(file_path, mime_type)
+
+    @staticmethod
+    def _is_desktop_safari_path(file_path: Path) -> bool:
+        """True for Talon's macOS layout ``browser/<user>/safari/History.db``.
+
+        Desktop Safari and iOS Safari ship the same filename AND the same
+        ``history_items``/``history_visits`` schema, so the name cannot decide
+        between them. Path can: Talon files desktop Safari under the top-level
+        ``browser`` collection directory, while an iOS extraction arrives under
+        its backup-domain tree. Getting this wrong in either direction is a real
+        loss — desktop Safari history parsed as ``artifact_type: ios`` is
+        invisible to the ``artifact_type:browser`` search an analyst actually
+        runs, and an iOS extraction hijacked here would lose its ios typing.
+        """
+        parts_lower = [p.lower() for p in file_path.parts]
+        return "safari" in parts_lower and "browser" in parts_lower
 
     def __init__(self, context: PluginContext) -> None:
         super().__init__(context)
@@ -239,6 +305,10 @@ class BrowserPlugin(BasePlugin):
         # Dispatch to the right parser(s) based on what tables exist
         if family == "firefox":
             yield from self._dispatch_firefox(filename_upper, tables)
+        elif family == "macos_quarantine":
+            yield from self._parse_macos_quarantine(tables)
+        elif family == "safari":
+            yield from self._parse_safari_history(tables)
         else:
             yield from self._dispatch_chromium(filename_upper, tables)
 
@@ -252,6 +322,145 @@ class BrowserPlugin(BasePlugin):
             return {r[0] for r in rows}
         except sqlite3.DatabaseError:
             return set()
+
+    # ------------------------------------------------------------------
+    # macOS: desktop Safari history (History.db)
+    # ------------------------------------------------------------------
+
+    def _parse_safari_history(self, tables: set[str]) -> Generator[dict[str, Any], None, None]:
+        """Parse desktop Safari's History.db into ordinary browser events."""
+        assert self._conn
+        if "history_items" not in tables or "history_visits" not in tables:
+            self.log.info("No history_items/history_visits tables — not a Safari history DB")
+            return
+        try:
+            cursor = self._conn.execute(
+                "SELECT hi.id AS item_id, hi.url, hi.visit_count, "
+                "hv.visit_time, hv.title, hv.redirect_source, hv.redirect_destination "
+                "FROM history_items hi "
+                "JOIN history_visits hv ON hi.id = hv.history_item "
+                "ORDER BY hv.visit_time"
+            )
+        except sqlite3.DatabaseError as exc:
+            self.log.warning("Cannot read Safari history: %s", exc)
+            return
+
+        for row in cursor:
+            try:
+                d = dict(row)
+                url = d.get("url") or ""
+                title = d.get("title") or ""
+                visit_count = d.get("visit_count") or 0
+                # visit_time is Cocoa epoch (2001), not Unix — reading it as the
+                # latter dates every visit to 1970.
+                ts = _cocoa_to_iso(d.get("visit_time"))
+                visit_label = f"{visit_count}×" if visit_count > 1 else "1×"
+                title_part = f"{title} — " if title and title != url else ""
+                self._records_read += 1
+                yield {
+                    "fo_id": str(uuid.uuid4()),
+                    "artifact_type": "browser",
+                    "os": "macos",
+                    "timestamp": ts,
+                    "timestamp_desc": "URL Visit Time",
+                    "message": f"[{visit_label}] {title_part}{url}",
+                    "browser": {
+                        "browser_type": "safari",
+                        "data_type": "history",
+                        "url": url,
+                        "title": title,
+                        "visit_count": visit_count,
+                        "redirect_source": d.get("redirect_source"),
+                        "redirect_destination": d.get("redirect_destination"),
+                    },
+                    "raw": {"line": json.dumps(d, default=str)},
+                }
+            except Exception as exc:  # noqa: BLE001 - one bad row must not kill the file
+                self._records_skipped += 1
+                self.log.debug("Skipped Safari history row: %s", exc)
+
+    # ------------------------------------------------------------------
+    # macOS: LaunchServices quarantine (com.apple.LaunchServices.QuarantineEventsV2)
+    # ------------------------------------------------------------------
+
+    def _parse_macos_quarantine(
+        self, tables: set[str]
+    ) -> Generator[dict[str, Any], None, None]:
+        """Parse the macOS quarantine DB: what was downloaded, from where, by what.
+
+        Emitted as ``artifact_type: browser`` with ``data_type: download`` so it
+        lands next to Chromium/Firefox downloads in every existing filter and
+        detection — the analyst question ("did anything come from this domain")
+        is the same one regardless of which store recorded it.
+
+        Two URLs per row and they are not interchangeable:
+        ``LSQuarantineDataURLString`` is the file that was fetched,
+        ``LSQuarantineOriginURLString`` is the page that linked to it. In a
+        drive-by the origin is the malicious site and the data URL is a CDN, so
+        both are indexed.
+        """
+        assert self._conn
+        if "LSQuarantineEvent" not in tables:
+            self.log.info("No LSQuarantineEvent table — not a quarantine database")
+            return
+        # Column set varies across macOS releases; select * and read by name so
+        # an older or newer schema degrades to fewer fields instead of raising.
+        try:
+            cursor = self._conn.execute(
+                "SELECT * FROM LSQuarantineEvent ORDER BY LSQuarantineTimeStamp"
+            )
+        except sqlite3.DatabaseError as exc:
+            self.log.warning("Cannot read LSQuarantineEvent: %s", exc)
+            return
+
+        for row in cursor:
+            try:
+                d = dict(row)
+                ts = _cocoa_to_iso(d.get("LSQuarantineTimeStamp"))
+                data_url = d.get("LSQuarantineDataURLString") or ""
+                origin_url = d.get("LSQuarantineOriginURLString") or ""
+                agent = d.get("LSQuarantineAgentName") or ""
+                agent_bundle = d.get("LSQuarantineAgentBundleIdentifier") or ""
+                sender = d.get("LSQuarantineSenderName") or ""
+                sender_addr = d.get("LSQuarantineSenderAddress") or ""
+                title = d.get("LSQuarantineOriginTitle") or ""
+
+                target = data_url or origin_url or "(unknown source)"
+                parts = [f"Quarantined download: {target}"]
+                if agent:
+                    parts.append(f"via {agent}")
+                if origin_url and origin_url != data_url:
+                    parts.append(f"referred by {origin_url}")
+                if sender or sender_addr:
+                    parts.append(f"sender {sender or sender_addr}".strip())
+                message = "  ".join(parts)
+
+                self._records_read += 1
+                yield {
+                    "fo_id": str(uuid.uuid4()),
+                    "artifact_type": "browser",
+                    "os": "macos",
+                    "timestamp": ts,
+                    "timestamp_desc": "File Quarantined (Downloaded)",
+                    "message": message,
+                    "browser": {
+                        "browser_type": "macos_quarantine",
+                        "data_type": "download",
+                        "url": data_url,
+                        "referrer": origin_url,
+                        "title": title,
+                        "agent": agent,
+                        "agent_bundle_id": agent_bundle,
+                        "sender_name": sender,
+                        "sender_address": sender_addr,
+                        "event_id": d.get("LSQuarantineEventIdentifier") or "",
+                        "type_number": d.get("LSQuarantineTypeNumber"),
+                    },
+                    "raw": {"line": json.dumps(d, default=str)},
+                }
+            except Exception as exc:  # noqa: BLE001 - one bad row must not kill the file
+                self._records_skipped += 1
+                self.log.debug("Skipped quarantine row: %s", exc)
 
     # ------------------------------------------------------------------
     # Chromium dispatcher

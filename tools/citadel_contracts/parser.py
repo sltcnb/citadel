@@ -52,6 +52,7 @@ STRUCTURED_ARTIFACTS: frozenset[str] = frozenset(
         "iptables",
         "netstat",
         "macos_uls",
+        "macos_triage",
         "pcap",
         "aws_cloudtrail",
         "azure_signin",
@@ -114,6 +115,17 @@ ARTIFACT_OS: dict[str, str] = {
     # ── macOS ─────────────────────────────────────────────────────────────────
     "plist": "macos",
     "macos_uls": "macos",
+    "macos_triage": "macos",
+    "macos_install_log": "macos",
+    "macos_wifi_log": "macos",
+    # NOTE: the macOS triage parser emits the SHARED types below (process,
+    # network_conn, service, system_info, installed_software, ...) so existing
+    # filters and detections keep working across platforms. Those are mapped to
+    # "windows" here, which is right for their most common source and wrong for
+    # a macOS host — so macos_triage sets event["os"] explicitly and the ingest
+    # stage honours it over this table. Do not "fix" that by moving the shared
+    # types to "cross"; that would silently reclassify every Windows triage
+    # event in existing cases.
     # ── Mobile ────────────────────────────────────────────────────────────────
     "android": "mobile",
     "ios": "mobile",
