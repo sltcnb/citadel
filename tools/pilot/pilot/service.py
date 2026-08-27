@@ -2152,7 +2152,7 @@ At every step return ONE JSON object — no markdown, no commentary outside it:
 
   {
     "thought": "what you're trying to verify and why",
-    "action":  "set_hypotheses" | "search" | "aggregate" | "inspect" | "time_window" | "correlate" | "mitre_hits" | "entity_graph" | "stack_rare" | "cti_seen_before" | "detection_rules" | "watchlist" | "module_runs" | "list_modules" | "launch_module" | "read_module_result" | "findings" | "save_finding" | "conclude",
+    "action":  "set_hypotheses" | "search" | "aggregate" | "inspect" | "time_window" | "correlate" | "mitre_hits" | "entity_graph" | "stack_rare" | "cti_seen_before" | "detection_rules" | "watchlist" | "module_runs" | "list_modules" | "launch_module" | "read_module_result" | "ioc_sweep" | "host_profile" | "findings" | "save_finding" | "conclude",
 
     // action=search — full Elasticsearch query_string against fo-case-{id}-*
     "query":   "host.hostname:DESKTOP-* AND artifact_type:evtx",
@@ -2247,6 +2247,18 @@ Tool playbook — chain these like a real DFIR analyst:
                        Pass {"action":"launch_module","module_id":"hayabusa"} etc.
                        Returns a run_id; use read_module_result later to see hits.
   read_module_result → fetch full hits of a specific module run by run_id.
+  ioc_sweep          → SKILL. Check indicators the right way: defangs them
+                       ("evil[.]com" -> evil.com), classifies each (ip/domain/
+                       url/hash/email) and queries the fields that type really
+                       lives in (network.dst_ip, browser.url, file.sha256 …).
+                       USE THIS instead of writing message:*term* yourself —
+                       that is a leading wildcard over a rendered summary and
+                       misses every indicator held in a structured field.
+                       {"action":"ioc_sweep","indicators":["evil[.]com","1.2.3.4"]}
+  host_profile       → SKILL. One-call orientation on a host: artifact types,
+                       users, processes, event count. Run it BEFORE searching a
+                       host, so you know what evidence exists before hunting for
+                       evidence that does not. {"action":"host_profile","host":"WS01"}
   entity_graph       → host↔user↔IP relationship graph — SEE lateral movement
                        (which accounts touched a host, which hosts an account
                        reached). Optional {"focus":"<host-or-user>"} to scope to
@@ -3471,6 +3483,74 @@ def _tool_read_module_result(case_id: str, step: dict) -> dict:
     return out
 
 
+# ── Skills ────────────────────────────────────────────────────────────────────
+# Executable procedures, as opposed to the playbooks' prose. See pilot/skills.py
+# for why IOC matching in particular cannot be left to improvisation.
+
+
+def _skill_search_adapter(case_id: str):
+    """Adapt the agent's search tool to the skills' (query, size) -> dict shape."""
+
+    def _search(query: str, size: int) -> dict:
+        res = _tool_search(case_id, {"query": query, "size": size})
+        if res.get("query_status") != "ok":
+            raise RuntimeError(res.get("query_error") or "search failed")
+        hits = []
+        for line, fo_id in zip(
+            res.get("sample") or [], res.get("sample_ids") or [], strict=False
+        ):
+            atype = line[1 : line.index("]")] if line.startswith("[") and "]" in line else ""
+            hits.append({"fo_id": fo_id, "artifact_type": atype, "message": line})
+        return {"total": res.get("result_count") or 0, "hits": hits}
+
+    return _search
+
+
+def _skill_aggregate_adapter(case_id: str):
+    """Adapt the aggregate tool to (field, query, size) -> list[str]."""
+
+    def _agg(field: str, query: str, size: int) -> list:
+        res = _tool_aggregate(
+            case_id, {"agg_field": field, "agg_query": query, "agg_size": size}
+        )
+        if res.get("query_status") != "ok":
+            return []
+        return res.get("buckets") or res.get("sample") or []
+
+    return _agg
+
+
+def _tool_ioc_sweep(case_id: str, step: dict) -> dict:
+    """Check indicators against the case with type-aware, field-targeted queries.
+
+    Replaces the hand-written ``message:*term*`` search, which is a leading
+    wildcard over a rendered summary field and therefore both slow and blind to
+    every indicator that only appears in structured data.
+    """
+    from pilot.skills import run_ioc_sweep
+
+    raw = step.get("indicators") or step.get("values") or step.get("value")
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return {
+            "query_status": "invalid",
+            "query_error": 'ioc_sweep needs {"indicators":["evil.com","1.2.3.4"]}',
+        }
+    return run_ioc_sweep([str(x) for x in raw], _skill_search_adapter(case_id))
+
+
+def _tool_host_profile(case_id: str, step: dict) -> dict:
+    """What evidence exists for one host — artifact types, users, processes, volume."""
+    from pilot.skills import run_host_profile
+
+    return run_host_profile(
+        str(step.get("host") or ""),
+        _skill_search_adapter(case_id),
+        _skill_aggregate_adapter(case_id),
+    )
+
+
 def _tool_module_runs(case_id: str, step: dict) -> dict:
     """List completed module runs for this case (Hayabusa / Sigma scanners /
     YARA / Volatility / etc) with their hit counts. Lets the agent answer
@@ -3924,6 +4004,8 @@ AGENT_TOOLS = {
     "list_modules": _tool_list_modules,
     "launch_module": _tool_launch_module,
     "read_module_result": _tool_read_module_result,
+    "ioc_sweep": _tool_ioc_sweep,
+    "host_profile": _tool_host_profile,
     "web_search": _tool_web_search,
 }
 
@@ -5191,6 +5273,16 @@ def _agent_run(
     except Exception:  # noqa: BLE001 - grounding is best-effort, never fatal
         specialist_block = ""
 
+    # Skills — executable procedures the agent should reach for instead of
+    # improvising the query itself.
+    skills_block_txt = ""
+    try:
+        from pilot.skills import skills_block as _skills_block
+
+        skills_block_txt = _skills_block()
+    except Exception:  # noqa: BLE001
+        skills_block_txt = ""
+
     # Playbook — a senior-analyst procedure for the recognized scenario type.
     playbook_block = ""
     try:
@@ -5215,6 +5307,7 @@ def _agent_run(
         + samples_block
         + _field_list_block(ctx)
         + specialist_block
+        + skills_block_txt
         + playbook_block
         + parent_hist
         + f"\nAnalyst scenario{' (follow-up)' if parent_transcript else ''}:\n{circumstance}\n"
@@ -5814,6 +5907,7 @@ def _agent_run(
             "search", "aggregate", "inspect", "time_window", "correlate",
             "mitre_hits", "module_runs", "detection_rules", "watchlist",
             "list_modules", "cti_seen_before", "entity_graph", "stack_rare",
+            "ioc_sweep", "host_profile",
         }
         sig = (
             action,

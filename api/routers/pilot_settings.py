@@ -57,6 +57,8 @@ KNOWN_TOOLS = (
     "list_modules",
     "launch_module",
     "read_module_result",
+    "ioc_sweep",
+    "host_profile",
     "web_search",
 )
 
