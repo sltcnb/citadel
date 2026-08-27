@@ -47,6 +47,12 @@ The declared surface (`brick.yaml`, `capabilities.yaml`, this README) needs no i
 
 Sluice is the intake stage behind the dashboard upload and the Harvest flow. It runs Babel in-process for the hot parse path, validates with `citadel_contracts.validate_forensic_event`, and feeds Rosetta + the timeline. See [`worker/`](worker/) for queues, dedup keys, and bus emission, and `bus_topics.md` in [citadel-contracts](https://github.com/sltcnb/citadel-contracts).
 
+## License
+
+[PolyForm Noncommercial 1.0.0](LICENSE) — run, modify and self-host for any
+**noncommercial** purpose. Commercial use requires prior written authorization
+signed by the copyright holder. See [LICENSING.md](LICENSING.md).
+
 ## Part of the Citadel suite
 
 Sluice is the intake stage of [Citadel](https://github.com/sltcnb/citadel). Upstream: [Talon](https://github.com/sltcnb/talon) (artifact bundles). Downstream: [Babel](https://github.com/sltcnb/babel) parsers, then [Rosetta](https://github.com/sltcnb/rosetta). Runtime dependencies (`brick.yaml`): Babel, Redis (bus + queue), MinIO (blob store). Runtime worker: in-repo under [`worker/`](worker/). Contracts: [citadel-contracts](https://github.com/sltcnb/citadel-contracts).

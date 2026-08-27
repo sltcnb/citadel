@@ -84,6 +84,12 @@ Bundles can also land in **S3/MinIO** via presigned URLs (stdlib-only) or creden
 
 Talon's bundle is the unit Sluice consumes. In-app **Harvest** runs Talon server-side against a mounted image/path; the standalone agent uploads to a case over the API or gRPC. Editing `capabilities.yaml` (e.g. adding a collection category) changes the Citadel collector UI with no orchestrator code change.
 
+## License
+
+[PolyForm Noncommercial 1.0.0](LICENSE) — run, modify and self-host for any
+**noncommercial** purpose. Commercial use requires prior written authorization
+signed by the copyright holder. See [LICENSING.md](LICENSING.md).
+
 ## Part of the Citadel suite
 
 Talon is the acquisition stage — the first node — of [Citadel](https://github.com/sltcnb/citadel). Upstream: none. Downstream (`brick.yaml` dependency): [Sluice](https://github.com/sltcnb/sluice), which receives bundles via gRPC or upload token. Contracts (`bundle_manifest`, `collector.proto`): [citadel-contracts](https://github.com/sltcnb/citadel-contracts).

@@ -85,6 +85,12 @@ Case IOCs go to Augur; enrichments attach to entities and the timeline.
 
 **Done when:** 5+ sources with scoring + cache; STIX export round-trips with MISP.
 
+## License
+
+[PolyForm Noncommercial 1.0.0](LICENSE) — run, modify and self-host for any
+**noncommercial** purpose. Commercial use requires prior written authorization
+signed by the copyright holder. See [LICENSING.md](LICENSING.md).
+
 ## Part of the Citadel suite
 
 Augur is the intel-enrichment stage of [Citadel](https://github.com/sltcnb/citadel). **Upstream:** case IOCs extracted from events canonicalized by [rosetta](https://github.com/sltcnb/rosetta). **Downstream:** scored intel attaches to case entities and the timeline, feeding [pilot](https://github.com/sltcnb/pilot) and [scribe](https://github.com/sltcnb/scribe). Platform service dependency (from `brick.yaml`): **Redis** — enrichment cache TTL + rate limiting (standalone runs use the in-memory cache).

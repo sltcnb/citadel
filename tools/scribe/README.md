@@ -71,6 +71,12 @@ pytest tests/             # tests/test_render.py
 
 **Done when:** standalone CLI renders all formats; scheduled-on-close works.
 
+## License
+
+[PolyForm Noncommercial 1.0.0](LICENSE) — run, modify and self-host for any
+**noncommercial** purpose. Commercial use requires prior written authorization
+signed by the copyright holder. See [LICENSING.md](LICENSING.md).
+
 ## Part of the Citadel suite
 Scribe is the last stage of the pipeline: it renders what the rest of the suite
 produced. Runtime dependency (per `brick.yaml`): Elasticsearch (the caller

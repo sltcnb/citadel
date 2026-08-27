@@ -89,6 +89,12 @@ Model-agnostic provider routing; prompt-injection guardrails fence untrusted evi
 
 **Done when:** decomposed multi-agent run; branching live. _(guardrails ✓ tested)_
 
+## License
+
+[PolyForm Noncommercial 1.0.0](LICENSE) — run, modify and self-host for any
+**noncommercial** purpose. Commercial use requires prior written authorization
+signed by the copyright holder. See [LICENSING.md](LICENSING.md).
+
 ## Part of the Citadel suite
 Pilot sits near the end of the pipeline, reasoning over normalized/detected data.
 Upstream/runtime dependencies (per `brick.yaml`): Elasticsearch,

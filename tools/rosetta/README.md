@@ -97,6 +97,12 @@ pytest tests/     # test_normalize.py, test_enrich.py, test_daemon.py
 
 **Done when:** single canonicalizer; CLI + daemon parse EVTX + syslog → ECS.
 
+## License
+
+[PolyForm Noncommercial 1.0.0](LICENSE) — run, modify and self-host for any
+**noncommercial** purpose. Commercial use requires prior written authorization
+signed by the copyright holder. See [LICENSING.md](LICENSING.md).
+
 ## Part of the Citadel suite
 Runs between parse and index so the timeline and search see one schema.
 Upstream: [Babel](https://github.com/sltcnb/babel) (emits ForensicEvent).
