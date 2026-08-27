@@ -5178,6 +5178,19 @@ def _agent_run(
     except Exception:  # noqa: BLE001 - grounding is best-effort, never fatal
         evidence_block = ""
 
+    # Specialist plan — which domain lenses this case can actually support.
+    # Injected BEFORE the playbook because it constrains it: a playbook step
+    # that needs browser history is not a step to attempt on a case with no
+    # browser artifacts, and a run that tries anyway is the 40-step
+    # "inconclusive" this block exists to prevent.
+    specialist_block = ""
+    try:
+        from pilot.specialists import plan as _spec_plan, plan_block as _spec_block
+
+        specialist_block = _spec_block(_spec_plan(ctx.get("artifact_types") or []))
+    except Exception:  # noqa: BLE001 - grounding is best-effort, never fatal
+        specialist_block = ""
+
     # Playbook — a senior-analyst procedure for the recognized scenario type.
     playbook_block = ""
     try:
@@ -5201,6 +5214,7 @@ def _agent_run(
         + whitelist_block
         + samples_block
         + _field_list_block(ctx)
+        + specialist_block
         + playbook_block
         + parent_hist
         + f"\nAnalyst scenario{' (follow-up)' if parent_transcript else ''}:\n{circumstance}\n"
