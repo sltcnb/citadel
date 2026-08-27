@@ -56,6 +56,37 @@ _TEXT_SIMPLE_RE = re.compile(
     r":\s+(.*)"
 )
 
+# Default `log show` output (no --style): a fixed-width column table, NOT the
+# syslog-ish form the two regexes above match.
+#
+#   Timestamp                       Thread     Type        Activity   PID    TTL
+#   2026-08-25 09:00:00.123456+0200 0x1a2b3 Default 0x0 501 0
+#       mDNSResponder: [com.apple.mDNSResponder:dns] query dntds.shop
+#
+# This is the format Talon actually collects — its `log show --style json`
+# attempt needs privileges that are often absent, and the text fallback it
+# writes on failure is this. Without this pattern the whole unified log fell
+# through to json_file, which emits ONE file-metadata event for the entire
+# export.
+_COLUMN_RE = re.compile(
+    r"^(?P<ts>\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d+[+-]\d{4})\s+"
+    r"(?P<thread>0x[0-9a-fA-F]+)\s+"
+    r"(?P<type>[A-Za-z]+)\s+"
+    r"(?P<activity>0x[0-9a-fA-F]+)\s+"
+    r"(?P<pid>\d+)\s+"
+    r"(?P<ttl>\d+)\s+"
+    r"(?P<rest>.*)$"
+)
+
+# Tail of a column row: "procname: [subsystem:category] message", where the
+# bracketed part is optional and may instead be a "(image.dylib)" attribution.
+_COLUMN_TAIL_RE = re.compile(
+    r"^(?P<proc>[^:\s]+):\s*"
+    r"(?:\[(?P<subsystem>[^:\]]*):(?P<category>[^\]]*)\]\s*)?"
+    r"(?:\((?P<image>[^)]*)\)\s*)?"
+    r"(?P<msg>.*)$"
+)
+
 _KNOWN_NAMES = frozenset(
     {
         "unified.log",
@@ -64,6 +95,14 @@ _KNOWN_NAMES = frozenset(
         "macos_logs.json",
         "uls_export.log",
         "uls_export.ndjson",
+        # ── Names Talon actually writes ───────────────────────────────────────
+        # MacOSCollector._logs saves the export as logs/unified_logs.ndjson
+        # (JSON path) or logs/unified_logs.log (text fallback). Neither name was
+        # listed here, so routing depended entirely on the content sniff below
+        # — which the text fallback failed, because its format had no pattern.
+        "unified_logs.ndjson",
+        "unified_logs.log",
+        "unified_logs.json",
     }
 )
 
@@ -121,6 +160,13 @@ class MacOSULSPlugin(BasePlugin):
     DEFAULT_ARTIFACT_TYPE = "macos_uls"
     SUPPORTED_EXTENSIONS = [".log", ".ndjson", ".json"]
     SUPPORTED_MIME_TYPES = ["text/plain", "application/json", "application/x-ndjson"]
+    # Explicit, not the default 50: a unified-log export is .log/.ndjson text
+    # that several generic readers will happily claim (json_file 15,
+    # log2timeline 20, timestamped_log 25, plaso 10), and losing this race
+    # collapses a 7-day system log into one metadata event. Kept level with
+    # syslog (100) rather than above it — they never contend, since neither
+    # ULS pattern matches a BSD syslog line.
+    PLUGIN_PRIORITY = 100
 
     def __init__(self, context: PluginContext) -> None:
         super().__init__(context)
@@ -137,10 +183,13 @@ class MacOSULSPlugin(BasePlugin):
         name = file_path.name.lower()
         if name in _KNOWN_NAMES:
             return True
-        # Peek at first lines
+        # Peek at the head of the file. 24 lines, not 5: `log show` prints a
+        # variable preamble ("Filtering the log data using ...", "Skipping info
+        # and debug messages...", then the column header) before the first
+        # record, and a 5-line peek can land entirely inside it.
         try:
             with open(file_path, errors="replace") as fh:
-                for _ in range(5):
+                for _ in range(24):
                     line = fh.readline()
                     if not line:
                         break
@@ -153,8 +202,12 @@ class MacOSULSPlugin(BasePlugin):
                                 return True
                         except (json.JSONDecodeError, ValueError):
                             pass
-                    # Text pattern
-                    if _TEXT_RE.match(line) or _TEXT_SIMPLE_RE.match(line):
+                    # Text patterns
+                    if (
+                        _TEXT_RE.match(line)
+                        or _TEXT_SIMPLE_RE.match(line)
+                        or _COLUMN_RE.match(line)
+                    ):
                         return True
         except OSError:
             pass
@@ -220,6 +273,9 @@ class MacOSULSPlugin(BasePlugin):
     # ── Text format ────────────────────────────────────────────────────────────
 
     def _parse_text_line(self, line: str) -> dict | None:
+        col = _COLUMN_RE.match(line)
+        if col:
+            return self._parse_column_line(line, col)
         m = _TEXT_RE.match(line)
         if not m:
             m = _TEXT_SIMPLE_RE.match(line)
@@ -251,6 +307,59 @@ class MacOSULSPlugin(BasePlugin):
                 "raw_message": msg,
             },
             "raw": {"line": line},
+        }
+
+    def _parse_column_line(self, line: str, m: re.Match) -> dict | None:
+        """Build an event from a default-`log show` column row."""
+        g = m.groupdict()
+        rest = (g.get("rest") or "").strip()
+        if not rest:
+            return None
+        proc_name = ""
+        subsystem = ""
+        category = ""
+        image = ""
+        msg = rest
+        tail = _COLUMN_TAIL_RE.match(rest)
+        if tail:
+            t = tail.groupdict()
+            proc_name = t.get("proc") or ""
+            subsystem = (t.get("subsystem") or "").strip()
+            category = (t.get("category") or "").strip()
+            image = (t.get("image") or "").strip()
+            msg = (t.get("msg") or "").strip()
+
+        level = (g.get("type") or "default").lower()
+        severity = _LEVEL_SEVERITY.get(level, "informational")
+
+        display = msg
+        if proc_name:
+            display = f"[{proc_name}] {msg}"
+        if subsystem:
+            display = f"[{subsystem}] {display}"
+
+        return {
+            "fo_id": str(uuid.uuid4()),
+            "artifact_type": "macos_uls",
+            "timestamp": _parse_uls_ts(g["ts"]),
+            "timestamp_desc": "Log Time",
+            "message": display,
+            # `log show` on a live host has no hostname column — the export is
+            # from this machine. Leave it empty rather than inventing one; the
+            # ingest stage fills host from the bundle manifest.
+            "host": {},
+            "process": {"name": proc_name, "pid": g.get("pid") or ""},
+            "macos_uls": {
+                "level": level,
+                "severity": severity,
+                "subsystem": subsystem,
+                "category": category,
+                "thread_id": g.get("thread") or "",
+                "activity_id": g.get("activity") or "",
+                "image": image,
+                "raw_message": msg,
+            },
+            "raw": {"line": line[:4000]},
         }
 
     # ── NDJSON / JSON formats ──────────────────────────────────────────────────

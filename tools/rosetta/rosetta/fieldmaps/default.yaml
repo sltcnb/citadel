@@ -216,6 +216,22 @@ artifact_types:
     fields:
       "host.name": "hostname"
       "process.name": "process"
+  macos_triage:
+    category: [host]
+    type: [info]
+    fields:
+      "host.name": "hostname"
+  macos_install_log:
+    category: [package]
+    type: [installation]
+    fields:
+      "host.name": "hostname"
+      "process.name": "tag"
+  macos_wifi_log:
+    category: [network]
+    type: [connection]
+    fields:
+      "process.name": "proc"
   plist:
     category: [configuration]
     type: [info]

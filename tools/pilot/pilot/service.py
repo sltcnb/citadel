@@ -3359,7 +3359,11 @@ def _tool_launch_module(case_id: str, step: dict) -> dict:
     if not sources and module_id not in _NO_SOURCE_MODULES:
         return {"query_status": "invalid", "query_error": "no completed source files to scan"}
 
-    # Build the module-run via the existing endpoint logic (in-process)
+    # Build the module-run via the existing endpoint logic (in-process).
+    # This one is safe only because create_module_run never touches its `_acl`
+    # parameter — an in-process call leaves it holding the Depends marker, which
+    # is what made the sibling read_module_result raise on every invocation.
+    # Case access is enforced above via get_case(case_id).
     try:
         from routers.modules import CreateModuleRunRequest, SourceFileRef, create_module_run
 
@@ -3389,33 +3393,54 @@ def _tool_read_module_result(case_id: str, step: dict) -> dict:
     run_id = (step.get("run_id") or "").strip()
     if not run_id:
         return {"query_status": "invalid", "query_error": "run_id required"}
+    # Go through the service layer, NOT routers.modules.get_module_run: that
+    # is a FastAPI endpoint whose `current_user` is a `Depends(...)` default.
+    # Calling it in-process passes the Depends marker object straight into the
+    # ACL check, which blew up with "'Depends' object has no attribute 'get'"
+    # on every single call — the agent then retried the same tool a dozen times
+    # and concluded "no evidence" from a tool that had never once run.
     try:
-        from routers.modules import get_module_run
+        from services import module_runs as run_svc
 
-        run = get_module_run(run_id)
+        run = run_svc.get_module_run(run_id)
     except Exception as exc:
-        msg = str(exc)[:200]
-        # 404 is the most common failure — agent invented a run_id. Give
-        # a useful nudge instead of a bare error.
-        if "404" in msg or "not found" in msg.lower():
-            return {
-                "query_status": "invalid",
-                "query_error": (
-                    f"run_id {run_id!r} does not exist. Use the "
-                    "`module_runs` tool first to list real run_ids, then "
-                    "pass one of those — do NOT invent run_ids."
-                ),
-            }
-        return {"query_status": "invalid", "query_error": msg}
-    # Trim noisy fields for LLM context
-    hits = (run.get("hits") or [])[:40]
-    return {
+        return {"query_status": "invalid", "query_error": str(exc)[:200]}
+    if not run:
+        return {
+            "query_status": "invalid",
+            "query_error": (
+                f"run_id {run_id!r} does not exist. Use the "
+                "`module_runs` tool first to list real run_ids, then "
+                "pass one of those — do NOT invent run_ids."
+            ),
+        }
+    # ACL: the pilot is scoped to one case, so a run from another case is off
+    # limits regardless of who is driving the agent.
+    if run.get("case_id") and run.get("case_id") != case_id:
+        return {
+            "query_status": "invalid",
+            "query_error": f"run_id {run_id!r} belongs to a different case",
+        }
+
+    status = (run.get("status") or "").upper()
+    # results_preview is the stored field name; "hits" never existed on the
+    # record, so this used to return an empty sample list even when the run
+    # had found something.
+    hits = run.get("results_preview") or []
+    if isinstance(hits, str):
+        try:
+            hits = json.loads(hits)
+        except (json.JSONDecodeError, TypeError):
+            hits = []
+    total = run.get("total_hits", 0) or 0
+
+    out = {
         "query_status": "ok",
         "run_id": run_id,
         "module_id": run.get("module_id"),
-        "status": run.get("status"),
-        "total_hits": run.get("total_hits", 0),
-        "hits_by_level": run.get("hits_by_level", {}),
+        "status": status,
+        "total_hits": total,
+        "hits_by_level": run.get("hits_by_level") or {},
         "sample_hits": [
             {
                 "level": h.get("level"),
@@ -3423,42 +3448,66 @@ def _tool_read_module_result(case_id: str, step: dict) -> dict:
                 "message": (h.get("message") or "")[:240],
                 "evidence": (h.get("evidence") or "")[:240],
             }
-            for h in hits
+            for h in hits[:40]
+            if isinstance(h, dict)
         ],
     }
+    # Say plainly when there is nothing to read *yet*. Without this the agent
+    # reads an empty hit list off a still-running scan and treats it as a
+    # negative result.
+    if status in ("PENDING", "RUNNING"):
+        out["note"] = (
+            f"Run is {status} — results are NOT final. Absence of hits here is "
+            "NOT evidence of absence. Investigate something else and re-read "
+            "this run_id later."
+        )
+    elif status == "FAILED":
+        out["note"] = f"Run FAILED: {(run.get('error') or 'no error recorded')[:200]}"
+    elif total > len(out["sample_hits"]):
+        out["note"] = (
+            f"Showing {len(out['sample_hits'])} of {total} hits "
+            "(preview is capped); use the module-run UI for the full list."
+        )
+    return out
 
 
 def _tool_module_runs(case_id: str, step: dict) -> dict:
     """List completed module runs for this case (Hayabusa / Sigma scanners /
     YARA / Volatility / etc) with their hit counts. Lets the agent answer
     'have we already run X against this case? what did it find?'"""
-    r = _redis()
-    out = []
+    # Read through the service layer. This used to scan_iter the key pattern
+    # "fo:case:{case_id}:module-run:*", which does not exist: runs live in the
+    # SET "fo:case:{case_id}:module_runs" (underscore) pointing at HASHes at
+    # "fo:module_run:{run_id}". The scan therefore matched nothing and this
+    # tool returned an empty list on every case — so the agent could never
+    # learn a real run_id, guessed one, and looped on read_module_result.
     try:
-        # scan_iter, not KEYS — KEYS blocks Redis while it walks the whole
-        # keyspace, which stalls every other consumer on a busy instance.
-        for i, k in enumerate(r.scan_iter(f"fo:case:{case_id}:module-run:*", count=200)):
-            if i >= 50:
-                break
-            raw = r.get(k) or "{}"
-            try:
-                run = json.loads(raw)
-            except Exception:
-                continue
-            out.append(
-                {
-                    "run_id": run.get("run_id"),
-                    "module_id": run.get("module_id"),
-                    "status": run.get("status"),
-                    "started_at": run.get("started_at"),
-                    "total_hits": run.get("total_hits", 0),
-                    "hits_by_level": run.get("hits_by_level", {}),
-                }
-            )
-    except Exception:
-        pass
+        from services import module_runs as run_svc
+
+        runs = run_svc.list_case_module_runs(case_id) or []
+    except Exception as exc:
+        return {"query_status": "invalid", "query_error": str(exc)[:200]}
+
+    out = [
+        {
+            "run_id": run.get("run_id"),
+            "module_id": run.get("module_id"),
+            "status": run.get("status"),
+            "started_at": run.get("started_at"),
+            "total_hits": run.get("total_hits", 0),
+            "hits_by_level": run.get("hits_by_level") or {},
+        }
+        for run in runs[:50]
+    ]
     out.sort(key=lambda x: -(x.get("total_hits") or 0))
-    return {"runs": out, "total": len(out), "query_status": "ok"}
+    res = {"runs": out, "total": len(out), "query_status": "ok"}
+    unfinished = [r_["run_id"] for r_ in out if (r_.get("status") or "").upper() in ("PENDING", "RUNNING")]
+    if unfinished:
+        res["note"] = (
+            f"{len(unfinished)} run(s) still in flight ({', '.join(unfinished[:3])}) — "
+            "their results are not final yet."
+        )
+    return res
 
 
 def _tool_entity_graph(case_id: str, step: dict) -> dict:
@@ -5163,6 +5212,16 @@ def _agent_run(
     ledger: dict = {"facts": [], "iocs": set(), "hosts": set(), "users": set()}
     conclude_gate_used = False  # evidence-cited conclude re-prompt fires at most once
     query_cache: dict = {}  # (action,args) → {step, result} for same-query dedup
+    # (action,args) → times that exact call came back query_status="invalid".
+    # Failures were never cached (only "ok" results are), so a broken tool could
+    # be re-invoked forever: one real run burned 15 of its 40 steps re-calling
+    # read_module_result against a tool that raised on every call, then
+    # concluded "inconclusive" from a question it had never actually asked.
+    failed_sigs: dict = {}
+    # Give up on an exact failing call after this many attempts. Two lets the
+    # agent retry a genuine transient (a module still spinning up); the third
+    # is a loop.
+    _MAX_SAME_FAILURES = 2
 
     # Admin-configurable capability policy (Settings → Pilot). Disabled tools
     # are rejected at dispatch; web_search is implicitly off unless enabled +
@@ -5746,6 +5805,33 @@ def _agent_run(
             action,
             tuple((k, step.get(k)) for k in _ARG_KEYS if step.get(k) is not None),
         )
+
+        # Hard stop on a call that has already failed the same way twice. The
+        # advisory "no_signal" nudge below is not enough on its own — a model
+        # that has decided a tool is load-bearing will keep calling it and burn
+        # the whole step budget.
+        if failed_sigs.get(sig, 0) >= _MAX_SAME_FAILURES:
+            step.update(
+                {
+                    "query_status": "invalid",
+                    "query_error": (
+                        f"BLOCKED — '{action}' with these exact arguments has already "
+                        f"failed {failed_sigs[sig]} times and will not be retried. "
+                        "It is not going to start working. Either call it with "
+                        "DIFFERENT arguments, use a different tool, or conclude — "
+                        "and if this data was load-bearing, say in your conclusion "
+                        "that the tool failed rather than reporting its absence as "
+                        "an absence of evidence."
+                    ),
+                }
+            )
+            transcript.append(step)
+            if run_id:
+                _append_step_log(case_id, run_id, step)
+                _update_active_run(case_id, run_id, step_count=len(transcript))
+            yield {"type": "step", "step": step}
+            continue
+
         if action in _CACHEABLE and sig in query_cache:
             cached = query_cache[sig]
             step.update(cached["result"])
@@ -5761,6 +5847,8 @@ def _agent_run(
             step.update(result)
             if action in _CACHEABLE and step.get("query_status") == "ok":
                 query_cache[sig] = {"step": step_no, "result": result}
+            if step.get("query_status") == "invalid":
+                failed_sigs[sig] = failed_sigs.get(sig, 0) + 1
 
         # Field coverage: tell the agent when the fields it just constrained
         # cannot see the whole case. This runs on hits AND on misses — a query

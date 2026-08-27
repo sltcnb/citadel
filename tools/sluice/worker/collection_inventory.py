@@ -169,6 +169,131 @@ DOCKER_INSPECT = (
     b'"Config":{"Image":"nginx:latest","Cmd":["nginx","-g","daemon off;"]}}]\n'
 )
 
+# macOS `log show` with no --style: the fixed-width column table Talon writes
+# as the fallback when the JSON export is refused. Two preamble lines and a
+# column header come first, exactly as the real tool emits them.
+UNIFIED_LOG_TEXT = (
+    b'Filtering the log data using "senderImagePath CONTAINS \'dnt\'"\n'
+    b"Skipping info and debug messages, pass --info and/or --debug to include.\n"
+    b"Timestamp                       Thread     Type        Activity             PID    TTL\n"
+    b"2026-08-25 09:00:00.123456+0200 0x1a2b3    Default     0x0                  501    0    "
+    b"mDNSResponder: [com.apple.mDNSResponder:dns] query A dntds.shop\n"
+    b"2026-08-25 09:00:01.456789+0200 0x1a2b4    Error       0x1f2                812    0    "
+    b"updater: (libnetwork.dylib) nw_connection failed\n"
+)
+
+# macOS system_triage.txt — the banner-delimited concatenation of ~18 command
+# outputs that MacOSCollector._system_triage writes. Only a few sections are
+# needed to prove routing and non-empty parsing; the plugin's own suite covers
+# each section's format.
+MACOS_TRIAGE = (
+    b"\n" + b"=" * 60 + b"\nOS VERSION\n" + b"=" * 60 + b"\n"
+    b"ProductName:\tmacOS\nProductVersion:\t14.4.1\nBuildVersion:\t23E224\n"
+    b"\n" + b"=" * 60 + b"\nUNAME\n" + b"=" * 60 + b"\n"
+    b"Darwin L20336 23.4.0 Darwin Kernel Version 23.4.0: Fri Mar  8 22:33:00 PST 2024; "
+    b"root:xnu-10063.101.15~3/RELEASE_ARM64_T6020 arm64\n"
+    b"\n" + b"=" * 60 + b"\nPROCESSES\n" + b"=" * 60 + b"\n"
+    b"USER               PID  %CPU %MEM      VSZ    RSS   TT  STAT STARTED      TIME COMMAND\n"
+    b"tmoll              812   0.0  0.1  33812345   8192   ??  S     9:12AM   0:00.31 "
+    b"/Users/tmoll/Library/Application Support/.dnt/updater --silent\n"
+    b"\n" + b"=" * 60 + b"\nNETWORK SOCKETS\n" + b"=" * 60 + b"\n"
+    b"Active Internet connections (including servers)\n"
+    b"Proto Recv-Q Send-Q  Local Address          Foreign Address        (state)\n"
+    b"tcp4       0      0  192.168.1.10.52344     178.16.53.137.443      ESTABLISHED "
+    b"131072 131072   812     0\n"
+    b"\n" + b"=" * 60 + b"\nLAUNCH DAEMONS\n" + b"=" * 60 + b"\n"
+    b"PID\tStatus\tLabel\n812\t0\tcom.dnt.updater\n"
+)
+
+# macOS LaunchServices quarantine store. A real SQLite file is required — the
+# parser opens it — so it is built at import time rather than hard-coded.
+def _quarantine_db() -> bytes:
+    import sqlite3 as _sq3
+    import tempfile as _tf
+    from pathlib import Path as _P
+
+    with _tf.TemporaryDirectory() as _td:
+        _f = _P(_td) / "q.sqlite"
+        _c = _sq3.connect(_f)
+        _c.execute(
+            "CREATE TABLE LSQuarantineEvent ("
+            "LSQuarantineEventIdentifier TEXT PRIMARY KEY NOT NULL,"
+            "LSQuarantineTimeStamp REAL,"
+            "LSQuarantineAgentBundleIdentifier TEXT,"
+            "LSQuarantineAgentName TEXT,"
+            "LSQuarantineDataURLString TEXT,"
+            "LSQuarantineSenderName TEXT,"
+            "LSQuarantineSenderAddress TEXT,"
+            "LSQuarantineTypeNumber INTEGER,"
+            "LSQuarantineOriginTitle TEXT,"
+            "LSQuarantineOriginURLString TEXT,"
+            "LSQuarantineOriginAlias BLOB)"
+        )
+        _c.execute(
+            "INSERT INTO LSQuarantineEvent VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                "F1A2-B3C4",
+                807_699_120.0,  # Cocoa seconds → 2026-08-06T09:32:00Z
+                "com.google.Chrome",
+                "Google Chrome",
+                "https://cdn.dntds.shop/setup.dmg",
+                "",
+                "",
+                2,
+                "Free Mac Cleaner",
+                "https://dntds.shop/download",
+                None,
+            ),
+        )
+        _c.commit()
+        _c.close()
+        return _f.read_bytes()
+
+
+QUARANTINE_DB = _quarantine_db()
+
+
+# Desktop Safari's History.db. Same filename and schema as iOS Safari, so the
+# router separates them by path — hence the full arcname on the row below.
+def _safari_history_db() -> bytes:
+    import sqlite3 as _sq3
+    import tempfile as _tf
+    from pathlib import Path as _P
+
+    with _tf.TemporaryDirectory() as _td:
+        _f = _P(_td) / "History.db"
+        _c = _sq3.connect(_f)
+        _c.execute(
+            "CREATE TABLE history_items (id INTEGER PRIMARY KEY, url TEXT, visit_count INTEGER)"
+        )
+        _c.execute(
+            "CREATE TABLE history_visits (id INTEGER PRIMARY KEY, history_item INTEGER, "
+            "visit_time REAL, title TEXT, redirect_source INTEGER, redirect_destination INTEGER)"
+        )
+        _c.execute("INSERT INTO history_items VALUES (1,'https://dntds.shop/download',3)")
+        _c.execute(
+            "INSERT INTO history_visits VALUES (1,1,807698400.0,'Free Mac Cleaner',NULL,NULL)"
+        )
+        _c.commit()
+        _c.close()
+        return _f.read_bytes()
+
+
+SAFARI_HISTORY_DB = _safari_history_db()
+
+# macOS /var/log/install.log — ISO timestamp with a TWO-digit offset.
+MACOS_INSTALL_LOG = (
+    b"2026-08-25 09:00:00+02 L20336 softwareupdated[456]: Descriptor state: Downloaded\n"
+    b"2026-08-25 09:12:31+02 L20336 installer[812]: PackageKit: Install Failed: "
+    b"/Users/tmoll/Downloads/setup.pkg\n"
+)
+
+# macOS /var/log/wifi.log — association history, its own format.
+MACOS_WIFI_LOG = (
+    b"Mon Aug 25 09:00:00.000 <airportd[123]> _handleLinkEvent: en0 associated to CORP-WIFI\n"
+    b"Mon Aug 25 09:30:12.451 <airportd[123]> _processSSIDList: scan complete\n"
+)
+
 UNIFIED_LOG_NDJSON = (
     b'{"timestamp":"2026-01-15 10:00:01.123456+0000","subsystem":"com.apple.securityd",'
     b'"eventMessage":"authorization granted","processImagePath":"/usr/sbin/securityd"}\n'
@@ -371,16 +496,16 @@ ARTIFACTS: list[Artifact] = [
     _a("lnk", "lnk/jdoe/report.lnk", b"L\x00\x00\x00\x01\x14\x02\x00" + b"\x00" * 500, "lnk"),
     _a("browser", "browser/chrome/jdoe/Default/History", SQLITE, "browser"),
     _a("browser", "browser/firefox/jdoe/x.default/places.sqlite", SQLITE, "browser"),
+    # macOS LSQuarantine: every downloaded file with the URL it came from AND
+    # the page that referred to it — the cleanest download-provenance artifact
+    # on macOS. Was an open gap routing to `strings`; the browser parser now
+    # claims it by name and reads LSQuarantineEvent.
     _a(
         "browser",
         "browser/jdoe/quarantine_events.sqlite",
-        SQLITE,
-        None,
-        gap="macOS LSQuarantine records every downloaded file with its origin URL "
-        "and the app that fetched it — the cleanest download-provenance "
-        "artifact on macOS. Needs its own SQLite parser; the browser parser "
-        "deliberately refuses unknown databases rather than claim and emit 0 "
-        "events",
+        QUARANTINE_DB,
+        "browser",
+        mime="application/vnd.sqlite3",
     ),
     _a("tasks", "scheduled_tasks/Microsoft/Windows/UpdateOrchestrator", TASK_XML, "scheduled_task"),
     _a("mft", "mft/C_$MFT", b"FILE0\x00\x03\x00" + b"\x00" * 1017, "mft"),
@@ -1040,6 +1165,26 @@ ARTIFACTS: list[Artifact] = [
         "macos_uls",
         mime="application/x-ndjson",
     ),
+    _a(
+        "logs",
+        "logs/unified_logs.log",
+        UNIFIED_LOG_TEXT,
+        "macos_uls",
+        mime="text/plain",
+    ),
+    _a("logs", "logs/system.log", SYSLOG, "syslog", mime="text/plain"),
+    _a("logs", "logs/install.log", MACOS_INSTALL_LOG, "syslog", mime="text/plain"),
+    _a("logs", "logs/wifi.log", MACOS_WIFI_LOG, "syslog", mime="text/plain"),
+    _a("triage", "system_triage.txt", MACOS_TRIAGE, "macos_triage", mime="text/plain"),
+    _a(
+        "browser",
+        "browser/tmoll/safari/History.db",
+        SAFARI_HISTORY_DB,
+        "browser",
+        mime="application/vnd.sqlite3",
+    ),
+    _a("history", "history/tmoll/.zsh_history", SHELL_HISTORY, "shell_history", mime="text/plain"),
+    _a("config", "config/SystemVersion.plist", BPLIST, "plist"),
     _a("plist", "plist/Library/Preferences/com.apple.loginwindow.plist", XML_PLIST, "plist"),
     _a("plist", "plist/Library/Preferences/com.apple.dock.plist", BPLIST, "plist"),
     _a("launchagents", "launchagents/LaunchDaemons/com.evil.agent.plist", XML_PLIST, "plist"),
