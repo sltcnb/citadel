@@ -2152,7 +2152,7 @@ At every step return ONE JSON object — no markdown, no commentary outside it:
 
   {
     "thought": "what you're trying to verify and why",
-    "action":  "set_hypotheses" | "search" | "aggregate" | "inspect" | "time_window" | "correlate" | "mitre_hits" | "entity_graph" | "stack_rare" | "cti_seen_before" | "detection_rules" | "watchlist" | "module_runs" | "list_modules" | "launch_module" | "read_module_result" | "ioc_sweep" | "host_profile" | "findings" | "save_finding" | "conclude",
+    "action":  "set_hypotheses" | "search" | "aggregate" | "inspect" | "time_window" | "correlate" | "mitre_hits" | "entity_graph" | "stack_rare" | "cti_seen_before" | "detection_rules" | "watchlist" | "module_runs" | "list_modules" | "launch_module" | "read_module_result" | "ioc_sweep" | "host_profile" | "request_collection" | "findings" | "save_finding" | "conclude",
 
     // action=search — full Elasticsearch query_string against fo-case-{id}-*
     "query":   "host.hostname:DESKTOP-* AND artifact_type:evtx",
@@ -3551,6 +3551,64 @@ def _tool_host_profile(case_id: str, step: dict) -> dict:
     )
 
 
+def _tool_request_collection(case_id: str, step: dict) -> dict:
+    """Turn an analysis gap into a runnable Talon instruction.
+
+    The return path the pipeline never had. "Not enough evidence" is the most
+    common Pilot verdict, and it repeats because nothing carries the finding
+    back to the stage that could fix it. This emits categories and --fetch
+    paths for a named host; it does NOT run anything — collecting against a
+    production host is an operator's decision.
+    """
+    from pilot.collection import infer_os, plan_collection
+
+    host = str(step.get("host") or "").strip()
+    if not host:
+        return {
+            "query_status": "invalid",
+            "query_error": (
+                'request_collection needs a host: {"action":"request_collection",'
+                '"host":"WS01","artifact_types":["browser","process"]}'
+            ),
+        }
+    wanted = step.get("artifact_types") or step.get("missing") or []
+    if isinstance(wanted, str):
+        wanted = [wanted]
+    if not wanted:
+        return {
+            "query_status": "invalid",
+            "query_error": 'request_collection needs artifact_types: ["browser","process",…]',
+        }
+
+    os_family = str(step.get("os") or "").strip().lower()
+    if os_family not in ("windows", "linux", "macos"):
+        try:
+            ctx_types = _gather_case_context(case_id).get("artifact_types") or []
+        except Exception:  # noqa: BLE001
+            ctx_types = []
+        os_family = infer_os(ctx_types)
+
+    req = plan_collection(
+        [str(x) for x in wanted],
+        host=host,
+        os_family=os_family,
+        extra_paths=step.get("paths") or [],
+    )
+    out = {"query_status": "ok", **req.as_dict()}
+    if not req.is_actionable:
+        out["note"] = (
+            "None of those artifact types map to a collection this OS can "
+            "produce. Name the file paths directly via \"paths\" if you know them."
+        )
+    else:
+        out["note"] = (
+            "Collection REQUEST recorded — nothing has run. Include this in your "
+            "conclusion as the concrete next step, with the command, so the "
+            "operator can action it."
+        )
+    return out
+
+
 def _tool_module_runs(case_id: str, step: dict) -> dict:
     """List completed module runs for this case (Hayabusa / Sigma scanners /
     YARA / Volatility / etc) with their hit counts. Lets the agent answer
@@ -4006,6 +4064,7 @@ AGENT_TOOLS = {
     "read_module_result": _tool_read_module_result,
     "ioc_sweep": _tool_ioc_sweep,
     "host_profile": _tool_host_profile,
+    "request_collection": _tool_request_collection,
     "web_search": _tool_web_search,
 }
 
@@ -5266,10 +5325,15 @@ def _agent_run(
     # browser artifacts, and a run that tries anyway is the 40-step
     # "inconclusive" this block exists to prevent.
     specialist_block = ""
+    _plan_answerable = True
+    _viable_lenses: list[str] = []
     try:
         from pilot.specialists import plan as _spec_plan, plan_block as _spec_block
 
-        specialist_block = _spec_block(_spec_plan(ctx.get("artifact_types") or []))
+        _plan = _spec_plan(ctx.get("artifact_types") or [])
+        specialist_block = _spec_block(_plan)
+        _plan_answerable = _plan.is_answerable
+        _viable_lenses = [x.id for x in _plan.viable]
     except Exception:  # noqa: BLE001 - grounding is best-effort, never fatal
         specialist_block = ""
 
@@ -5378,7 +5442,37 @@ def _agent_run(
     # conclude block after the loop).
     llm_error: str | None = None
 
+    supervisor_note = ""  # injected into the next turn when control speaks
+
     for step_no in range(1, max_steps + 1):
+        # ── Supervision ───────────────────────────────────────────────────────
+        # Direction and stopping are not the agent's to decide. The guards below
+        # this point are loop detectors — they answer "are you repeating
+        # yourself", which is a different question from "is this line of inquiry
+        # still productive" and cannot catch a run issuing varied, well-formed
+        # queries against evidence that was never collected.
+        try:
+            from pilot.supervisor import CONCLUDE as _SUP_CONCLUDE
+            from pilot.supervisor import assess as _sup_assess
+
+            _directive = _sup_assess(
+                transcript,
+                step_no=step_no,
+                max_steps=max_steps,
+                plan_answerable=_plan_answerable,
+                viable_lenses=_viable_lenses,
+            )
+            supervisor_note = _directive.as_prompt()
+            if _directive.action == _SUP_CONCLUDE:
+                # Do not terminate the run outright — the agent still has to
+                # WRITE the conclusion, and a truncated run produces no verdict
+                # at all. Force the next turn to be that conclusion.
+                supervisor_note += (
+                    "\nYour next action MUST be 'conclude'. No further tool calls.\n"
+                )
+        except Exception:  # noqa: BLE001 - control is advisory; never kill a run
+            supervisor_note = ""
+
         # Stale-progress detection — but NO force-conclude. Instead, the
         # agent gets a stronger diversify nudge each time the stale streak
         # extends. The agent only stops when it actually concludes with a
@@ -5754,6 +5848,9 @@ def _agent_run(
             + f"\nTranscript so far:\n{hist}\n"
             + focus_anchor
             + stale_nudge
+            # Last, so it is the closest instruction to the model's turn: the
+            # supervisor overrides the agent's own sense of what to do next.
+            + supervisor_note
             + f"\nThis is step {step_no} of {max_steps}. Output the next JSON object."
         )
         try:
@@ -5907,7 +6004,7 @@ def _agent_run(
             "search", "aggregate", "inspect", "time_window", "correlate",
             "mitre_hits", "module_runs", "detection_rules", "watchlist",
             "list_modules", "cti_seen_before", "entity_graph", "stack_rare",
-            "ioc_sweep", "host_profile",
+            "ioc_sweep", "host_profile", "request_collection",
         }
         sig = (
             action,
