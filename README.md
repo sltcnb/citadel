@@ -52,7 +52,7 @@ Each tool is its own product (`tools/<name>`), with its own CLI and `brick.yaml`
 |------|------|----------------|
 | **Talon** | Acquisition agent — host/disk/mount → artifact bundle | `talon collect --out case.bundle` |
 | **Sluice** | Intake & routing — bundle/file/dir → routed events | `sluice ingest case.bundle` |
-| **Babel** | Parser library — artifact → `ForensicEvent` (40+ packs) | `babel parse Security.evtx` |
+| **Babel** | Parser library — artifact → `ForensicEvent` (51 packs) | `babel parse Security.evtx` |
 | **Rosetta** | Canonicalizer — `ForensicEvent` → ECS v8 + OSSEM | `rosetta normalize ev.jsonl` |
 | **Sigil** | Detection engine — ECS + rules → detections | `sigil validate ./rules/` |
 | **Anvil** | Analysis runner — artifact + module → findings | `anvil run volatility3 -a mem.raw` |
@@ -66,7 +66,7 @@ Each tool is its own product (`tools/<name>`), with its own CLI and `brick.yaml`
 | Area | What |
 |------|------|
 | **Acquisition** | Talon live + dead-box (Windows/Linux/macOS/server); in-app Harvest from a mounted image/path; resumable encrypted upload; gRPC remote agent (mTLS) |
-| **Ingestion** | 40+ parsers, 80+ forensic formats auto-detected (EVTX, MFT, Registry, Prefetch, LNK, PCAP, Plaso, syslog, Zeek, Suricata, browsers, Android/iOS, disk images) |
+| **Ingestion** | 51 parsers, 80+ forensic formats auto-detected (EVTX, MFT, Registry, Prefetch, LNK, PCAP, Plaso, syslog, Zeek, Suricata, browsers, Android/iOS, disk images) |
 | **Detection** | 1 666 built-in rules (1 487 Sigma across 13 ATT&CK tactics + 179 native ES queries); Sigma→ES conversion; ATT&CK coverage matrix; runtime opt-out |
 | **Analysis** | Hayabusa, RegRipper, YARA, Volatility3, capa/FLOSS, oletools, PE/strings, CTI IOC matching — typed `BaseModule` + DAG pipelines |
 | **Search & normalize** | ES full-text + facets, saved queries, timeline, CSV export, cross-case search; `ForensicEvent → ECS v8` + OSSEM with GeoIP/ASN/rDNS enrichment |

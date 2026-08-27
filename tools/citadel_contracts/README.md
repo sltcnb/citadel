@@ -72,6 +72,12 @@ Anything that crosses a tool boundary in the suite is defined by these files. Th
 pytest test_validator.py   # or: pytest .
 ```
 
+## License
+
+[PolyForm Noncommercial 1.0.0](LICENSE) — run, modify and self-host for any
+**noncommercial** purpose. Commercial use requires prior written authorization
+signed by the copyright holder. See [LICENSING.md](LICENSING.md).
+
 ---
 
 Part of the **[Citadel](https://github.com/sltcnb/citadel)** DFIR suite — every Citadel tool depends on this package.

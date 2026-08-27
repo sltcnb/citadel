@@ -2,7 +2,7 @@
 
 > Many tongues, one event: turn any forensic artifact into a normalized `ForensicEvent`.
 
-**Status: built** — 40+ parser packs across Windows, Linux, macOS, mobile, network, cloud, container, and generic formats.
+**Status: built** — 51 parser packs across Windows, Linux, macOS, mobile, network, cloud, container, and generic formats.
 
 Babel is a pure parser library. Each parser is a `BasePlugin` subclass that reads a raw artifact and yields `ForensicEvent` dicts (required `timestamp` + `message`; structured types carry their `raw` record). It has no dependencies on the rest of the suite — it runs standalone or inside Sluice.
 
@@ -21,7 +21,7 @@ Sluice ──routes a file──▶ Babel ──ForensicEvent──▶ Rosetta �
 
 No registry. The loader scans the built-in packs plus any custom-ingester directory for `BasePlugin` subclasses. Each parser declares `PLUGIN_PRIORITY` (≈100 for a dedicated handler, ≈10 for a generic fallback); the highest-priority parser that matches the content wins. Custom ingesters authored in **Studio** drop in as Python modules and are picked up on the next scan — no edit to any manifest.
 
-Parser packs include: `access_log`, `android`, `antivirus`, `apt_history`, `archive`, `auditd`, `browser`, `cloud_audit` (AWS/Azure/GCP), `crictl`, `dd_image`, `diskimage`, `docker`, `evtx`, `hayabusa`, `ios`, `iptables`, `json_file`, `jumplist`, `k3s`, `k8s_resources`, `lastlog`, `linux_config`, `linux_triage`, `lnk`, `log2timeline`, `macos_uls`, `markofweb`, `mft`, `ndjson`, `netstat`, `notifications`, `pcap`, `plaso`, `plist`, `prefetch`, `recyclebin`, `registry`, `scheduled_task`, `shell_history`, `strings_fallback`, `suricata`, `syslog`, `timestamped_log`, `trend_telemetry`, `utmp`, `wer`, `win_timeline`, `windows_triage`, `wlan_profile`, `zeek`.
+Parser packs include: `access_log`, `android`, `antivirus`, `apt_history`, `archive`, `auditd`, `browser`, `cloud_audit` (AWS/Azure/GCP), `crictl`, `dd_image`, `diskimage`, `docker`, `evtx`, `hayabusa`, `ios`, `iptables`, `json_file`, `jumplist`, `k3s`, `k8s_resources`, `lastlog`, `linux_config`, `linux_triage`, `lnk`, `log2timeline`, `macos_triage`, `macos_uls`, `markofweb`, `mft`, `ndjson`, `netstat`, `notifications`, `pcap`, `plaso`, `plist`, `prefetch`, `recyclebin`, `registry`, `scheduled_task`, `shell_history`, `strings_fallback`, `suricata`, `syslog`, `timestamped_log`, `trend_telemetry`, `utmp`, `wer`, `win_timeline`, `windows_triage`, `wlan_profile`, `zeek`.
 
 ## Contracts
 
@@ -85,6 +85,12 @@ BABEL_REGEN_GOLDEN=1 pytest tests/test_golden.py    # regenerate golden fixtures
 Sluice calls Babel for every routed artifact; events are validated, indexed into Elasticsearch, and normalized by Rosetta. The live parser set is advertised to the UI (`GET /plugins`), and Studio-authored parsers appear without a manifest edit.
 
 See `forensic_event.schema.json` and the `BasePlugin` contract in [github.com/sltcnb/citadel-contracts](https://github.com/sltcnb/citadel-contracts).
+
+## License
+
+[PolyForm Noncommercial 1.0.0](LICENSE) — run, modify and self-host for any
+**noncommercial** purpose. Commercial use requires prior written authorization
+signed by the copyright holder. See [LICENSING.md](LICENSING.md).
 
 ## Part of the Citadel suite
 

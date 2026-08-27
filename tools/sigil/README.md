@@ -75,6 +75,12 @@ pytest test_rule_match.py           # rule matching against sample_events/ (also
 
 The platform converts Sigma to ES queries, runs the rule library against a case timeline, and surfaces matches as detections (with runtime per-case opt-out and an ATT&CK coverage view). Native and imported rules are managed under the Detection Rules and YARA Rules surfaces.
 
+## License
+
+[PolyForm Noncommercial 1.0.0](LICENSE) — run, modify and self-host for any
+**noncommercial** purpose. Commercial use requires prior written authorization
+signed by the copyright holder. See [LICENSING.md](LICENSING.md).
+
 ## Part of the Citadel suite
 
 Sigil is the detect stage of [Citadel](https://github.com/sltcnb/citadel). Upstream: [Rosetta](https://github.com/sltcnb/rosetta) (normalized ECS event stream). Downstream: the case timeline and [Pilot](https://github.com/sltcnb/pilot). Runtime dependency (`brick.yaml`): Elasticsearch. Contracts: [citadel-contracts](https://github.com/sltcnb/citadel-contracts).

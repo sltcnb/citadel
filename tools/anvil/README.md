@@ -74,6 +74,12 @@ The API exposes modules at `GET /modules` and dispatches runs to the worker; res
 
 See the `BaseModule` / `Result` contract in the `citadel_contracts` package ([github.com/sltcnb/citadel-contracts](https://github.com/sltcnb/citadel-contracts)) and [`result.schema.json`](result.schema.json).
 
+## License
+
+[PolyForm Noncommercial 1.0.0](LICENSE) — run, modify and self-host for any
+**noncommercial** purpose. Commercial use requires prior written authorization
+signed by the copyright holder. See [LICENSING.md](LICENSING.md).
+
 ## Part of the Citadel suite
 
 Anvil is the deep-analysis stage of [Citadel](https://github.com/sltcnb/citadel). **Upstream:** artifacts arrive via [sluice](https://github.com/sltcnb/sluice) (worker/) after canonicalization by [rosetta](https://github.com/sltcnb/rosetta). **Downstream:** findings land on the case timeline and feed [pilot](https://github.com/sltcnb/pilot) and [scribe](https://github.com/sltcnb/scribe). Runtime service dependency (from `brick.yaml`): **Redis** — queue, cancel flags, per-run log streaming.

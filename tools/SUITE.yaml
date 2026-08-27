@@ -20,7 +20,7 @@ tools:
     status: built
     brick: tools/sluice/brick.yaml
   - name: Babel
-    role: Parser library (43 parsers)
+    role: Parser library (51 parsers)
     kind: parser-lib
     path: tools/babel
     repository: babel
