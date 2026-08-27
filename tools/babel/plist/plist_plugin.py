@@ -1,13 +1,38 @@
 """
-Generic plist plugin — parses any Apple Property List (.plist) file.
-Handles both XML and binary (bplist) formats using stdlib plistlib.
+plist plugin — Apple Property Lists, XML and binary, via stdlib plistlib.
 
-Each top-level key becomes one event. Nested dicts/lists are preserved
-verbatim in the ``raw`` dict so analysts have the full original record.
+Most plists are configuration and the right output is a key/value dump. A few
+carry the evidence a macOS investigation actually turns on, and for those a
+dump is worse than useless — it scatters one fact across N events and elides
+the part that matters. A LaunchDaemon used to come out as seven disconnected
+rows, the load-bearing one reading::
 
-Priority 20 — runs after iOS plugin (default 50) so iOS-specific files
-like Info.plist and WiFi plists are already claimed before this plugin
-sees them.
+    com.evil.agent.plist | ProgramArguments = <list 2 items>
+
+The executable path — the whole point of the artifact — appeared nowhere in
+any message, so searching for it found nothing. These get a semantic handler:
+
+  launchd job (Label + Program/ProgramArguments)
+      → ONE ``persistence`` event carrying the full command line, the trigger
+        (RunAtLoad / StartInterval / WatchPaths / StartCalendarInterval) and a
+        flag for a job running from a user-writable path.
+  Safari Downloads.plist (DownloadHistory)
+      → ``browser`` download events with the source URL.
+  Login items (loginwindow / com.apple.loginitems)
+      → ``persistence`` events, one per item.
+
+Everything else keeps the per-key dump, but the message now carries real
+content instead of ``<list N items>``: a container of scalars is rendered
+inline, so its values are searchable in the timeline rather than only in the
+structured ``plist.value`` object.
+
+NSKeyedArchiver payloads ($archiver/$objects/$top) are resolved back into the
+object graph they encode before any of the above runs. plistlib returns them
+as a flat $objects table with integer back-references, which dumps as an
+unreadable soup of indices.
+
+Priority 20 — runs after the iOS plugin (default 50) so iOS-specific files
+like Info.plist and the WiFi plists are claimed before this plugin sees them.
 """
 
 from __future__ import annotations
@@ -91,9 +116,70 @@ def _summary(val: Any, max_len: int = 200) -> str:
             else "{" + ", ".join(f"{k}={_summary(v, 40)}" for k, v in val.items()) + "}"
         )
     if isinstance(val, list):
+        # Render a list of scalars inline. "<list 2 items>" hid the one thing
+        # worth reading — a LaunchDaemon's ProgramArguments IS the command line,
+        # and eliding it made the executable path unsearchable.
+        if val and all(isinstance(v, (str, int, float, bool)) for v in val):
+            joined = " ".join(str(v) for v in val)
+            return joined if len(joined) <= max_len else joined[:max_len] + "…"
         return f"<list {len(val)} items>"
     s = str(val)
     return s if len(s) <= max_len else s[:max_len] + "…"
+
+
+# ── Semantic plist shapes ─────────────────────────────────────────────────────
+
+# A launchd job is identified by shape, not filename: Talon collects these from
+# /Library/LaunchDaemons, ~/Library/LaunchAgents and several other roots, and
+# malware is free to name the file anything.
+def _is_launchd_job(data: Any) -> bool:
+    return (
+        isinstance(data, dict)
+        and "Label" in data
+        and ("Program" in data or "ProgramArguments" in data)
+    )
+
+
+# Paths any user can write to. A launchd job whose executable lives here is the
+# classic macOS persistence pattern; one under /usr/libexec or /System is the OS.
+_USER_WRITABLE = ("/Users/", "/tmp/", "/var/tmp/", "/private/tmp/", "/Volumes/")
+
+
+def _launchd_command(data: dict) -> tuple[str, str]:
+    """Return (executable, full command line) for a launchd job."""
+    args = data.get("ProgramArguments")
+    program = data.get("Program")
+    if isinstance(args, list) and args:
+        argv = [str(a) for a in args]
+        # Program wins as argv[0] when both are present — that is launchd's own
+        # rule, and a job can point Program at one binary while argv[0] lies.
+        exe = str(program) if program else argv[0]
+        return exe, " ".join(argv)
+    if program:
+        return str(program), str(program)
+    return "", ""
+
+
+def _launchd_trigger(data: dict) -> str:
+    """Human summary of what makes the job run."""
+    parts: list[str] = []
+    if data.get("RunAtLoad"):
+        parts.append("at load")
+    if data.get("KeepAlive"):
+        parts.append("kept alive")
+    interval = data.get("StartInterval")
+    if isinstance(interval, int):
+        parts.append(f"every {interval}s")
+    if data.get("StartCalendarInterval"):
+        parts.append("on a calendar schedule")
+    watch = data.get("WatchPaths")
+    if isinstance(watch, list) and watch:
+        parts.append(f"on changes to {', '.join(str(w) for w in watch[:3])}")
+    if data.get("StartOnMount"):
+        parts.append("on mount")
+    if isinstance(data.get("Sockets"), dict):
+        parts.append("on socket activity")
+    return ", ".join(parts) or "on demand"
 
 
 def _pick_timestamp(value: Any) -> str | None:
@@ -110,6 +196,60 @@ def _pick_timestamp(value: Any) -> str | None:
                     v = v.replace(tzinfo=UTC)
                 return v.isoformat()
     return None
+
+
+def _resolve_nskeyedarchiver(data: Any, _depth: int = 0) -> Any:
+    """Rebuild the object graph an NSKeyedArchiver plist encodes.
+
+    plistlib decodes the container faithfully and that is the problem: the
+    payload is a flat ``$objects`` table plus ``$top`` holding integer indices
+    into it, so a dump is a soup of numbers with the real strings sitting in a
+    side table. Follow the references once, here, and every handler downstream
+    sees ordinary dicts and lists.
+
+    Returns *data* unchanged when it is not an archive, so this is safe to run
+    over everything.
+    """
+    if not (isinstance(data, dict) and "$objects" in data and "$top" in data):
+        return data
+    objects = data.get("$objects")
+    if not isinstance(objects, list):
+        return data
+
+    def deref(value: Any, depth: int) -> Any:
+        # Cyclic graphs are legal in an archive (a parent holding its children
+        # holding the parent); bound the walk rather than trusting the data.
+        if depth > 24:
+            return "<max depth>"
+        if isinstance(value, plistlib.UID):
+            idx = int(value.data)
+            if not (0 <= idx < len(objects)):
+                return None
+            resolved = objects[idx]
+            # $null is the archive's None.
+            if resolved == "$null":
+                return None
+            return deref(resolved, depth + 1)
+        if isinstance(value, dict):
+            out = {}
+            for k, v in value.items():
+                if k == "$class":  # bookkeeping, not payload
+                    continue
+                out[str(k)] = deref(v, depth + 1)
+            return out
+        if isinstance(value, list):
+            return [deref(v, depth + 1) for v in value]
+        return value
+
+    try:
+        top = deref(data.get("$top"), _depth)
+    except Exception:
+        return data
+    # A single-rooted archive ("root") is the common case; unwrap it so callers
+    # see the payload rather than a one-key wrapper.
+    if isinstance(top, dict) and set(top) == {"root"}:
+        return top["root"]
+    return top if top is not None else data
 
 
 class PlistPlugin(BasePlugin):
@@ -158,6 +298,25 @@ class PlistPlugin(BasePlugin):
 
         filename = fp.name
         mtime = _file_mtime_iso(fp)
+
+        # Archives first: every handler below wants the decoded object graph,
+        # not the $objects/$top index table plistlib hands back.
+        data = _resolve_nskeyedarchiver(data)
+
+        # Semantic shapes — these carry the evidence a macOS case turns on, and
+        # a key/value dump destroys them. Each returns a complete event stream,
+        # so the generic dump below is skipped entirely.
+        if _is_launchd_job(data):
+            yield from self._parse_launchd(data, filename, mtime)
+            return
+        downloads = self._safari_downloads(data)
+        if downloads is not None:
+            yield from self._parse_safari_downloads(downloads, filename, mtime)
+            return
+        login_items = self._login_items(data)
+        if login_items is not None:
+            yield from self._parse_login_items(login_items, filename, mtime)
+            return
 
         if isinstance(data, dict):
             for key, value in data.items():
@@ -216,4 +375,159 @@ class PlistPlugin(BasePlugin):
                     "filename": filename,
                     "value": jv,
                 },
+            }
+
+    # ── launchd job (LaunchAgents / LaunchDaemons) ────────────────────────────
+
+    def _parse_launchd(
+        self, data: dict, filename: str, mtime: str
+    ) -> Generator[dict[str, Any], None, None]:
+        """One event per job, not one per key.
+
+        macOS persistence is a single fact — "this label runs this command on
+        this trigger" — and splitting it across seven rows means no single
+        event answers the question an analyst asks.
+        """
+        label = str(data.get("Label") or "")
+        exe, command = _launchd_command(data)
+        trigger = _launchd_trigger(data)
+        disabled = bool(data.get("Disabled"))
+        user_writable = exe.startswith(_USER_WRITABLE)
+        run_as = data.get("UserName")
+
+        bits = [f"launchd job {label or filename}"]
+        if command:
+            bits.append(f"runs {command}")
+        bits.append(trigger)
+        if run_as:
+            bits.append(f"as {run_as}")
+        if disabled:
+            bits.append("[disabled]")
+        if user_writable:
+            bits.append("[user-writable path]")
+
+        yield {
+            "timestamp": mtime,
+            "timestamp_desc": "Plist File mtime",
+            "artifact_type": "persistence",
+            # The shared taxonomy files "persistence" under windows; a launchd
+            # job is macOS by construction, so say so rather than let it land
+            # on the wrong side of an OS filter.
+            "os": "macos",
+            "message": "  ".join(bits),
+            "process": {"path": exe, "name": exe.rsplit("/", 1)[-1], "command_line": command}
+            if exe
+            else {},
+            "user": {"name": str(run_as)} if run_as else {},
+            "persistence": {
+                "kind": "launchd",
+                "label": label,
+                "executable": exe,
+                "command_line": command,
+                "trigger": trigger,
+                "run_at_load": bool(data.get("RunAtLoad")),
+                "keep_alive": bool(data.get("KeepAlive")),
+                "start_interval": data.get("StartInterval"),
+                "watch_paths": [str(w) for w in (data.get("WatchPaths") or [])]
+                if isinstance(data.get("WatchPaths"), list)
+                else [],
+                "run_as": str(run_as) if run_as else "",
+                "disabled": disabled,
+                "user_writable_path": user_writable,
+                "filename": filename,
+            },
+            "raw": {"filename": filename, "value": _jsonable(data)},
+        }
+
+    # ── Safari Downloads.plist ────────────────────────────────────────────────
+
+    @staticmethod
+    def _safari_downloads(data: Any) -> list | None:
+        """Return the download list if this is a Safari Downloads.plist."""
+        if isinstance(data, dict):
+            hist = data.get("DownloadHistory")
+            if isinstance(hist, list):
+                return hist
+        return None
+
+    def _parse_safari_downloads(
+        self, history: list, filename: str, mtime: str
+    ) -> Generator[dict[str, Any], None, None]:
+        """Safari's download log — the URL each file came from."""
+        for entry in history:
+            if not isinstance(entry, dict):
+                continue
+            url = str(entry.get("DownloadEntryURL") or "")
+            path = str(entry.get("DownloadEntryPath") or "")
+            ts = _pick_timestamp(entry.get("DownloadEntryDateAddedKey")) or _pick_timestamp(
+                entry
+            )
+            total = entry.get("DownloadEntryProgressTotalToLoad")
+            got = entry.get("DownloadEntryProgressBytesSoFar")
+            yield {
+                "timestamp": ts or mtime,
+                "timestamp_desc": "Download Started" if ts else "Plist File mtime",
+                "artifact_type": "browser",
+                "os": "macos",
+                "message": f"Safari download: {url}" + (f" -> {path}" if path else ""),
+                "browser": {
+                    "browser_type": "safari",
+                    "data_type": "download",
+                    "url": url,
+                    "target_path": path,
+                    "bytes_total": total if isinstance(total, int) else None,
+                    "bytes_received": got if isinstance(got, int) else None,
+                },
+                "raw": {"filename": filename, "value": _jsonable(entry)},
+            }
+
+    # ── Login items ───────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _login_items(data: Any) -> list | None:
+        """Return the login-item list for a loginwindow / loginitems plist."""
+        if not isinstance(data, dict):
+            return None
+        for key in ("AutoLaunchedApplicationDictionary", "SessionItems", "CustomListItems"):
+            v = data.get(key)
+            if isinstance(v, list):
+                return v
+            if isinstance(v, dict) and isinstance(v.get("CustomListItems"), list):
+                return v["CustomListItems"]
+        return None
+
+    def _parse_login_items(
+        self, items: list, filename: str, mtime: str
+    ) -> Generator[dict[str, Any], None, None]:
+        """Anything set to launch at login is persistence, same as a launchd job."""
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("Name") or item.get("name") or "")
+            path = str(item.get("Path") or item.get("path") or "")
+            hidden = bool(item.get("Hide") or item.get("hidden"))
+            user_writable = path.startswith(_USER_WRITABLE)
+            bits = [f"login item {name or path or '(unnamed)'}"]
+            if path:
+                bits.append(f"-> {path}")
+            if hidden:
+                bits.append("[hidden]")
+            if user_writable:
+                bits.append("[user-writable path]")
+            yield {
+                "timestamp": mtime,
+                "timestamp_desc": "Plist File mtime",
+                "artifact_type": "persistence",
+                "os": "macos",
+                "message": "  ".join(bits),
+                "process": {"path": path, "name": path.rsplit("/", 1)[-1]} if path else {},
+                "persistence": {
+                    "kind": "login_item",
+                    "label": name,
+                    "executable": path,
+                    "hidden": hidden,
+                    "user_writable_path": user_writable,
+                    "filename": filename,
+                },
+                "raw": {"filename": filename, "value": _jsonable(item)},
             }
