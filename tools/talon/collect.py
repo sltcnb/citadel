@@ -36,6 +36,7 @@ import argparse
 import datetime
 import errno
 import fnmatch
+import hashlib
 import io
 import json
 import os
@@ -327,6 +328,94 @@ def _disk_free(path: Path) -> tuple[int, int] | None:
 
 # Refuse to start / keep going below this much free space on the output volume.
 _LOW_SPACE_BYTES = 200 * 1024 * 1024  # 200 MB
+
+
+def _physical_ram_bytes() -> int | None:
+    """Installed physical RAM, or None if it cannot be determined.
+
+    A memory image is the size of RAM, so this is what a free-space check has
+    to compare against — not a guess.
+    """
+    try:
+        if IS_WINDOWS:
+            import ctypes
+
+            class _MemStatus(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+
+            st = _MemStatus()
+            st.dwLength = ctypes.sizeof(_MemStatus)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(st)):
+                return int(st.ullTotalPhys)
+            return None
+        if IS_MACOS:
+            out = subprocess.run(
+                ["sysctl", "-n", "hw.memsize"], capture_output=True, timeout=10
+            )
+            return int(out.stdout.decode().strip())
+        # Linux: MemTotal is in kB.
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemTotal:"):
+                return int(line.split()[1]) * 1024
+    except Exception:  # noqa: BLE001 — best effort; caller degrades to a warning
+        return None
+    return None
+
+
+def _memory_space_ok(staging: Path, warn) -> bool:
+    """True if there is plausibly room for a full memory image under *staging*.
+
+    A dump that runs out of disk halfway is the worst outcome available here:
+    the tool often still exits 0, the file looks like an image, and the
+    truncation is only discovered when an analyst tries to work it — by which
+    time the machine has usually been rebooted and the memory is gone. Better
+    to refuse up front and let the operator point --output somewhere larger.
+    """
+    ram = _physical_ram_bytes()
+    info = _disk_free(staging)
+    if ram is None or info is None:
+        warn(
+            "Could not determine RAM size or free space — proceeding, but a "
+            "memory image needs as much free space as the host has RAM."
+        )
+        return True
+    free, _total = info
+    # 5% headroom: the dump is RAM-sized, and the archive is written beside it.
+    needed = int(ram * 1.05)
+    if free < needed:
+        warn(
+            f"Not enough space for a memory image: {_fmt_bytes(ram)} of RAM needs "
+            f"~{_fmt_bytes(needed)} free, but only {_fmt_bytes(free)} is available "
+            f"on {staging}.\n"
+            "      A dump that fills the disk is usually truncated silently — "
+            "refusing rather than producing an unusable image.\n"
+            "      Point --output at a larger volume, or free space, and re-run."
+        )
+        return False
+    print(f"      RAM {_fmt_bytes(ram)} | free {_fmt_bytes(free)} — proceeding")
+    return True
+
+
+def _sha256_file(path: Path, chunk: int = 4 * 1024 * 1024) -> str:
+    """Streaming SHA-256. Memory images are tens of GB — never read one whole."""
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        while True:
+            block = fh.read(chunk)
+            if not block:
+                break
+            h.update(block)
+    return h.hexdigest()
 
 
 def _log_disk_space(output: Path, staging: Path) -> None:
@@ -658,6 +747,49 @@ class Collector:
                 warnings[cat] = reason
 
         return warnings
+
+    def _finish_memory_dump(self, dump_path: Path, tool: str) -> bool:
+        """Verify, hash and stage a completed memory image.
+
+        Shared by all three collectors because all three got it subtly wrong in
+        different ways. A memory image is the one artifact that cannot be
+        re-acquired once the host is rebooted, so a truncated or empty file that
+        is reported as success is the most expensive failure Talon can produce.
+        """
+        if not dump_path.exists():
+            self._warn(f"{tool} reported success but wrote no file at {dump_path}")
+            return False
+        size = dump_path.stat().st_size
+        if size == 0:
+            self._warn(f"{tool} produced an empty image — treating as failure")
+            try:
+                dump_path.unlink()
+            except OSError:
+                pass
+            return False
+
+        ram = _physical_ram_bytes()
+        if ram and size < ram * 0.5:
+            # Not fatal — a tool may legitimately skip device-mapped ranges —
+            # but an image half the size of RAM usually means it ran out of
+            # disk or was killed, and that must not read as a clean success.
+            self._warn(
+                f"Memory image is {_fmt_bytes(size)} but the host has "
+                f"{_fmt_bytes(ram)} of RAM — the image may be truncated. "
+                "Verify before relying on it."
+            )
+
+        print(f"      Hashing {_fmt_bytes(size)} image…")
+        digest = _sha256_file(dump_path)
+        sidecar = dump_path.with_suffix(dump_path.suffix + ".sha256")
+        sidecar.write_text(f"{digest}  {dump_path.name}\n", encoding="utf-8")
+
+        self._add(dump_path, f"memory/{dump_path.name}")
+        self._add(sidecar, f"memory/{sidecar.name}")
+        self._log(f"memory image {dump_path.name} sha256={digest}")
+        print(f"  [+] Memory dump complete ({_fmt_bytes(size)})")
+        print(f"      sha256: {digest}")
+        return True
 
     def _add(self, src: Path, arcname: str) -> bool:
         arcname = arcname.replace("\\", "/")
@@ -2239,6 +2371,9 @@ class WindowsCollector(Collector):
         print("  [*] Physical Memory Dump (live acquisition)")
         print("  [!] Note: Memory dumps are typically 4–64 GB — this may take a while")
 
+        if not _memory_space_ok(self.staging, self._warn):
+            return
+
         dump_path = self.staging / f"memory-{HOSTNAME}-{TS_NOW}.dmp"
 
         # Locate WinPmem — check PATH, then script directory, then CWD
@@ -2278,9 +2413,12 @@ class WindowsCollector(Collector):
                 timeout=7200,  # 2 hours
             )
             if r.returncode == 0:
-                self._add(dump_path, f"memory/{dump_path.name}")
-                size_gb = dump_path.stat().st_size / (1024**3)
-                print(f"  [+] Memory dump complete ({size_gb:.1f} GB)")
+                # Verify through the shared finaliser. This used to stat() the
+                # dump unconditionally, so a winpmem that exited 0 without
+                # writing anything raised inside the success branch and was
+                # reported as a generic "acquisition error" — the one failure
+                # mode that most needs a clear message.
+                self._finish_memory_dump(dump_path, "winpmem")
             else:
                 err = (r.stderr or r.stdout or b"").decode(errors="replace")[:400]
                 self._warn(
@@ -2748,6 +2886,9 @@ class LinuxCollector(Collector):
         print("  [!] Note: Memory dumps are typically 4–64 GB — this may take a while")
         print("  [!] Root privileges are required for memory acquisition")
 
+        if not _memory_space_ok(self.staging, self._warn):
+            return
+
         dump_path = self.staging / f"memory-{HOSTNAME}-{TS_NOW}.lime"
 
         # 1. Try avml (Microsoft's user-space memory acquisition tool)
@@ -2762,10 +2903,7 @@ class LinuxCollector(Collector):
                     capture_output=True,
                     timeout=7200,
                 )
-                if r.returncode == 0 and dump_path.exists() and dump_path.stat().st_size > 0:
-                    self._add(dump_path, f"memory/{dump_path.name}")
-                    size_gb = dump_path.stat().st_size / (1024**3)
-                    print(f"  [+] Memory dump complete ({size_gb:.1f} GB)")
+                if r.returncode == 0 and self._finish_memory_dump(dump_path, "avml"):
                     return
                 err = (r.stderr or r.stdout or b"").decode(errors="replace")[:400]
                 self._warn(f"avml failed (code {r.returncode}): {err}")
@@ -2785,10 +2923,7 @@ class LinuxCollector(Collector):
                         capture_output=True,
                         timeout=7200,
                     )
-                    if r.returncode == 0 and raw_path.stat().st_size > 0:
-                        self._add(raw_path, f"memory/{raw_path.name}")
-                        size_gb = raw_path.stat().st_size / (1024**3)
-                        print(f"  [+] Memory image via {mem_dev} ({size_gb:.1f} GB)")
+                    if r.returncode == 0 and self._finish_memory_dump(raw_path, f"dd {mem_dev}"):
                         return
                 except Exception as exc:
                     self._log(f"{mem_dev} dd error: {exc}")
@@ -3701,52 +3836,127 @@ class MacOSCollector(Collector):
     # ── Memory acquisition ────────────────────────────────────────────────────
 
     def _memory(self) -> None:
+        """Acquire physical memory on macOS.
+
+        macOS is the hard case and the previous implementation pretended it was
+        not. It tried exactly one tool, osxpmem from Google's Rekall, and on
+        failure pointed the operator at github.com/google/rekall/releases —
+        a project archived since 2020. osxpmem works by loading MacPmem.kext,
+        which is x86-only and signed with a long-expired certificate, so on
+        Apple Silicon it cannot run at all and on Intel it needs SIP disabled
+        (a reboot into recovery — rarely acceptable mid-incident). In practice
+        that meant macOS memory acquisition always failed, and said so in a way
+        that sent the operator to a dead page.
+
+        So: try what can actually work, in order, and when nothing can, say
+        precisely why on THIS hardware rather than offering a dead link.
+        """
         print("  [*] Physical Memory Dump (live acquisition)")
         print("  [!] Note: Memory dumps are typically 4–64 GB — this may take a while")
         print("  [!] Root privileges are required for memory acquisition")
 
+        if not _memory_space_ok(self.staging, self._warn):
+            return
+
         dump_path = self.staging / f"memory-{HOSTNAME}-{TS_NOW}.raw"
+        arch = platform.machine()
+        apple_silicon = arch in ("arm64", "aarch64")
 
-        # osxpmem (most reliable tool for macOS)
-        osxpmem = shutil.which("osxpmem")
-        if not osxpmem:
-            # Check common locations
-            for loc in [
-                "/usr/local/bin/osxpmem",
-                Path.cwd() / "osxpmem",
-                Path(__file__).parent / "osxpmem",
-            ]:
-                if Path(loc).exists():
-                    osxpmem = str(loc)
-                    break
-
-        if osxpmem:
-            self._log(f"Using osxpmem: {osxpmem}")
-            print(f"      Output: {dump_path}")
+        # 1. Commercial acquisition tools, if the operator has one installed.
+        #    These are the only things that actually work on a current Mac.
+        for tool_name, argv in (
+            ("surge-collect", ["surge-collect", "--output", str(dump_path)]),
+            ("MacQuisition", ["MacQuisition", "--memory", "--output", str(dump_path)]),
+        ):
+            tool = shutil.which(tool_name)
+            if not tool:
+                continue
+            argv[0] = tool
+            self._log(f"Using {tool_name}: {tool}")
+            print(f"      {tool_name}: {tool}")
             try:
-                r = subprocess.run(
-                    [osxpmem, str(dump_path)],
-                    capture_output=True,
-                    timeout=7200,
-                )
-                if r.returncode == 0 and dump_path.exists() and dump_path.stat().st_size > 0:
-                    self._add(dump_path, f"memory/{dump_path.name}")
-                    size_gb = dump_path.stat().st_size / (1024**3)
-                    print(f"  [+] Memory dump complete ({size_gb:.1f} GB)")
+                r = subprocess.run(argv, capture_output=True, timeout=7200)
+                if r.returncode == 0 and self._finish_memory_dump(dump_path, tool_name):
                     return
                 err = (r.stderr or r.stdout or b"").decode(errors="replace")[:400]
-                self._warn(f"osxpmem failed (code {r.returncode}): {err}")
+                self._warn(f"{tool_name} failed (code {r.returncode}): {err}")
             except subprocess.TimeoutExpired:
-                self._warn("osxpmem timed out (>2 hours)")
-            except Exception as exc:
-                self._warn(f"osxpmem error: {exc}")
+                self._warn(f"{tool_name} timed out (>2 hours)")
+            except Exception as exc:  # noqa: BLE001
+                self._warn(f"{tool_name} error: {exc}")
 
-        self._warn(
-            "No memory acquisition tool found.\n"
-            "      Download osxpmem for macOS memory acquisition:\n"
-            "        https://github.com/google/rekall/releases\n"
-            "      Run: sudo osxpmem memory.raw"
-        )
+        # 2. osxpmem — Intel only, and only with SIP disabled. Still worth
+        #    trying on an Intel host: some IR kits carry a re-signed kext.
+        if not apple_silicon:
+            osxpmem = shutil.which("osxpmem")
+            if not osxpmem:
+                for loc in (
+                    Path("/usr/local/bin/osxpmem"),
+                    Path.cwd() / "osxpmem",
+                    Path(sys.argv[0]).resolve().parent / "osxpmem",
+                ):
+                    if loc.exists():
+                        osxpmem = str(loc)
+                        break
+            if osxpmem:
+                self._log(f"Using osxpmem: {osxpmem}")
+                print(f"      osxpmem: {osxpmem}")
+                print(f"      Output : {dump_path}")
+                try:
+                    r = subprocess.run(
+                        [osxpmem, str(dump_path)], capture_output=True, timeout=7200
+                    )
+                    if r.returncode == 0 and self._finish_memory_dump(dump_path, "osxpmem"):
+                        return
+                    err = (r.stderr or r.stdout or b"").decode(errors="replace")[:400]
+                    self._warn(f"osxpmem failed (code {r.returncode}): {err}")
+                    if "kext" in err.lower() or "MacPmem" in err:
+                        self._warn(
+                            "MacPmem.kext was refused. On macOS 11+ the kext must be "
+                            "signed and SIP disabled (csrutil disable from recovery)."
+                        )
+                except subprocess.TimeoutExpired:
+                    self._warn("osxpmem timed out (>2 hours)")
+                except Exception as exc:  # noqa: BLE001
+                    self._warn(f"osxpmem error: {exc}")
+
+        # 3. Nothing worked. Say what is actually true for this machine.
+        sip = self._sip_status()
+        if apple_silicon:
+            self._warn(
+                f"No usable memory acquisition tool for Apple Silicon ({arch}).\n"
+                "      There is no free tool that images physical memory on M-series "
+                "Macs: osxpmem's MacPmem.kext is x86-only and unmaintained since 2020, "
+                "and Apple provides no supported interface.\n"
+                "      Working options are commercial:\n"
+                "        • Volexity Surge Collect Pro\n"
+                "        • Cellebrite Digital Collector (formerly MacQuisition)\n"
+                "      Install one on PATH and re-run, or drop --collect memory and "
+                "rely on the disk and unified-log artifacts this run already gathered."
+            )
+        else:
+            self._warn(
+                f"No usable memory acquisition tool for Intel macOS (SIP: {sip}).\n"
+                "      osxpmem needs MacPmem.kext loaded, which requires a valid "
+                "signature and SIP disabled — Google's build is unmaintained and its "
+                "certificate has expired.\n"
+                "      Working options: Volexity Surge Collect Pro, or Cellebrite "
+                "Digital Collector. Place one on PATH and re-run."
+            )
+
+    @staticmethod
+    def _sip_status() -> str:
+        """System Integrity Protection state — it decides whether a kext can load."""
+        try:
+            r = subprocess.run(["csrutil", "status"], capture_output=True, timeout=10)
+            out = (r.stdout or b"").decode(errors="replace").strip()
+            if "disabled" in out.lower():
+                return "disabled"
+            if "enabled" in out.lower():
+                return "enabled"
+            return out[:60] or "unknown"
+        except Exception:  # noqa: BLE001
+            return "unknown"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -5178,15 +5388,6 @@ S3_MAX_PART = 5 * 1024 * 1024 * 1024  # 5 GiB
 # flaky/slow WAN links far better than one multi-GB firehose, and a reset costs
 # one part instead of the whole transfer.
 MULTIPART_PREFER_ABOVE = 256 * 1024 * 1024  # 256 MiB
-
-
-def _fmt_bytes(n: float) -> str:
-    """Human-readable byte size."""
-    for unit in ("B", "KB", "MB", "GB", "TB"):
-        if n < 1024 or unit == "TB":
-            return f"{n:.1f} {unit}"
-        n /= 1024
-    return f"{n:.1f} TB"
 
 
 def upload_via_presigned(zip_path: Path, presigned_url: str, max_retries: int = 4) -> None:

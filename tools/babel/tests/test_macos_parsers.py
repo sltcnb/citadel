@@ -492,3 +492,168 @@ def test_ios_safari_history_is_left_to_the_ios_parser(tmp_path):
 
     assert not BrowserPlugin.can_handle(f, "application/vnd.sqlite3")
     assert IOSPlugin.can_handle(f, "application/vnd.sqlite3")
+
+
+# ── plist: semantic shapes ────────────────────────────────────────────────────
+
+
+def _plist(tmp_path, name, obj, binary=False):
+    import plistlib
+
+    f = tmp_path / name
+    f.write_bytes(
+        plistlib.dumps(obj, fmt=plistlib.FMT_BINARY if binary else plistlib.FMT_XML)
+    )
+    return f
+
+
+def _parse_plist(f):
+    from babel.plist.plist_plugin import PlistPlugin
+
+    assert PlistPlugin.can_handle(f, "application/x-plist")
+    return list(PlistPlugin(_ctx(f)).parse())
+
+
+LAUNCHD = {
+    "Label": "com.dnt.updater",
+    "ProgramArguments": [
+        "/Users/tmoll/Library/Application Support/.dnt/updater",
+        "--silent",
+    ],
+    "RunAtLoad": True,
+    "KeepAlive": True,
+    "StartInterval": 3600,
+}
+
+
+def test_launchd_job_is_one_event_not_one_per_key(tmp_path):
+    """A LaunchDaemon is a single fact. Dumped per-key it became seven rows,
+    none of which answered "what persists on this host"."""
+    events = _parse_plist(_plist(tmp_path, "com.dnt.updater.plist", LAUNCHD))
+    assert len(events) == 1
+    ev = events[0]
+    assert ev["artifact_type"] == "persistence"
+    assert ev["os"] == "macos"
+    assert ev["persistence"]["label"] == "com.dnt.updater"
+
+
+def test_launchd_executable_path_is_searchable(tmp_path):
+    """The regression: ProgramArguments rendered as "<list 2 items>", so the
+    executable path — the whole point of the artifact — was in no message and
+    a search for it found nothing."""
+    ev = _parse_plist(_plist(tmp_path, "com.dnt.updater.plist", LAUNCHD))[0]
+    path = "/Users/tmoll/Library/Application Support/.dnt/updater"
+    assert path in ev["message"]
+    assert ev["persistence"]["executable"] == path
+    assert ev["persistence"]["command_line"] == f"{path} --silent"
+    assert ev["process"]["path"] == path
+
+
+def test_launchd_trigger_is_summarised(tmp_path):
+    ev = _parse_plist(_plist(tmp_path, "j.plist", LAUNCHD))[0]
+    assert ev["persistence"]["run_at_load"] is True
+    assert ev["persistence"]["start_interval"] == 3600
+    for fragment in ("at load", "kept alive", "every 3600s"):
+        assert fragment in ev["message"]
+
+
+def test_launchd_from_user_writable_path_is_flagged(tmp_path):
+    """A job under /Users or /tmp is the classic persistence pattern; one under
+    /usr/libexec is the OS doing its job."""
+    ev = _parse_plist(_plist(tmp_path, "evil.plist", LAUNCHD))[0]
+    assert ev["persistence"]["user_writable_path"] is True
+
+    system_job = {"Label": "com.apple.thing", "Program": "/usr/libexec/thing"}
+    ev2 = _parse_plist(_plist(tmp_path, "sys.plist", system_job))[0]
+    assert ev2["persistence"]["user_writable_path"] is False
+
+
+def test_program_wins_as_argv0_over_programarguments(tmp_path):
+    """launchd's own rule: a job can point Program at one binary while argv[0]
+    names another."""
+    job = {
+        "Label": "com.x",
+        "Program": "/tmp/real-binary",
+        "ProgramArguments": ["totally-legit", "--flag"],
+    }
+    ev = _parse_plist(_plist(tmp_path, "x.plist", job))[0]
+    assert ev["persistence"]["executable"] == "/tmp/real-binary"
+    assert ev["persistence"]["command_line"] == "totally-legit --flag"
+
+
+def test_safari_downloads_plist_yields_download_events(tmp_path):
+    obj = {
+        "DownloadHistory": [
+            {
+                "DownloadEntryURL": "https://cdn.dntds.shop/setup.dmg",
+                "DownloadEntryPath": "~/Downloads/setup.dmg",
+            }
+        ]
+    }
+    events = _parse_plist(_plist(tmp_path, "Downloads.plist", obj))
+    assert len(events) == 1
+    ev = events[0]
+    assert ev["artifact_type"] == "browser"
+    assert ev["browser"]["data_type"] == "download"
+    assert ev["browser"]["url"] == "https://cdn.dntds.shop/setup.dmg"
+
+
+def test_login_items_are_persistence(tmp_path):
+    obj = {
+        "AutoLaunchedApplicationDictionary": [
+            {"Name": "DNTUpdater", "Path": "/Users/tmoll/.dnt/DNTUpdater.app", "Hide": True},
+            {"Name": "Spotify", "Path": "/Applications/Spotify.app", "Hide": False},
+        ]
+    }
+    events = _parse_plist(_plist(tmp_path, "com.apple.loginwindow.plist", obj))
+    assert len(events) == 2
+    assert all(e["artifact_type"] == "persistence" for e in events)
+    evil = next(e for e in events if e["persistence"]["label"] == "DNTUpdater")
+    assert evil["persistence"]["hidden"] is True
+    assert evil["persistence"]["user_writable_path"] is True
+
+
+def test_nskeyedarchiver_object_graph_is_resolved(tmp_path):
+    """plistlib decodes the container but leaves a flat $objects table keyed by
+    integer UIDs — a dump of that is a soup of indices with the real strings in
+    a side table."""
+    import plistlib
+
+    U = plistlib.UID
+    arch = {
+        "$version": 100000,
+        "$archiver": "NSKeyedArchiver",
+        "$top": {"root": U(1)},
+        "$objects": [
+            "$null",
+            {"label": U(2), "cmd": U(3), "$class": U(4)},
+            "com.evil.archived",
+            "/tmp/payload --run",
+            {"$classname": "NSDictionary"},
+        ],
+    }
+    events = _parse_plist(_plist(tmp_path, "archived.plist", arch, binary=True))
+    joined = " ".join(e["message"] for e in events)
+    assert "com.evil.archived" in joined
+    assert "/tmp/payload --run" in joined
+    # The archive scaffolding must not leak into the timeline as content.
+    assert "$objects" not in joined
+
+
+def test_generic_plist_renders_scalar_lists_inline(tmp_path):
+    """"<list 2 items>" hid the values; they have to be in the message to be
+    searchable, not only in the structured object."""
+    obj = {"persistent-apps": ["/Applications/Safari.app", "/tmp/evil.app"]}
+    events = _parse_plist(_plist(tmp_path, "com.apple.dock.plist", obj))
+    assert len(events) == 1
+    assert "/tmp/evil.app" in events[0]["message"]
+
+
+def test_non_plist_xml_is_still_refused(tmp_path):
+    """Regression guard: this plugin used to claim every XML file and emit
+    "<null>" events, starving the real parser."""
+    from babel.plist.plist_plugin import PlistPlugin
+
+    f = tmp_path / "WER.abc.tmp.xml"
+    f.write_text('<?xml version="1.0"?><WERReportMetadata><OSVersion>10</OSVersion></WERReportMetadata>')
+    assert not PlistPlugin.can_handle(f, "text/xml")
