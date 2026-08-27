@@ -59,6 +59,7 @@ KNOWN_TOOLS = (
     "read_module_result",
     "ioc_sweep",
     "host_profile",
+    "request_collection",
     "web_search",
 )
 
