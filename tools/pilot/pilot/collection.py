@@ -48,7 +48,10 @@ _SOURCES: dict[str, dict] = {
                 "AppData/Local/Google/Chrome/User Data/Default/History",
                 "AppData/Roaming/Mozilla/Firefox/Profiles/*/places.sqlite",
             ),
-            "linux": ("~/.mozilla/firefox/*/places.sqlite", "~/.config/google-chrome/Default/History"),
+            "linux": (
+                "~/.mozilla/firefox/*/places.sqlite",
+                "~/.config/google-chrome/Default/History",
+            ),
         },
         "why": "URL history and download provenance — where a file came from",
     },
@@ -133,7 +136,11 @@ _SOURCES: dict[str, dict] = {
         "why": "filesystem timeline including deleted entries",
     },
     "file": {
-        "categories": {"windows": ("file_search",), "linux": ("file_search",), "macos": ("file_search",)},
+        "categories": {
+            "windows": ("file_search",),
+            "linux": ("file_search",),
+            "macos": ("file_search",),
+        },
         "paths": {},
         "why": "targeted file retrieval — needs a --fetch pattern",
     },
