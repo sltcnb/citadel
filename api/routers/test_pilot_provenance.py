@@ -47,7 +47,7 @@ def test_ai_analyze_case_includes_provenance(monkeypatch):
     monkeypatch.setattr(
         lc,
         "_call_llm_with_system",
-        lambda cfg, system, user_msg, max_tokens=1200: json.dumps(
+        lambda cfg, system, user_msg, **_kw: json.dumps(
             {
                 "executive_summary": "Suspicious activity detected.",
                 "key_findings": ["Suspicious PowerShell download (event_ids: evt-aaa)"],
@@ -103,7 +103,7 @@ def test_provenance_input_hash_changes_with_context(monkeypatch):
     monkeypatch.setattr(
         lc,
         "_call_llm_with_system",
-        lambda cfg, system, user_msg, max_tokens=1200: json.dumps({"executive_summary": "x"}),
+        lambda cfg, system, user_msg, **_kw: json.dumps({"executive_summary": "x"}),
     )
 
     monkeypatch.setattr(lc, "_gather_case_context", lambda case_id: base_ctx)
