@@ -358,7 +358,9 @@ def test_llm_config():
         "ok": True,
         "provider": cfg.get("provider"),
         "model": cfg.get("model"),
-        "response": reply[:300],
+        # (reply or "") — a model that answers with nothing is a legitimate
+        # outcome to report, not a TypeError that becomes a 500.
+        "response": (reply or "")[:300],
     }
 
 
@@ -457,8 +459,15 @@ def _track_llm_usage(
 
 
 def _call_llm_test(cfg: dict) -> str:
-    """Send a minimal prompt with a short timeout to verify connectivity."""
-    return _call_llm_with_system(cfg, "", "Reply with exactly the word: OK", max_tokens=10)
+    """Verify connectivity with a trivial prompt.
+
+    max_tokens is 512, not 10. A reasoning model bills its chain of thought
+    against the budget before emitting anything visible, so a 10-token probe
+    made every such model fail the connection test with content=null — the
+    endpoint was reachable and correctly configured, and the test said
+    otherwise. 512 is still a trivially cheap call and leaves room to think.
+    """
+    return _call_llm_with_system(cfg, "", "Reply with exactly the word: OK", max_tokens=512)
 
 
 def _call_llm(cfg: dict, prompt: str) -> str:
@@ -724,7 +733,7 @@ def analyze_alert_rule_result(req: AlertAnalyzeRequest) -> Any:
         raise HTTPException(status_code=502, detail=f"LLM call failed: {exc}")
 
     try:
-        clean = raw.strip()
+        clean = (raw or "").strip()
         if clean.startswith("```"):
             clean = clean.split("\n", 1)[1] if "\n" in clean else clean[3:]
             clean = clean.rstrip("`").strip()
@@ -811,7 +820,7 @@ def analyze_module_run(run_id: str, current_user: dict = Depends(get_current_use
     # ── Parse JSON response ───────────────────────────────────────────────────
     try:
         # Strip potential markdown code fences
-        clean = raw_response.strip()
+        clean = (raw_response or "").strip()
         if clean.startswith("```"):
             clean = clean.split("\n", 1)[1] if "\n" in clean else clean[3:]
             if clean.endswith("```"):
@@ -1386,7 +1395,7 @@ def ai_search_assist(req: SearchAssistRequest) -> Any:
         raise HTTPException(status_code=502, detail=f"LLM call failed: {exc}")
 
     try:
-        clean = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
+        clean = (raw or "").strip().lstrip("```json").lstrip("```").rstrip("```").strip()
         result = json.loads(clean)
     except (json.JSONDecodeError, ValueError):
         result = {
@@ -1446,7 +1455,7 @@ def generate_alert_rule(req: GenerateRuleRequest) -> Any:
         raise HTTPException(status_code=502, detail=f"LLM call failed: {exc}")
 
     try:
-        clean = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
+        clean = (raw or "").strip().lstrip("```json").lstrip("```").rstrip("```").strip()
         result = json.loads(clean)
     except (json.JSONDecodeError, ValueError):
         result = {
@@ -1872,12 +1881,18 @@ def ai_analyze_case(case_id: str, case: dict = Depends(require_case_access)):
     user_msg = _build_case_analysis_prompt(ctx)
 
     try:
-        raw = _call_llm_with_system(cfg, _CASE_ANALYSIS_PROMPT, user_msg, max_tokens=1200)
+        # json_mode: without it Qwen-class models emit valid JSONC — trailing
+        # "// comment" after array entries — which json.loads rejects outright.
+        # 3000, not 1200: a reasoning model needs ~1500-2300 for this report
+        # before its visible answer even starts.
+        raw = _call_llm_with_system(
+            cfg, _CASE_ANALYSIS_PROMPT, user_msg, max_tokens=3000, json_mode=True
+        )
     except Exception as exc:
         raise HTTPException(502, f"LLM call failed: {exc}")
 
     try:
-        clean = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
+        clean = (raw or "").strip().lstrip("```json").lstrip("```").rstrip("```").strip()
         result = json.loads(clean)
     except (json.JSONDecodeError, ValueError):
         result = {
@@ -2016,12 +2031,14 @@ def ai_investigate_case(case_id: str, req: CaseInvestigateRequest, case: dict = 
     user_msg = _build_case_investigate_prompt(ctx, req.circumstance)
 
     try:
-        raw = _call_llm_with_system(cfg, _CASE_INVESTIGATE_PROMPT, user_msg, max_tokens=1400)
+        raw = _call_llm_with_system(
+            cfg, _CASE_INVESTIGATE_PROMPT, user_msg, max_tokens=3000, json_mode=True
+        )
     except Exception as exc:
         raise HTTPException(502, f"LLM call failed: {exc}")
 
     try:
-        clean = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
+        clean = (raw or "").strip().lstrip("```json").lstrip("```").rstrip("```").strip()
         result = json.loads(clean)
     except (json.JSONDecodeError, ValueError):
         result = {"_raw": raw, "narrative": raw, "suggested_queries": [], "indicators": []}
@@ -7303,6 +7320,52 @@ def generate_final_report(case_id: str, body: FinalReportRequest = None, case: d
     return result
 
 
+class LLMBudgetExhausted(RuntimeError):
+    """The model spent its whole token budget before emitting any content.
+
+    Reasoning models (GLM, Gemma, DeepSeek-R1 and friends) bill their chain of
+    thought against ``max_tokens`` and only then start the visible answer. Below
+    some floor they never reach it: the API returns HTTP 200 with
+    ``finish_reason: "length"`` and ``content: null``.
+
+    That null is the whole bug. It is not an error at the transport level, so it
+    propagates as a plain None into callers that do ``reply[:300]`` or
+    ``raw.strip()`` and surfaces as "Internal server error" — which tells the
+    operator nothing about the actual cause or the actual fix.
+    """
+
+
+def _extract_llm_text(data: dict, max_tokens: int, where: str) -> str:
+    """Pull the assistant text out of an OpenAI-compatible response.
+
+    Never returns None. A null content with ``finish_reason: "length"`` is
+    raised as :class:`LLMBudgetExhausted` naming the budget, because that is a
+    configuration problem the operator can fix and silently returning "" would
+    hide it.
+    """
+    try:
+        choice = (data.get("choices") or [{}])[0]
+    except (AttributeError, IndexError, TypeError):
+        return ""
+    message = choice.get("message") or {}
+    content = message.get("content")
+    if content:
+        return content
+
+    finish = choice.get("finish_reason") or ""
+    # Some gateways expose the chain of thought separately; its presence is
+    # proof the budget went on reasoning rather than the request being empty.
+    reasoned = bool(message.get("reasoning_content") or message.get("reasoning"))
+    if finish == "length" or reasoned:
+        raise LLMBudgetExhausted(
+            f"{where}: the model returned no content — it used all {max_tokens} "
+            f"tokens before answering (finish_reason={finish or 'unset'}"
+            f"{', reasoning tokens present' if reasoned else ''}). This is a "
+            "reasoning model: raise max_tokens, or pick a non-reasoning model."
+        )
+    return ""
+
+
 def _call_llm_with_system(
     cfg: dict, system_prompt: str, user_msg: str, max_tokens: int = 600, json_mode: bool = False
 ) -> str:
@@ -7354,7 +7417,7 @@ def _call_llm_with_system(
         _track_llm_usage(
             "anthropic", model, usage.get("input_tokens", 0), usage.get("output_tokens", 0)
         )
-        return data["content"][0]["text"]
+        return ((data.get("content") or [{}])[0].get("text")) or ""
     elif provider == "ollama":
         url = base_url or "http://localhost:11434"
         _body = {
@@ -7383,7 +7446,7 @@ def _call_llm_with_system(
             data.get("eval_count", 0),
             data.get("eval_duration", 0),
         )
-        return data["message"]["content"]
+        return (data.get("message") or {}).get("content") or ""
     else:
         url = base_url or "https://api.openai.com/v1"
         _body = {
@@ -7429,7 +7492,7 @@ def _call_llm_with_system(
             usage.get("completion_tokens", 0),
             actual_cost_usd=float(actual_cost) if actual_cost is not None else None,
         )
-        return data["choices"][0]["message"]["content"]
+        return _extract_llm_text(data, max_tokens, f"{model or 'model'} @ {url}")
 
 
 # ── YARA rule generation ───────────────────────────────────────────────────────
@@ -7476,7 +7539,7 @@ def generate_yara_rule(req: GenerateYaraRequest) -> Any:
         raise HTTPException(status_code=502, detail=f"LLM call failed: {exc}")
 
     try:
-        clean = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
+        clean = (raw or "").strip().lstrip("```json").lstrip("```").rstrip("```").strip()
         result = json.loads(clean)
     except (json.JSONDecodeError, ValueError):
         # Fallback: the raw text is likely the YARA rule itself
@@ -7606,7 +7669,7 @@ def ai_aggregate(case_id: str, body: AiAggRequest,
     )
     try:
         raw = _call_llm_with_system(cfg, _AGG_SYSTEM_PROMPT, user_msg, max_tokens=300)
-        clean = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
+        clean = (raw or "").strip().lstrip("```json").lstrip("```").rstrip("```").strip()
         spec = json.loads(clean)
     except (json.JSONDecodeError, ValueError, Exception) as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"AI could not build an aggregation: {exc}")
