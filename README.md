@@ -65,13 +65,13 @@ Each tool is its own product (`tools/<name>`), with its own CLI and `brick.yaml`
 
 | Area | What |
 |------|------|
-| **Acquisition** | Talon live + dead-box (Windows/Linux/macOS/server); in-app Harvest from a mounted image/path; resumable encrypted upload; gRPC remote agent (mTLS) |
-| **Ingestion** | 51 parsers, 80+ forensic formats auto-detected (EVTX, MFT, Registry, Prefetch, LNK, PCAP, Plaso, syslog, Zeek, Suricata, browsers, Android/iOS, disk images) |
+| **Acquisition** | Talon live + dead-box (Windows/Linux/macOS/server); in-app Harvest from a mounted image/path; resumable encrypted upload; gRPC remote agent (mTLS); memory images are free-space pre-checked against installed RAM, size-verified and SHA-256 sealed |
+| **Ingestion** | 51 parsers, 80+ forensic formats auto-detected (EVTX, MFT, Registry, Prefetch, LNK, PCAP, Plaso, syslog, Zeek, Suricata, browsers, Android/iOS, disk images). macOS is first-class: live triage snapshot, unified log, launchd persistence, Safari history, LaunchServices quarantine, install/wifi logs |
 | **Detection** | 1 666 built-in rules (1 487 Sigma across 13 ATT&CK tactics + 179 native ES queries); Sigma→ES conversion; ATT&CK coverage matrix; runtime opt-out |
 | **Analysis** | Hayabusa, RegRipper, YARA, Volatility3, capa/FLOSS, oletools, PE/strings, CTI IOC matching — typed `BaseModule` + DAG pipelines |
 | **Search & normalize** | ES full-text + facets, saved queries, timeline, CSV export, cross-case search; `ForensicEvent → ECS v8` + OSSEM with GeoIP/ASN/rDNS enrichment |
-| **Investigate** | Alert-triggered auto-investigation · entity graph (host↔user↔IP) · rare-artifact stacking · reverse kill-chain · cross-case Pilot memory · editable templates |
-| **AI assist** | LLM providers (Anthropic, OpenAI, Ollama, OpenRouter) for the Pilot agent, rule generation, summaries; cost tracking; prompt-injection guardrails + confidence-calibrated verdicts |
+| **Investigate** | Alert-triggered auto-investigation · entity graph (host↔user↔IP) · rare-artifact stacking · reverse kill-chain · cross-case Pilot memory · editable templates · a missing-evidence finding is emitted as a ready-to-run Talon collection command for the named host |
+| **AI assist** | LLM providers (Anthropic, OpenAI, Ollama, OpenRouter, any OpenAI-compatible gateway) for the Pilot agent, rule generation, summaries; cost tracking; prompt-injection guardrails + confidence-calibrated verdicts. Pilot runs against a per-case plan of specialist lenses (execution, persistence, network, identity, malware, timeline), calls executable skills rather than improvising queries, and is stopped by run control that measures new evidence rather than activity. Reasoning models are supported: budgets are sized for a chain of thought, and an exhausted one reports itself instead of surfacing as a server error |
 | **Threat intel** | STIX/TAXII, MISP, YETI, OTX/URLhaus/AbuseIPDB/Shodan/GreyNoise; SSRF-guarded feed fetches |
 | **AuthN / AuthZ** | JWT · MFA/TOTP · SSO (Google & Microsoft OIDC) · granular RBAC + role presets + groups · per-company multi-tenant isolation · tiered licensing |
 | **Evidence & observability** | Tamper-evident hash-chained audit log + signed chain-of-custody manifests; structured JSON logs, Prometheus `/metrics`, `/healthz`/`/readyz` |
