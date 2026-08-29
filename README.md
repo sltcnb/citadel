@@ -1,154 +1,89 @@
 # Citadel
 
-[![CI](https://github.com/sltcnb/citadel/actions/workflows/ci.yml/badge.svg)](https://github.com/sltcnb/citadel/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/sltcnb/citadel/actions/workflows/codeql.yml/badge.svg)](https://github.com/sltcnb/citadel/actions/workflows/codeql.yml)
-[![Build](https://github.com/sltcnb/citadel/actions/workflows/build.yml/badge.svg)](https://github.com/sltcnb/citadel/actions/workflows/build.yml)
-[![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue)](https://www.python.org/)
-[![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-lightgrey)](LICENSE)
+A DFIR platform that composes standalone forensic tools into one case workflow: acquire, ingest, parse, normalize, detect, analyze, enrich and report.
 
-**A DFIR platform built from independent, standalone tools — each useful on its own, all composed by Citadel.**
+Each stage is its own repository with its own CLI and its own tests. Citadel pins a tested set of them and wires them together over shared contracts. You can run the whole platform, or take one tool and ignore the rest.
 
-Citadel takes a forensic artifact from acquisition to a finished, searchable, detection-rich case — acquire → ingest → parse → normalize → detect → analyze → enrich → investigate → report. Every stage is a **standalone tool** with its own CLI; the platform wires them together over **shared contracts**.
+## The pipeline
 
-The case dashboard — every investigation, platform health, and resource usage at a glance:
+```
+Talon ──▶ Sluice ──▶ Babel ──▶ Rosetta ──▶ Elasticsearch
+                                              │
+                        ┌─────────────────────┼─────────────────────┐
+                        ▼                     ▼                     ▼
+                      Sigil                 Anvil                 Augur
+                    (detect)             (analyze)              (enrich)
+                        └─────────────────────┼─────────────────────┘
+                                              ▼
+                                      Pilot ──▶ Scribe
+                                  (investigate)  (report)
+```
 
-<p align="center"><img src="docs/demo-dashboard.png" alt="Citadel case dashboard" width="100%"></p>
+| Stage | Tool | Does |
+|---|---|---|
+| Acquire | [talon](https://github.com/sltcnb/talon) | Live or dead-box collection on Windows, Linux and macOS into a hash-verified ZIP. gRPC remote agent over mTLS. |
+| Intake | [sluice](https://github.com/sltcnb/sluice) | Identifies and deduplicates each artifact, routes it to a parser. |
+| Parse | [babel](https://github.com/sltcnb/babel) | 51 parser packs: EVTX, MFT, Registry, plist, PCAP, browsers, macOS triage, cloud audit. |
+| Normalize | [rosetta](https://github.com/sltcnb/rosetta) | Maps everything to ECS v8 and OSSEM through config-driven field maps. |
+| Detect | [sigil](https://github.com/sltcnb/sigil) | 231 native rules plus Sigma and YARA over the timeline. |
+| Analyze | [anvil](https://github.com/sltcnb/anvil) | Sandboxed runner for capa, FLOSS, oletools, PE triage, chained in a DAG. |
+| Enrich | [augur](https://github.com/sltcnb/augur) | IOCs to scored, sourced STIX 2.1 via OTX, AbuseIPDB, GreyNoise, Shodan, URLhaus, MISP. |
+| Investigate | [pilot](https://github.com/sltcnb/pilot) | LLM agent that forms hypotheses, pivots, and cites its evidence. |
+| Report | [scribe](https://github.com/sltcnb/scribe) | Case data to Markdown, HTML or DOCX. |
+| Contracts | [citadel-contracts](https://github.com/sltcnb/citadel-contracts) | The schemas and plugin contracts all of the above share. |
 
-**Open-core / source-available** under the PolyForm Noncommercial License — run, modify, and self-host for any noncommercial purpose. Premium *runtime* tiers are unlocked by a license key; no key → Community tier. See [Licensing](#licensing).
-
-## Quickstart
-
-`./foctl` drives every deployment — it generates secrets, creates `.env`, builds images, and sizes resources, so a first install is one command.
+## Running it
 
 ```bash
-git clone https://github.com/sltcnb/citadel.git && cd citadel
-./foctl deploy docker     # single host · or: ./foctl (interactive menu)
+make dev
 ```
 
-Open **http://localhost** — default login `admin` / `CitadelAdmin1!` (forced password change on first sign-in).
-
-| Mode | Command | Best for |
-|------|---------|----------|
-| **Docker Compose** | `./foctl deploy docker` | laptop, single server, evaluation, air-gapped |
-| **Kubernetes** (raw manifests) | `./foctl deploy k8s` | a cluster where Citadel provisions ES/Redis/MinIO |
-| **Kubernetes** (new local k3d) | `./foctl deploy k8s-new` | development, CI, offline labs |
-| **Helm** (app-only) | `./foctl deploy helm` | a cluster already running ES/Redis/MinIO + ingress |
-
-**Operations** — `./foctl status` · `logs api` · `update` · `destroy` · `config` (mode auto-detected). **Prerequisites** — Docker (Compose v2); kubectl + Helm 3 for k8s/Helm modes; Python 3 for `foctl`. Helm-by-hand, ingress (`traefik`/`tailscale`/`nginx`), and Google/Microsoft SSO setup: [`docs/DEPLOY.md`](docs/DEPLOY.md).
-
-Run any tool standalone, no platform required:
+That generates a `.env` with fresh secrets on first run and brings the stack up with Docker Compose: Elasticsearch, Kibana, Redis, MinIO, the FastAPI backend, ingest and module workers, and the React frontend.
 
 ```bash
-babel parse Security.evtx -o events.jsonl                 # parse one artifact
-rosetta normalize events.jsonl --ecs 8.11 -o ecs.jsonl    # → ECS v8 + OSSEM
-augur enrich iocs.json -o enriched.stix.json              # enrich IOCs
+make dev-down          # stop
+make logs-api          # follow a service
+make shell-api         # shell into the API container
+make reload-plugins    # pick up parser changes without a rebuild
 ```
 
-## The tool suite
+## Deploying
 
-Each tool is its own product (`tools/<name>`), with its own CLI and `brick.yaml` — run one alone, or adopt the platform. Full index: [`tools/README.md`](tools/README.md). Each ships a `capabilities.yaml`; Citadel **renders its UI from that declaration** (forms, options, validation) and self-registers manifests into Redis, so a tool-only change needs no orchestrator or API rebuild.
-
-| Tool | Role | Standalone CLI |
-|------|------|----------------|
-| **Talon** | Acquisition agent — host/disk/mount → artifact bundle | `talon collect --out case.bundle` |
-| **Sluice** | Intake & routing — bundle/file/dir → routed events | `sluice ingest case.bundle` |
-| **Babel** | Parser library — artifact → `ForensicEvent` (40+ packs) | `babel parse Security.evtx` |
-| **Rosetta** | Canonicalizer — `ForensicEvent` → ECS v8 + OSSEM | `rosetta normalize ev.jsonl` |
-| **Sigil** | Detection engine — ECS + rules → detections | `sigil validate ./rules/` |
-| **Anvil** | Analysis runner — artifact + module → findings | `anvil run volatility3 -a mem.raw` |
-| **Augur** | Intel enrichment — IOCs → scored STIX / MISP | `augur enrich iocs.json` |
-| **Pilot** | Investigation agent — case → autonomous report (LLM) | `pilot investigate --case ID` |
-| **Scribe** | Report engine — case → HTML/PDF/Markdown/DOCX | `scribe report --case ID -f pdf` |
-| **Citadel** | Platform / integrator — cases · timeline · search · console | `docker compose --profile full up` |
-
-## Features
-
-| Area | What |
-|------|------|
-| **Acquisition** | Talon live + dead-box (Windows/Linux/macOS/server); in-app Harvest from a mounted image/path; resumable encrypted upload; gRPC remote agent (mTLS) |
-| **Ingestion** | 40+ parsers, 80+ forensic formats auto-detected (EVTX, MFT, Registry, Prefetch, LNK, PCAP, Plaso, syslog, Zeek, Suricata, browsers, Android/iOS, disk images) |
-| **Detection** | 1 666 built-in rules (1 487 Sigma across 13 ATT&CK tactics + 179 native ES queries); Sigma→ES conversion; ATT&CK coverage matrix; runtime opt-out |
-| **Analysis** | Hayabusa, RegRipper, YARA, Volatility3, capa/FLOSS, oletools, PE/strings, CTI IOC matching — typed `BaseModule` + DAG pipelines |
-| **Search & normalize** | ES full-text + facets, saved queries, timeline, CSV export, cross-case search; `ForensicEvent → ECS v8` + OSSEM with GeoIP/ASN/rDNS enrichment |
-| **Investigate** | Alert-triggered auto-investigation · entity graph (host↔user↔IP) · rare-artifact stacking · reverse kill-chain · cross-case Pilot memory · editable templates |
-| **AI assist** | LLM providers (Anthropic, OpenAI, Ollama, OpenRouter) for the Pilot agent, rule generation, summaries; cost tracking; prompt-injection guardrails + confidence-calibrated verdicts |
-| **Threat intel** | STIX/TAXII, MISP, YETI, OTX/URLhaus/AbuseIPDB/Shodan/GreyNoise; SSRF-guarded feed fetches |
-| **AuthN / AuthZ** | JWT · MFA/TOTP · SSO (Google & Microsoft OIDC) · granular RBAC + role presets + groups · per-company multi-tenant isolation · tiered licensing |
-| **Evidence & observability** | Tamper-evident hash-chained audit log + signed chain-of-custody manifests; structured JSON logs, Prometheus `/metrics`, `/healthz`/`/readyz` |
-
-## Using the case console
-
-The case timeline — normalized events across the intrusion, filterable and Lucene-searchable, with flagged findings and MITRE context:
-
-<p align="center"><img src="docs/demo-timeline.png" alt="Citadel case timeline" width="100%"></p>
-
-Inside a case the top toolbar is the command surface, and everything you produce flows to **one** place — **Findings**.
-
-| Control | What it does |
-|---------|--------------|
-| **Ingest** | Upload artifacts (files, bundles, disk images) or pull from S3, with live per-job progress. |
-| **AI** / **⚡ Auto-AI** | Launch Pilot (reads events, detections, and Findings; runs tool-calls; writes a report). Auto-AI launches it the moment ingest finishes. |
-| **Detect ▾** | Detection Rules (Sigma/EQL), Anomalies (z-score), Baseline / rare artifacts, MITRE coverage. |
-| **Investigate ▾** | IOCs + threat-intel match, Process Tree, Entity graph, Kill chain, Co-Pilot. |
-| **Case ▾** | Notes, Templates, Report (MD/HTML/PDF/DOCX), signed Evidence chain. |
-| **Modules** | Run analysis modules (Hayabusa, YARA, CAPA, Volatility…); results land in Findings. |
-
-**Findings** is the single output store: every surface (modules, IOC match, anomaly scan, MITRE coverage, Pilot) writes here in one shape. Filter by kind/severity, export CSV, re-ingest a selection, or pivot to source events. Findings are ordinary timeline events (`artifact_type:finding`), so they are searchable, reported, and carried in the `.citadel` archive — no separate path. A **Module run status** view tracks progress/failure/retry separately from output.
-
-Open any event to flag, pin, tag, annotate, or explain it, and inspect the full record and raw JSON:
-
-<p align="center"><img src="docs/demo-event.png" alt="Citadel event drill-down" width="100%"></p>
-
-## Architecture
-
-Citadel is an end-to-end DFIR pipeline assembled from standalone tools. Tools stay independent because they speak only **contracts** — never each other's internals.
-
-```mermaid
-flowchart TB
-  Browser -->|HTTPS| Traefik["Traefik ingress<br/>TLS · host routing"]
-  Traefik --> Frontend["Frontend<br/>React 18 · Vite · nginx"]
-  Traefik -->|/api| API["API<br/>FastAPI · Uvicorn"]
-  Frontend -->|REST · SSE| API
-
-  API -->|enqueue| Redis[("Redis 7<br/>broker · state · Streams")]
-  API -->|query / index| ES[("Elasticsearch 8<br/>events · search")]
-  API -->|presigned| MinIO[("MinIO<br/>artifact blobs · S3")]
-
-  Redis -->|ingest queue| WIngest["Worker · ingest<br/>Celery"]
-  Redis -->|modules queue| WModules["Worker · modules<br/>Celery"]
-
-  WIngest -->|parse → ECS| ES
-  WIngest -->|read artifacts| MinIO
-  WModules -->|findings| ES
-  WModules -->|read artifacts| MinIO
-
-  TalonAgent["Talon remote agent"] -.->|gRPC / mTLS · S3| MinIO
+```bash
+make deploy            # ./foctl deploy k8s
+make status
+make destroy
 ```
 
-Every stage runs over the async pipeline as a Celery/Redis-Streams consumer group (at-least-once, dedup by event sha256). Three shared layers make the tools compose: **`ForensicEvent`** (what a Babel parser yields — `timestamp` + `message` + `artifact_type`; Rosetta maps it to **ECS v8 + OSSEM**), the **artifact bundle** (`manifest.json | events.jsonl | blobs/<sha256> | bundle.sha256`), and **`brick.yaml`** (every tool's manifest). The async pipeline runs over a message bus (Redis Streams default; NATS/Kafka pluggable), at-least-once, dedup by event sha256: `artifacts.received → events.parsed → events.normalized → {indexed, detections.matched, modules.completed, intel.enriched}`. Full contract: [`contracts/`](contracts/).
+Kubernetes manifests are in [`k8s/`](k8s/), Helm charts in [`charts/`](charts/), and there is a Traefik compose file for a reverse-proxied deployment. `foctl` is the operations CLI.
 
-| Component | Tech |
-|-----------|------|
-| Frontend | React 18 + Vite + Tailwind (nginx) |
-| API | FastAPI / Python 3.11 (Uvicorn) |
-| Workers | Celery (ingest + modules queues) |
-| Search | Elasticsearch 8 · **Broker/state** Redis 7 · **Artifacts** MinIO (S3) · **Ingress** Traefik |
+## Stack
 
-Layout: `api/` + `frontend/` (platform) · `tools/` (standalone suite + `citadel_contracts`) · `contracts/` (schemas) · `charts/citadel/` (Helm) · `k8s/` (manifests). Resource sizing (`scripts/allocate_resources.py`) reads real host RAM/CPU and never over-commits.
+FastAPI and Celery on the backend, React 19 with Vite and Tailwind on the frontend, Elasticsearch for the timeline, Redis for the bus and queues, MinIO for evidence blobs.
 
-## Security
+## How the tools are wired
 
-Found a vulnerability? Please report it privately — see [`SECURITY.md`](SECURITY.md).
-Do not open a public issue for security reports. Hardening guidance (secrets,
-default credentials, auth) lives in [`docs/DEPLOY.md`](docs/DEPLOY.md) and
-[`.env.example`](.env.example).
+[`tools/SUITE.yaml`](tools/SUITE.yaml) indexes every tool, its role and its status. [`tools/versions.yaml`](tools/versions.yaml) pins each one at a tested ref, and `scripts/fetch_tools.sh` clones or checks out that ref.
+
+All ten tools are currently `vendored: true`, meaning they live in-tree here and `fetch_tools.sh` skips them. Externalising one with `--force` needs its pinned ref to exist as a tag in its own repo, which is not yet the case.
+
+Every tool declares its surface in a `brick.yaml`: what it consumes, what it produces, what it depends on, and how to health-check it. Nothing talks to anything except through the schemas in [`contracts/`](contracts/).
+
+## Development
+
+```bash
+pytest -q                       # backend
+cd frontend && npm test         # frontend
+```
+
+CI runs lint (Python, frontend, Dockerfiles, YAML), tests on 3.11 and 3.12, a CVE scan, and CodeQL.
+
+## License
+
+[PolyForm Noncommercial 1.0.0](LICENSE). Run, modify and self-host it for any noncommercial purpose. Commercial use needs written authorization from the copyright holder; see [LICENSING.md](LICENSING.md).
+
+This is a source-available license, not an OSI-approved open source license.
 
 ## Contributing
 
-`./scripts/run_tests.sh` runs 16 suites + a real `access.log → Babel → Rosetta → Sigil` integration, stdlib-only (no pytest/ES/Redis), enforced in CI on Python 3.11 & 3.12. **Add a parser:** scaffold from `tools/babel/template` (cookiecutter), implement `parse()`, drop the package under `tools/babel/` — the loader discovers it. **Add a tool:** new `tools/<name>/` depending only on `citadel_contracts` + `contracts/`, ship a `brick.yaml`, emit `ForensicEvent`. **Rule:** never import another tool's internals — cross only via contracts. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
-
-Participation is governed by [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) — community standards, plus the obligations specific to forensics tooling: **never commit real evidence, case data, or identifiers**, and dual-use technique is discussed for defence.
-
-## Licensing
-
-**Source-available, noncommercial.** Licensed under the **PolyForm Noncommercial License 1.0.0** ([`LICENSE`](LICENSE)) — run, modify, and self-host for any noncommercial purpose (personal, research, education, nonprofits, government). **Any commercial use requires prior written authorization signed by the copyright holder.** Premium runtime tiers (pro / enterprise / mssp) are unlocked by a license key; no key → Community tier. Detail: [`LICENSING.md`](LICENSING.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) and [SECURITY.md](SECURITY.md).
