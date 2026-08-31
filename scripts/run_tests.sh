@@ -13,6 +13,7 @@ ROOT="$(pwd)"
 SUITES=(
   "tools/citadel_contracts/test_validator.py"
   "tools/citadel_contracts/test_telemetry.py"
+  "tools/citadel_contracts/test_capabilities.py"
   "api/test_agg_rules.py"
   "tools/sigil/test_sigil_tools.py"
   "tools/sigil/sigil_validate.py"

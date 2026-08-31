@@ -25,3 +25,39 @@ capabilities:
         label: Force artifact type (optional)
         placeholder: auto-detect
         help: Override parser auto-detection for ambiguous files.
+
+# What the intake worker emits, and how it wants it shown. Citadel holds no
+# knowledge of parse outcomes — this block is the only place they are defined.
+telemetry:
+  kinds: [task]
+  fields:
+    - { name: task.name,          type: keyword, label: "Task" }
+    - { name: task.id,            type: keyword }
+    - { name: task.queue,         type: keyword, label: "Queue" }
+    - { name: task.artifact_type, type: keyword, label: "Artifact type" }
+    - { name: task.plugin,        type: keyword, label: "Parser" }
+    - { name: task.events,        type: long,    label: "Events" }
+    - { name: task.retries,       type: short,   label: "Retries" }
+  panels:
+    - key: parser_reliability
+      label: Parser reliability
+      hint: "per artifact type — a failure ratio here is a parser worth fixing"
+      type: table
+      kind: task
+      group_by: task.artifact_type
+      limit: 25
+      metrics:
+        - { op: count, label: "Runs" }
+        - { op: count, label: "Failed", where: { outcome: failure }, tone: bad }
+        - { op: avg,   field: duration_ms,  label: "Avg", unit: ms }
+        - { op: sum,   field: task.events,  label: "Events" }
+    - key: task_outcomes
+      label: Background tasks
+      hint: "every queued unit of work, by task name"
+      type: table
+      kind: task
+      group_by: task.name
+      metrics:
+        - { op: count, label: "Runs" }
+        - { op: count, label: "Failed", where: { outcome: failure }, tone: bad }
+        - { op: avg,   field: duration_ms, label: "Avg", unit: ms }

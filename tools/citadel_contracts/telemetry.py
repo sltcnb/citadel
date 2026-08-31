@@ -102,6 +102,18 @@ _TEMPLATE_BODY: dict = {
         },
         "mappings": {
             "dynamic": False,
+            # ── The envelope, and only the envelope ──────────────────────
+            # These are the fields every event carries by construction, written
+            # by emit() itself. Everything else — error.*, http.*, task.*,
+            # llm.*, ui.*, and anything a tool invents — is ADVERTISED by the
+            # component that emits it (capabilities.yaml → telemetry.fields)
+            # and merged in through ensure_index_template's `fields` argument.
+            #
+            # That is the point: neither this package nor the orchestrator
+            # should need editing for a swapped-in tool to aggregate its own
+            # telemetry. `dynamic: false` means an undeclared field is still
+            # stored and readable in _source — it just cannot be grouped on
+            # until somebody advertises it.
             "properties": {
                 "@timestamp": {"type": "date"},
                 "service": {"type": "keyword"},
@@ -114,72 +126,29 @@ _TEMPLATE_BODY: dict = {
                 "correlation_id": {"type": "keyword"},
                 "host": {"type": "keyword"},
                 "version": {"type": "keyword"},
-                "error": {
-                    "properties": {
-                        # `type` + a keyword-normalised `signature` are what you
-                        # group by; `message` stays text for reading.
-                        "type": {"type": "keyword"},
-                        "message": {"type": "text"},
-                        "signature": {"type": "keyword"},
-                        "stack": {"type": "text", "index": False},
-                    }
-                },
-                "http": {
-                    "properties": {
-                        "method": {"type": "keyword"},
-                        # `route` is the templated path (/cases/{case_id}) —
-                        # low cardinality, the one you aggregate on. `path` is
-                        # the concrete URL, for reading a single event.
-                        "route": {"type": "keyword"},
-                        "path": {"type": "keyword"},
-                        "status_code": {"type": "short"},
-                    }
-                },
-                "user": {
-                    "properties": {
-                        "name": {"type": "keyword"},
-                        "role": {"type": "keyword"},
-                    }
-                },
-                "task": {
-                    "properties": {
-                        "name": {"type": "keyword"},
-                        "id": {"type": "keyword"},
-                        "queue": {"type": "keyword"},
-                        "artifact_type": {"type": "keyword"},
-                        "plugin": {"type": "keyword"},
-                        "module": {"type": "keyword"},
-                        "events": {"type": "long"},
-                        "retries": {"type": "short"},
-                    }
-                },
-                "llm": {
-                    "properties": {
-                        "provider": {"type": "keyword"},
-                        "base_url": {"type": "keyword"},
-                        "model": {"type": "keyword"},
-                        "purpose": {"type": "keyword"},
-                        "prompt_tokens": {"type": "long"},
-                        "completion_tokens": {"type": "long"},
-                        "total_tokens": {"type": "long"},
-                        "cost_usd": {"type": "double"},
-                        "tokens_per_second": {"type": "float"},
-                    }
-                },
-                "ui": {
-                    "properties": {
-                        "route": {"type": "keyword"},
-                        "component": {"type": "keyword"},
-                        "source": {"type": "keyword"},
-                        "user_agent": {"type": "keyword"},
-                        "app_version": {"type": "keyword"},
-                    }
-                },
                 "labels": {"type": "flattened"},
-            },
+            }
         },
     },
 }
+
+
+def _deep_merge_properties(base: dict, extra: dict) -> dict:
+    """Merge advertised properties into the envelope without clobbering it.
+
+    The envelope always wins: a manifest cannot redefine ``kind`` as a float and
+    break every other component's aggregations.
+    """
+    out = {k: (dict(v) if isinstance(v, dict) else v) for k, v in base.items()}
+    for key, spec in (extra or {}).items():
+        if key in out and "properties" in out[key] and "properties" in (spec or {}):
+            out[key]["properties"] = _deep_merge_properties(
+                out[key]["properties"], spec["properties"]
+            )
+        elif key not in out:
+            out[key] = spec
+    return out
+
 
 
 # ── Ambient context ───────────────────────────────────────────────────────────
@@ -414,11 +383,22 @@ class TelemetrySink:
         return json.loads(raw) if raw else {}
 
     # ── index management ─────────────────────────────────────────────────────
-    def ensure_index_template(self, retention_days: int = 30) -> bool:
-        """Install the ILM policy + index template. Best-effort, idempotent."""
+    def ensure_index_template(
+        self, retention_days: int = 30, fields: dict | None = None
+    ) -> bool:
+        """Install the ILM policy + index template. Best-effort, idempotent.
+
+        ``fields`` is an Elasticsearch ``properties`` tree built from the
+        components' telemetry advertisements, merged over the envelope so each
+        component's own fields become aggregatable.
+        """
         if not self.enabled:
             return False
         template = json.loads(json.dumps(_TEMPLATE_BODY))
+        if fields:
+            template["template"]["mappings"]["properties"] = _deep_merge_properties(
+                template["template"]["mappings"]["properties"], fields
+            )
         try:
             policy = {
                 "policy": {
