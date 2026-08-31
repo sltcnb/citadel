@@ -222,6 +222,97 @@ def test_search_swallows_elasticsearch_failures(monkeypatch):
     assert tel._search({"size": 0}) == {}
 
 
+# ── the query itself ─────────────────────────────────────────────────────────
+# The tests above mock _search, so they validate how a response is RESHAPED and
+# say nothing about whether Elasticsearch would accept the query. That gap
+# shipped a summary endpoint that 400'd on every call: a terms agg ordered by
+# "p95" instead of "p95.95". These two tests close it without a live cluster.
+
+_MULTI_VALUE_AGGS = ("percentiles", "percentile_ranks", "stats", "extended_stats")
+
+
+def _capture_query(monkeypatch, fn, **kw):
+    captured = {}
+    monkeypatch.setattr(tel, "_search", lambda body: captured.update(body) or {})
+    fn(**kw)
+    return captured
+
+
+def _walk_aggs(node, path=""):
+    """Yield (path, name, spec) for every aggregation in a search body."""
+    for name, spec in (node.get("aggs") or {}).items():
+        here = f"{path}.{name}" if path else name
+        yield here, name, spec
+        yield from _walk_aggs(spec, here)
+
+
+def test_summary_never_orders_a_terms_agg_by_a_bare_multi_value_metric(monkeypatch):
+    body = _capture_query(monkeypatch, tel.telemetry_summary, hours=24)
+    for path, _name, spec in _walk_aggs(body):
+        order = (spec.get("terms") or {}).get("order")
+        if not isinstance(order, dict):
+            continue
+        siblings = spec.get("aggs") or {}
+        for key in order:
+            target = key.split(".", 1)[0]
+            sibling = siblings.get(target) or {}
+            kind = next((k for k in _MULTI_VALUE_AGGS if k in sibling), None)
+            if kind:
+                assert "." in key, (
+                    f"{path} orders by {key!r}, a {kind} agg. Elasticsearch rejects "
+                    f"the whole search with invalid_path unless the metric is named "
+                    f"(e.g. {key}.95)."
+                )
+
+
+def test_every_aggregated_field_exists_in_the_index_template(monkeypatch):
+    """A typo in a field name does not 400 — it silently returns no buckets,
+    which reads exactly like "nothing happened". Cross-check the query against
+    the mapping the sink actually installs."""
+    from citadel_contracts.telemetry import _TEMPLATE_BODY
+
+    mapped: set[str] = set()
+
+    def flatten(props, prefix=""):
+        for key, spec in (props or {}).items():
+            full = f"{prefix}{key}"
+            if "properties" in spec:
+                flatten(spec["properties"], full + ".")
+            else:
+                mapped.add(full)
+
+    flatten(_TEMPLATE_BODY["template"]["mappings"]["properties"])
+
+    def fields_of(node):
+        """Every field name referenced anywhere in a query/agg fragment."""
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key == "field" and isinstance(value, str):
+                    yield value
+                elif key in ("term", "terms", "range") and isinstance(value, dict):
+                    for name in value:
+                        if name not in ("field", "size", "order", "percents"):
+                            yield name
+                else:
+                    yield from fields_of(value)
+        elif isinstance(node, list):
+            for item in node:
+                yield from fields_of(item)
+
+    for body in (
+        _capture_query(monkeypatch, tel.telemetry_summary, hours=24),
+        _capture_query(monkeypatch, tel.telemetry_events, hours=24, kind="error",
+                       service="api", outcome="failure", signature="x",
+                       correlation_id="y", q="z", limit=10),
+    ):
+        for field in fields_of(body):
+            base = field[:-8] if field.endswith(".keyword") else field
+            assert base in mapped, (
+                f"query aggregates on {field!r}, which the telemetry index "
+                f"template does not map — it would return no buckets, silently."
+            )
+
+
 # ── event drill-down ─────────────────────────────────────────────────────────
 
 

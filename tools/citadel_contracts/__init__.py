@@ -10,23 +10,24 @@ and the rest of the pipeline is unchanged.
 No third-party dependencies; safe to vendor or pip-install into any tool image.
 """
 
-from .parser import (  # noqa: F401
-    STRUCTURED_ARTIFACTS,
-    BasePlugin,
-    PluginContext,
-    PluginError,
-    PluginFatalError,
-    PluginParseError,
-    classify_os,
-    iso_z,
-)
-from .validator import (  # noqa: F401
-    is_valid_forensic_event,
-    validate_forensic_event,
+from .capabilities import (  # noqa: F401
+    CAPABILITIES_KEY_PREFIX,
+    FIELD_TYPES,
+    PLATFORMS,
+    Capability,
+    CapabilityManifest,
+    InputField,
+    capabilities_redis_key,
+    manifest_from_dict,
+    register_capability,
 )
 from .finding import (  # noqa: F401
     ARTIFACT_TYPE as FINDING_ARTIFACT_TYPE,
+)
+from .finding import (
     KINDS as FINDING_KINDS,
+)
+from .finding import (
     SEVERITIES,
     Finding,
     make_finding,
@@ -39,23 +40,6 @@ from .logship import (  # noqa: F401
     setup_json_logging,
     tool_logger,
 )
-from .telemetry import (  # noqa: F401
-    KIND_ERROR,
-    KIND_LLM,
-    KIND_REQUEST,
-    KIND_TASK,
-    KIND_UI,
-    TelemetrySink,
-    emit as emit_telemetry,
-    error_signature,
-    get_sink,
-    init_telemetry,
-    record_error,
-    record_llm,
-    record_request,
-    record_task,
-    record_ui_event,
-)
 from .mapping import (  # noqa: F401
     MappingSpec,
     apply_mapping,
@@ -65,24 +49,49 @@ from .mapping import (  # noqa: F401
     register_transform,
     render_template,
 )
+from .parser import (  # noqa: F401
+    STRUCTURED_ARTIFACTS,
+    BasePlugin,
+    PluginContext,
+    PluginError,
+    PluginFatalError,
+    PluginParseError,
+    classify_os,
+    iso_z,
+)
+from .redis_conn import (  # noqa: F401
+    redis_url_with_auth,
+)
 from .sdk import (  # noqa: F401
     Ctx,
     event,
     parser,
 )
-from .redis_conn import (  # noqa: F401
-    redis_url_with_auth,
+from .telemetry import (  # noqa: F401
+    KIND_ERROR,
+    KIND_LLM,
+    KIND_REQUEST,
+    KIND_TASK,
+    KIND_UI,
+    TelemetrySink,
+    bind_context,
+    error_signature,
+    get_context,
+    get_sink,
+    init_telemetry,
+    record_error,
+    record_llm,
+    record_request,
+    record_task,
+    record_ui_event,
+    reset_context,
 )
-from .capabilities import (  # noqa: F401
-    CAPABILITIES_KEY_PREFIX,
-    FIELD_TYPES,
-    PLATFORMS,
-    Capability,
-    CapabilityManifest,
-    InputField,
-    capabilities_redis_key,
-    manifest_from_dict,
-    register_capability,
+from .telemetry import (
+    emit as emit_telemetry,
+)
+from .validator import (  # noqa: F401
+    is_valid_forensic_event,
+    validate_forensic_event,
 )
 
 __all__ = [
@@ -103,6 +112,9 @@ __all__ = [
     "JsonFormatter",
     "init_telemetry",
     "get_sink",
+    "bind_context",
+    "reset_context",
+    "get_context",
     "emit_telemetry",
     "record_error",
     "record_request",

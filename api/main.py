@@ -300,9 +300,14 @@ def _record_request_telemetry(scope, method: str, path: str, code: int, ms: floa
     try:
         from citadel_contracts.telemetry import record_request
 
-        # The templated route ("/api/v1/cases/{case_id}") is what you can
-        # aggregate on; the concrete path is kept for reading one event.
+        # The templated route ("/cases/{case_id}") is what you can aggregate on;
+        # the concrete path is kept for reading one event. Endpoints Starlette
+        # serves without a matched route (openapi.json, static) have no
+        # template, so fall back to the path with the same /api/v1 prefix
+        # stripped — otherwise the one field you group by holds two shapes.
         route = getattr(scope.get("route"), "path", "") or ""
+        if not route:
+            route = path.split("/api/v1", 1)[-1] or path
         actor, role = _audit_actor_from_scope(scope)
         m = _CASE_ID_RE.search(path)
         record_request(
@@ -434,6 +439,19 @@ class CoreHTTPMiddleware:
                 await denied(scope, receive, send)
                 return
 
+        # Bind the case this request is about, so telemetry raised anywhere
+        # underneath it — an LLM call inside Pilot, an unhandled exception —
+        # is attributed without every layer having to pass a case_id down.
+        ctx_token = None
+        try:
+            from citadel_contracts.telemetry import bind_context
+
+            m = _CASE_ID_RE.search(path)
+            if m:
+                ctx_token = bind_context(case_id=m.group(1))
+        except Exception:  # noqa: BLE001
+            ctx_token = None
+
         start = time.perf_counter()
         status = {"code": 0}
 
@@ -448,6 +466,13 @@ class CoreHTTPMiddleware:
         try:
             await self.app(scope, receive, send_wrapper)
         finally:
+            if ctx_token is not None:
+                try:
+                    from citadel_contracts.telemetry import reset_context
+
+                    reset_context(ctx_token)
+                except Exception:  # noqa: BLE001
+                    pass
             ms = round((time.perf_counter() - start) * 1000, 1)
             code = status["code"]
             try:

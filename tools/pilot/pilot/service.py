@@ -469,6 +469,12 @@ def _llm_call(cfg: dict, purpose: str):
     started = _t.perf_counter()
     _LLM_CALL.started = started
     _LLM_CALL.purpose = purpose
+    # The OpenAI-compatible branches pass their base_url as `provider` to
+    # _track_llm_usage, which put a full internal URL into a keyword field and
+    # made "group by provider" useless. Keep the configured provider name for
+    # aggregation and the endpoint as its own field.
+    _LLM_CALL.provider = (cfg.get("provider") or "").lower() or "custom"
+    _LLM_CALL.base_url = cfg.get("base_url") or ""
     try:
         yield
     except Exception as exc:
@@ -476,10 +482,11 @@ def _llm_call(cfg: dict, purpose: str):
             from citadel_contracts.telemetry import record_llm
 
             record_llm(
-                cfg.get("provider", "") or cfg.get("base_url", "") or "unknown",
+                (cfg.get("provider") or "").lower() or "custom",
                 cfg.get("model", ""),
                 outcome="failure",
                 purpose=purpose,
+                base_url=cfg.get("base_url") or "",
                 duration_ms=(_t.perf_counter() - started) * 1000,
                 message=f"{type(exc).__name__}: {exc}",
                 **{"labels": {"component": "pilot"}},
@@ -490,6 +497,8 @@ def _llm_call(cfg: dict, purpose: str):
     finally:
         _LLM_CALL.started = None
         _LLM_CALL.purpose = ""
+        _LLM_CALL.provider = ""
+        _LLM_CALL.base_url = ""
 
 
 def _call_llm(cfg: dict, prompt: str) -> str:
@@ -527,20 +536,40 @@ def _track_llm_usage(
         from citadel_contracts.telemetry import record_llm
 
         started = getattr(_LLM_CALL, "started", None)
+        elapsed_ms = (_t.perf_counter() - started) * 1000 if started else None
+
+        # Cost: providers that bill us report it; self-hosted and most
+        # OpenAI-compatible endpoints do not. Falling back to the price table
+        # the dashboard already uses means the spend figure is a number rather
+        # than a permanent $0.00 — labelled so the two are never confused.
+        cost, cost_source = actual_cost_usd, "actual"
+        if cost is None:
+            cost = _estimate_cost(
+                model, prompt_tokens or 0, completion_tokens or 0,
+                getattr(_LLM_CALL, "base_url", "") or "",
+            )
+            cost_source = "estimated" if cost is not None else ""
+
+        # Throughput: only the Ollama branch reports inference_ns, so derive it
+        # from the wall clock everywhere else rather than leaving it empty.
+        tps = None
+        if inference_ns and completion_tokens:
+            tps = round(completion_tokens / (inference_ns / 1e9), 2)
+        elif elapsed_ms and completion_tokens:
+            tps = round(completion_tokens / (elapsed_ms / 1000), 2)
+
         record_llm(
-            provider,
+            getattr(_LLM_CALL, "provider", "") or provider,
             model,
             outcome="success",
             purpose=getattr(_LLM_CALL, "purpose", "") or "",
+            base_url=getattr(_LLM_CALL, "base_url", "") or "",
             prompt_tokens=prompt_tokens or 0,
             completion_tokens=completion_tokens or 0,
-            cost_usd=actual_cost_usd,
-            duration_ms=(_t.perf_counter() - started) * 1000 if started else None,
-            tokens_per_second=(
-                round(completion_tokens / (inference_ns / 1e9), 2)
-                if inference_ns and completion_tokens
-                else None
-            ),
+            cost_usd=cost,
+            cost_source=cost_source,
+            duration_ms=elapsed_ms,
+            tokens_per_second=tps,
             **{"labels": {"component": "pilot"}},
         )
     except Exception:  # noqa: BLE001 — telemetry must never break an LLM call
