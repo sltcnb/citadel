@@ -733,44 +733,22 @@ async def _on_startup():
     except Exception as exc:
         logger.warning("admin log shipping unavailable: %s", exc)
 
-    # Durable product telemetry (citadel-telemetry-*). Separate from the Redis
-    # log streams above: those are a live tail, this is the aggregatable history
-    # the admin telemetry endpoints and Kibana read. Best-effort throughout —
-    # a missing or unreachable Elasticsearch degrades it to a no-op.
+    # Create the telemetry sink now, so anything raised during the rest of
+    # startup is captured. Installing the index MAPPING is deliberately left
+    # until after the capability manifests are registered further down — see
+    # the comment there.
     try:
         from citadel_contracts.telemetry import init_telemetry
 
-        _sink = init_telemetry(
+        init_telemetry(
             "api",
             es_url=settings.ELASTICSEARCH_URL,
             username=settings.ELASTICSEARCH_USERNAME,
             password=settings.ELASTICSEARCH_PASSWORD,
             enabled=settings.TELEMETRY_ENABLED,
         )
-        if _sink.enabled:
-            # The index mapping is built from what the deployed components
-            # advertise, so a tool's own fields are aggregatable without either
-            # this file or the shared package knowing they exist.
-            from routers.telemetry import declaration as _telemetry_declaration
-
-            _decl = _telemetry_declaration()
-            await asyncio.get_event_loop().run_in_executor(
-                None,
-                _sink.ensure_index_template,
-                settings.TELEMETRY_RETENTION_DAYS,
-                _decl.index_properties(),
-            )
-            logger.info(
-                "Telemetry enabled → citadel-telemetry-* (retention %dd, sample %.0f%%) "
-                "· advertised by %d component(s): %d field(s), %d panel(s), kinds=%s",
-                settings.TELEMETRY_RETENTION_DAYS, settings.TELEMETRY_SAMPLE_RATE * 100,
-                len({p["tool"] for p in _decl.panels}) if _decl.panels else 0,
-                len(_decl.fields), len(_decl.panels), ",".join(_decl.kinds) or "-",
-            )
-            for _w in _decl.warnings:
-                logger.warning("telemetry advertisement: %s", _w)
     except Exception as exc:
-        logger.warning("Telemetry unavailable: %s", exc)
+        logger.warning("Telemetry sink unavailable: %s", exc)
 
     if not settings.AUTH_ENABLED and not settings.ALLOW_NO_AUTH:
         # AUTH_ENABLED=false makes every request a synthetic unrestricted admin.
@@ -882,6 +860,44 @@ async def _on_startup():
                 logger.warning("capability manifest warning: %s", w)
     except Exception as _cap_exc:
         logger.warning("Could not load tool capability manifests: %s", _cap_exc)
+
+    # ── Durable product telemetry (citadel-telemetry-*) ──────────────────────
+    # Deliberately AFTER the capability registration above. The telemetry index
+    # mapping and the summary panels are derived from the components'
+    # advertisements, and _aggregate() lets Redis (runtime self-registration)
+    # win over the baked-in manifests. On the first boot after a manifest
+    # change Redis still holds the PREVIOUS deploy's copies, so reading
+    # declarations before that loop refreshes them installs a mapping missing
+    # the new fields — which then silently fail to aggregate until some later
+    # restart. Registering first, then busting the aggregate cache, makes the
+    # mapping correct on the first boot rather than by luck of pod ordering.
+    try:
+        from citadel_contracts.telemetry import get_sink
+
+        _sink = get_sink()
+        if _sink is not None and _sink.enabled:
+            from routers.telemetry import declaration as _telemetry_declaration
+            from routers.tools import _AGG_CACHE
+
+            _AGG_CACHE["data"] = None  # re-read now that Redis is up to date
+            _decl = _telemetry_declaration()
+            await asyncio.get_event_loop().run_in_executor(
+                None,
+                _sink.ensure_index_template,
+                settings.TELEMETRY_RETENTION_DAYS,
+                _decl.index_properties(),
+            )
+            logger.info(
+                "Telemetry enabled → citadel-telemetry-* (retention %dd, sample %.0f%%) "
+                "· advertised by %d component(s): %d field(s), %d panel(s), kinds=%s",
+                settings.TELEMETRY_RETENTION_DAYS, settings.TELEMETRY_SAMPLE_RATE * 100,
+                len({p["tool"] for p in _decl.panels}) if _decl.panels else 0,
+                len(_decl.fields), len(_decl.panels), ",".join(_decl.kinds) or "-",
+            )
+            for _w in _decl.warnings:
+                logger.warning("telemetry advertisement: %s", _w)
+    except Exception as exc:
+        logger.warning("Telemetry unavailable: %s", exc)
 
 
 # ── Auth dependencies for route protection ────────────────────────────────────
