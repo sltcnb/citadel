@@ -1,0 +1,98 @@
+# Citadel platform — its own advertisement.
+#
+# The API and the case console are components like any other, so they declare
+# what they emit through the same contract a tool uses. There is no built-in
+# path: if this file is removed, these panels disappear from the Telemetry page
+# exactly as a tool's would.
+tool: citadel
+kind: platform
+stage: Platform
+icon: Shield
+role: "Platform — API, console, orchestration"
+version: "1.0.0"
+description: >
+  The orchestrator itself: the HTTP API, the case console, and the request and
+  error telemetry they produce.
+capabilities: []
+
+telemetry:
+  kinds: [request, error, ui]
+
+  fields:
+    # Failures — written by citadel_contracts.record_error / record_ui_event.
+    - { name: error.type,      type: keyword, label: "Type" }
+    - { name: error.message,   type: text }
+    - { name: error.signature, type: keyword, label: "Error" }
+    - { name: error.stack,     type: text }
+    # HTTP — written by record_request.
+    - { name: http.method,      type: keyword, label: "Method" }
+    - { name: http.route,       type: keyword, label: "Route" }
+    - { name: http.path,        type: keyword }
+    - { name: http.status_code, type: short,   label: "Status" }
+    - { name: user.name,        type: keyword, label: "User" }
+    - { name: user.role,        type: keyword, label: "Role" }
+    # Browser — written by record_ui_event.
+    - { name: ui.route,       type: keyword, label: "Route" }
+    - { name: ui.component,   type: keyword, label: "Component" }
+    - { name: ui.source,      type: keyword, label: "Source" }
+    - { name: ui.user_agent,  type: keyword }
+    - { name: ui.app_version, type: keyword, label: "Build" }
+
+  panels:
+    - key: overview
+      label: Overview
+      type: stat
+      metrics:
+        - { op: count, label: "Events" }
+        - { op: count, label: "Failures", where: { outcome: failure }, tone: bad }
+
+    - key: activity
+      label: Activity
+      hint: "events per hour, failures highlighted"
+      type: timeseries
+      interval: 1h
+      metrics:
+        - { op: count, label: "Events" }
+        - { op: count, label: "Failures", where: { outcome: failure }, tone: bad }
+
+    - key: top_errors
+      label: Recurring errors
+      hint: "grouped by signature — ids and numbers normalised, so one bug is one row"
+      type: table
+      group_by: error.signature
+      limit: 20
+      sample: true
+      metrics:
+        - { op: count, label: "Count", tone: bad }
+
+    - key: failing_endpoints
+      label: Failing endpoints
+      hint: "4xx and 5xx by route"
+      type: table
+      kind: request
+      where: { http.status_code: { gte: 400 } }
+      group_by: http.route
+      metrics:
+        - { op: count, label: "Failures", tone: bad }
+        - { op: count, label: "Server errors", where: { outcome: failure }, tone: bad }
+
+    - key: slowest_endpoints
+      label: Slowest endpoints
+      hint: "by p95 — the tail users actually feel, not the average"
+      type: table
+      kind: request
+      group_by: http.route
+      order_by: "p95"
+      metrics:
+        - { op: p95, field: duration_ms, label: "p95", unit: ms }
+        - { op: avg, field: duration_ms, label: "Avg", unit: ms }
+        - { op: count, label: "Calls" }
+
+    - key: browser_errors
+      label: Browser errors
+      hint: "render crashes and failed calls, as the user experienced them"
+      type: table
+      kind: ui
+      group_by: ui.route
+      metrics:
+        - { op: count, label: "Reports", tone: bad }

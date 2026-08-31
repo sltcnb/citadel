@@ -16,19 +16,37 @@ to *improve* the platform rather than to watch it.
 
 ## Telemetry
 
-### What is recorded
+### Everything is advertised
 
-Every event is one document with `@timestamp`, `service`, `kind`, `event` and
-`outcome` (`success` / `failure`). `kind` says what the rest of the document
-means:
+**No part of Citadel knows what a "parse outcome" or a "token count" is.** Event
+kinds, indexed fields and rendered panels all come from a `telemetry:` block in
+each component's own `capabilities.yaml` — the same contract that already builds
+the tool input forms. Remove a tool and its panels leave with it; plug one in
+and its panels appear, with no orchestrator change.
 
-| `kind` | Emitted by | One document per |
+Platform services advertise through exactly the same path: `tools/citadel/`
+declares the API's `request`/`error`/`ui` telemetry, `tools/sluice/` the
+worker's `task` telemetry, `tools/pilot/` the `llm` telemetry. There is no
+privileged built-in.
+
+What ships today, and who declares it:
+
+| `kind` | Advertised by | One document per |
 |---|---|---|
-| `error` | API exception handlers, Celery `task_failure`, dead-letter parking | unexpected exception, with the full traceback |
-| `request` | `CoreHTTPMiddleware` | HTTP request (sampled — see below) |
-| `task` | Celery signals, `observability.record_parse` | task run and parse attempt |
-| `llm` | `pilot.service` | call to a language-model backend |
-| `ui` | `POST /telemetry/ui` | browser crash, unhandled rejection, or 5xx the user hit |
+| `error` | `citadel` | unexpected exception, with the full traceback |
+| `request` | `citadel` | HTTP request (sampled — see below) |
+| `ui` | `citadel` | browser crash, unhandled rejection, or 5xx the user hit |
+| `task` | `sluice` | task run and parse attempt |
+| `llm` | `pilot` | call to a language-model backend |
+
+`anvil` declares no kind of its own — it adds one field (`task.module`) and one
+panel to Sluice's `task` events. That cross-tool extension is deliberate and
+supported.
+
+`GET /api/v1/admin/telemetry/contract` shows the merged result: every kind,
+field and panel the platform currently sees, plus any warnings. **It is the
+first place to look when a panel is missing or a field will not group** — if it
+is not there, no manifest declared it.
 
 Field groups: `error.*` (`type`, `message`, `signature`, `stack`), `http.*`
 (`method`, `route`, `path`, `status_code`), `task.*` (`name`, `id`, `queue`,
@@ -212,10 +230,13 @@ its own the first time it has something to say — and an `os.register_at_fork`
 hook rebuilds the queue and shipper in the child for the case where the parent
 had already started one.
 
-**Mappings are explicit, `dynamic` is `false`.** Unknown fields stay in
-`_source` (nothing a caller sends is lost) but are not indexed, so a careless
-`labels` payload cannot blow up the field count. Add a mapping when you want to
-aggregate on a field, not before.
+**Mappings are explicit, `dynamic` is `false`.** The index template carries the
+*envelope* only — the fields every event has by construction. Everything else is
+merged in from the advertisements at startup. An undeclared field is still
+stored and readable in `_source`; it just cannot be grouped on until somebody
+declares it. That is the mechanism that stops a careless payload blowing up the
+field count, and the reason a new tool's fields become aggregatable without
+editing the shared package.
 
 **Instrument at the choke point, not at the call site.** Task events come from
 Celery's own signals, so a new task type is covered the day it is added. LLM
@@ -224,17 +245,56 @@ the caller's stack frame — because threading a `purpose=` argument through
 thirty existing call sites is the kind of change that gets half done and then
 reports coverage it does not have.
 
-## Adding telemetry to a new tool
+## Adding telemetry to a tool
+
+Two halves: emit, and advertise.
+
+**Emit** — two lines, and the same code runs unchanged in a standalone CLI
+(without `ELASTICSEARCH_URL` the sink is disabled and every call is a no-op):
 
 ```python
 from citadel_contracts.telemetry import init_telemetry, record_task, record_error
 
 init_telemetry("mytool")          # reads ELASTICSEARCH_* from the environment
-
 record_task("mytool.scan", "success", duration_ms=1234, case_id=case_id)
 record_error(exc, event="scan_failed", case_id=case_id)
 ```
 
-That is the whole integration. `init_telemetry` is idempotent and returns the
-process-wide sink; if `ELASTICSEARCH_URL` is unset the sink is disabled and
-every call becomes a no-op, so the same code runs unchanged in a standalone CLI.
+**Advertise** — add a `telemetry:` block to the tool's `capabilities.yaml`. This
+is what makes the fields aggregatable and puts the panels on the page:
+
+```yaml
+telemetry:
+  kinds: [scan]                      # event kinds this tool emits
+  fields:                            # merged into the index mapping
+    - { name: scan.target, type: keyword, label: "Target" }
+    - { name: scan.findings, type: long, label: "Findings" }
+  panels:                            # rendered generically by the frontend
+    - key: scan_by_target
+      label: "Scans by target"
+      hint: "which targets fail most"
+      type: table                    # table | stat | timeseries
+      kind: scan
+      group_by: scan.target
+      order_by: "Failed"             # a metric label; default is count
+      metrics:
+        - { op: count, label: "Runs" }
+        - { op: count, label: "Failed", where: { outcome: failure }, tone: bad }
+        - { op: avg, field: duration_ms, label: "Avg", unit: ms }
+        - { op: p95, field: duration_ms, label: "p95", unit: ms }
+```
+
+Field types: `keyword` (the only thing you can group by), `text`, `long`,
+`integer`, `short`, `double`, `float`, `boolean`, `date`, `flattened`.
+Metric ops: `count`, `sum`, `avg`, `min`, `max`, `p95`. Units (`ms`, `usd`,
+`percent`) are formatting hints; `tone: bad` colours a non-zero value red.
+`where` takes an exact value, a list, or a range (`{gte: 400}`).
+
+The manifest is validated: an unknown type or op, a `table` without a
+`group_by`, a `group_by` on a `text` field, or a duplicate panel key are all
+reported by `GET /admin/telemetry/contract` and by
+`tools/citadel_contracts/test_capabilities.py` rather than silently producing an
+empty panel.
+
+A tool may declare fields and panels **without** declaring a kind, to extend
+another tool's events — that is how Anvil adds `task.module` to Sluice's `task`.

@@ -36,182 +36,100 @@ def _request(headers: dict | None = None, client: str = "10.0.0.7") -> Request:
     )
 
 
-# ── summary shaping ──────────────────────────────────────────────────────────
+# ── summary, driven by advertisements ────────────────────────────────────────
+# The summary has no fixed shape any more: it renders whatever the deployed
+# components advertise. These tests therefore feed it a manifest rather than a
+# canned Elasticsearch response.
 
-_AGGS = {
-    "hits": {"total": {"value": 42}},
-    "aggregations": {
-        "by_kind": {
-            "buckets": [
-                {
-                    "key": "request",
-                    "doc_count": 30,
-                    "outcome": {
-                        "buckets": [
-                            {"key": "success", "doc_count": 28},
-                            {"key": "failure", "doc_count": 2},
-                        ]
-                    },
-                }
-            ]
-        },
-        "by_service": {"buckets": [{"key": "api", "doc_count": 40}]},
-        "over_time": {
-            "buckets": [
-                {
-                    "key_as_string": "2026-08-31T10:00:00.000Z",
-                    "doc_count": 12,
-                    "failures": {"doc_count": 2},
-                }
-            ]
-        },
-        "top_errors": {
-            "doc_count": 2,
-            "signatures": {
-                "buckets": [
-                    {
-                        "key": "ValueError: case <id> not found",
-                        "doc_count": 2,
-                        "last_seen": {"value_as_string": "2026-08-31T10:12:00.000Z"},
-                        "services": {"buckets": [{"key": "api", "doc_count": 2}]},
-                        "sample": {
-                            "hits": {
-                                "hits": [
-                                    {"_source": {"message": "case abc not found"}}
-                                ]
-                            }
-                        },
-                    }
-                ]
-            },
-        },
-        "requests": {
-            "doc_count": 30,
-            "status": {"buckets": [{"key": 500, "doc_count": 2}]},
-            "failing_routes": {
-                "doc_count": 2,
-                "routes": {
-                    "buckets": [
-                        {
-                            "key": "/api/v1/cases/{case_id}/search",
-                            "doc_count": 2,
-                            "codes": {"buckets": [{"key": 500, "doc_count": 2}]},
-                        }
-                    ]
-                },
-            },
-            "slowest_routes": {
-                "buckets": [
-                    {
-                        "key": "/api/v1/search",
-                        "doc_count": 10,
-                        "p95": {"values": {"95.0": 2412.77}},
-                        "avg_ms": {"value": 880.45},
-                        "max_ms": {"value": 3000.0},
-                    }
-                ]
-            },
-        },
-        "tasks": {
-            "doc_count": 8,
-            "by_name": {
-                "buckets": [
-                    {
-                        "key": "parse",
-                        "doc_count": 8,
-                        "outcome": {
-                            "buckets": [
-                                {"key": "success", "doc_count": 6},
-                                {"key": "failure", "doc_count": 2},
-                            ]
-                        },
-                        "avg_ms": {"value": 1500.0},
-                    }
-                ]
-            },
-            "by_artifact_type": {
-                "buckets": [
-                    {
-                        "key": "evtx",
-                        "doc_count": 8,
-                        "outcome": {"buckets": [{"key": "failure", "doc_count": 2}]},
-                        "avg_ms": {"value": 1500.0},
-                        "events": {"value": 91234.0},
-                    }
-                ]
-            },
-        },
-        "llm": {
-            "doc_count": 4,
-            "calls": {"value": 4},
-            "tokens": {"value": 12000},
-            "cost_usd": {"value": 0.1234567},
-            "avg_ms": {"value": 2100.0},
-            "outcome": {"buckets": [{"key": "success", "doc_count": 3},
-                                    {"key": "failure", "doc_count": 1}]},
-            "by_model": {
-                "buckets": [
-                    {
-                        "key": "claude-opus-5",
-                        "doc_count": 4,
-                        "tokens": {"value": 12000},
-                        "cost_usd": {"value": 0.1234567},
-                        "avg_ms": {"value": 2100.0},
-                        "failures": {"doc_count": 1},
-                    }
-                ]
-            },
-            "by_purpose": {
-                "buckets": [
-                    {
-                        "key": "investigate_case",
-                        "doc_count": 4,
-                        "tokens": {"value": 12000},
-                        "avg_ms": {"value": 2100.0},
-                        "failures": {"doc_count": 1},
-                    }
-                ]
-            },
-        },
-        "ui": {
-            "doc_count": 3,
-            "routes": {"buckets": [{"key": "/cases/abc/timeline", "doc_count": 3}]},
-            "components": {"buckets": [{"key": "GET /cases/{id}", "doc_count": 3}]},
-            "sources": {"buckets": [{"key": "api", "doc_count": 3}]},
-        },
+_PILOT = {
+    "tool": "pilot",
+    "telemetry": {
+        "kinds": ["llm"],
+        "fields": [
+            {"name": "llm.purpose", "type": "keyword"},
+            {"name": "llm.total_tokens", "type": "long"},
+        ],
+        "panels": [
+            {
+                "key": "llm_by_purpose",
+                "label": "LLM by purpose",
+                "type": "table",
+                "kind": "llm",
+                "group_by": "llm.purpose",
+                "metrics": [
+                    {"op": "count", "label": "Calls"},
+                    {"op": "sum", "field": "llm.total_tokens", "label": "Tokens"},
+                    {"op": "count", "label": "Failed",
+                     "where": {"outcome": "failure"}, "tone": "bad"},
+                ],
+            }
+        ],
     },
 }
 
 
-def test_summary_reshapes_every_section(monkeypatch):
-    monkeypatch.setattr(tel, "_search", lambda body: _AGGS)
-    out = tel.telemetry_summary(hours=24)
+def _declaring(monkeypatch, *manifests):
+    """Point the router at a fixed set of advertisements."""
+    merged = tel.contract.merged(list(manifests))
+    monkeypatch.setattr(tel, "declaration", lambda: merged)
+    return merged
 
-    assert out["events"] == 42
-    assert out["by_kind"][0] == {
-        "kind": "request",
-        "count": 30,
-        "outcomes": {"success": 28, "failure": 2},
-    }
-    assert out["over_time"][0]["failures"] == 2
-    assert out["top_errors"][0]["signature"] == "ValueError: case <id> not found"
-    assert out["top_errors"][0]["sample"]["message"] == "case abc not found"
-    assert out["requests"]["failing_routes"][0]["codes"] == {"500": 2}
-    assert out["requests"]["slowest_routes"][0]["p95_ms"] == 2412.8
-    assert out["tasks"]["by_artifact_type"][0]["events"] == 91234
-    assert out["llm"]["cost_usd"] == 0.1235
-    assert out["llm"]["by_purpose"][0]["failures"] == 1
-    assert out["ui"]["routes"][0]["count"] == 3
+
+def test_summary_renders_only_what_is_advertised(monkeypatch):
+    _declaring(monkeypatch, _PILOT)
+    monkeypatch.setattr(tel, "_search", lambda body: {
+        "hits": {"total": {"value": 3}},
+        "aggregations": {
+            "llm_by_purpose": {
+                "doc_count": 3,
+                "buckets": {"buckets": [
+                    {"key": "_agent_run", "doc_count": 2,
+                     "m0": {}, "m1": {"value": 1200.0}, "m2": {"doc_count": 1}},
+                ]},
+            }
+        },
+    })
+    out = tel.telemetry_summary(hours=24)
+    assert out["events"] == 3
+    assert [p["key"] for p in out["panels"]] == ["llm_by_purpose"]
+    panel = out["panels"][0]
+    assert panel["tool"] == "pilot"
+    assert panel["group_by"] == "llm.purpose"
+    assert [c["label"] for c in panel["columns"]] == ["Calls", "Tokens", "Failed"]
+    row = panel["rows"][0]
+    assert row["key"] == "_agent_run"
+    assert row["m0"] == 2          # count -> the bucket's doc_count
+    assert row["m1"] == 1200.0     # sum
+    assert row["m2"] == 1          # filtered count
+
+
+def test_removing_a_tool_removes_its_panels(monkeypatch):
+    # The whole point of the contract: no orchestrator code mentions Pilot, so
+    # undeploying it leaves nothing behind.
+    _declaring(monkeypatch)  # nothing advertises anything
+    monkeypatch.setattr(tel, "_search", lambda body: {})
+    out = tel.telemetry_summary(hours=24)
+    assert out["panels"] == []
+    assert out["warnings"]  # says so rather than rendering an empty page
 
 
 def test_summary_on_missing_index_returns_empty_not_an_error(monkeypatch):
     # Telemetry going missing must never look like the platform being broken.
+    _declaring(monkeypatch, _PILOT)
     monkeypatch.setattr(tel, "_search", lambda body: {})
     out = tel.telemetry_summary(hours=1)
     assert out["events"] == 0
-    assert out["by_kind"] == []
-    assert out["requests"]["slowest_routes"] == []
-    assert out["llm"]["calls"] == 0
+    assert out["panels"][0]["rows"] == []
+
+
+def test_a_malformed_advertisement_is_reported_not_swallowed(monkeypatch):
+    bad = {"tool": "broken", "telemetry": {
+        "kinds": ["x"],
+        "fields": [{"name": "a", "type": "not-a-type"}],
+        "panels": [],
+    }}
+    merged = _declaring(monkeypatch, bad)
+    assert any("not-a-type" in w for w in merged.warnings)
 
 
 def test_search_swallows_elasticsearch_failures(monkeypatch):
@@ -265,13 +183,16 @@ def test_summary_never_orders_a_terms_agg_by_a_bare_multi_value_metric(monkeypat
                 )
 
 
-def test_every_aggregated_field_exists_in_the_index_template(monkeypatch):
-    """A typo in a field name does not 400 — it silently returns no buckets,
-    which reads exactly like "nothing happened". Cross-check the query against
-    the mapping the sink actually installs."""
+def test_every_aggregated_field_is_declared_by_some_manifest(monkeypatch):
+    """A typo in a group_by does not 400 — it silently returns no buckets,
+    which reads exactly like "nothing happened". Cross-check every field the
+    real shipped manifests aggregate on against the fields they declare."""
+    from pathlib import Path
+
+    import yaml
     from citadel_contracts.telemetry import _TEMPLATE_BODY
 
-    mapped: set[str] = set()
+    envelope: set[str] = set()
 
     def flatten(props, prefix=""):
         for key, spec in (props or {}).items():
@@ -279,37 +200,30 @@ def test_every_aggregated_field_exists_in_the_index_template(monkeypatch):
             if "properties" in spec:
                 flatten(spec["properties"], full + ".")
             else:
-                mapped.add(full)
+                envelope.add(full)
 
     flatten(_TEMPLATE_BODY["template"]["mappings"]["properties"])
 
-    def fields_of(node):
-        """Every field name referenced anywhere in a query/agg fragment."""
-        if isinstance(node, dict):
-            for key, value in node.items():
-                if key == "field" and isinstance(value, str):
-                    yield value
-                elif key in ("term", "terms", "range") and isinstance(value, dict):
-                    for name in value:
-                        if name not in ("field", "size", "order", "percents"):
-                            yield name
-                else:
-                    yield from fields_of(value)
-        elif isinstance(node, list):
-            for item in node:
-                yield from fields_of(item)
+    root = Path(__file__).resolve().parents[2] / "tools"
+    manifests = [
+        yaml.safe_load(p.read_text())
+        for p in sorted(root.glob("*/capabilities.yaml"))
+    ]
+    merged = tel.contract.merged([m for m in manifests if m])
+    assert not merged.warnings, merged.warnings
+    known = set(merged.fields) | envelope
 
-    for body in (
-        _capture_query(monkeypatch, tel.telemetry_summary, hours=24),
-        _capture_query(monkeypatch, tel.telemetry_events, hours=24, kind="error",
-                       service="api", outcome="failure", signature="x",
-                       correlation_id="y", q="z", limit=10),
-    ):
-        for field in fields_of(body):
-            base = field[:-8] if field.endswith(".keyword") else field
-            assert base in mapped, (
-                f"query aggregates on {field!r}, which the telemetry index "
-                f"template does not map — it would return no buckets, silently."
+    for panel in merged.panels:
+        where = panel.get("where") or {}
+        referenced = [panel.get("group_by")] + list(where)
+        for metric in panel.get("metrics") or []:
+            referenced.append(metric.get("field"))
+            referenced.extend((metric.get("where") or {}).keys())
+        for name in filter(None, referenced):
+            assert name in known, (
+                f"panel '{panel['key']}' (from {panel['tool']}) aggregates on "
+                f"'{name}', which no manifest declares — it would silently "
+                f"return no buckets."
             )
 
 
@@ -324,9 +238,11 @@ def test_events_builds_the_expected_filters(monkeypatch):
         return {"hits": {"total": {"value": 1}, "hits": [{"_source": {"kind": "error"}}]}}
 
     monkeypatch.setattr(tel, "_search", _capture)
+    # Called directly, FastAPI's Query(...) defaults are never resolved, so
+    # every optional argument has to be passed explicitly here.
     out = tel.telemetry_events(
-        hours=6, kind="error", service="api", outcome="failure",
-        correlation_id="c0ffee", q="timeout", limit=10,
+        hours=6, kind="error", service="api", outcome="failure", signature=None,
+        correlation_id="c0ffee", q="timeout", field=None, value=None, limit=10,
     )
     filters = captured["query"]["bool"]["filter"]
     assert {"term": {"kind": "error"}} in filters
@@ -337,9 +253,32 @@ def test_events_builds_the_expected_filters(monkeypatch):
     assert out["count"] == 1
 
 
-def test_events_rejects_an_unknown_kind():
+def test_events_rejects_a_kind_no_component_advertises(monkeypatch):
+    _declaring(monkeypatch, _PILOT)
     with pytest.raises(HTTPException) as exc:
-        tel.telemetry_events(kind="nonsense")
+        tel.telemetry_events(hours=24, kind="nonsense", service=None, outcome=None,
+                             signature=None, correlation_id=None, q=None,
+                             field=None, value=None, limit=10)
+    assert exc.value.status_code == 400
+    assert "llm" in exc.value.detail
+
+
+def test_drilldown_is_restricted_to_advertised_fields(monkeypatch):
+    _declaring(monkeypatch, _PILOT)
+    captured = {}
+    monkeypatch.setattr(tel, "_search", lambda b: captured.update(b) or {})
+
+    # An advertised field is accepted...
+    tel.telemetry_events(hours=24, kind=None, service=None, outcome=None,
+                         signature=None, correlation_id=None, q=None,
+                         field="llm.purpose", value="_agent_run", limit=10)
+    assert {"term": {"llm.purpose": "_agent_run"}} in captured["query"]["bool"]["filter"]
+
+    # ...anything else is refused, so this cannot become a free-form query API.
+    with pytest.raises(HTTPException) as exc:
+        tel.telemetry_events(hours=24, kind=None, service=None, outcome=None,
+                             signature=None, correlation_id=None, q=None,
+                             field="secret.field", value="x", limit=10)
     assert exc.value.status_code == 400
 
 

@@ -25,3 +25,41 @@ capabilities:
     platforms: [any]
     output: "summary (text)"
     inputs: []
+
+# Pilot's own telemetry. Swap Pilot for a non-LLM agent and these panels leave
+# with it — the orchestrator has no llm-shaped code to clean up.
+telemetry:
+  kinds: [llm]
+  fields:
+    - { name: llm.provider,          type: keyword, label: "Provider" }
+    - { name: llm.base_url,          type: keyword }
+    - { name: llm.model,             type: keyword, label: "Model" }
+    - { name: llm.purpose,           type: keyword, label: "Purpose" }
+    - { name: llm.prompt_tokens,     type: long }
+    - { name: llm.completion_tokens, type: long }
+    - { name: llm.total_tokens,      type: long,    label: "Tokens" }
+    - { name: llm.cost_usd,          type: double,  label: "Cost" }
+    - { name: llm.tokens_per_second, type: float,   label: "Tok/s" }
+  panels:
+    - key: llm_by_purpose
+      label: LLM by purpose
+      hint: "which kind of call costs, and which fails"
+      type: table
+      kind: llm
+      group_by: llm.purpose
+      metrics:
+        - { op: count, label: "Calls" }
+        - { op: sum,   field: llm.total_tokens, label: "Tokens" }
+        - { op: sum,   field: llm.cost_usd,     label: "Cost", unit: usd }
+        - { op: avg,   field: duration_ms,      label: "Avg", unit: ms }
+        - { op: count, label: "Failed", where: { outcome: failure }, tone: bad }
+    - key: llm_by_model
+      label: LLM by model
+      type: table
+      kind: llm
+      group_by: llm.model
+      metrics:
+        - { op: count, label: "Calls" }
+        - { op: sum,   field: llm.total_tokens,      label: "Tokens" }
+        - { op: avg,   field: llm.tokens_per_second, label: "Tok/s" }
+        - { op: sum,   field: llm.cost_usd,          label: "Cost", unit: usd }

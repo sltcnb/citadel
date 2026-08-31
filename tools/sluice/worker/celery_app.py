@@ -45,10 +45,10 @@ try:
     from citadel_contracts.telemetry import init_telemetry as _init_telemetry
 
     _TELEMETRY = _init_telemetry("processor")
-    if _TELEMETRY.enabled:
-        _TELEMETRY.ensure_index_template(
-            int(os.getenv("CITADEL_TELEMETRY_RETENTION_DAYS", "30"))
-        )
+    # The worker does NOT install the index template. The mapping is built from
+    # every component's telemetry advertisement, and only the API aggregates
+    # those; a worker installing a template from its own partial view would
+    # race the API and drop the other components' fields. The worker just ships.
 except Exception:  # noqa: BLE001
     pass
 

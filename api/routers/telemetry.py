@@ -23,12 +23,12 @@ import urllib.error
 
 from citadel_contracts.telemetry import (
     INDEX_PATTERN,
-    KINDS,
     get_sink,
     record_ui_event,
 )
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
+from services import telemetry_contract as contract
 from services.elasticsearch import es_request
 
 from config import get_redis, settings
@@ -47,6 +47,15 @@ admin_router = APIRouter(tags=["admin"])
 
 _SEARCH_PATH = f"/{INDEX_PATTERN}/_search?ignore_unavailable=true&allow_no_indices=true"
 
+# The envelope every event carries, regardless of what any component advertises
+# (mirrors citadel_contracts.telemetry's index template).
+_ENVELOPE_FIELDS = frozenset(
+    {
+        "service", "kind", "event", "outcome", "duration_ms",
+        "case_id", "correlation_id", "host", "version",
+    }
+)
+
 
 def _search(body: dict) -> dict:
     """Run one telemetry search. An unreachable/empty index reads as no data."""
@@ -60,6 +69,22 @@ def _search(body: dict) -> dict:
     except Exception as exc:  # noqa: BLE001
         logger.warning("telemetry search unavailable: %s", exc)
         return {}
+
+
+def declaration() -> contract.MergedTelemetry:
+    """Every component's telemetry advertisement, merged.
+
+    Reuses the tools router's cached aggregation, so a manifest change — a file
+    edit, or a component re-registering itself in Redis — reaches this within
+    that cache's TTL, with no restart and no code change here.
+    """
+    from routers.tools import _aggregate_cached
+
+    try:
+        return contract.merged(_aggregate_cached())
+    except Exception as exc:  # noqa: BLE001 — no manifests must not 500 the page
+        logger.warning("telemetry declarations unavailable: %s", exc)
+        return contract.MergedTelemetry()
 
 
 def _range(hours: int) -> dict:
@@ -177,289 +202,60 @@ def telemetry_health():
 
 @admin_router.get("/admin/telemetry/summary")
 def telemetry_summary(hours: int = Query(24, ge=1, le=24 * 90)):
-    """The improvement dashboard in one query.
+    """Every panel every deployed component advertises, in one query.
 
-    Every section answers a different "what should we fix?":
-    failing/slow routes (API quality), recurring errors (bugs), task outcomes
-    (parser reliability), LLM spend (cost), UI errors (frontend quality).
+    There is nothing tool-shaped in this function. The panels, the fields they
+    group by and the metrics they compute all come from ``telemetry:`` blocks
+    in the components' own ``capabilities.yaml``. Remove a tool and its panels
+    go with it; add one and its panels appear.
     """
+    decl = declaration()
+    if not decl.panels:
+        return {
+            "window_hours": hours,
+            "events": 0,
+            "panels": [],
+            "kinds": decl.kinds,
+            "warnings": decl.warnings
+            or ["no component advertises any telemetry panel"],
+        }
+
+    interval = "1h" if hours <= 48 else "6h"
     body = {
         "size": 0,
         "query": {"bool": {"filter": [_range(hours)]}},
-        "aggs": {
-            "by_kind": {
-                "terms": {"field": "kind", "size": 10},
-                "aggs": {"outcome": {"terms": {"field": "outcome", "size": 5}}},
-            },
-            "by_service": {"terms": {"field": "service", "size": 20}},
-            "over_time": {
-                "date_histogram": {
-                    "field": "@timestamp",
-                    "fixed_interval": "1h" if hours <= 48 else "6h",
-                    "min_doc_count": 0,
-                },
-                "aggs": {"failures": {"filter": {"term": {"outcome": "failure"}}}},
-            },
-            "top_errors": {
-                "filter": {"terms": {"kind": ["error", "ui"]}},
-                "aggs": {
-                    "signatures": {
-                        "terms": {"field": "error.signature", "size": 20},
-                        "aggs": {
-                            "last_seen": {"max": {"field": "@timestamp"}},
-                            "services": {"terms": {"field": "service", "size": 5}},
-                            "sample": {
-                                "top_hits": {
-                                    "size": 1,
-                                    "sort": [{"@timestamp": "desc"}],
-                                    "_source": [
-                                        "@timestamp", "service", "kind", "event",
-                                        "message", "correlation_id",
-                                        "error.type", "error.message",
-                                        "http.method", "http.route", "http.path",
-                                        "ui.route", "ui.component",
-                                    ],
-                                }
-                            },
-                        },
-                    }
-                },
-            },
-            "requests": {
-                "filter": {"term": {"kind": "request"}},
-                "aggs": {
-                    "status": {"terms": {"field": "http.status_code", "size": 20}},
-                    "failing_routes": {
-                        "filter": {"range": {"http.status_code": {"gte": 400}}},
-                        "aggs": {
-                            "routes": {
-                                "terms": {"field": "http.route", "size": 15},
-                                "aggs": {
-                                    "codes": {
-                                        "terms": {"field": "http.status_code", "size": 5}
-                                    }
-                                },
-                            }
-                        },
-                    },
-                    "slowest_routes": {
-                        "terms": {
-                            "field": "http.route",
-                            "size": 15,
-                            # "p95.95", not "p95": ordering a terms agg by a
-                            # percentiles sub-agg must name the percentile, or
-                            # Elasticsearch rejects the WHOLE search with a 400
-                            # (invalid_path) and the page renders empty.
-                            "order": {"p95.95": "desc"},
-                        },
-                        "aggs": {
-                            "p95": {"percentiles": {"field": "duration_ms", "percents": [95]}},
-                            "avg_ms": {"avg": {"field": "duration_ms"}},
-                            "max_ms": {"max": {"field": "duration_ms"}},
-                        },
-                    },
-                },
-            },
-            "tasks": {
-                "filter": {"term": {"kind": "task"}},
-                "aggs": {
-                    "by_name": {
-                        "terms": {"field": "task.name", "size": 20},
-                        "aggs": {
-                            "outcome": {"terms": {"field": "outcome", "size": 5}},
-                            "avg_ms": {"avg": {"field": "duration_ms"}},
-                        },
-                    },
-                    "by_artifact_type": {
-                        "terms": {"field": "task.artifact_type", "size": 25},
-                        "aggs": {
-                            "outcome": {"terms": {"field": "outcome", "size": 5}},
-                            "avg_ms": {"avg": {"field": "duration_ms"}},
-                            "events": {"sum": {"field": "task.events"}},
-                        },
-                    },
-                },
-            },
-            "llm": {
-                "filter": {"term": {"kind": "llm"}},
-                "aggs": {
-                    "calls": {"value_count": {"field": "llm.total_tokens"}},
-                    "tokens": {"sum": {"field": "llm.total_tokens"}},
-                    "cost_usd": {"sum": {"field": "llm.cost_usd"}},
-                    "avg_ms": {"avg": {"field": "duration_ms"}},
-                    "outcome": {"terms": {"field": "outcome", "size": 5}},
-                    "by_model": {
-                        "terms": {"field": "llm.model", "size": 15},
-                        "aggs": {
-                            "tokens": {"sum": {"field": "llm.total_tokens"}},
-                            "cost_usd": {"sum": {"field": "llm.cost_usd"}},
-                            "avg_ms": {"avg": {"field": "duration_ms"}},
-                            "failures": {"filter": {"term": {"outcome": "failure"}}},
-                        },
-                    },
-                    "by_purpose": {
-                        "terms": {"field": "llm.purpose", "size": 15},
-                        "aggs": {
-                            "tokens": {"sum": {"field": "llm.total_tokens"}},
-                            "avg_ms": {"avg": {"field": "duration_ms"}},
-                            "failures": {"filter": {"term": {"outcome": "failure"}}},
-                        },
-                    },
-                },
-            },
-            "ui": {
-                "filter": {"term": {"kind": "ui"}},
-                "aggs": {
-                    "routes": {"terms": {"field": "ui.route", "size": 15}},
-                    "components": {"terms": {"field": "ui.component", "size": 15}},
-                    "sources": {"terms": {"field": "ui.source", "size": 10}},
-                },
-            },
-        },
+        "aggs": contract.build_aggs(decl.panels, interval),
     }
     res = _search(body)
-    aggs = res.get("aggregations") or {}
     total = ((res.get("hits") or {}).get("total") or {}).get("value", 0)
-
-    def _pct(bucket: dict, key: str = "p95") -> float | None:
-        vals = ((bucket.get(key) or {}).get("values") or {})
-        return next((round(v, 1) for v in vals.values() if v is not None), None)
-
     return {
         "window_hours": hours,
         "events": total,
-        "by_kind": [
-            {
-                "kind": b["key"],
-                "count": b["doc_count"],
-                "outcomes": {
-                    o["key"]: o["doc_count"] for o in _buckets(b, "outcome")
-                },
-            }
-            for b in _buckets(aggs, "by_kind")
+        "panels": contract.shape(decl.panels, res.get("aggregations") or {}),
+        "kinds": decl.kinds,
+        "warnings": decl.warnings,
+    }
+
+
+@admin_router.get("/admin/telemetry/contract")
+def telemetry_contract_view():
+    """What each component currently advertises — the contract as the platform
+    sees it. The first place to look when a panel is missing or a field will not
+    group: if it is not here, no manifest declared it."""
+    decl = declaration()
+    fields = [
+        {"name": name, **spec} for name, spec in sorted(decl.fields.items())
+    ]
+    return {
+        "kinds": decl.kinds,
+        "fields": fields,
+        "panels": [
+            {k: v for k, v in p.items() if k in
+             ("key", "label", "tool", "type", "kind", "group_by", "hint")}
+            for p in decl.panels
         ],
-        "by_service": [
-            {"service": b["key"], "count": b["doc_count"]}
-            for b in _buckets(aggs, "by_service")
-        ],
-        "over_time": [
-            {
-                "ts": b.get("key_as_string"),
-                "count": b["doc_count"],
-                "failures": (b.get("failures") or {}).get("doc_count", 0),
-            }
-            for b in _buckets(aggs, "over_time")
-        ],
-        "top_errors": [
-            {
-                "signature": b["key"],
-                "count": b["doc_count"],
-                "last_seen": (b.get("last_seen") or {}).get("value_as_string"),
-                "services": [s["key"] for s in _buckets(b, "services")],
-                "sample": next(
-                    (
-                        h.get("_source")
-                        for h in (((b.get("sample") or {}).get("hits") or {}).get("hits") or [])
-                    ),
-                    None,
-                ),
-            }
-            for b in _buckets(aggs, "top_errors", "signatures")
-        ],
-        "requests": {
-            "count": (aggs.get("requests") or {}).get("doc_count", 0),
-            "status": [
-                {"code": b["key"], "count": b["doc_count"]}
-                for b in _buckets(aggs, "requests", "status")
-            ],
-            "failing_routes": [
-                {
-                    "route": b["key"],
-                    "count": b["doc_count"],
-                    "codes": {str(c["key"]): c["doc_count"] for c in _buckets(b, "codes")},
-                }
-                for b in _buckets(aggs, "requests", "failing_routes", "routes")
-            ],
-            "slowest_routes": [
-                {
-                    "route": b["key"],
-                    "count": b["doc_count"],
-                    "p95_ms": _pct(b),
-                    "avg_ms": round((b.get("avg_ms") or {}).get("value") or 0, 1),
-                    "max_ms": round((b.get("max_ms") or {}).get("value") or 0, 1),
-                }
-                for b in _buckets(aggs, "requests", "slowest_routes")
-            ],
-        },
-        "tasks": {
-            "count": (aggs.get("tasks") or {}).get("doc_count", 0),
-            "by_name": [
-                {
-                    "task": b["key"],
-                    "count": b["doc_count"],
-                    "outcomes": {o["key"]: o["doc_count"] for o in _buckets(b, "outcome")},
-                    "avg_ms": round((b.get("avg_ms") or {}).get("value") or 0, 1),
-                }
-                for b in _buckets(aggs, "tasks", "by_name")
-            ],
-            "by_artifact_type": [
-                {
-                    "artifact_type": b["key"],
-                    "count": b["doc_count"],
-                    "outcomes": {o["key"]: o["doc_count"] for o in _buckets(b, "outcome")},
-                    "avg_ms": round((b.get("avg_ms") or {}).get("value") or 0, 1),
-                    "events": int((b.get("events") or {}).get("value") or 0),
-                }
-                for b in _buckets(aggs, "tasks", "by_artifact_type")
-            ],
-        },
-        "llm": {
-            "calls": int(((aggs.get("llm") or {}).get("calls") or {}).get("value") or 0),
-            "tokens": int(((aggs.get("llm") or {}).get("tokens") or {}).get("value") or 0),
-            "cost_usd": round(
-                ((aggs.get("llm") or {}).get("cost_usd") or {}).get("value") or 0, 4
-            ),
-            "avg_ms": round(((aggs.get("llm") or {}).get("avg_ms") or {}).get("value") or 0, 1),
-            "outcomes": {
-                b["key"]: b["doc_count"] for b in _buckets(aggs, "llm", "outcome")
-            },
-            "by_model": [
-                {
-                    "model": b["key"],
-                    "calls": b["doc_count"],
-                    "tokens": int((b.get("tokens") or {}).get("value") or 0),
-                    "cost_usd": round((b.get("cost_usd") or {}).get("value") or 0, 4),
-                    "avg_ms": round((b.get("avg_ms") or {}).get("value") or 0, 1),
-                    "failures": (b.get("failures") or {}).get("doc_count", 0),
-                }
-                for b in _buckets(aggs, "llm", "by_model")
-            ],
-            "by_purpose": [
-                {
-                    "purpose": b["key"],
-                    "calls": b["doc_count"],
-                    "tokens": int((b.get("tokens") or {}).get("value") or 0),
-                    "avg_ms": round((b.get("avg_ms") or {}).get("value") or 0, 1),
-                    "failures": (b.get("failures") or {}).get("doc_count", 0),
-                }
-                for b in _buckets(aggs, "llm", "by_purpose")
-            ],
-        },
-        "ui": {
-            "count": (aggs.get("ui") or {}).get("doc_count", 0),
-            "routes": [
-                {"route": b["key"], "count": b["doc_count"]}
-                for b in _buckets(aggs, "ui", "routes")
-            ],
-            "components": [
-                {"component": b["key"], "count": b["doc_count"]}
-                for b in _buckets(aggs, "ui", "components")
-            ],
-            "sources": [
-                {"source": b["key"], "count": b["doc_count"]}
-                for b in _buckets(aggs, "ui", "sources")
-            ],
-        },
+        "warnings": decl.warnings,
+        "index_properties": decl.index_properties(),
     }
 
 
@@ -472,6 +268,8 @@ def telemetry_events(
     signature: str | None = Query(None, description="exact error.signature to drill into"),
     correlation_id: str | None = Query(None, description="the id returned with a 500"),
     q: str | None = Query(None, description="free text over message/error.message"),
+    field: str | None = Query(None, description="advertised field to filter on"),
+    value: str | None = Query(None, description="value for `field`"),
     limit: int = Query(100, ge=1, le=1000),
 ):
     """Raw events, newest first — the drill-down behind every summary number.
@@ -479,9 +277,26 @@ def telemetry_events(
     ``correlation_id`` is the direct path from a user saying "I got an error,
     it said c3f9a1b2" to the traceback that produced it.
     """
-    if kind and kind not in KINDS:
-        raise HTTPException(status_code=400, detail=f"kind must be one of {', '.join(KINDS)}")
+    known = declaration().kinds
+    if kind and known and kind not in known:
+        raise HTTPException(
+            status_code=400,
+            detail=f"kind must be one of {', '.join(sorted(known))} "
+                   f"(these are advertised by the deployed components)",
+        )
     filters: list[dict] = [_range(hours)]
+    # Generic drill-down: a panel groups by whatever it advertised, so the
+    # drawer behind it has to be able to filter on that same field. Restricted
+    # to advertised fields (plus the envelope) so this cannot become an
+    # arbitrary query surface.
+    if field and value is not None:
+        allowed = set(declaration().fields) | _ENVELOPE_FIELDS
+        if field not in allowed:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{field}' is not an advertised telemetry field",
+            )
+        filters.append({"term": {field: value}})
     for field, value in (
         ("kind", kind),
         ("service", service),

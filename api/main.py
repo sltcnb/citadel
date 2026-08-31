@@ -748,13 +748,27 @@ async def _on_startup():
             enabled=settings.TELEMETRY_ENABLED,
         )
         if _sink.enabled:
+            # The index mapping is built from what the deployed components
+            # advertise, so a tool's own fields are aggregatable without either
+            # this file or the shared package knowing they exist.
+            from routers.telemetry import declaration as _telemetry_declaration
+
+            _decl = _telemetry_declaration()
             await asyncio.get_event_loop().run_in_executor(
-                None, _sink.ensure_index_template, settings.TELEMETRY_RETENTION_DAYS
+                None,
+                _sink.ensure_index_template,
+                settings.TELEMETRY_RETENTION_DAYS,
+                _decl.index_properties(),
             )
             logger.info(
-                "Telemetry enabled → citadel-telemetry-* (retention %dd, sample %.0f%%)",
+                "Telemetry enabled → citadel-telemetry-* (retention %dd, sample %.0f%%) "
+                "· advertised by %d component(s): %d field(s), %d panel(s), kinds=%s",
                 settings.TELEMETRY_RETENTION_DAYS, settings.TELEMETRY_SAMPLE_RATE * 100,
+                len({p["tool"] for p in _decl.panels}) if _decl.panels else 0,
+                len(_decl.fields), len(_decl.panels), ",".join(_decl.kinds) or "-",
             )
+            for _w in _decl.warnings:
+                logger.warning("telemetry advertisement: %s", _w)
     except Exception as exc:
         logger.warning("Telemetry unavailable: %s", exc)
 
