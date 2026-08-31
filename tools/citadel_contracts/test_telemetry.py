@@ -290,6 +290,63 @@ def test_prune_deletes_only_indices_past_the_window():
     sink.close()
 
 
+# ── ambient context ──────────────────────────────────────────────────────────
+# The case an event belongs to is known by the request handler, not by the LLM
+# wrapper five layers down. Context carries it so nothing has to pass it.
+
+
+def test_context_fills_in_fields_the_call_site_did_not_set():
+    sink = _sink()
+    _as_singleton(sink)
+    token = t.bind_context(case_id="case-abc")
+    try:
+        t.record_llm("anthropic", "claude", prompt_tokens=1, completion_tokens=1)
+        sink.close()
+        assert _docs(sink)[0]["case_id"] == "case-abc"
+    finally:
+        t.reset_context(token)
+        t.reset_telemetry()
+
+
+def test_an_explicit_field_always_beats_the_context():
+    sink = _sink()
+    _as_singleton(sink)
+    token = t.bind_context(case_id="case-ambient")
+    try:
+        t.record_task("parse", "success", 1.0, case_id="case-explicit")
+        sink.close()
+        assert _docs(sink)[0]["case_id"] == "case-explicit"
+    finally:
+        t.reset_context(token)
+        t.reset_telemetry()
+
+
+def test_context_does_not_survive_its_reset():
+    sink = _sink()
+    _as_singleton(sink)
+    token = t.bind_context(case_id="case-abc")
+    t.reset_context(token)
+    try:
+        t.record_error(ValueError("after the request ended"))
+        sink.close()
+        assert "case_id" not in _docs(sink)[0]
+    finally:
+        t.reset_telemetry()
+
+
+def test_labels_from_a_caller_merge_with_the_helper_s_own():
+    # A caller adding its own label must not silently drop cost_source.
+    sink = _sink()
+    _as_singleton(sink)
+    try:
+        t.record_llm("anthropic", "claude", cost_usd=0.5, cost_source="estimated",
+                     **{"labels": {"component": "pilot"}})
+        sink.close()
+        assert _docs(sink)[0]["labels"] == {"cost_source": "estimated", "component": "pilot"}
+    finally:
+        t.reset_telemetry()
+
+
 # ── fork safety ──────────────────────────────────────────────────────────────
 # Celery runs a prefork pool: the worker imports the module, then forks the
 # children that execute tasks. A shipper thread started before the fork does

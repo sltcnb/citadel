@@ -166,6 +166,7 @@ def record_parse(
     events_normalized: int = 0,
     case_id: str = "",
     plugin: str = "",
+    module: str = "",
 ) -> None:
     """Record one parse attempt's outcome for a given artifact type.
 
@@ -186,6 +187,7 @@ def record_parse(
             duration_seconds * 1000.0,
             artifact_type=atype,
             plugin=plugin,
+            module=module,
             case_id=case_id,
             events=events_normalized or None,
         )

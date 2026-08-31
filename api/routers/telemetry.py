@@ -246,7 +246,11 @@ def telemetry_summary(hours: int = Query(24, ge=1, le=24 * 90)):
                         "terms": {
                             "field": "http.route",
                             "size": 15,
-                            "order": {"p95": "desc"},
+                            # "p95.95", not "p95": ordering a terms agg by a
+                            # percentiles sub-agg must name the percentile, or
+                            # Elasticsearch rejects the WHOLE search with a 400
+                            # (invalid_path) and the page renders empty.
+                            "order": {"p95.95": "desc"},
                         },
                         "aggs": {
                             "p95": {"percentiles": {"field": "duration_ms", "percents": [95]}},
