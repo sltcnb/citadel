@@ -16,4 +16,5 @@ produces:
     - "*"                   # ~90-entry taxonomy across windows/linux/macos/mobile/network/generic
 dependencies: []            # pure library; runs standalone or inside Sluice
 health:
-  command: "babel list-parsers"
+  command: "python -c \"import pathlib,sys; sys.exit(0 if any(pathlib.Path('.').glob('*/manifest.yaml'))\
+  \ else 1)\""

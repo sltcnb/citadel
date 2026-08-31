@@ -49,7 +49,7 @@ and the optional proofread LLM as an injected `llm_call(system, user)` callable
 
 ## Run / health
 
-`api/routers/reports.py` gathers case data and calls the engine; `scribe --version` is the health check (from `brick.yaml`). The standalone multi-format CLI is in progress (see capabilities below).
+`api/routers/reports.py` gathers case data and calls the engine; `python -c "import scribe"` is the health check (from `brick.yaml`). The standalone multi-format CLI is in progress (see capabilities below).
 
 ## Tests
 

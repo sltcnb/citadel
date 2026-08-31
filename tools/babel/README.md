@@ -59,8 +59,12 @@ Only the `dd_image` parser reads the environment (see `dd_image/dd_image_plugin.
 ## Run standalone
 
 ```bash
-babel parse Security.evtx -o events.jsonl   # parse one artifact to ForensicEvent JSONL
-babel list-parsers                          # list the discovered parser set (also the brick health check)
+# Babel installs no console script; import a plugin and call parse():
+python -c "from evtx.evtx_plugin import EvtxPlugin; from base_plugin import PluginContext; \
+print(sum(1 for _ in EvtxPlugin().parse('Security.evtx', PluginContext(case_id='c1'))))"
+
+# the parser set is whatever ships a manifest.yaml:
+for m in */manifest.yaml; do echo "${m%/*}"; done
 ```
 
 ## Add a parser

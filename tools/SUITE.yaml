@@ -20,7 +20,7 @@ tools:
     status: built
     brick: tools/sluice/brick.yaml
   - name: Babel
-    role: Parser library (43 parsers)
+    role: Parser library (51 parser packs)
     kind: parser-lib
     path: tools/babel
     repository: babel
@@ -31,7 +31,7 @@ tools:
     kind: canonicalizer
     path: tools/rosetta
     repository: rosetta
-    status: planned
+    status: partial
     brick: tools/rosetta/brick.yaml
   - name: Sigil
     role: Detection engine (Sigma + YARA)

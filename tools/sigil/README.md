@@ -62,7 +62,7 @@ python sigil_coverage.py            # regenerate coverage_matrix.{json,md}
 
 `sigil_match.py` is the offline Lucene-subset matcher used by the rule tests against the `sample_events/` corpus.
 
-Health check (declared in `brick.yaml`): `sigil validate ./rules/`.
+Health check (declared in `brick.yaml`): `python sigil_validate.py --quiet`.
 
 ## Tests
 
