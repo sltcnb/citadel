@@ -32,10 +32,22 @@ means:
 
 Field groups: `error.*` (`type`, `message`, `signature`, `stack`), `http.*`
 (`method`, `route`, `path`, `status_code`), `task.*` (`name`, `id`, `queue`,
-`artifact_type`, `plugin`, `events`, `retries`), `llm.*` (`provider`, `model`,
-`purpose`, token counts, `cost_usd`, `tokens_per_second`), `ui.*` (`route`,
-`component`, `source`, `user_agent`, `app_version`), plus `user.name`,
-`user.role`, `case_id`, `correlation_id` and a free-form `labels` object.
+`artifact_type`, `plugin`, `module`, `events`, `retries`), `llm.*` (`provider`,
+`base_url`, `model`, `purpose`, token counts, `cost_usd`, `tokens_per_second`),
+`ui.*` (`route`, `component`, `source`, `user_agent`, `app_version`), plus
+`user.name`, `user.role`, `case_id`, `correlation_id` and a free-form `labels`
+object.
+
+**`case_id` is ambient.** The API middleware binds the case a request is about
+into a `ContextVar` for the life of that request, and any event raised
+underneath it — an LLM call deep inside Pilot, an unhandled exception —
+inherits it. That is what makes "which investigation cost the most tokens" a
+query rather than a guess. An explicitly passed `case_id` always wins.
+
+**`llm.cost_usd` is not always billed.** Providers that return a cost are
+recorded as-is (`labels.cost_source = "actual"`); for self-hosted and most
+OpenAI-compatible endpoints the platform's own price table is used instead
+(`"estimated"`). Never assume a cost figure is an invoice.
 
 Two fields do most of the work:
 

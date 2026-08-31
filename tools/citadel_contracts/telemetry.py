@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import atexit
 import base64
+import contextvars
 import json
 import os
 import queue
@@ -155,6 +156,7 @@ _TEMPLATE_BODY: dict = {
                 "llm": {
                     "properties": {
                         "provider": {"type": "keyword"},
+                        "base_url": {"type": "keyword"},
                         "model": {"type": "keyword"},
                         "purpose": {"type": "keyword"},
                         "prompt_tokens": {"type": "long"},
@@ -178,6 +180,43 @@ _TEMPLATE_BODY: dict = {
         },
     },
 }
+
+
+# ── Ambient context ───────────────────────────────────────────────────────────
+# Fields that belong on every event raised while some larger thing is happening
+# — the case a request is about, the user driving it — but that the code doing
+# the emitting has no reason to know. An LLM wrapper deep inside Pilot should
+# not have to take a case_id parameter just so the cost can be attributed.
+#
+# A ContextVar carries them: asyncio gives each request its own context, and
+# both run_in_threadpool and run_in_executor copy it, so a sync endpoint and a
+# threadpool call inherit the binding without any plumbing.
+# Default is None, not {}: a mutable default on a ContextVar is a shared object
+# every context would see. Every write below replaces the dict rather than
+# mutating it, so a binding can never leak sideways into another request.
+_CONTEXT: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
+    "citadel_telemetry_context", default=None
+)
+
+
+def bind_context(**fields: Any):
+    """Bind ambient fields for the current context; returns a reset token.
+
+    Always reset in a ``finally`` — the API middleware does this per request.
+    """
+    merged = {**(_CONTEXT.get() or {}), **{k: v for k, v in fields.items() if v}}
+    return _CONTEXT.set(merged)
+
+
+def reset_context(token) -> None:
+    try:
+        _CONTEXT.reset(token)
+    except Exception:  # noqa: BLE001 — a token from another context is not fatal
+        pass
+
+
+def get_context() -> dict:
+    return dict(_CONTEXT.get() or {})
 
 
 class TelemetrySink:
@@ -281,6 +320,11 @@ class TelemetrySink:
                     continue
                 # `labels` is a flattened object; leave its shape alone.
                 doc[key] = value if key == "labels" else _truncate(value)
+            # Ambient context fills in what the call site did not set — never
+            # overrides it. An explicit case_id always wins.
+            for key, value in (_CONTEXT.get() or {}).items():
+                if value and key not in doc:
+                    doc[key] = _truncate(value)
             if self._thread is None or not self._thread.is_alive():
                 self._start()
             self.stats["emitted"] += 1
@@ -544,9 +588,18 @@ def retention_days() -> int:
 
 def _merge(base: dict, extra: dict) -> dict:
     """Caller-supplied fields win over the helper's defaults, and a duplicate
-    key is an override rather than a ``TypeError`` from two ``**`` unpackings."""
+    key is an override rather than a ``TypeError`` from two ``**`` unpackings.
+
+    ``labels`` is the exception: it is merged key-by-key rather than replaced,
+    so a caller adding its own label does not silently drop the ones the helper
+    set (which is how cost_source went missing the first time).
+    """
     merged = dict(base)
-    merged.update(extra)
+    for key, value in extra.items():
+        if key == "labels" and isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = {**merged[key], **value}
+        else:
+            merged[key] = value
     return merged
 
 
@@ -667,6 +720,8 @@ def record_llm(
     *,
     outcome: str = "success",
     purpose: str = "",
+    base_url: str = "",
+    cost_source: str = "",
     prompt_tokens: int = 0,
     completion_tokens: int = 0,
     cost_usd: float | None = None,
@@ -689,6 +744,7 @@ def record_llm(
             "duration_ms": round(float(duration_ms), 2) if duration_ms is not None else None,
             "message": _truncate(message, _MAX_MSG) if message else None,
             "llm.provider": provider or "unknown",
+            "llm.base_url": base_url or None,
             "llm.model": model or "unknown",
             "llm.purpose": purpose or None,
             "llm.prompt_tokens": int(prompt_tokens or 0),
@@ -696,6 +752,10 @@ def record_llm(
             "llm.total_tokens": total,
             "llm.cost_usd": float(cost_usd) if cost_usd is not None else None,
             "llm.tokens_per_second": tokens_per_second,
+            # "actual" when the provider billed us a number, "estimated" when it
+            # came from a price table. Without this a self-hosted endpoint and a
+            # genuinely free call are indistinguishable from a missing price.
+            "labels": {"cost_source": cost_source} if cost_source else None,
         },
         fields,
     ))

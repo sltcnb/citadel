@@ -714,6 +714,8 @@ def run_module(
                     "success",
                     time.monotonic() - _metrics_start,
                     events_normalized=len(results),
+                    case_id=case_id,
+                    module=module_id,
                 )
             except Exception:  # pragma: no cover - metrics must never break a module run
                 pass
@@ -726,7 +728,10 @@ def run_module(
         r.delete(rk.module_cancel(run_id))
         if _obs is not None:
             try:
-                _obs.record_parse(_metrics_atype, "cancelled", time.monotonic() - _metrics_start)
+                _obs.record_parse(
+                    _metrics_atype, "cancelled", time.monotonic() - _metrics_start,
+                    case_id=case_id, module=module_id,
+                )
             except Exception:  # pragma: no cover - metrics must never break a module run
                 pass
         return {"status": "CANCELLED", "total_hits": 0}
@@ -761,7 +766,10 @@ def run_module(
         )
         if _obs is not None:
             try:
-                _obs.record_parse(_metrics_atype, "failure", time.monotonic() - _metrics_start)
+                _obs.record_parse(
+                    _metrics_atype, "failure", time.monotonic() - _metrics_start,
+                    case_id=case_id, module=module_id,
+                )
             except Exception:  # pragma: no cover - metrics must never break a module run
                 pass
         # A task that blew a CPU/memory/wall-clock limit (or any other module
