@@ -119,6 +119,94 @@ def test_record_dead_letter_counter():
     assert f'worker_dead_letter_total{{task="{task}"}}' in obs.METRICS.render_prometheus()
 
 
+# ── the same outcomes, mirrored into durable telemetry ───────────────────────
+# The Prometheus counters above reset with the process. record_parse also writes
+# to citadel-telemetry-*, which is what keeps "this parser has been failing all
+# week" answerable after a worker restart.
+#
+# No pytest fixtures here — this module is also run standalone by
+# scripts/run_tests.sh, which calls every test_* with no arguments.
+
+
+def _capturing_sink():
+    """Install a telemetry sink whose bulk writes are captured, not sent."""
+    from citadel_contracts import telemetry as tel
+
+    tel.reset_telemetry()
+    sink = tel.TelemetrySink("processor", "http://es.invalid", flush_interval=0.05)
+    sink.sent = []
+    sink._request = lambda m, p, b=None, c="application/json": sink.sent.append(b) or {}
+    tel._SINK = sink
+    return sink
+
+
+def _telemetry_docs(sink):
+    import json
+
+    sink.close()
+    return [
+        json.loads(line)
+        for body in sink.sent
+        for line in body.decode().strip().split("\n")[1::2]
+    ]
+
+
+def test_record_parse_also_emits_a_task_event():
+    from citadel_contracts import telemetry as tel
+
+    sink = _capturing_sink()
+    try:
+        atype = f"test_tel_{uuid.uuid4().hex[:8]}"
+        obs.record_parse(atype, "failure", 1.5, case_id="case-abc", plugin="evtx_plugin")
+
+        doc = _telemetry_docs(sink)[0]
+        assert doc["kind"] == "task"
+        assert doc["task.name"] == "parse"
+        assert doc["outcome"] == "failure"
+        assert doc["task.artifact_type"] == atype
+        assert doc["task.plugin"] == "evtx_plugin"
+        assert doc["case_id"] == "case-abc"
+        # seconds in, milliseconds out
+        assert doc["duration_ms"] == 1500.0
+    finally:
+        tel.reset_telemetry()
+
+
+def test_record_dead_letter_also_emits_an_error_event():
+    from citadel_contracts import telemetry as tel
+
+    sink = _capturing_sink()
+    try:
+        task = f"test.task.{uuid.uuid4().hex[:8]}"
+        obs.record_dead_letter(task)
+
+        doc = _telemetry_docs(sink)[0]
+        assert doc["kind"] == "error"
+        assert doc["event"] == "dead_letter"
+        assert doc["task.name"] == task
+    finally:
+        tel.reset_telemetry()
+
+
+def test_a_broken_telemetry_sink_never_breaks_a_parse():
+    from citadel_contracts import telemetry as tel
+
+    tel.reset_telemetry()
+    saved = obs.record_task
+    obs.record_task = lambda *a, **kw: 1 / 0
+    try:
+        atype = f"test_safe_{uuid.uuid4().hex[:8]}"
+        obs.record_parse(atype, "success", 0.1, events_normalized=3)
+        # The Prometheus counter still moved — telemetry failing is not a parse
+        # failing.
+        assert (
+            _counter_value("parser_parse_total", {"artifact_type": atype, "status": "success"})
+            == 1
+        )
+    finally:
+        obs.record_task = saved
+
+
 # ── robustness.to_dead_letter wiring ─────────────────────────────────────────
 
 

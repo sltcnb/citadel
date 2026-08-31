@@ -4,6 +4,7 @@ import asyncio
 import collections
 import json
 import logging
+import random
 import time
 
 from fastapi import Depends, FastAPI, Request
@@ -70,6 +71,7 @@ from routers import (
     search,
     sigma_sync,
     sso,
+    telemetry,
     timeline_views,
     watchlist,
     webhooks,
@@ -174,6 +176,29 @@ async def _unhandled_exception(request: Request, exc: Exception) -> JSONResponse
     import uuid as _uuid
     corr = _uuid.uuid4().hex[:12]
     logger.exception("Unhandled exception [%s] on %s %s", corr, request.method, request.url.path)
+    # Durable copy with the stack attached: the log stream rolls over in
+    # minutes on a busy instance, and a 500 the user reports an hour later is
+    # only diagnosable if the traceback outlived it. The correlation id the
+    # client is handed below is the key that finds this document.
+    try:
+        import traceback as _tb
+
+        from citadel_contracts.telemetry import record_error
+
+        record_error(
+            exc,
+            event="unhandled_exception",
+            stack="".join(_tb.format_exception(type(exc), exc, exc.__traceback__)),
+            correlation_id=corr,
+            **{
+                "http.method": request.method,
+                "http.path": request.url.path,
+                "http.route": getattr(request.scope.get("route"), "path", "") or "",
+                "http.status_code": 500,
+            },
+        )
+    except Exception:  # noqa: BLE001 — never fail while handling a failure
+        pass
     return JSONResponse(
         status_code=500,
         content={"detail": "Internal server error", "correlation_id": corr},
@@ -182,6 +207,20 @@ async def _unhandled_exception(request: Request, exc: Exception) -> JSONResponse
 
 async def _redis_unavailable(request: Request, exc: Exception) -> JSONResponse:
     logger.warning("Redis unavailable on %s %s: %s", request.method, request.url.path, exc)
+    try:
+        from citadel_contracts.telemetry import record_error
+
+        record_error(
+            exc,
+            event="redis_unavailable",
+            **{
+                "http.method": request.method,
+                "http.path": request.url.path,
+                "http.status_code": 503,
+            },
+        )
+    except Exception:  # noqa: BLE001
+        pass
     return JSONResponse(
         status_code=503,
         content={"detail": "Service temporarily unavailable — Redis is unreachable"},
@@ -201,6 +240,9 @@ _GUEST_WRITE_ALLOW = (
     # Guests can self-serve case creation + the things they need to work inside their cases.
     ("POST", "/api/v1/cases"),
     ("POST", "/api/v1/cases/"),
+    # A guest's browser must still be able to report its own crashes — the
+    # endpoint writes nothing but a telemetry event and is rate-limited.
+    ("POST", "/api/v1/telemetry/ui"),
 )
 _GUEST_PATH_PREFIX_ALLOW = (
     # Within a case they own, allow notes/tags/flags, file ingestion, module runs.
@@ -227,9 +269,52 @@ _ACCESS_LOG_SKIP = (
     "/metrics/dashboard", "/metrics/history", "/jobs",
     # The log viewer itself + the capability poll — logging these floods the
     # stream with the viewer's own traffic.
-    "/admin/logs", "/tools/capabilities", "/cti/iocs/stats", "/license/info",
+    "/admin/logs", "/admin/telemetry", "/tools/capabilities", "/cti/iocs/stats",
+    "/license/info",
 )
 _access_logger = logging.getLogger("citadel.api")
+
+# ── Durable request telemetry ─────────────────────────────────────────────────
+# The Redis log stream above is a live tail; this is the aggregatable record in
+# Elasticsearch that survives a restart. Recording every request would dwarf the
+# case data, so the rule is: keep everything that could indicate a problem
+# (any 4xx/5xx, any mutation, anything slow) and sample the fast happy path.
+_TELEMETRY_MUTATING = ("POST", "PUT", "PATCH", "DELETE")
+
+
+def _telemetry_should_record(method: str, path: str, code: int, ms: float) -> bool:
+    if code >= 400:
+        return True  # errors are never sampled away, poll path or not
+    if any(s in path for s in _ACCESS_LOG_SKIP):
+        return False  # heartbeat/poll traffic that succeeded carries no signal
+    if method in _TELEMETRY_MUTATING:
+        return True
+    if ms >= settings.TELEMETRY_SLOW_REQUEST_MS:
+        return True
+    rate = settings.TELEMETRY_SAMPLE_RATE
+    return rate > 0 and random.random() < rate
+
+
+def _record_request_telemetry(scope, method: str, path: str, code: int, ms: float) -> None:
+    """Emit one request event. Called inline — the sink only enqueues."""
+    try:
+        from citadel_contracts.telemetry import record_request
+
+        # The templated route ("/api/v1/cases/{case_id}") is what you can
+        # aggregate on; the concrete path is kept for reading one event.
+        route = getattr(scope.get("route"), "path", "") or ""
+        actor, role = _audit_actor_from_scope(scope)
+        m = _CASE_ID_RE.search(path)
+        record_request(
+            method, path, code, ms,
+            route=route,
+            user=actor if actor != "anonymous" else "",
+            role=role,
+            case_id=m.group(1) if m else "",
+        )
+    except Exception:  # noqa: BLE001 — telemetry must never break a request
+        pass
+
 
 # ── Audit trail (chain-of-custody) ─────────────────────────────────────────────
 # Record an immutable, hash-chained audit event for MUTATING requests on the API.
@@ -239,7 +324,9 @@ import re as _re
 
 _AUDIT_METHODS = ("POST", "PUT", "PATCH", "DELETE")
 # Health/metrics churn that carries no chain-of-custody value.
-_AUDIT_SKIP = ("/health", "/metrics/dashboard", "/metrics/history")
+# /telemetry/ui is a browser error report — high volume, no custody value, and
+# unauthenticated, so auditing it would just fill the chain with "anonymous".
+_AUDIT_SKIP = ("/health", "/metrics/dashboard", "/metrics/history", "/telemetry/ui")
 _CASE_ID_RE = _re.compile(r"/cases/([^/]+)")
 
 
@@ -376,6 +463,9 @@ class CoreHTTPMiddleware:
                     _access_logger.info("%s /%s → %d (%.0fms)", method, short, code, ms)
             except Exception:  # noqa: BLE001 — logging must never break a request
                 pass
+            # ── Durable telemetry — sampled, kept in Elasticsearch ────────────
+            if code and "/api/v1/" in path and _telemetry_should_record(method, path, code, ms):
+                _record_request_telemetry(scope, method, path, code, ms)
             # ── Persistent audit trail — mutating API requests only ───────────
             # Offload the Redis/ES write to the threadpool so the chain append
             # never blocks the event loop, and never let it raise here.
@@ -534,6 +624,41 @@ async def _auto_archive_loop():
             logger.exception("Auto-archive loop error: %s", exc)
 
 
+async def _telemetry_maintenance_loop():
+    """Keep citadel-telemetry-* bounded.
+
+    ILM already carries a delete phase, but a cluster without ILM (OSS build, or
+    no manage_ilm privilege) would otherwise grow a daily index forever — so
+    prune explicitly too. Single-flight across uvicorn workers via a Redis lock,
+    since all of them run this loop.
+    """
+    import asyncio as _aio
+
+    await _aio.sleep(120)
+    while True:
+        try:
+            from citadel_contracts.telemetry import get_sink
+
+            sink = get_sink()
+            if sink is not None and sink.enabled:
+                from config import get_redis
+
+                r = get_redis()
+                if r.set("fo:telemetry:prune:lock", "1", nx=True, ex=82800):
+                    days = settings.TELEMETRY_RETENTION_DAYS
+                    dropped = await _aio.get_event_loop().run_in_executor(
+                        None, sink.prune_old_indices, days
+                    )
+                    if dropped:
+                        logger.info(
+                            "Telemetry retention: dropped %d index(es) older than %dd: %s",
+                            len(dropped), days, ", ".join(dropped),
+                        )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Telemetry maintenance loop error: %s", exc)
+        await _aio.sleep(86400)
+
+
 async def _storage_reconcile_loop():
     """Periodic REPORT-ONLY orphan sweep. Never deletes; persists the latest
     report to Redis for later surfacing. Disabled unless
@@ -582,6 +707,31 @@ async def _on_startup():
         _tools_log.setLevel(_lg.INFO)  # propagates to api stream too
     except Exception as exc:
         logger.warning("admin log shipping unavailable: %s", exc)
+
+    # Durable product telemetry (citadel-telemetry-*). Separate from the Redis
+    # log streams above: those are a live tail, this is the aggregatable history
+    # the admin telemetry endpoints and Kibana read. Best-effort throughout —
+    # a missing or unreachable Elasticsearch degrades it to a no-op.
+    try:
+        from citadel_contracts.telemetry import init_telemetry
+
+        _sink = init_telemetry(
+            "api",
+            es_url=settings.ELASTICSEARCH_URL,
+            username=settings.ELASTICSEARCH_USERNAME,
+            password=settings.ELASTICSEARCH_PASSWORD,
+            enabled=settings.TELEMETRY_ENABLED,
+        )
+        if _sink.enabled:
+            await asyncio.get_event_loop().run_in_executor(
+                None, _sink.ensure_index_template, settings.TELEMETRY_RETENTION_DAYS
+            )
+            logger.info(
+                "Telemetry enabled → citadel-telemetry-* (retention %dd, sample %.0f%%)",
+                settings.TELEMETRY_RETENTION_DAYS, settings.TELEMETRY_SAMPLE_RATE * 100,
+            )
+    except Exception as exc:
+        logger.warning("Telemetry unavailable: %s", exc)
 
     if not settings.AUTH_ENABLED and not settings.ALLOW_NO_AUTH:
         # AUTH_ENABLED=false makes every request a synthetic unrestricted admin.
@@ -636,6 +786,7 @@ async def _on_startup():
     asyncio.create_task(_metrics_background_loop())
     asyncio.create_task(_auto_archive_loop())
     asyncio.create_task(_storage_reconcile_loop())
+    asyncio.create_task(_telemetry_maintenance_loop())
     try:
         from services.elasticsearch import ensure_artifacts_index
 
@@ -766,6 +917,11 @@ app.include_router(llm_config.router, prefix="/api/v1", dependencies=_analyst_or
 app.include_router(s3_integration.router, prefix="/api/v1", dependencies=_admin_only)
 app.include_router(admin_utils.router, prefix="/api/v1", dependencies=_admin_only)
 app.include_router(admin_logs.router, prefix="/api/v1", dependencies=_admin_only)
+app.include_router(telemetry.admin_router, prefix="/api/v1", dependencies=_admin_only)
+# Browser error intake is deliberately unauthenticated — a crash on the login
+# page or a chunk that failed before a token existed is exactly what we need
+# reported. Bounded by a typed payload + a per-IP rate limit instead.
+app.include_router(telemetry.router, prefix="/api/v1")
 app.include_router(admin_dead_letter.router, prefix="/api/v1", dependencies=_admin_only)
 app.include_router(platform_settings.router, prefix="/api/v1")
 app.include_router(pilot_settings.router, prefix="/api/v1")

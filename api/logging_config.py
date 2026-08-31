@@ -32,6 +32,7 @@ _NOISY_ACCESS_SUBSTRINGS = (
     "/metrics/dashboard",
     "/metrics/history",
     "/admin/logs",           # the log viewer polling itself
+    "/admin/telemetry",      # the telemetry dashboard polling itself
     "/tools/capabilities",   # capability poll flooding
     "/cti/iocs/stats",
     "/license/info",

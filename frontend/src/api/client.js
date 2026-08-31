@@ -1,3 +1,5 @@
+import { reportUIError, isTelemetryEndpoint } from '../lib/telemetry'
+
 const BASE = '/api/v1'
 
 const TOKEN_KEY = 'fo_token'
@@ -20,6 +22,37 @@ function _handle401() {
   // Hard reload so React router re-evaluates the auth gate cleanly
   window.location.href = `/login${from}`
 }
+
+/**
+ * Report a server-side API failure the user just experienced.
+ *
+ * The backend already logs its own 500s; what it cannot see is which UI action
+ * the user was taking when it happened, or that the call never arrived at all
+ * (status 0 — offline, DNS, proxy down). Skipped for the telemetry endpoint
+ * itself so a reporting outage can never amplify itself.
+ */
+function _reportApiFailure(method, path, status, message, correlationId) {
+  if (isTelemetryEndpoint(path)) return
+  reportUIError({
+    event: status === 0 ? 'api_unreachable' : 'api_server_error',
+    message: `${method} ${path} → ${status || 'network'}: ${message}`
+      + (correlationId ? ` [correlation_id=${correlationId}]` : ''),
+    component: `${method} ${_routeKey(path)}`,
+    source: 'api',
+  })
+}
+
+// Collapse ids out of a path so it can be grouped on. `ui.component` is a
+// keyword field: leaving raw case/run ids in it would make every failure its
+// own bucket and the aggregation useless.
+function _routeKey(path) {
+  return (path || '')
+    .split('?')[0]
+    .split('/')
+    .map(seg => (/^[0-9a-fA-F-]{8,}$|^\d+$/.test(seg) ? '{id}' : seg))
+    .join('/')
+}
+
 
 async function request(method, path, body, options = {}) {
   const url     = `${BASE}${path}`
@@ -44,6 +77,7 @@ async function request(method, path, body, options = {}) {
     if (e?.name === 'AbortError') throw e
     // Network-level failure (offline, DNS, server down) — fetch rejects with a
     // TypeError. Surface something a human can act on instead of "Failed to fetch".
+    _reportApiFailure(method, path, 0, e?.message || 'network error')
     throw new Error('Cannot reach the API — check that the server is running')
   }
 
@@ -60,6 +94,12 @@ async function request(method, path, body, options = {}) {
     const msg = Array.isArray(detail)
       ? detail.map(d => d.msg || JSON.stringify(d)).join('; ')
       : (typeof detail === 'string' ? detail : `HTTP ${res.status}`)
+    // Only 5xx: a 4xx is usually the API correctly refusing something, and
+    // reporting those would bury the server faults nobody knows about. The
+    // correlation_id a 500 carries is the key into the backend's own event.
+    if (res.status >= 500) {
+      _reportApiFailure(method, path, res.status, msg, err.correlation_id)
+    }
     throw new Error(msg || `HTTP ${res.status}`)
   }
   if (res.status === 204) return null
@@ -543,6 +583,14 @@ export const api = {
     services: ()                     => request('GET', '/admin/logs/services'),
     tail:     (service, params = {}) => request('GET', withParams(`/admin/logs/${service}`, params)),
     clear:    (service)              => request('DELETE', `/admin/logs/${service}`),
+  },
+
+  // Durable product telemetry (citadel-telemetry-*). Unlike `logs` above —
+  // a live tail of a capped Redis buffer — these aggregate weeks of history.
+  telemetry: {
+    summary: (hours = 24)      => request('GET', `/admin/telemetry/summary?hours=${hours}`),
+    events:  (params = {})     => request('GET', withParams('/admin/telemetry/events', params)),
+    health:  ()                => request('GET', '/admin/telemetry/health'),
   },
 
   companies: {

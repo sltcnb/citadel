@@ -1266,6 +1266,7 @@ def process_artifact(
                     "success",
                     time.monotonic() - _metrics_parse_start,
                     events_normalized=events_indexed,
+                    case_id=case_id,
                 )
             except Exception:  # pragma: no cover - metrics must never break ingestion
                 pass
@@ -1290,7 +1291,8 @@ def process_artifact(
         if _obs is not None and _metrics_parse_start is not None:
             try:
                 _obs.record_parse(
-                    _metrics_atype, "failure", time.monotonic() - _metrics_parse_start
+                    _metrics_atype, "failure", time.monotonic() - _metrics_parse_start,
+                    case_id=case_id,
                 )
             except Exception:  # pragma: no cover - metrics must never break ingestion
                 pass

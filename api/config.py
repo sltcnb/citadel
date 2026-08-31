@@ -29,6 +29,27 @@ class Settings:
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO").upper()
     LOG_JSON: bool = os.getenv("LOG_JSON", "false").lower() in ("true", "1", "yes")
 
+    # ── Telemetry ──────────────────────────────────────────────────────────
+    # Durable, aggregatable product telemetry in Elasticsearch
+    # (citadel-telemetry-*), as opposed to the capped Redis log streams the
+    # admin console tails. This is what answers "what should we fix next?" —
+    # which routes error, which parsers fail, what the LLM costs, what the
+    # browser crashed on. Read it back via /api/v1/admin/telemetry/*.
+    TELEMETRY_ENABLED: bool = os.getenv(
+        "CITADEL_TELEMETRY_ENABLED", "true"
+    ).lower() not in ("false", "0", "no")
+    TELEMETRY_RETENTION_DAYS: int = int(os.getenv("CITADEL_TELEMETRY_RETENTION_DAYS", "30"))
+    # Fraction of fast, successful GETs recorded. Errors, mutations and slow
+    # requests are ALWAYS recorded regardless — sampling only trims the
+    # high-volume happy path so the index stays small enough to be cheap.
+    TELEMETRY_SAMPLE_RATE: float = float(os.getenv("CITADEL_TELEMETRY_SAMPLE_RATE", "0.05"))
+    # A request slower than this is recorded in full, never sampled away.
+    TELEMETRY_SLOW_REQUEST_MS: float = float(
+        os.getenv("CITADEL_TELEMETRY_SLOW_REQUEST_MS", "1000")
+    )
+    # Browser-reported errors (POST /telemetry/ui) accepted per IP per minute.
+    TELEMETRY_UI_RATE_LIMIT: int = int(os.getenv("CITADEL_TELEMETRY_UI_RATE_LIMIT", "30"))
+
     # ── Storage reconciliation (orphan handling) ────────────────────────────
     # Objects modified within this window are NEVER considered orphans or
     # eligible for deletion — this avoids racing in-flight uploads whose DB
