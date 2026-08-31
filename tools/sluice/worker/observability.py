@@ -45,6 +45,11 @@ from citadel_contracts.logship import (  # noqa: E402,F401
     log_stream_key,
     setup_json_logging,
 )
+from citadel_contracts.telemetry import (  # noqa: E402,F401
+    init_telemetry,
+    record_error,
+    record_task,
+)
 
 
 # ── metrics registry ─────────────────────────────────────────────────────────
@@ -159,14 +164,33 @@ def record_parse(
     duration_seconds: float,
     *,
     events_normalized: int = 0,
+    case_id: str = "",
+    plugin: str = "",
 ) -> None:
     """Record one parse attempt's outcome for a given artifact type.
 
     Called once per parse attempt from the ingest and module task pipelines.
     ``status`` is typically one of "success", "failure", "skipped", or
     "cancelled" (module runs cancelled by an analyst).
+
+    Feeds two sinks with different lifetimes: the Prometheus registry above
+    (scraped, in-memory, resets with the process) and durable telemetry in
+    Elasticsearch. The second is what lets you ask, weeks later, which parser
+    pack has been quietly failing on which artifact type.
     """
     atype = artifact_type or "unknown"
+    try:
+        record_task(
+            "parse",
+            status,
+            duration_seconds * 1000.0,
+            artifact_type=atype,
+            plugin=plugin,
+            case_id=case_id,
+            events=events_normalized or None,
+        )
+    except Exception:  # pragma: no cover - telemetry must never break a parse
+        pass
     METRICS.inc(
         "parser_parse_total",
         labels={"artifact_type": atype, "status": status},
@@ -189,6 +213,18 @@ def record_parse(
 
 def record_dead_letter(task_name: str) -> None:
     """Record a task being parked on the dead-letter queue."""
+    try:
+        # A dead-lettered task is the strongest "fix me" signal the pipeline
+        # produces, so it goes to the durable store as an error, not a counter
+        # that resets on the next worker restart.
+        record_error(
+            None,
+            event="dead_letter",
+            message=f"task parked on the dead-letter queue: {task_name or 'unknown'}",
+            **{"task.name": task_name or "unknown"},
+        )
+    except Exception:  # pragma: no cover - telemetry must never break a task
+        pass
     METRICS.inc(
         "worker_dead_letter_total",
         labels={"task": task_name or "unknown"},

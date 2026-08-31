@@ -33,7 +33,18 @@ The core validator has zero dependencies; add the `validate` extra (`pip install
 
 **Authoring SDK** — the `@parser` decorator, the `event(...)` builder, and `Ctx` (cheap `.text()`/`.lines()`/`.json()`/`.jsonl()` readers).
 
-**Observability** — `setup_json_logging()`, `JsonFormatter`, `attach_redis_logs()`, `RedisLogHandler`, `log_stream_key()`, `tool_logger()` — shared structured logging + capped Redis log streams (`citadel:logs:<service>`).
+**Observability — logs** — `setup_json_logging()`, `JsonFormatter`, `attach_redis_logs()`, `RedisLogHandler`, `log_stream_key()`, `tool_logger()` — shared structured logging + capped Redis log streams (`citadel:logs:<service>`). A live tail; gone on restart.
+
+**Observability — telemetry** — `init_telemetry()`, `record_error()`, `record_request()`, `record_task()`, `record_llm()`, `record_ui_event()`, `error_signature()`, `TelemetrySink` — durable, aggregatable events in Elasticsearch (`citadel-telemetry-*`), for the questions logs cannot answer because they have already rolled over. Non-blocking (bounded queue + background shipper), best-effort (a dead Elasticsearch degrades it to a drop counter), stdlib-only. Two lines to adopt:
+
+```python
+from citadel_contracts.telemetry import init_telemetry, record_task
+
+init_telemetry("mytool")      # reads ELASTICSEARCH_* from the environment
+record_task("mytool.scan", "success", duration_ms=1234, case_id=case_id)
+```
+
+With `ELASTICSEARCH_URL` unset the sink is disabled and every call is a no-op, so the same code runs unchanged in a standalone CLI.
 
 ## How a tool uses it
 

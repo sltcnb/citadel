@@ -1,4 +1,5 @@
 import { Component } from 'react'
+import { reportUIError } from '../lib/telemetry'
 
 /**
  * App-wide error boundary. Catches render-time errors (including failed lazy
@@ -17,6 +18,14 @@ export default class ErrorBoundary extends Component {
 
   componentDidCatch(error, info) {
     console.error('Unhandled UI error:', error, info)
+    // The console line dies with the tab. This one reaches the telemetry index,
+    // where the component stack tells us which page actually broke.
+    reportUIError({
+      event: 'render_crash',
+      message: error?.message || String(error),
+      stack: [error?.stack, info?.componentStack].filter(Boolean).join('\n\n'),
+      source: 'boundary',
+    })
   }
 
   render() {

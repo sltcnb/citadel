@@ -134,6 +134,21 @@ Every stage runs over the async pipeline as a Celery/Redis-Streams consumer grou
 | Workers | Celery (ingest + modules queues) |
 | Search | Elasticsearch 8 · **Broker/state** Redis 7 · **Artifacts** MinIO (S3) · **Ingress** Traefik |
 
+## Observability
+
+Three separate things, for three separate questions — see [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md).
+
+| | Where | Answers |
+|---|---|---|
+| Logs | Redis streams, tailed at **Admin → Tool Logs** | What is a service doing right now? |
+| Metrics | Prometheus text on the worker's `:9100/metrics` | How much, how fast, how many in flight? |
+| Telemetry | Elasticsearch `citadel-telemetry-*`, read at **Admin → Telemetry** | What should we fix next? |
+
+Telemetry keeps 30 days of structured events — exceptions with tracebacks, failing
+and slow routes, parse outcomes per artifact type, LLM cost per kind of call, and
+browser crashes reported by the frontend — behind
+`GET /api/v1/admin/telemetry/summary`.
+
 Layout: `api/` + `frontend/` (platform) · `tools/` (standalone suite + `citadel_contracts`) · `contracts/` (schemas) · `charts/citadel/` (Helm) · `k8s/` (manifests). Resource sizing (`scripts/allocate_resources.py`) reads real host RAM/CPU and never over-commits.
 
 ## Security

@@ -20,6 +20,8 @@ export default [
         ...globals.browser,
         ...globals.es2021,
         ...globals.node,
+        // Injected at build time by vite.config.js `define`.
+        __APP_VERSION__: 'readonly',
       },
       parserOptions: {
         ecmaFeatures: { jsx: true },

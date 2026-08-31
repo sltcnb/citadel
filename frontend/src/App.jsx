@@ -21,6 +21,7 @@ const Settings        = lazy(() => import('./pages/Settings'))
 const Account         = lazy(() => import('./pages/Account'))
 const Performance     = lazy(() => import('./pages/Performance'))
 const Logs            = lazy(() => import('./pages/Logs'))
+const Telemetry       = lazy(() => import('./pages/Telemetry'))
 const Suite           = lazy(() => import('./pages/Suite'))
 const UserManagement  = lazy(() => import('./pages/UserManagement'))
 const ThreatIntel     = lazy(() => import('./pages/ThreatIntel'))
@@ -112,6 +113,7 @@ export default function App() {
             <Route path="docs"                      element={<Docs />} />
             <Route path="performance"               element={<Performance />} />
             <Route path="logs"                      element={<Logs />} />
+            <Route path="telemetry"                 element={<Telemetry />} />
             <Route path="suite"                     element={<Suite />} />
             {/* Capabilities merged into Suite — keep the path working. */}
             <Route path="capabilities"              element={<Navigate to="/suite" replace />} />

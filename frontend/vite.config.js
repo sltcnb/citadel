@@ -1,8 +1,15 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import pkg from './package.json' with { type: 'json' }
 
 export default defineConfig({
   plugins: [react()],
+  // Stamped into the bundle so a browser error report says which build it came
+  // from — "it broke for one user" and "it broke on the last deploy" need very
+  // different responses.
+  define: {
+    __APP_VERSION__: JSON.stringify(pkg.version),
+  },
   server: {
     port: 3000,
     proxy: {

@@ -36,6 +36,123 @@ try:
 except Exception:  # missing dep / redis down must not stop the worker booting
     pass
 
+# ── Durable telemetry ─────────────────────────────────────────────────────────
+# The Redis log stream above is a live tail capped at 2 000 lines — on a busy
+# ingest it holds minutes. Telemetry writes every task outcome to Elasticsearch
+# instead, so "which parser fails, on what, and how slowly" is still answerable
+# a week later. Best-effort: no ES, no telemetry, no impact on the worker.
+try:
+    from citadel_contracts.telemetry import init_telemetry as _init_telemetry
+
+    _TELEMETRY = _init_telemetry("processor")
+    if _TELEMETRY.enabled:
+        _TELEMETRY.ensure_index_template(
+            int(os.getenv("CITADEL_TELEMETRY_RETENTION_DAYS", "30"))
+        )
+except Exception:  # noqa: BLE001
+    pass
+
+
+# ── Task lifecycle telemetry ──────────────────────────────────────────────────
+# One event per task, recorded from Celery's own signals rather than sprinkled
+# through the task bodies — so a new task type is covered the day it is added,
+# and no task can forget to report that it failed.
+_TASK_STARTS: dict = {}
+
+
+def _task_queue(task) -> str:
+    try:
+        return (getattr(task, "request", None).delivery_info or {}).get("routing_key", "") or ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+# Positional index of `case_id` per task, resolved from the signature once.
+# It is NOT a fixed position — process_artifact/run_module/run_harvest take
+# (job_or_run_id, case_id, …) while maybe_run_detections takes (case_id, …), so
+# assuming args[0] would silently file every parse under a job id.
+_CASE_ARG_INDEX: dict = {}
+
+
+def _case_arg_index(task) -> int:
+    name = getattr(task, "name", "")
+    if name in _CASE_ARG_INDEX:
+        return _CASE_ARG_INDEX[name]
+    idx = -1
+    try:
+        import inspect
+
+        params = list(inspect.signature(task.run).parameters)
+        if params and params[0] == "self":  # bind=True — celery binds it, args don't carry it
+            params = params[1:]
+        idx = params.index("case_id")
+    except Exception:  # noqa: BLE001 — unknown signature just means no case attribution
+        idx = -1
+    _CASE_ARG_INDEX[name] = idx
+    return idx
+
+
+def _case_id_of(task, kwargs: dict | None, args: tuple | None) -> str:
+    """The case a task belongs to, from its kwargs or its positional args."""
+    if kwargs and isinstance(kwargs.get("case_id"), str):
+        return kwargs["case_id"]
+    idx = _case_arg_index(task)
+    if idx >= 0 and args and idx < len(args) and isinstance(args[idx], str):
+        return args[idx]
+    return ""
+
+
+try:
+    import time as _time
+
+    from celery import signals as _signals
+
+    @_signals.task_prerun.connect(weak=False)
+    def _telemetry_task_prerun(task_id=None, **_kw):  # noqa: ANN001
+        _TASK_STARTS[task_id] = _time.perf_counter()
+
+    @_signals.task_postrun.connect(weak=False)
+    def _telemetry_task_postrun(  # noqa: ANN001
+        task_id=None, task=None, args=None, kwargs=None, state=None, **_kw
+    ):
+        started = _TASK_STARTS.pop(task_id, None)
+        try:
+            from citadel_contracts.telemetry import record_task
+
+            record_task(
+                getattr(task, "name", "unknown"),
+                "success" if state == "SUCCESS" else "failure",
+                (_time.perf_counter() - started) * 1000 if started else 0.0,
+                task_id=task_id or "",
+                queue_name=_task_queue(task),
+                case_id=_case_id_of(task, kwargs, args),
+                retries=getattr(getattr(task, "request", None), "retries", None),
+                **{"labels": {"celery_state": state or "UNKNOWN"}},
+            )
+        except Exception:  # noqa: BLE001 — telemetry must never fail a task
+            pass
+
+    @_signals.task_failure.connect(weak=False)
+    def _telemetry_task_failure(  # noqa: ANN001
+        task_id=None, exception=None, args=None, kwargs=None, einfo=None, sender=None, **_kw
+    ):
+        try:
+            from citadel_contracts.telemetry import record_error
+
+            record_error(
+                exception,
+                event="task_failure",
+                stack=str(einfo) if einfo else "",
+                correlation_id=task_id or "",
+                case_id=_case_id_of(sender, kwargs, args),
+                **{"task.name": getattr(sender, "name", "unknown"), "task.id": task_id or ""},
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+except Exception:  # noqa: BLE001 — celery signals unavailable (import-time edge)
+    pass
+
 # ── Queue definitions ─────────────────────────────────────────────────────────
 # ingest   — I/O-bound file parsing; run with higher concurrency
 # modules  — CPU/memory-bound analysis binaries; run with lower concurrency

@@ -11,6 +11,13 @@ data:
   PLUGINS_DIR: "/app/babel"
   DEFAULT_PAGE_SIZE: "100"
   MAX_PAGE_SIZE: "1000"
+  # Telemetry — durable product events in citadel-telemetry-* (see
+  # docs/OBSERVABILITY.md). Every value here is the built-in default; they are
+  # listed so they can be tuned with a ConfigMap edit + rollout, no rebuild.
+  CITADEL_TELEMETRY_ENABLED: "true"
+  CITADEL_TELEMETRY_RETENTION_DAYS: "30"
+  CITADEL_TELEMETRY_SAMPLE_RATE: "0.05"
+  CITADEL_TELEMETRY_SLOW_REQUEST_MS: "1000"
   # Auth
   AUTH_ENABLED: "__FO_AUTH_ENABLED__"
   JWT_EXPIRE_HOURS: "__FO_JWT_EXPIRE_HOURS__"

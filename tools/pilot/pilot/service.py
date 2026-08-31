@@ -21,7 +21,9 @@ import hashlib
 import json
 import logging
 import re as _re
+import threading as _threading
 from collections.abc import Iterator
+from contextlib import contextmanager as _contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -415,6 +417,99 @@ Key principles:
 Do not include markdown, only return the raw JSON object."""
 
 
+# ── Per-call LLM telemetry ────────────────────────────────────────────────────
+# Redis already keeps rolling usage counters for the dashboard (below). Those
+# tell you the total; they cannot tell you WHICH kind of call is slow, failing
+# or expensive. So every LLM call also lands in Elasticsearch as one document,
+# tagged with its purpose.
+#
+# "Purpose" is the name of the endpoint that asked — taken from the caller's
+# stack frame rather than a parameter, because threading a purpose= argument
+# through ~30 existing call sites is exactly the kind of change that gets half
+# done and then lies about coverage. The frame is always right.
+_LLM_CALL = _threading.local()
+
+_LLM_INTERNAL_FRAMES = {
+    "_call_llm",
+    "_call_llm_impl",
+    "_call_llm_test",
+    "_call_llm_with_system",
+    "_call_llm_with_system_impl",
+    "_llm_purpose",
+}
+
+
+def _llm_purpose() -> str:
+    """Name of the outermost non-LLM-plumbing function on the stack."""
+    try:
+        import sys as _sys
+
+        frame = _sys._getframe(1)
+        while frame is not None:
+            name = frame.f_code.co_name
+            if name not in _LLM_INTERNAL_FRAMES:
+                return name
+            frame = frame.f_back
+    except Exception:  # noqa: BLE001
+        pass
+    return "unknown"
+
+
+@_contextmanager
+def _llm_call(cfg: dict, purpose: str):
+    """Time one LLM call and make sure a failure is recorded, not just raised.
+
+    A provider timing out or rejecting a key is the single most common reason
+    an analyst sees "AI analysis failed" — and previously it left no trace
+    beyond a log line that had rolled out of the buffer by the time anyone
+    asked about it.
+    """
+    import time as _t
+
+    started = _t.perf_counter()
+    _LLM_CALL.started = started
+    _LLM_CALL.purpose = purpose
+    try:
+        yield
+    except Exception as exc:
+        try:
+            from citadel_contracts.telemetry import record_llm
+
+            record_llm(
+                cfg.get("provider", "") or cfg.get("base_url", "") or "unknown",
+                cfg.get("model", ""),
+                outcome="failure",
+                purpose=purpose,
+                duration_ms=(_t.perf_counter() - started) * 1000,
+                message=f"{type(exc).__name__}: {exc}",
+                **{"labels": {"component": "pilot"}},
+            )
+        except Exception:  # noqa: BLE001 — never fail while reporting a failure
+            pass
+        raise
+    finally:
+        _LLM_CALL.started = None
+        _LLM_CALL.purpose = ""
+
+
+def _call_llm(cfg: dict, prompt: str) -> str:
+    """Route to the appropriate LLM provider, with per-call telemetry."""
+    purpose = _llm_purpose()
+    with _llm_call(cfg, purpose):
+        return _call_llm_impl(cfg, prompt)
+
+
+def _call_llm_with_system(
+    cfg: dict, system_prompt: str, user_msg: str, max_tokens: int = 600, json_mode: bool = False
+) -> str:
+    """Generic LLM call with a custom system prompt, with per-call telemetry."""
+    purpose = _llm_purpose()
+    with _llm_call(cfg, purpose):
+        return _call_llm_with_system_impl(
+            cfg, system_prompt, user_msg, max_tokens=max_tokens, json_mode=json_mode
+        )
+
+
 def _track_llm_usage(
     provider: str,
     model: str,
@@ -423,6 +518,33 @@ def _track_llm_usage(
     inference_ns: int = 0,
     actual_cost_usd: float = None,
 ):
+    # Durable per-call record. Duration and purpose come from the _llm_call
+    # context the wrapper opened, so every provider branch reports them without
+    # each one having to remember to.
+    try:
+        import time as _t
+
+        from citadel_contracts.telemetry import record_llm
+
+        started = getattr(_LLM_CALL, "started", None)
+        record_llm(
+            provider,
+            model,
+            outcome="success",
+            purpose=getattr(_LLM_CALL, "purpose", "") or "",
+            prompt_tokens=prompt_tokens or 0,
+            completion_tokens=completion_tokens or 0,
+            cost_usd=actual_cost_usd,
+            duration_ms=(_t.perf_counter() - started) * 1000 if started else None,
+            tokens_per_second=(
+                round(completion_tokens / (inference_ns / 1e9), 2)
+                if inference_ns and completion_tokens
+                else None
+            ),
+            **{"labels": {"component": "pilot"}},
+        )
+    except Exception:  # noqa: BLE001 — telemetry must never break an LLM call
+        pass
     try:
         import time as _time
 
@@ -470,7 +592,7 @@ def _call_llm_test(cfg: dict) -> str:
     return _call_llm_with_system(cfg, "", "Reply with exactly the word: OK", max_tokens=512)
 
 
-def _call_llm(cfg: dict, prompt: str) -> str:
+def _call_llm_impl(cfg: dict, prompt: str) -> str:
     """Route to the appropriate LLM provider and return the raw text response."""
     provider = cfg.get("provider", "").lower()
     model = cfg.get("model", "")
@@ -7366,7 +7488,7 @@ def _extract_llm_text(data: dict, max_tokens: int, where: str) -> str:
     return ""
 
 
-def _call_llm_with_system(
+def _call_llm_with_system_impl(
     cfg: dict, system_prompt: str, user_msg: str, max_tokens: int = 600, json_mode: bool = False
 ) -> str:
     """Generic LLM call with a custom system prompt.

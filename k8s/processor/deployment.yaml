@@ -127,6 +127,12 @@ spec:
               value: "forensics-cases"
             - name: BULK_SIZE
               value: "1000"
+            # Telemetry — task outcomes and failures to citadel-telemetry-*
+            # (see docs/OBSERVABILITY.md). Set "false" to turn it off.
+            - name: CITADEL_TELEMETRY_ENABLED
+              value: "true"
+            - name: CITADEL_TELEMETRY_RETENTION_DAYS
+              value: "30"
             # Worker concurrency — number of parallel Celery processes per pod.
             # Increase to match the CPU limit above (1 process per vCPU is a good rule).
             # Change here + redeploy; no image rebuild needed.
