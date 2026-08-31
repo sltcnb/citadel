@@ -87,6 +87,7 @@ docker run -e REDIS_URL=redis://redis:6379/0 -e BUS_EMIT_ENABLED=true sluice-wor
     - `parser_events_normalized_total{artifact_type}` — counter of events successfully indexed/normalized per artifact type.
     - `worker_dead_letter_total{task}` — counter of tasks parked on the dead-letter queue (`robustness.to_dead_letter()`), labeled by Celery task name.
   - All four are rendered on the same `/metrics` endpoint as the rest of the registry (see `observability.render_prometheus()`) — no `prometheus_client` dependency required.
+  - **Telemetry** — the same parse outcomes, plus every task's outcome and every task failure with its traceback, are also written to Elasticsearch as `citadel-telemetry-*`. The metrics above reset with the process and the log stream holds minutes; telemetry keeps 30 days and can be aggregated, so "which parser has been quietly failing, on what, and how slowly" stays answerable. Task events come from Celery's `task_prerun`/`task_postrun`/`task_failure` signals in `celery_app.py`, so a new task type is covered the day it is added. Best-effort: no Elasticsearch, no telemetry, no impact on the worker. See [`docs/OBSERVABILITY.md`](../../../docs/OBSERVABILITY.md).
 
 ## Key modules
 

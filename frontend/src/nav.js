@@ -8,7 +8,7 @@
 import {
   LayoutDashboard, FolderOpen, Bell, FileCode, Shield, FlaskConical,
   Cpu, Code2, PackageOpen, Puzzle, BookOpen, Activity, Users, Settings2,
-  UserCircle, Search, ListChecks, ScrollText, Boxes, LayoutTemplate,
+  UserCircle, Search, ListChecks, ScrollText, Boxes, LayoutTemplate, LineChart,
 } from 'lucide-react'
 
 // Home / dashboard — rendered as a standalone top-nav link (not in a dropdown).
@@ -57,6 +57,8 @@ export const NAV_GROUPS = [
       { to: '/settings',    icon: Settings2,  label: 'Platform Settings' },
       { to: '/performance', icon: Activity,   label: 'Performance'       },
       { to: '/logs',        icon: ScrollText, label: 'Tool Logs'         },
+      // Tool Logs is a live tail; Telemetry is the aggregated history.
+      { to: '/telemetry',   icon: LineChart,  label: 'Telemetry'         },
       { to: '/users',       icon: Users,      label: 'Users'             },
     ],
   },
