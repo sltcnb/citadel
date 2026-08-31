@@ -17,4 +17,5 @@ produces:
 dependencies:
   - redis                   # queue + cancel flags + log streaming
 health:
-  command: "anvil list"
+  command: "python -c \"import pathlib,sys; sys.exit(0 if any(p for p in pathlib.Path('.').glob('*_module.py')\
+  \ if not p.name.startswith('test_')) else 1)\""

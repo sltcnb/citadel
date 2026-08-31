@@ -16,4 +16,4 @@ produces:
 dependencies:
   - elasticsearch
 health:
-  command: "scribe --version"
+  command: "python -c \"import scribe\""

@@ -21,4 +21,4 @@ dependencies:
   - anvil
   - augur
 health:
-  command: "pilot --version"
+  command: "python -c \"import pilot\""
