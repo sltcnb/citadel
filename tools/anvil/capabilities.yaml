@@ -25,3 +25,22 @@ capabilities:
           - { value: process_tree, label: "Process Tree" }
           - { value: persistence_sweep, label: "Persistence Sweep" }
           - { value: yara_scan, label: "YARA Scan" }
+
+# Anvil modules run inside the Sluice worker, so they ride Sluice's `task`
+# kind and add just the one field that is theirs. Declaring no kinds of its own
+# is exactly right — this is a tool extending another tool's event.
+telemetry:
+  fields:
+    - { name: task.module, type: keyword, label: "Module" }
+  panels:
+    - key: module_reliability
+      label: Analysis modules
+      hint: "per module — which analyzers fail, and how slow they are"
+      type: table
+      kind: task
+      group_by: task.module
+      limit: 25
+      metrics:
+        - { op: count, label: "Runs" }
+        - { op: count, label: "Failed", where: { outcome: failure }, tone: bad }
+        - { op: avg,   field: duration_ms, label: "Avg", unit: ms }

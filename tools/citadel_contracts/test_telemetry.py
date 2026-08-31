@@ -347,6 +347,54 @@ def test_labels_from_a_caller_merge_with_the_helper_s_own():
         t.reset_telemetry()
 
 
+# ── the mapping comes from advertisements ────────────────────────────────────
+# The template carries only the envelope. Everything else is declared by the
+# component that emits it, so a swapped-in tool can make its own fields
+# aggregatable without editing this package.
+
+
+def test_the_template_maps_only_the_envelope():
+    props = t._TEMPLATE_BODY["template"]["mappings"]["properties"]
+    assert "kind" in props and "outcome" in props and "duration_ms" in props
+    # Tool-shaped groups must NOT be baked in.
+    for baked_in in ("llm", "http", "task", "ui", "error"):
+        assert baked_in not in props, f"{baked_in} should be advertised, not built in"
+
+
+def test_advertised_fields_are_merged_into_the_template():
+    sink = _sink()
+    sink.ensure_index_template(
+        retention_days=7,
+        fields={"llm": {"properties": {"purpose": {"type": "keyword"}}}},
+    )
+    body = json.loads(
+        next(b for _m, p, b in sink.sent if p == f"/_index_template/{t.TEMPLATE_NAME}")
+    )
+    props = body["template"]["mappings"]["properties"]
+    assert props["llm"]["properties"]["purpose"] == {"type": "keyword"}
+    assert props["kind"] == {"type": "keyword"}   # envelope still there
+    sink.close()
+
+
+def test_an_advertisement_cannot_redefine_the_envelope():
+    # A manifest claiming `kind` is a float would break every other component's
+    # aggregations, so the envelope always wins.
+    merged = t._deep_merge_properties(
+        t._TEMPLATE_BODY["template"]["mappings"]["properties"],
+        {"kind": {"type": "float"}, "new": {"type": "keyword"}},
+    )
+    assert merged["kind"] == {"type": "keyword"}
+    assert merged["new"] == {"type": "keyword"}
+
+
+def test_two_tools_can_extend_the_same_object():
+    merged = t._deep_merge_properties(
+        {"task": {"properties": {"name": {"type": "keyword"}}}},
+        {"task": {"properties": {"module": {"type": "keyword"}}}},
+    )
+    assert set(merged["task"]["properties"]) == {"name", "module"}
+
+
 # ── fork safety ──────────────────────────────────────────────────────────────
 # Celery runs a prefork pool: the worker imports the module, then forks the
 # children that execute tasks. A shipper thread started before the fork does
