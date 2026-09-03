@@ -219,3 +219,81 @@ def test_attack_rejects_out_of_range_lookalike(fieldmap):
     }
     doc = normalize_event(event, fieldmap, "8.11")
     assert not (doc.get("threat", {}).get("technique", {}).get("id"))
+
+
+# ── Browser artifacts -> ECS (previously unmapped) ───────────────────────────
+
+
+def test_browser_download_maps_to_ecs_and_splits_the_url(fieldmap):
+    """
+    A browser download -> ECS web/access with url.* and file.* populated.
+
+    Before the `browser` artifact_type existed in the field-map these events
+    landed on the `default` spec — no event.category, no url, no file — so a
+    downloaded payload could not be joined to the prefetch/MFT/Sysmon evidence
+    of it running. url.domain is derived from url.full so the source host is
+    queryable as one indicator across every artifact that saw it.
+    """
+    event = {
+        "timestamp": "2026-03-04T09:12:33Z",
+        "message": "Downloaded: inv.exe",
+        "artifact_type": "browser",
+        "timestamp_desc": "Download Start Time",
+        "browser": {
+            "browser_type": "chromium",
+            "data_type": "download",
+            "url": "http://45.61.136.9:8443/d/gate.php?id=7",
+            "target_path": r"C:\Users\v\Downloads\inv.exe",
+            "filename": "inv.exe",
+            "total_bytes": 40960,
+            "mime_type": "application/x-msdownload",
+        },
+        "raw": {"line": "{}"},
+    }
+    doc = normalize_event(event, fieldmap, "8.11")
+    assert doc["event"]["category"] == ["web"]
+    assert doc["event"]["type"] == ["access"]
+    assert doc["url"]["full"] == "http://45.61.136.9:8443/d/gate.php?id=7"
+    assert doc["url"]["scheme"] == "http"
+    assert doc["url"]["domain"] == "45.61.136.9"
+    assert doc["url"]["port"] == 8443
+    assert doc["url"]["path"] == "/d/gate.php"
+    assert doc["url"]["query"] == "id=7"
+    assert doc["url"]["extension"] == "php"
+    assert doc["file"]["name"] == "inv.exe"
+    assert doc["file"]["path"] == r"C:\Users\v\Downloads\inv.exe"
+    assert doc["file"]["size"] == 40960
+    assert doc["file"]["mime_type"] == "application/x-msdownload"
+
+
+def test_browser_quarantine_maps_the_writing_agent(fieldmap):
+    """macOS quarantine: the agent that wrote the file becomes process.name."""
+    event = {
+        "timestamp": "2026-03-04T09:12:33Z",
+        "message": "Quarantined by curl: payload.dmg",
+        "artifact_type": "browser",
+        "browser": {
+            "browser_type": "safari",
+            "data_type": "quarantine",
+            "url": "https://cdn.miniwakaya.xyz/payload.dmg",
+            "filename": "payload.dmg",
+            "agent_name": "curl",
+        },
+    }
+    doc = normalize_event(event, fieldmap, "8.11")
+    assert doc["url"]["domain"] == "cdn.miniwakaya.xyz"
+    assert doc["file"]["name"] == "payload.dmg"
+    assert doc["process"]["name"] == "curl"
+    assert doc["service"]["name"] == "safari"
+
+
+def test_url_decomposition_leaves_a_bare_path_alone(fieldmap):
+    """url.full that is not a URL must not gain an invented domain."""
+    event = {
+        "timestamp": "2026-03-04T09:12:33Z",
+        "artifact_type": "browser",
+        "browser": {"data_type": "history", "url": "/var/tmp/.cache/stage"},
+    }
+    doc = normalize_event(event, fieldmap, "8.11")
+    assert doc["url"]["full"] == "/var/tmp/.cache/stage"
+    assert "domain" not in doc["url"]

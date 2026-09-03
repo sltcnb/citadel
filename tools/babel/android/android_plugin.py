@@ -26,7 +26,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+# packages.xml / WiFi configs come off the seized device, so they are
+# attacker-influenced input. safe_xml refuses entity declarations, which is
+# what stops a crafted file from expanding to gigabytes inside the processor.
 from babel.base_plugin import BasePlugin, PluginContext, PluginFatalError
+from babel.safe_xml import parse_file as _parse_xml_file
 
 
 # Android stores most timestamps as milliseconds since Unix epoch.
@@ -459,7 +463,7 @@ class AndroidPlugin(BasePlugin):
     # ------------------------------------------------------------------
     def _parse_packages(self) -> Generator[dict[str, Any], None, None]:
         try:
-            tree = ET.parse(str(self.ctx.source_file_path))
+            tree = _parse_xml_file(self.ctx.source_file_path)
         except ET.ParseError as exc:
             raise PluginFatalError(f"Cannot parse packages.xml: {exc}") from exc
 
@@ -577,7 +581,7 @@ class AndroidPlugin(BasePlugin):
     def _parse_wifi_xml(self) -> Generator[dict[str, Any], None, None]:
         """Parse Android XML WiFi config (newer Android versions)."""
         try:
-            tree = ET.parse(str(self.ctx.source_file_path))
+            tree = _parse_xml_file(self.ctx.source_file_path)
         except ET.ParseError as exc:
             raise PluginFatalError(f"Cannot parse WiFi XML: {exc}") from exc
 

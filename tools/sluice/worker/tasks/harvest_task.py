@@ -33,8 +33,11 @@ logger = logging.getLogger(__name__)
 
 # ── environment ───────────────────────────────────────────────────────────────
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "minio-service:9000")
-MINIO_ACCESS = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
-MINIO_SECRET = os.getenv("MINIO_SECRET_KEY", "minioadmin")
+MINIO_ACCESS = os.getenv("MINIO_ACCESS_KEY", "")
+MINIO_SECRET = os.getenv("MINIO_SECRET_KEY", "")
+# TLS for the object store. Secure by default; plaintext requires an explicit
+# MINIO_SECURE=false (set by the shipped in-cluster manifests / compose files).
+MINIO_SECURE = os.getenv("MINIO_SECURE", "true").lower() not in ("false", "0", "no")
 MINIO_BUCKET = os.getenv("MINIO_BUCKET", "forensics-cases")
 RUN_TTL = 7 * 24 * 3600  # 7 days
 
@@ -743,7 +746,12 @@ def _get_redis() -> redis.Redis:
 def _get_minio():
     from minio import Minio
 
-    return Minio(MINIO_ENDPOINT, access_key=MINIO_ACCESS, secret_key=MINIO_SECRET, secure=False)
+    return Minio(
+        MINIO_ENDPOINT,
+        access_key=MINIO_ACCESS,
+        secret_key=MINIO_SECRET,
+        secure=MINIO_SECURE,
+    )
 
 
 def _update_run(r: redis.Redis, run_id: str, **fields) -> None:

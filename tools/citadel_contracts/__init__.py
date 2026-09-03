@@ -59,6 +59,10 @@ from .parser import (  # noqa: F401
     classify_os,
     iso_z,
 )
+from .plugin_trust import (  # noqa: F401
+    PluginTrustStore,
+    sha256_file,
+)
 from .redis_conn import (  # noqa: F401
     redis_url_with_auth,
 )
@@ -142,6 +146,8 @@ __all__ = [
     "register_capability",
     "capabilities_redis_key",
     "redis_url_with_auth",
+    "PluginTrustStore",
+    "sha256_file",
     "CAPABILITIES_KEY_PREFIX",
     "FIELD_TYPES",
     "PLATFORMS",

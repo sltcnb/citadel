@@ -52,11 +52,48 @@ particular:
 - **Change the default `admin` credentials** immediately; the first sign-in
   forces a password change.
 - **Set strong `JWT_SECRET` and `MINIO_SECRET_KEY`** values — never reuse the
-  examples.
+  examples. The API refuses to start when the MinIO credentials are unset or
+  left at the well-known `minioadmin` default; `./foctl deploy` generates
+  strong ones. `CITADEL_ALLOW_DEFAULT_MINIO_CREDS=true` overrides that check
+  and should never be set outside a throwaway environment.
 - **Do not disable authentication** (`AUTH_ENABLED=false`) outside an isolated,
   trusted lab; it grants unrestricted admin to every request.
+- **Review transport encryption.** Browser-facing traffic is TLS by default,
+  but traffic to the bundled Elasticsearch, Redis and MinIO is plaintext until
+  those services carry certificates — service credentials and evidence bytes
+  cross the pod network in the clear. See
+  [`docs/security-transport.md`](docs/security-transport.md) for what is
+  encrypted, and for the `transport.*` switches that flip each hop to TLS.
+- **Encrypt evidence at rest** by naming an encrypting StorageClass in
+  `storage.uploads_storage_class`; the default cluster class often does not.
+- **Sandbox the processor.** It executes third-party analysis modules, so
+  install a sandbox runtime (gVisor / Kata) and name its RuntimeClass
+  (`resources.processor_runtime_class`, or `processor.runtimeClassName` in the
+  Helm chart). Without one, a malicious module only has to break standard
+  container isolation to reach the node.
+- **Consider a plugin trust manifest.** Loading a plugin executes it, and the
+  loaders pick candidates by filename glob off a shared writable volume.
+  Group/world-writable plugin files are always refused; setting
+  `PLUGIN_TRUST_MANIFEST` to a JSON allowlist of `path → sha256` (stored
+  *outside* the plugins volume) additionally restricts execution to approved,
+  unmodified files. See `tools/citadel_contracts/plugin_trust.py`.
+- **Leave the image pruner off.** `maintenance.image_pruner` deploys a
+  privileged CronJob with a hostPath mount of `/`, which is a container-escape
+  primitive. Prefer kubelet image garbage collection
+  (`--image-gc-high-threshold` / `--image-gc-low-threshold`).
 - Keep container images up to date; CI runs Trivy and `pip-audit` scans and CVE
   gating on release tags.
+- Pin third-party GitHub Actions to a full commit SHA, not a tag or branch.
+- **Confine harvest paths.** `HARVEST_MOUNT_ROOTS` (default `/mnt,/data`)
+  bounds which worker-side directories a harvest may read. Widen it only to
+  directories that genuinely hold evidence.
+- **Do not disable TLS verification for collector uploads.** `talon`
+  aborts an upload whose certificate does not verify; `--insecure-tls` /
+  `FO_INSECURE_TLS=1` overrides that for a known self-signed internal
+  endpoint and says so on stderr. It is not a general-purpose flag.
+- **CTI feeds always verify TLS** — there is no per-feed opt-out. For an
+  internal MISP/TAXII with a private certificate, add its CA to the container
+  trust store.
 
 ## Security tooling in CI
 

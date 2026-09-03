@@ -31,7 +31,10 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+# .wer files arrive through the ingest pipeline, so the XML is untrusted.
+# safe_xml refuses entity declarations (billion-laughs / XXE).
 from babel.base_plugin import BasePlugin, PluginFatalError
+from babel.safe_xml import parse_string as _parse_xml_string
 
 # FILETIME epoch: 1601-01-01T00:00:00Z
 _FILETIME_EPOCH = datetime(1601, 1, 1, tzinfo=UTC)
@@ -159,7 +162,7 @@ class WerPlugin(BasePlugin):
             return
 
         try:
-            root = ET.fromstring(text)
+            root = _parse_xml_string(text)
         except Exception as exc:
             raise PluginFatalError(f"Cannot parse WER file '{path.name}': {exc}") from exc
 

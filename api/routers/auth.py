@@ -35,7 +35,7 @@ from auth.service import (
     verify_password,
     verify_totp,
 )
-from license.gate import check_user_limit
+from license.gate import check_user_limit, limit_lock
 
 from config import get_redis as _get_redis, settings
 
@@ -135,6 +135,72 @@ def _record_login_failure(request: Request) -> None:
         logger.warning("Rate-limit failure count failed (Redis unavailable?): %s", exc)
 
 
+# ── Concurrency gate ──────────────────────────────────────────────────────────
+#
+# _check_login_rate_limit above is a read of the failure counter, and
+# _record_login_failure only increments AFTER the credentials were checked.
+# That gap is a check-then-act race: N requests arriving together all read the
+# same pre-limit failure count, all pass the gate, and only then increment —
+# so an attacker with N parallel connections got N attempts past the limit in
+# the first window.
+#
+# This dependency closes it by counting attempts that are IN FLIGHT and
+# charging them against the same limit. INCR is atomic, so concurrent requests
+# receive distinct values instead of all observing the same stale count, and a
+# parallel burst throttles itself. The slot is released when the request
+# finishes, which keeps the property the read-only gate was written for:
+# successful logins do not burn the failure budget, so a user behind a shared
+# NAT is never locked out by their own successes.
+
+# Safety net only — a released slot is decremented immediately. This bounds the
+# damage if a worker is killed mid-request and never runs its release.
+_LOGIN_INFLIGHT_TTL = 120
+
+
+def _login_inflight_key(request: Request) -> str:
+    return _login_rate_bucket(request) + ":inflight"
+
+
+async def login_attempt_slot(request: Request):
+    """Reserve one in-flight login slot for the client IP, or answer 429."""
+    limit, window = _login_rate_config()
+    key = _login_rate_bucket(request)
+    inflight_key = _login_inflight_key(request)
+    redis = None
+    reserved = False
+    try:
+        redis = _get_redis()
+        # One MULTI/EXEC: read the recorded failures and claim a slot together.
+        pipe = redis.pipeline()
+        pipe.get(key)
+        pipe.incr(inflight_key)
+        pipe.expire(inflight_key, _LOGIN_INFLIGHT_TTL)
+        failures, in_flight, _ = pipe.execute()
+        reserved = True
+        failures = int(failures or 0)
+        # -1: this request's own slot is not an attempt that already happened.
+        used = failures + int(in_flight or 1) - 1
+    except Exception as exc:
+        logger.warning("Login concurrency gate unavailable (Redis?): %s", exc)
+        yield
+        return
+
+    try:
+        if used >= limit:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Too many failed login attempts. Try again in {_window_hint(window)}.",
+            )
+        yield
+    finally:
+        if reserved and redis is not None:
+            try:
+                if redis.decr(inflight_key) <= 0:
+                    redis.delete(inflight_key)
+            except Exception:  # noqa: BLE001 — releasing is best effort
+                pass
+
+
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
@@ -228,7 +294,11 @@ class ChangePasswordRequest(BaseModel):
 
 
 @router.post("/login", response_model=LoginResponse, summary="Login (JSON)")
-async def login(request: Request, body: LoginRequest):
+async def login(
+    request: Request,
+    body: LoginRequest,
+    _slot: None = Depends(login_attempt_slot),
+):
     """Primary login endpoint. Returns a token, or an MFA challenge if the
     account has TOTP enabled (complete via /auth/login/totp)."""
     _check_login_rate_limit(request)
@@ -265,7 +335,11 @@ async def login(request: Request, body: LoginRequest):
 
 
 @router.post("/login/totp", response_model=TokenResponse, summary="Complete MFA login")
-async def login_totp(request: Request, body: TotpLoginRequest):
+async def login_totp(
+    request: Request,
+    body: TotpLoginRequest,
+    _slot: None = Depends(login_attempt_slot),
+):
     """Second login step: verify the TOTP (or backup) code against the challenge."""
     _check_login_rate_limit(request)
     username = decode_mfa_challenge(body.mfa_token)
@@ -278,6 +352,10 @@ async def login_totp(request: Request, body: TotpLoginRequest):
     user = get_user(username)
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
+    # Consume the challenge: it is single-use (jti revocation) so a captured
+    # mfa_token cannot be replayed within its 5-minute TTL to mint another
+    # access token. Same contract as the pw_token path below.
+    revoke_token(body.mfa_token)
     token = create_token(username, user["role"])
     return TokenResponse(
         access_token=token, token_type="bearer", username=username, role=user["role"],
@@ -285,7 +363,11 @@ async def login_totp(request: Request, body: TotpLoginRequest):
 
 
 @router.post("/login/change-password", response_model=TokenResponse, summary="Complete forced password change")
-async def login_change_password(request: Request, body: ChangePasswordChallengeRequest):
+async def login_change_password(
+    request: Request,
+    body: ChangePasswordChallengeRequest,
+    _slot: None = Depends(login_attempt_slot),
+):
     """Second login step for a must-change-password account: set a new password
     using the short-lived pw_token, then receive a normal access token."""
     _check_login_rate_limit(request)
@@ -313,7 +395,11 @@ async def login_change_password(request: Request, body: ChangePasswordChallengeR
 
 
 @router.post("/token", response_model=TokenResponse, summary="Login (OAuth2 form)")
-async def token(request: Request, form: OAuth2PasswordRequestForm = Depends()):
+async def token(
+    request: Request,
+    form: OAuth2PasswordRequestForm = Depends(),
+    _slot: None = Depends(login_attempt_slot),
+):
     """OAuth2-compatible endpoint for tooling (Swagger UI, curl, etc.)."""
     _check_login_rate_limit(request)
     request.scope["audit_actor"] = form.username
@@ -494,12 +580,14 @@ async def admin_create_user(
     body: CreateUserRequest,
     admin: dict = Depends(require_admin),
 ):
-    check_user_limit()
+    # Count-check-create under one lock (see license.gate.limit_lock).
     try:
-        user = create_user(
-            body.username, body.password, body.role, body.companies,
-            groups=body.groups, extra_permissions=body.extra_permissions,
-        )
+        with limit_lock("users"):
+            check_user_limit()
+            user = create_user(
+                body.username, body.password, body.role, body.companies,
+                groups=body.groups, extra_permissions=body.extra_permissions,
+            )
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

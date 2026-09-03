@@ -56,8 +56,9 @@ Everything else is passed as per-run module parameters, not environment.
 ## Run / use
 
 ```bash
-anvil list                       # list available modules (also the brick health check)
-anvil run volatility3 -a mem.raw # run a module against an artifact
+# Anvil installs no console script. Modules are *_module.py files here, and the
+# running platform exposes the live set over the API:
+curl -s "$CITADEL_API/modules" | jq '.[].key'
 ```
 
 In the platform, modules execute inside the Sluice worker’s `modules` queue via a sandboxed harness (`tasks/_module_sandbox.py`: resource limits, env isolation, JSON-over-stdin).

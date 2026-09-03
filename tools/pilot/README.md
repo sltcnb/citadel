@@ -61,8 +61,8 @@ environment.
 ## Run / health
 
 ```bash
-pilot --version            # health check (from brick.yaml)
-pilot investigate --case ID
+# Pilot installs no console script; it is driven by the platform, not a CLI.
+python -c "import pilot"   # health check (from brick.yaml)
 ```
 
 Model-agnostic provider routing; prompt-injection guardrails fence untrusted evidence as data.

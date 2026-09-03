@@ -17,4 +17,4 @@ produces:
 dependencies:
   - elasticsearch          # query backend for Sigma->ES conversion
 health:
-  command: "sigil validate ./rules/"
+  command: "python sigil_validate.py --quiet"

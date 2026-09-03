@@ -145,6 +145,90 @@ rules:
     mitre: [T1071.001]
     level: medium
 
+  - name: Payload Quarantined by a Non-Browser Agent
+    description: >-
+      The macOS LaunchServices quarantine database records which application
+      wrote a downloaded file to disk. When that agent is a shell, an
+      interpreter, or a command-line fetcher rather than a browser or mail
+      client, the file was pulled by something being driven — a malicious
+      installer script, an osascript stager, a curl in a dropper — not by a
+      person clicking a link.
+
+      This is the macOS counterpart to Chromium's downloads table, and it
+      survives the browser's own history being cleared.
+    artifact_type: browser
+    query: >-
+      browser.data_type:quarantine AND
+      (browser.agent_name.ci:*curl* OR browser.agent_name.ci:*wget* OR
+      browser.agent_name.ci:*osascript* OR browser.agent_name.ci:*python* OR
+      browser.agent_name.ci:*Terminal* OR browser.agent_name.ci:*iTerm* OR
+      browser.agent_name.ci:*bash* OR browser.agent_name.ci:*zsh* OR
+      browser.agent_name.ci:*sh* OR browser.agent_bundle_id.ci:*com.apple.curl* OR
+      browser.agent_bundle_id.ci:*com.apple.Terminal* OR
+      browser.agent_bundle_id.ci:*com.apple.osascript*)
+    threshold: 1
+    mitre: [T1105, T1204.002]
+    level: high
+
+  - name: File Downloaded From a Bare IP Address
+    description: >-
+      A download's source URL names an IP literal instead of a hostname, so the
+      fetch skipped DNS entirely. Legitimate software distribution is
+      DNS-fronted; hardcoded IPs are how stagers reach infrastructure that has
+      no domain, or whose domain the operator does not want in a resolver log.
+
+      Covers Chromium and Firefox download records and the macOS quarantine
+      database, which reports the same fact for every quarantine-aware app.
+    artifact_type: browser
+    query: >-
+      browser.host_is_ip:true AND
+      (browser.data_type:download OR browser.data_type:quarantine)
+    threshold: 1
+    mitre: [T1105, T1071.001]
+    level: high
+
+  - name: Browser Navigated Directly to an IP Address
+    description: >-
+      A visit in browser history whose host is an IP literal. Users type
+      hostnames; an IP in history is a management interface, an internal
+      appliance, or a C2 panel — and paired with the download rule above it
+      shows the same address serving both the page and the payload.
+    artifact_type: browser
+    query: "browser.data_type:history AND browser.host_is_ip:true"
+    threshold: 1
+    mitre: [T1071.001]
+    level: medium
+
+  - name: Safari History Entries Deleted
+    description: >-
+      Safari records every deleted history entry in history_tombstones — the URL
+      and the window it covered survive the deletion. Entries here are URLs
+      someone removed from the visible timeline, which makes them more
+      interesting than the ones left behind, not less.
+
+      There is no Chromium equivalent: Chrome deletes the row outright.
+    artifact_type: browser
+    query: "browser.data_type:history_deleted"
+    threshold: 1
+    mitre: [T1070.003]
+    level: medium
+
+  - name: Quarantined Email or Message Attachment
+    description: >-
+      LaunchServices tagged the file as arriving as an email or instant-message
+      attachment rather than a web download, and named the sender. That is the
+      delivery half of a phishing chain recorded by the OS itself, independent
+      of whether the mail client kept the message.
+    artifact_type: browser
+    query: >-
+      browser.data_type:quarantine AND
+      (browser.quarantine_type:emailattachment OR
+      browser.quarantine_type:instantmessageattachment OR
+      browser.quarantine_type:otherattachment)
+    threshold: 1
+    mitre: [T1566.001, T1566.002]
+    level: high
+
 # ── Removed: no data source in these artifacts ────────────────────────────────
 #
 # "Browser Extension Installed" (T1176)

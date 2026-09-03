@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from auth.dependencies import get_company_filter, get_current_user
 from fastapi import APIRouter, Depends, HTTPException
-from license.gate import check_case_limit
+from license.gate import check_case_limit, limit_lock
 from pydantic import BaseModel
 from services import cases as case_svc
 from services.elasticsearch import bulk_case_stats, count_case_events, list_artifact_types
@@ -88,8 +88,12 @@ def create_case(body: CaseCreate, current_user: dict = Depends(get_current_user)
         raise HTTPException(
             status_code=403, detail="Cannot create a case for a company outside your scope"
         )
-    check_case_limit()
-    case = case_svc.create_case(body.name, body.description, body.analyst, body.company)
+    # Count-check-create under one lock: without it two concurrent creates
+    # both count N, both pass the cap check, and the installation ends up at
+    # cap+1 cases.
+    with limit_lock("cases"):
+        check_case_limit()
+        case = case_svc.create_case(body.name, body.description, body.analyst, body.company)
     return case
 
 

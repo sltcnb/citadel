@@ -1,0 +1,3 @@
+# TLS material for the proxy — never commit certificates or private keys.
+*
+!.gitignore

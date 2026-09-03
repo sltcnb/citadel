@@ -29,8 +29,13 @@ spec:
               drop: ["ALL"]
             readOnlyRootFilesystem: false
           env:
+            # Scheme rendered from config.json transport.elasticsearch_tls;
+            # the shipped ES manifest serves plaintext, so this is http by
+            # default. With TLS on, also mount the CA and set
+            # ELASTICSEARCH_SSL_CERTIFICATEAUTHORITIES + ssl.verificationMode.
+            # See docs/security-transport.md.
             - name: ELASTICSEARCH_HOSTS
-              value: "http://elasticsearch-service:9200"
+              value: "__FO_KIBANA_ES_SCHEME__://elasticsearch-service:9200"
             - name: SERVER_BASEPATH
               value: "/kibana"
             - name: SERVER_REWRITEBASEPATH

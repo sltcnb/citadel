@@ -306,10 +306,14 @@ def test_quarantine_db_yields_download_url_and_referrer(tmp_path):
     ev = events[0]
     assert ev["artifact_type"] == "browser"
     assert ev["os"] == "macos"
-    assert ev["browser"]["data_type"] == "download"
+    # "quarantine", not "download": Rosetta's fieldmap keys the writing-agent →
+    # process.name mapping on this exact value (rosetta/fieldmaps/default.yaml).
+    assert ev["browser"]["data_type"] == "quarantine"
     assert ev["browser"]["url"] == "https://cdn.dntds.shop/setup.dmg"
-    assert ev["browser"]["referrer"] == "https://dntds.shop/download"
-    assert ev["browser"]["agent"] == "Google Chrome"
+    # page_url / agent_name are the names Rosetta reads (browser.agent_name →
+    # process.name); the origin page is the drive-by site, the url is the CDN.
+    assert ev["browser"]["page_url"] == "https://dntds.shop/download"
+    assert ev["browser"]["agent_name"] == "Google Chrome"
     # Cocoa epoch (2001), not Unix — off by 31 years if read as the latter.
     assert ev["timestamp"].startswith("2026-08-25T09:12:00")
 

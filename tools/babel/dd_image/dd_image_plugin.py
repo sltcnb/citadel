@@ -155,7 +155,9 @@ def _minio() -> _MinioClient:
         os.environ.get("MINIO_ENDPOINT", "minio:9000"),
         access_key=os.environ.get("MINIO_ACCESS_KEY", ""),
         secret_key=os.environ.get("MINIO_SECRET_KEY", ""),
-        secure=os.environ.get("MINIO_SECURE", "false").lower() == "true",
+        # Secure by default: plaintext needs an explicit MINIO_SECURE=false.
+        secure=os.environ.get("MINIO_SECURE", "true").lower()
+        not in ("false", "0", "no"),
     )
 
 

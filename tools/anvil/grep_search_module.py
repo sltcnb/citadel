@@ -34,6 +34,42 @@ def _normalize(pat: str) -> str:
         return re.escape(pat).replace(r"\*", ".*").replace(r"\?", ".")
 
 
+# ── Pattern cost bounds ───────────────────────────────────────────────────────
+#
+# Patterns arrive in ctx.params, so whoever can queue a module run chooses
+# them. `grep -oP` runs PCRE, and a nested quantifier like (a+)+$ backtracks
+# exponentially on crafted input: one pattern could pin a worker core for the
+# whole subprocess timeout, per pattern, per file. Bounding the pattern set and
+# the per-invocation wall clock keeps a bad pattern from becoming a worker DoS.
+_MAX_PATTERNS = 64
+_MAX_PATTERN_LEN = 512
+# Seconds per grep invocation. Was 60; a pathological pattern used the full
+# budget on every file, and legitimate patterns finish in well under this.
+_GREP_TIMEOUT = int(os.getenv("GREP_SEARCH_TIMEOUT", "15"))
+
+# Nested quantifier applied to an already-quantified group — the classic
+# catastrophic-backtracking shape: (a+)+, (x*)*, ([a-z]+)*, (\d{2,})+.
+#
+# This is a cheap screen, not a decision procedure. Other shapes backtrack too
+# (overlapping alternation such as (a|aa)+ is not matched here), and detecting
+# them reliably would reject legitimate patterns like (foo|bar)+. The bounded
+# _GREP_TIMEOUT below is what covers the rest: this rule removes the pattern
+# class that is both obviously pathological and unambiguous to spot.
+_NESTED_QUANTIFIER = re.compile(r"\((?:[^()\\]|\\.)*[+*}][)]?\)\s*[+*{]")
+
+
+def _pattern_rejection(pat: str) -> str | None:
+    """Return a reason to refuse this pattern, or None if it is acceptable."""
+    if len(pat) > _MAX_PATTERN_LEN:
+        return f"pattern is {len(pat)} characters (limit {_MAX_PATTERN_LEN})"
+    if _NESTED_QUANTIFIER.search(pat):
+        return (
+            "pattern nests a quantifier inside a quantified group "
+            "(catastrophic backtracking); rewrite it without the nesting"
+        )
+    return None
+
+
 class GrepSearchModule(BaseModule):
     name = MODULE_NAME
     description = MODULE_DESCRIPTION
@@ -61,6 +97,37 @@ class GrepSearchModule(BaseModule):
         result = Result(module=self.name)
         matches_total = 0
 
+        if len(patterns) > _MAX_PATTERNS:
+            print(
+                f"[grep_search] {len(patterns)} patterns supplied; using the "
+                f"first {_MAX_PATTERNS} (limit)",
+                file=sys.stderr,
+            )
+            result.add_finding(
+                "low",
+                "Pattern list truncated",
+                f"{len(patterns)} patterns supplied; only the first "
+                f"{_MAX_PATTERNS} were run.",
+            )
+            patterns = patterns[:_MAX_PATTERNS]
+
+        # Screen the pattern set once, before touching any file.
+        usable: list[str] = []
+        for raw in patterns:
+            pat = _normalize(raw)
+            reason = _pattern_rejection(pat)
+            if reason:
+                print(f"[grep_search] refusing pattern {pat[:60]!r}: {reason}", file=sys.stderr)
+                result.add_finding(
+                    "low",
+                    f"Pattern refused — {pat[:60]}",
+                    f"This pattern was not run: {reason}.",
+                    pattern=pat,
+                )
+                continue
+            usable.append(pat)
+        patterns = usable
+
         for filename, local_path, _sf in iter_local_files(ctx, bucket=bucket):
             print(
                 f"[grep_search] scanning {filename} with {len(patterns)} patterns …",
@@ -68,18 +135,36 @@ class GrepSearchModule(BaseModule):
             )
 
             for pat in patterns:
-                pat = _normalize(pat)
                 try:
                     proc_count = subprocess.run(
                         [grep_bin, "-oPc", "--", pat, str(local_path)],
                         capture_output=True,
                         text=True,
-                        timeout=60,
+                        timeout=_GREP_TIMEOUT,
                     )
                     count = (
                         int(proc_count.stdout.strip()) if proc_count.stdout.strip().isdigit() else 0
                     )
-                except (subprocess.TimeoutExpired, ValueError):
+                except subprocess.TimeoutExpired:
+                    # Record it. Reporting 0 here would show the analyst "no
+                    # matches" for a search that never actually completed.
+                    print(
+                        f"[grep_search]   [{pat[:40]}] timed out after "
+                        f"{_GREP_TIMEOUT}s on {filename}",
+                        file=sys.stderr,
+                    )
+                    result.add_finding(
+                        "medium",
+                        f"Pattern timed out — {pat[:60]}",
+                        f"grep did not finish within {_GREP_TIMEOUT}s on this "
+                        f"file, so its result is UNKNOWN — not zero matches. "
+                        f"Simplify the pattern or narrow the input.",
+                        file=filename,
+                        filename=filename,
+                        pattern=pat,
+                    )
+                    continue
+                except ValueError:
                     count = 0
 
                 if count > 0:
@@ -88,7 +173,7 @@ class GrepSearchModule(BaseModule):
                             [grep_bin, "-oP", "--", pat, str(local_path)],
                             capture_output=True,
                             text=True,
-                            timeout=60,
+                            timeout=_GREP_TIMEOUT,
                         )
                         samples = list(set(proc_m.stdout.strip().split("\n")))[:50]
                     except subprocess.TimeoutExpired:
