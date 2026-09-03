@@ -115,6 +115,9 @@ services:
       - MINIO_ENDPOINT=minio:9000
       - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY must be set in .env}
       - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:?MINIO_SECRET_KEY must be set in .env}
+      # MinIO is plain HTTP inside the compose network — opt out of TLS
+      # explicitly (the app defaults to secure=true).
+      - MINIO_SECURE=${MINIO_SECURE:-false}
       - MINIO_BUCKET=forensics-cases
       - PLUGINS_DIR=/app/babel
       - INGESTER_DIR=/app/sluice
@@ -157,6 +160,9 @@ services:
       - MINIO_ENDPOINT=minio:9000
       - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY must be set in .env}
       - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:?MINIO_SECRET_KEY must be set in .env}
+      # MinIO is plain HTTP inside the compose network — opt out of TLS
+      # explicitly (the app defaults to secure=true).
+      - MINIO_SECURE=${MINIO_SECURE:-false}
       - MINIO_BUCKET=forensics-cases
       - BULK_SIZE=${BULK_SIZE:-1000}
       - INGESTER_DIR=/app/sluice
@@ -214,6 +220,9 @@ services:
       - MINIO_ENDPOINT=minio:9000
       - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY must be set in .env}
       - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:?MINIO_SECRET_KEY must be set in .env}
+      # MinIO is plain HTTP inside the compose network — opt out of TLS
+      # explicitly (the app defaults to secure=true).
+      - MINIO_SECURE=${MINIO_SECURE:-false}
       - MINIO_BUCKET=forensics-cases
       - BULK_SIZE=${BULK_SIZE:-1000}
       - INGESTER_DIR=/app/sluice
@@ -266,11 +275,26 @@ services:
   proxy:
     image: nginx:1.25-alpine@sha256:516475cc129da42866742567714ddc681e5eed7b9ee0b9e9c015e464b4221a00
     ports:
-      # PROXY_PORT (default 80) — change in .env if another service already owns port 80.
-      # Example: PROXY_PORT=8090 then point your nginx/Caddy/HAProxy to localhost:8090.
+      # PROXY_PORT (default 80) — :80 only redirects to HTTPS and carries HSTS.
       - "${PROXY_PORT:-80}:80"
+      # PROXY_TLS_PORT (default 443) — the actual service listener.
+      - "${PROXY_TLS_PORT:-443}:443"
     volumes:
+      # TLS-terminating config (default). If TLS is terminated by a proxy you
+      # already run in front of this stack, swap this line for
+      #   - ./nginx/nginx.behind-proxy.conf:/etc/nginx/conf.d/default.conf:ro
+      # and bind PROXY_PORT to loopback so the plaintext listener is not
+      # publicly reachable.
       - ./nginx/nginx.prod.conf:/etc/nginx/conf.d/default.conf:ro
+      # Certificates. Drop fullchain.pem + privkey.pem in ./nginx/certs to use
+      # a real certificate; tls-bootstrap.sh generates a self-signed one on
+      # first boot if the directory is empty, so HTTPS is never off.
+      - ./nginx/certs:/etc/nginx/certs
+      - ./nginx/tls-bootstrap.sh:/docker-entrypoint.d/10-tls-bootstrap.sh:ro
+    environment:
+      # CN/SAN for the generated self-signed certificate. Ignored once a real
+      # certificate is mounted.
+      - TLS_CN=${CITADEL_HOSTNAME:-citadel.local}
     depends_on:
       - api
       - frontend

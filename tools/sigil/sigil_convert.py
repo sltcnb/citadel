@@ -29,6 +29,44 @@ import yaml
 RULES_DIR = Path(__file__).resolve().parent
 NON_RULE_FILES = {"sample_events"}
 
+# ── `re` modifier bounds ──────────────────────────────────────────────────────
+#
+# A Sigma field with the `re` modifier is emitted as a Lucene `field:/regex/`
+# and executed by Elasticsearch against the case index. Rules can be imported,
+# so that regex is not necessarily written by someone trusted, and Lucene
+# regexes are compiled into an automaton whose size the pattern controls.
+#
+# Elasticsearch is the backstop: every query_string Citadel builds passes an
+# explicit `max_determinized_states` (see api/services/elasticsearch.py), so a
+# blow-up is answered with "too complex" rather than burned CPU. The checks
+# here fail earlier and more legibly — at conversion time, naming the rule —
+# and refuse the two shapes that are never worth running.
+_MAX_RE_LEN = 512
+# Quantifier applied to an already-quantified group: (a+)+, (x*)*, ([a-z]+)*.
+# A cheap screen for the unambiguous case, not a decision procedure.
+_NESTED_QUANTIFIER = re.compile(r"\((?:[^()\\]|\\.)*[+*}][)]?\)\s*[+*{]")
+
+
+class SigmaRegexRejected(ValueError):
+    """A rule's `re` value was refused as unsafe to execute."""
+
+
+def _check_regex(field: str, pattern: str) -> None:
+    """Raise SigmaRegexRejected if this `re` value should not be run."""
+    if len(pattern) > _MAX_RE_LEN:
+        raise SigmaRegexRejected(
+            f"{field}: regex is {len(pattern)} characters (limit {_MAX_RE_LEN})"
+        )
+    if _NESTED_QUANTIFIER.search(pattern):
+        raise SigmaRegexRejected(
+            f"{field}: regex nests a quantifier inside a quantified group "
+            f"(catastrophic backtracking): {pattern[:80]}"
+        )
+    try:
+        re.compile(pattern)
+    except re.error as exc:
+        raise SigmaRegexRejected(f"{field}: regex does not compile ({exc})") from exc
+
 
 def _lucene_value(field: str, modifier: str | None, value) -> str:
     v = str(value)
@@ -41,6 +79,7 @@ def _lucene_value(field: str, modifier: str | None, value) -> str:
     elif modifier == "endswith":
         term = f"*{esc}"
     elif modifier == "re":
+        _check_regex(field, v)
         return f"{field}:/{v}/"
     else:
         # exact match — quote when it contains whitespace

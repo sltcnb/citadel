@@ -45,7 +45,8 @@ All settings are environment variables (defaults verified in code):
 | **Broker / storage** | | |
 | `REDIS_URL` | `redis://redis-service:6379/0` | Celery broker + backend, dedup, run state, logs |
 | `MINIO_ENDPOINT` | `minio-service:9000` | Artifact blob store |
-| `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` | `minioadmin` | MinIO credentials |
+| `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` | *(empty — required)* | MinIO credentials. No default: the API refuses to start on the old `minioadmin` value, and `foctl` generates strong ones. |
+| `MINIO_SECURE` | `true` | TLS to the object store. Set `false` only for a plain-HTTP in-cluster MinIO (the shipped manifests do). |
 | `MINIO_BUCKET` | `forensics-cases` | Bucket artifacts are pulled from |
 | `ELASTICSEARCH_URL` | `http://elasticsearch-service:9200` | Event index |
 | `BULK_SIZE` | `500` | Events per ES bulk request |

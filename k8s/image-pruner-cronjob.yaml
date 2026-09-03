@@ -1,4 +1,10 @@
 ---
+# ⚠️  NOT DEPLOYED BY DEFAULT. foctl applies this manifest only when
+# config.json sets maintenance.image_pruner: true — a privileged pod with a
+# hostPath mount of `/` is a complete container-escape primitive, so it is not
+# something every deployment should carry. Kubelet image GC (below) does the
+# same job with no privileged pod at all.
+#
 # Weekly image pruner — prunes unreferenced k3s container images on the host
 # to reclaim disk and prevent DiskPressure taints from accumulated images.
 # Chroots into the host filesystem to run the k3s binary directly.

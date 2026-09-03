@@ -51,6 +51,31 @@ def _sanitize(obj: Any) -> Any:
     return obj
 
 
+class ESBulkPartialFailure(RuntimeError):
+    """Some documents in a _bulk request were rejected by Elasticsearch.
+
+    Elasticsearch answers a _bulk with HTTP 200 even when individual documents
+    fail (mapping conflict, field type mismatch, oversized field). Those
+    failures used to be logged and then swallowed, so the ingest task reported
+    success while events were missing from the case — the worst possible
+    outcome for a tool whose output is evidence: an analyst cannot tell an
+    empty result from a dropped one.
+
+    Raising instead routes the batch into the task's normal retry / failure
+    path. Documents that DID index stay indexed; _bulk is per-document, and
+    every batch is attempted before this is raised.
+    """
+
+    def __init__(self, failed: int, total: int, reasons: list[str]) -> None:
+        self.failed = failed
+        self.total = total
+        self.reasons = reasons
+        super().__init__(
+            f"{failed} of {total} documents were rejected by Elasticsearch: "
+            + "; ".join(reasons[:5])
+        )
+
+
 class ESBulkIndexer:
     def __init__(self, es_url: str) -> None:
         self.es_url = es_url.rstrip("/")
@@ -68,16 +93,24 @@ class ESBulkIndexer:
         self._session.mount("http://", adapter)
         self._session.mount("https://", adapter)
 
-    def bulk_index(self, case_id: str, events: list[dict[str, Any]]) -> None:
+    def bulk_index(self, case_id: str, events: list[dict[str, Any]]) -> int:
         """Bulk index events, split into bounded sub-batches.
 
         One huge _bulk request (a 1 GB file's worth, or a single oversized doc)
         timed out and pressured ES into the DNS/read-timeout failures seen in
         prod. Chunk by doc count AND byte size so each request stays small and
         retryable.
+
+        Returns the number of documents indexed. Raises
+        :class:`ESBulkPartialFailure` if Elasticsearch rejected any document —
+        every batch is attempted first, so this never hides work that
+        succeeded.
         """
         if not events:
-            return
+            return 0
+
+        failed_total = 0
+        reasons: list[str] = []
 
         batch: list[str] = []
         batch_docs = 0
@@ -94,12 +127,22 @@ class ESBulkIndexer:
             batch_docs += 1
             batch_bytes += len(action) + len(doc) + 2
             if batch_docs >= _MAX_DOCS_PER_BULK or batch_bytes >= _MAX_BYTES_PER_BULK:
-                self._flush(batch, batch_docs)
+                n_failed, why = self._flush(batch, batch_docs)
+                failed_total += n_failed
+                reasons.extend(why)
                 batch, batch_docs, batch_bytes = [], 0, 0
         if batch:
-            self._flush(batch, batch_docs)
+            n_failed, why = self._flush(batch, batch_docs)
+            failed_total += n_failed
+            reasons.extend(why)
 
-    def _flush(self, lines: list[str], n_docs: int) -> None:
+        total = len(events)
+        if failed_total:
+            raise ESBulkPartialFailure(failed_total, total, reasons)
+        return total
+
+    def _flush(self, lines: list[str], n_docs: int) -> tuple[int, list[str]]:
+        """POST one batch. Returns (rejected_doc_count, reason_strings)."""
         body = ("\n".join(lines) + "\n").encode("utf-8")
         compressed = gzip.compress(body, compresslevel=_COMPRESS_LEVEL)
 
@@ -123,10 +166,20 @@ class ESBulkIndexer:
                 logger.error(
                     "Bulk indexing had %d errors (of %d total)", len(error_items), n_docs
                 )
-                for item in error_items[:5]:
-                    logger.error("Bulk error detail: %s", item)
-            else:
-                logger.debug("Bulk indexed %d events", n_docs)
+                reasons: list[str] = []
+                for item in error_items:
+                    idx = item.get("index", {})
+                    err = idx.get("error", {})
+                    # Name the document so a dropped event is attributable.
+                    reasons.append(
+                        f"{idx.get('_id') or '<no fo_id>'}: "
+                        f"{err.get('type', 'unknown')} — {str(err.get('reason', ''))[:200]}"
+                    )
+                for detail in reasons[:5]:
+                    logger.error("Bulk error detail: %s", detail)
+                return len(error_items), reasons
+            logger.debug("Bulk indexed %d events", n_docs)
+            return 0, []
         except requests.HTTPError as exc:
             logger.error(
                 "ES bulk HTTP error %d: %s", exc.response.status_code, exc.response.text[:500]

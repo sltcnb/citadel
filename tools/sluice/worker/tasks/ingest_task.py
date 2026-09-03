@@ -140,8 +140,11 @@ from utils.file_type import detect_mime
 logger = logging.getLogger(__name__)
 
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "minio-service:9000")
-MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
-MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "minioadmin")
+MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "")
+MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "")
+# TLS for the object store. Secure by default; plaintext requires an explicit
+# MINIO_SECURE=false (set by the shipped in-cluster manifests / compose files).
+MINIO_SECURE = os.getenv("MINIO_SECURE", "true").lower() not in ("false", "0", "no")
 MINIO_BUCKET = os.getenv("MINIO_BUCKET", "forensics-cases")
 ELASTICSEARCH_URL = os.getenv("ELASTICSEARCH_URL", "http://elasticsearch-service:9200")
 # ES security is enabled — install scoped basic-auth for every urllib ES call.
@@ -192,7 +195,7 @@ def get_minio():
         MINIO_ENDPOINT,
         access_key=MINIO_ACCESS_KEY,
         secret_key=MINIO_SECRET_KEY,
-        secure=False,
+        secure=MINIO_SECURE,
     )
 
 
@@ -1791,13 +1794,15 @@ def _run_plugin_and_index(
                 "[%s] Skipped malformed event from plugin %s: %s", job_id, plugin.PLUGIN_NAME, exc
             )
         if len(batch) >= BULK_SIZE:
-            indexer.bulk_index(case_id, batch)
-            events_indexed += len(batch)
+            # Count what Elasticsearch actually accepted. bulk_index raises
+            # ESBulkPartialFailure if it rejected anything, so the job fails
+            # visibly instead of reporting a total that includes dropped
+            # events.
+            events_indexed += indexer.bulk_index(case_id, batch)
             batch = []
             update_job_status(r, job_id, events_indexed=str(events_indexed), progress_pct="")
     if batch:
-        indexer.bulk_index(case_id, batch)
-        events_indexed += len(batch)
+        events_indexed += indexer.bulk_index(case_id, batch)
     # Snapshot + reset the per-process counter so each job reports its own deltas.
     plugin_warnings = {
         k: v for k, v in _validation_warnings.items() if k.startswith(f"{plugin_name}:")

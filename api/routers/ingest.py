@@ -16,6 +16,7 @@ Status lifecycle: UPLOADING → PENDING → RUNNING → COMPLETED | FAILED
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import hashlib
 import json
 import logging
@@ -57,6 +58,10 @@ _MAX_CHUNKS = 10_000
 # once they're older than this, opportunistically at chunk-finalize time.
 _CHUNK_STALE_SECONDS = 24 * 3600
 _CHUNK_META_SUFFIX = ".chunks.json"
+# Advisory lock guarding the read-check-append-write on a chunk ledger. Held on
+# a dedicated file rather than the ledger itself, because rewriting the ledger
+# replaces its inode and would drop a lock taken on the old one.
+_CHUNK_LOCK_SUFFIX = ".chunks.lock"
 
 
 class _DuplicateChunk(Exception):
@@ -515,6 +520,7 @@ async def ingest_chunk(
     except UnsafePathError:
         raise HTTPException(status_code=400, detail="Invalid filename")
     meta_path = Path(tmp_path + _CHUNK_META_SUFFIX)
+    lock_path = Path(tmp_path + _CHUNK_LOCK_SUFFIX)
 
     loop = asyncio.get_event_loop()
     try:
@@ -524,15 +530,27 @@ async def ingest_chunk(
         # The ledger write stays in the same executor call so the append and the
         # bookkeeping can't drift apart.
         def _append():
-            meta = _load_chunk_meta(meta_path)
-            if chunk_index in meta["indexes"]:
-                raise _DuplicateChunk(chunk_index)
-            with open(tmp_path, "ab") as f:
-                f.write(data)
-            meta["indexes"].append(chunk_index)
-            meta["bytes"] += len(data)
-            meta_path.write_text(json.dumps(meta))
-            return meta
+            # Being in one executor call is not mutual exclusion: this handler
+            # runs in a thread pool AND behind several uvicorn workers, so two
+            # requests carrying the same (upload_id, chunk_index) could both
+            # read the ledger before either wrote it, both pass the duplicate
+            # check, and both append — silently doubling bytes in the assembled
+            # file. flock makes the whole read-check-append-write exclusive
+            # across threads and processes alike.
+            with open(lock_path, "a+") as lock:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+                try:
+                    meta = _load_chunk_meta(meta_path)
+                    if chunk_index in meta["indexes"]:
+                        raise _DuplicateChunk(chunk_index)
+                    with open(tmp_path, "ab") as f:
+                        f.write(data)
+                    meta["indexes"].append(chunk_index)
+                    meta["bytes"] += len(data)
+                    meta_path.write_text(json.dumps(meta))
+                    return meta
+                finally:
+                    fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
         meta = await loop.run_in_executor(None, _append)
     except _DuplicateChunk as exc:
@@ -569,6 +587,10 @@ async def ingest_chunk(
     # uploads (older than 24h) while we're here.
     try:
         meta_path.unlink()
+    except OSError:
+        pass
+    try:
+        lock_path.unlink()
     except OSError:
         pass
     _sweep_stale_chunks()
@@ -642,6 +664,14 @@ async def ingest_files(
 
     for upload in files:
         filename = upload.filename or "unknown"
+        # The filename is client-supplied and must not reach two places raw:
+        #   * the temp-file path — a '/' inside mkstemp's suffix is joined into
+        #     the path, so "../../app/x" escapes the temp directory entirely;
+        #   * the log — an embedded CR/LF forges whole log lines (the chunked
+        #     upload path already sanitised for exactly this reason, line ~512).
+        # The unsanitised name is still echoed in the JSON error payload, where
+        # it is a quoted string value and cannot forge structure.
+        safe_name = re.sub(r"[^\w.\-]", "_", filename)[:200] or "unknown"
 
         # ── Stream upload to a local temp file ────────────────────────────────
         # Uses UploadFile.read() in 4 MB chunks so the event loop is never
@@ -649,7 +679,7 @@ async def ingest_files(
         # Each read() call is internally dispatched to a thread pool by
         # Starlette, keeping other requests responsive during large uploads.
         try:
-            tmp_fd, tmp_path = tempfile.mkstemp(prefix="fo_ingest_", suffix=f"_{filename}")
+            tmp_fd, tmp_path = tempfile.mkstemp(prefix="fo_ingest_", suffix=f"_{safe_name}")
             os.close(tmp_fd)
 
             size = 0
@@ -663,7 +693,7 @@ async def ingest_files(
                     size += len(chunk)
 
         except Exception as exc:
-            logger.error("Cannot spool '%s' to disk: %s", filename, exc)
+            logger.error("Cannot spool '%s' to disk: %s", safe_name, exc)
             # Clean up partial temp file if it was created
             try:
                 os.unlink(tmp_path)
@@ -695,7 +725,7 @@ async def ingest_files(
                     keep_raw=keep_raw,
                 )
         except Exception as exc:
-            logger.error("Failed to register ingest job for '%s': %s", filename, exc)
+            logger.error("Failed to register ingest job for '%s': %s", safe_name, exc)
             errors.append({"filename": filename, "error": f"Server error: {exc}"})
             try:
                 os.unlink(tmp_path)

@@ -11,6 +11,7 @@ from auth import rbac
 from auth.service import (
     decode_token,
     get_user,
+    groups_epoch,
     groups_index,
     is_token_revoked,
     token_fresh_for_user,
@@ -27,18 +28,54 @@ _oauth2 = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token", auto_error=False)
 # seconds removes both Redis hits for the common case (a client polling many
 # endpoints with the same token). Trade-off: a revoked/edited account keeps
 # working up to _USER_CACHE_TTL seconds — acceptable for a short window.
-_USER_CACHE: dict[str, tuple[float, dict]] = {}
+# token -> (cached_at, user, groups_epoch)
+_USER_CACHE: dict[str, tuple[float, dict, str]] = {}
 _USER_CACHE_TTL = 15.0
 _USER_CACHE_MAX = 2048
+
+
+# Group-store generation, re-read at most once per second per process. A
+# cached identity carries the epoch it was resolved under; when an admin edits
+# a group the epoch moves and every worker's cached entries stop matching, so
+# permission changes take effect on the next request instead of lingering for
+# the identity-cache TTL. One GET/second/process is negligible next to the two
+# Redis round-trips per request this cache exists to remove.
+_GROUPS_EPOCH_POLL = 1.0
+_groups_epoch_seen: tuple[float, str] = (0.0, "")
+
+
+def _current_groups_epoch() -> str:
+    global _groups_epoch_seen
+    import time
+
+    now = time.monotonic()
+    checked_at, value = _groups_epoch_seen
+    if value and (now - checked_at) < _GROUPS_EPOCH_POLL:
+        return value
+    epoch = groups_epoch()
+    if epoch == "0" and value:
+        # Unreadable: keep the last known value rather than invalidating every
+        # cached identity on a transient Redis blip.
+        _groups_epoch_seen = (now, value)
+        return value
+    _groups_epoch_seen = (now, epoch)
+    return epoch
 
 
 def _cache_get(token: str) -> dict | None:
     import time
 
     hit = _USER_CACHE.get(token)
-    if hit and (time.monotonic() - hit[0]) < _USER_CACHE_TTL:
-        return hit[1]
-    return None
+    if not hit:
+        return None
+    cached_at, user, epoch = hit
+    if (time.monotonic() - cached_at) >= _USER_CACHE_TTL:
+        return None
+    if epoch != _current_groups_epoch():
+        # A group changed since this was resolved — re-resolve.
+        _USER_CACHE.pop(token, None)
+        return None
+    return user
 
 
 def _cache_put(token: str, user: dict) -> None:
@@ -46,7 +83,7 @@ def _cache_put(token: str, user: dict) -> None:
 
     if len(_USER_CACHE) > _USER_CACHE_MAX:
         _USER_CACHE.clear()  # cheap bound; entries are short-lived anyway
-    _USER_CACHE[token] = (time.monotonic(), user)
+    _USER_CACHE[token] = (time.monotonic(), user, _current_groups_epoch())
 
 
 # ── Session idle timeout (platform setting ``session_idle_minutes``) ──────────

@@ -51,6 +51,12 @@ def make_servicer(storage_dir: Path, key: bytes | None = None):
                     yield collector_pb2.Task()
 
         def UploadChunk(self, request_iterator, context):
+            # OWNERSHIP: a production servicer MUST validate c.upload_token
+            # against the mTLS peer identity on every chunk and derive the
+            # storage location from that identity — never from c.session_id,
+            # which the client chooses (see contracts/collector.proto). This
+            # reference servicer writes to one fixed path per instance, so it
+            # cannot be steered by session_id; do not copy the omission.
             sid = ""
             core = InProcessCollectorServicer(key or b"\x00" * 32, storage_dir / "upload.bin")
 

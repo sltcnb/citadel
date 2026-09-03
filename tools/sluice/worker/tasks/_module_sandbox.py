@@ -86,7 +86,9 @@ try:
         args["minio_endpoint"],
         access_key=args["minio_access"],
         secret_key=args["minio_secret"],
-        secure=False,
+        # Inherited from the parent worker's MINIO_SECURE (secure by
+        # default); the sandbox never silently downgrades the transport.
+        secure=bool(args.get("minio_secure", True)),
     )
 except Exception as _exc:
     print(f"[sandbox] MinIO client init failed: {_exc}", file=sys.stderr)

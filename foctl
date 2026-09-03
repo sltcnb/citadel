@@ -79,7 +79,10 @@ APPLY_ORDER = [
     K8S / "processor",
     K8S / "frontend",
     K8S / "ingress",
-    K8S / "image-pruner-cronjob.yaml",
+    # NOTE: image-pruner-cronjob.yaml is deliberately NOT in this list. It is
+    # a privileged pod with a hostPath mount of / — a full container-escape
+    # primitive — and is only applied when config.json explicitly opts in
+    # (maintenance.image_pruner: true). See apply_all_manifests().
 ]
 
 SERVICES = ["api", "processor", "frontend"]
@@ -183,10 +186,30 @@ SECRET_GENERATORS = {
 # .env by ensure_env_file(), then stay stable across redeploys.
 ENV_SECRET_GENERATORS = {
     "JWT_SECRET":       SECRET_GENERATORS["jwt_secret"],
+    # MinIO guards the evidence store and the API now refuses to start on the
+    # well-known minioadmin default, so generate real credentials here too.
+    "MINIO_ACCESS_KEY": SECRET_GENERATORS["minio_access_key"],
+    "MINIO_SECRET_KEY": SECRET_GENERATORS["minio_secret_key"],
     "ELASTIC_PASSWORD": SECRET_GENERATORS["es_password"],
     "KIBANA_PASSWORD":  SECRET_GENERATORS["kibana_password"],
     "REDIS_PASSWORD":   SECRET_GENERATORS["redis_password"],
 }
+
+
+def _require_secret(cfg, key):
+    """Return secrets.<key> from config.json, or abort.
+
+    ensure_secrets() generates every entry in SECRET_GENERATORS on first
+    deploy, so an empty value here means the config was hand-edited. Never
+    substitute a well-known default (the old behaviour shipped
+    minioadmin/minioadmin straight into the cluster Secret).
+    """
+    val = str(cfg.get("secrets", {}).get(key, "") or "").strip()
+    if val in _PLACEHOLDERS or val == "minioadmin":
+        die(f"secrets.{key} is unset or set to an insecure placeholder in "
+            f"config.json. Run './foctl deploy' (which generates it) or set a "
+            f"strong value manually.")
+    return val
 
 
 def ensure_secrets():
@@ -311,14 +334,24 @@ def build_substitutions(cfg, pull_policy):
     res     = {**auto_resources(), **cfg.get("resources", {})}
     es_heap = res.get("elasticsearch_heap_mb", 512)
     auth    = cfg.get("auth", {})
+    # ── Datastore transport ──────────────────────────────────────────────────
+    # The shipped Elasticsearch / Redis / MinIO manifests serve plaintext on
+    # the pod network, so these default to the cleartext schemes. They are
+    # rendered (not hardcoded in the manifests) so an operator who has put
+    # certificates on the datastores can flip the whole stack to TLS from
+    # config.json alone. See docs/security-transport.md.
+    tp      = cfg.get("transport", {})
+    es_tls    = bool(tp.get("elasticsearch_tls", False))
+    redis_tls = bool(tp.get("redis_tls", False))
+    minio_tls = bool(tp.get("minio_tls", False))
     return {
         "__FO_NAMESPACE__":        NS,
         "__FO_API_IMAGE__":        image_name("api",       cfg),
         "__FO_PROCESSOR_IMAGE__":  image_name("processor", cfg),
         "__FO_FRONTEND_IMAGE__":   image_name("frontend",  cfg),
         "__FO_PULL_POLICY__":      pull_policy,
-        "__FO_MINIO_ACCESS_KEY__": cfg.get("secrets", {}).get("minio_access_key", "minioadmin"),
-        "__FO_MINIO_SECRET_KEY__": cfg.get("secrets", {}).get("minio_secret_key", "minioadmin"),
+        "__FO_MINIO_ACCESS_KEY__": _require_secret(cfg, "minio_access_key"),
+        "__FO_MINIO_SECRET_KEY__": _require_secret(cfg, "minio_secret_key"),
         "__FO_REDIS_PASSWORD__":   cfg.get("secrets", {}).get("redis_password", ""),
         "__FO_ES_PASSWORD__":      cfg.get("secrets", {}).get("es_password", ""),
         "__FO_KIBANA_PASSWORD__":  cfg.get("secrets", {}).get("kibana_password", ""),
@@ -329,6 +362,18 @@ def build_substitutions(cfg, pull_policy):
         "__FO_LICENSE_KEY__":             cfg["secrets"].get("license_key", ""),
         "__FO_LICENSE_SIGNING_KEY__":     cfg["secrets"].get("license_signing_key", ""),
         "__FO_AUTH_ENABLED__":     str(auth.get("auth_enabled", True)).lower(),
+        "__FO_ES_SCHEME__":        "https" if es_tls else "http",
+        "__FO_API_SCHEME__":       "https" if bool(tp.get("api_tls", False)) else "http",
+        # Evidence-at-rest encryption is a StorageClass property. "null" keeps
+        # the cluster default class (and deploy warns); name an encrypted class
+        # in config.json storage.uploads_storage_class to pin it.
+        "__FO_UPLOADS_STORAGE_CLASS__": (
+            str(cfg.get("storage", {}).get("uploads_storage_class", "") or "").strip()
+            or "null"
+        ),
+        "__FO_REDIS_SCHEME__":     "rediss" if redis_tls else "redis",
+        "__FO_MINIO_SECURE__":     str(minio_tls).lower(),
+        "__FO_KIBANA_ES_SCHEME__": "https" if es_tls else "http",
         "__FO_JWT_EXPIRE_HOURS__": str(auth.get("jwt_expire_hours", 8)),
         "__FO_ES_HEAP__":          f"{es_heap}m",
         "__FO_ES_MEMORY_REQUEST__": res.get("elasticsearch_memory_request", "1Gi"),
@@ -708,11 +753,50 @@ def ensure_vpa_controller():
 def apply_all_manifests(cfg, pull_policy, setup_traefik=False):
     step("Applying Kubernetes manifests")
     subs = build_substitutions(cfg, pull_policy)
+    # Surface the two security postures the manifests inherit from config.json
+    # rather than letting them pass silently.
+    if subs["__FO_UPLOADS_STORAGE_CLASS__"] == "null":
+        warn("storage.uploads_storage_class is unset — the evidence PVC will "
+             "use the cluster's default StorageClass, which may not encrypt "
+             "at rest. Name an encrypted class in config.json to pin it.")
+    if subs["__FO_ES_SCHEME__"] == "http" or subs["__FO_MINIO_SECURE__"] == "false":
+        warn("In-cluster datastore traffic is plaintext (transport.* in "
+             "config.json). Credentials and evidence cross the pod network "
+             "unencrypted — see docs/security-transport.md to enable TLS.")
+
+    # The image pruner is opt-in: it runs privileged with hostPath / and
+    # chroots to the node, which is a complete container-escape primitive.
+    # Kubelet image GC does the same job with no privileged pod at all, so
+    # that is the default and this manifest ships unapplied.
+    if not subs["__FO_PROCESSOR_RUNTIME_CLASS__"]:
+        warn("resources.processor_runtime_class is unset — the processor "
+             "executes untrusted third-party analysis modules under standard "
+             "container isolation. Install a sandbox runtime (gVisor / Kata) "
+             "and name its RuntimeClass in config.json.")
+
+    apply_order = list(APPLY_ORDER)
+    if cfg.get("maintenance", {}).get("image_pruner", False):
+        warn("maintenance.image_pruner is enabled — deploying a PRIVILEGED "
+             "CronJob with a hostPath mount of /. Any compromise of that job "
+             "or its image is host root. Prefer kubelet image GC "
+             "(--image-gc-high-threshold / --image-gc-low-threshold via k3s "
+             "kubelet-arg) and leave this off.")
+        apply_order.append(K8S / "image-pruner-cronjob.yaml")
 
     def apply_one(path):
         content = path.read_text()
         for k, v in subs.items():
             content = content.replace(k, str(v))
+        # A manifest that still contains a __FO_*__ token was not fully
+        # rendered — applying it would push the literal placeholder into the
+        # cluster as a Secret value (e.g. JWT_SECRET: "__FO_JWT_SECRET__",
+        # a signing key an attacker can read straight out of this repo).
+        leftover = sorted(set(re.findall(r"__FO_[A-Z0-9_]+__", content)))
+        if leftover:
+            die(f"{path.name} still contains unsubstituted placeholders after "
+                f"rendering: {', '.join(leftover)}. Refusing to apply — this "
+                f"would deploy the literal placeholder as a real value. "
+                f"Add the missing key(s) to build_substitutions().")
         r = subprocess.run(["kubectl", "apply", "-f", "-"],
                             input=content, capture_output=True, text=True)
         if r.returncode != 0:
@@ -742,7 +826,7 @@ def apply_all_manifests(cfg, pull_policy, setup_traefik=False):
 
     _vpa_available = vpa_crds_available()
 
-    for item in APPLY_ORDER:
+    for item in apply_order:
         if item.is_file() and item.suffix == ".yaml":
             if _targets_kube_system(item) and not setup_traefik:
                 warn(f"Skipping {item.name} — targets kube-system "
@@ -1248,7 +1332,10 @@ def _fill_env_secrets(path):
         key, val = m.group(1), m.group(2).strip().strip("\"'")
         seen.add(key)
         gen = ENV_SECRET_GENERATORS.get(key)
-        if gen and val in _PLACEHOLDERS:
+        # "minioadmin" is a placeholder, not a credential: an older .env copied
+        # from .env.example carries it and the API now refuses to start on it.
+        insecure_default = key.startswith("MINIO_") and val == "minioadmin"
+        if gen and (val in _PLACEHOLDERS or insecure_default):
             lines[i] = f"{key}={gen()}"
             generated.append(key)
     # Append any required vars missing from the file entirely.
@@ -1744,8 +1831,8 @@ def deploy_helm(cfg, no_build=False, no_cache=False):
         # across `helm upgrade` — the template's randAlphaNum fallback would
         # rotate it every render and break the worker → API finalize chain.
         "secret.internalServiceToken":  sec.get("internal_service_token", ""),
-        "secret.minioAccessKey":        sec.get("minio_access_key", "minioadmin"),
-        "secret.minioSecretKey":        sec.get("minio_secret_key", "minioadmin"),
+        "secret.minioAccessKey":        _require_secret(cfg, "minio_access_key"),
+        "secret.minioSecretKey":        _require_secret(cfg, "minio_secret_key"),
         "secret.authEnabled":           str(cfg.get("auth", {}).get("auth_enabled", True)).lower(),
     }
     # Booleans → --set (a string "false" would be truthy in the templates).

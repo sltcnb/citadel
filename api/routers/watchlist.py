@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import uuid
 from datetime import UTC, datetime
 
@@ -58,6 +59,42 @@ def _whitelist_not_clause(r) -> str:
     return f"NOT ({' OR '.join(parts)})" if parts else ""
 
 
+# A `regex` watchlist entry becomes a Lucene `message:/…/` and is re-run by the
+# auto-run scheduler on every case, so a pathological pattern is not a one-off
+# slow query — it is a recurring load. Elasticsearch caps the automaton it will
+# build (max_determinized_states, see services/elasticsearch.py); these checks
+# refuse the obviously catastrophic shapes up front, at the point where the
+# analyst can still see and fix the message.
+_MAX_REGEX_LEN = 512
+# Quantifier applied to an already-quantified group: (a+)+, (x*)*, ([a-z]+)*.
+_NESTED_QUANTIFIER = re.compile(r"\((?:[^()\\]|\\.)*[+*}][)]?\)\s*[+*{]")
+
+
+def _validate_watchlist_regex(pattern: str) -> None:
+    """Raise HTTPException(400) if this pattern should not be stored."""
+    if len(pattern) > _MAX_REGEX_LEN:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Regex is too long ({len(pattern)} characters; limit "
+                f"{_MAX_REGEX_LEN}). Narrow the pattern."
+            ),
+        )
+    if _NESTED_QUANTIFIER.search(pattern):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Regex nests a quantifier inside a quantified group (e.g. "
+                "\"(a+)+\"), which backtracks exponentially. Rewrite it "
+                "without the nesting."
+            ),
+        )
+    try:
+        re.compile(pattern)
+    except re.error as exc:
+        raise HTTPException(status_code=400, detail=f"Regex does not compile: {exc}") from exc
+
+
 def _build_query(kind: str, value: str) -> str:
     """Translate (kind, value) into a Lucene clause."""
     v = value.strip()
@@ -78,6 +115,7 @@ def _build_query(kind: str, value: str) -> str:
     if kind == "cmdline":
         return f'process.command_line:"{v}"'
     if kind == "regex":
+        _validate_watchlist_regex(v)
         return f"message:/{v}/"
     return v  # custom — raw Lucene
 

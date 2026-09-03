@@ -26,6 +26,13 @@ _USERS_SET = rk.USERS_SET
 _USER_KEY = "fo:user:{username}"
 # Single JSON document {group_id: group} holding all RBAC groups.
 _GROUPS_KEY = "fo:groups"
+# Bumped on every group mutation. auth.dependencies caches resolved permissions
+# per token for a few seconds; without a change signal a user kept their old
+# effective permissions for the whole cache TTL after being moved between
+# groups (or removed from one). Every API worker watches this counter, so the
+# invalidation crosses processes — clearing a local dict would only fix the
+# worker that happened to serve the write.
+_GROUPS_EPOCH_KEY = "fo:groups:epoch"
 
 
 # ── Password helpers ──────────────────────────────────────────────────────────
@@ -257,10 +264,18 @@ def create_mfa_challenge(username: str) -> str:
 
 
 def decode_mfa_challenge(token: str) -> Optional[str]:
-    """Return the username if ``token`` is a valid MFA challenge, else None."""
+    """Return the username if ``token`` is a valid MFA challenge, else None.
+
+    Challenges are single-use, exactly like password-change challenges: the jti
+    is revoked once the TOTP step succeeds, and revoked challenges are rejected
+    here. Without that check a captured challenge stayed usable for the whole
+    5-minute TTL, so an intercepted token plus any valid code could mint
+    further access tokens for the same account."""
     try:
         payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
     except Exception:
+        return None
+    if is_token_revoked(payload):
         return None
     if payload.get("mfa") and payload.get("sub"):
         return payload["sub"]
@@ -315,8 +330,11 @@ def verify_totp(username: str, code: str) -> bool:
 
     A valid TOTP code stays cryptographically valid for up to ~90s
     (valid_window=1), so a replay cache (Redis, keyed by user+code, 90s TTL)
-    rejects a second presentation of the same code within that window. If Redis
-    is unreachable the cache check fails open — TOTP itself still verifies."""
+    rejects a second presentation of the same code within that window. The
+    cache fails CLOSED: if replay protection cannot be enforced the code is
+    refused. That costs nothing in availability terms — the user records
+    themselves live in Redis, so a Redis outage has already stopped every
+    login before this point."""
     import pyotp
 
     u = get_user(username)
@@ -333,12 +351,22 @@ def verify_totp(username: str, code: str) -> bool:
 
 def _mark_totp_code_used(username: str, code: str) -> bool:
     """Atomically claim (user, code) for the TOTP validity window. Returns False
-    if the code was already used (replay). Fails open on Redis errors."""
+    if the code was already used (replay), or if the claim could not be made.
+
+    Fails CLOSED. Returning True on a Redis error would have made the same
+    code reusable for its whole ~90s window during an outage, which is exactly
+    the replay this cache exists to stop."""
+    key = f"fo:totp:used:{username}:{code}"
     try:
-        key = f"fo:totp:used:{username}:{code}"
         return bool(_redis().set(key, "1", nx=True, ex=90))
-    except Exception:
-        return True
+    except Exception as exc:
+        logger.error(
+            "TOTP replay protection unavailable (%s) — refusing the code for "
+            "'%s' rather than accepting one that could be replayed.",
+            exc,
+            username,
+        )
+        return False
 
 
 def _consume_backup_code(username: str, code: str, user: dict) -> bool:
@@ -650,6 +678,27 @@ def list_groups() -> list[dict]:
     return sorted(groups_index().values(), key=lambda g: g.get("name", g.get("id", "")))
 
 
+def groups_epoch() -> str:
+    """Current group-store generation. "0" if it cannot be read (callers then
+    keep their cached value rather than stampeding Redis)."""
+    try:
+        return str(_redis().get(_GROUPS_EPOCH_KEY) or "0")
+    except Exception:
+        return "0"
+
+
+def _bump_groups_epoch() -> None:
+    """Invalidate every worker's cached permission resolution."""
+    try:
+        _redis().incr(_GROUPS_EPOCH_KEY)
+    except Exception as exc:
+        logger.warning(
+            "Could not bump the group epoch (%s) — cached permissions may stay "
+            "stale for up to the identity-cache TTL.",
+            exc,
+        )
+
+
 def groups_index() -> dict[str, dict]:
     """Return the {group_id: group} map (the raw store document)."""
     r = _redis()
@@ -705,6 +754,7 @@ def create_group(
         return store
 
     mutate_json(_redis(), _GROUPS_KEY, _add, default={})
+    _bump_groups_epoch()
     if group["members"]:
         _sync_user_groups_for_members(group_id, group["members"])
     return group
@@ -740,6 +790,9 @@ def update_group(
         return store
 
     mutate_json(_redis(), _GROUPS_KEY, _patch, default={})
+    # Roles/permissions/companies/members may all have changed: force every
+    # worker to re-resolve rather than serve the pre-edit permission set.
+    _bump_groups_epoch()
     if members is not None:
         # The members picker was edited — push the change into the canonical
         # user["groups"] field so enforcement matches the group view.
@@ -758,6 +811,7 @@ def delete_group(group_id: str) -> bool:
         return store
 
     mutate_json(_redis(), _GROUPS_KEY, _del, default={})
+    _bump_groups_epoch()
     if existed["v"]:
         _sync_user_groups_for_members(group_id, [])  # strip from every user's groups
     return existed["v"]

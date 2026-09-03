@@ -66,10 +66,13 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
-            # readOnlyRootFilesystem left false: the Python runtime writes
-            # bytecode caches / rendered report scratch to the image filesystem.
-            # Writable data paths are the mounted PVCs + /tmp emptyDir.
-            readOnlyRootFilesystem: false
+            # The image filesystem is read-only: an RCE cannot plant a
+            # backdoor in /app that survives for the pod's lifetime. The two
+            # things that used to need a writable / are redirected below —
+            # Python bytecode to PYTHONPYCACHEPREFIX and every temp/report
+            # scratch file to $HOME / TMPDIR — both under the /tmp emptyDir.
+            # Writable data paths remain the mounted PVCs + /tmp.
+            readOnlyRootFilesystem: true
           ports:
             - containerPort: 8000
           envFrom:
@@ -117,6 +120,15 @@ spec:
                   name: api-auth-secret
                   key: CITADEL_LICENSE_SIGNING_KEY
                   optional: true
+            # ── read-only rootfs support ──────────────────────────────────
+            # Bytecode, temp files and any library that insists on writing to
+            # $HOME land in the /tmp emptyDir instead of the image filesystem.
+            - name: PYTHONPYCACHEPREFIX
+              value: "/tmp/pycache"
+            - name: TMPDIR
+              value: "/tmp"
+            - name: HOME
+              value: "/tmp"
             - name: CHUNK_DIR
               value: "/app/uploads/_chunks"
             - name: MODULES_DIR

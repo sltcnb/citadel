@@ -14,7 +14,8 @@ service Collector {
   // Long-lived heartbeat; server pushes new Tasks down the stream.
   rpc Heartbeat(stream AgentBeat) returns (stream Task);
 
-  // Resumable, chunked, sha256-verified bundle upload.
+  // Resumable, chunked, sha256-verified bundle upload. Every Chunk carries its
+  // own upload_token — see the ownership rules on the Chunk message.
   rpc UploadChunk(stream Chunk) returns (UploadAck);
 }
 
@@ -43,12 +44,31 @@ message AgentBeat {
 }
 
 message Chunk {
+  // Correlation handle for a resumable upload — NOT an authorisation token.
+  //
+  // The server MUST NOT use this value to select where a chunk is stored, nor
+  // to decide which case or task it belongs to. It is chosen by the client, so
+  // treating it as a capability lets any agent append to (or overwrite) another
+  // agent's upload by guessing or replaying a session_id.
+  //
+  // Required server-side handling:
+  //   1. Authenticate the peer (mTLS client certificate) and validate
+  //      upload_token below on EVERY chunk, not just the first.
+  //   2. Derive the storage location from the AUTHENTICATED identity plus the
+  //      token's case scope — never from session_id.
+  //   3. Confirm the session_id is one previously issued to this same
+  //      authenticated identity; reject it otherwise.
   string session_id = 1;
   string blob_sha256 = 2;    // full-blob digest
   uint64 offset = 3;         // resume point
   bytes data = 4;            // <= 8MB
   string chunk_sha256 = 5;   // per-chunk digest
   bool last = 6;
+  // Case-scoped upload token, as issued in Task.upload_token. Carried on every
+  // chunk so ownership is verifiable per message: a stream is long-lived and
+  // resumable, so authorising only the first chunk (or only the connection)
+  // leaves the rest of the stream unattributed.
+  string upload_token = 7;
 }
 
 message UploadAck {

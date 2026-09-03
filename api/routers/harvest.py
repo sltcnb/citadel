@@ -13,6 +13,7 @@ DELETE /harvest/runs/{run_id}         — cancel a pending/running harvest run (
 from __future__ import annotations
 
 import json
+import posixpath
 import uuid
 from datetime import UTC, datetime
 
@@ -291,6 +292,49 @@ class HarvestRequest(BaseModel):
     )
 
 
+def _validate_mounted_path(raw: str) -> str:
+    """Confine ``mounted_path`` to the configured harvest roots.
+
+    This value is a worker-side filesystem path and the worker reads whatever
+    it is handed, so an unvalidated value let any caller who can start a
+    harvest read /etc, /root or /var/log with the worker's privileges. The
+    endpoint's case-access check says *which case* you may harvest into, not
+    *which directory* you may harvest from.
+
+    Containment is checked on the lexically normalised path rather than
+    os.path.realpath: the directory lives on the worker, not in the API
+    container, so resolving symlinks here would answer a question about the
+    wrong filesystem. Normalisation collapses '..' and duplicate separators,
+    which is what defeats the traversal.
+    """
+    path = (raw or "").strip()
+    if not path:
+        raise HTTPException(status_code=400, detail="mounted_path must not be empty")
+    if "\x00" in path:
+        raise HTTPException(status_code=400, detail="mounted_path contains a null byte")
+    if not path.startswith("/"):
+        raise HTTPException(
+            status_code=400,
+            detail="mounted_path must be an absolute path (e.g. /mnt/disk)",
+        )
+
+    normalised = posixpath.normpath(path)
+    roots = settings.HARVEST_MOUNT_ROOTS
+    allowed = any(
+        normalised == root or normalised.startswith(root.rstrip("/") + "/")
+        for root in roots
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"mounted_path must be inside one of the configured harvest "
+                f"roots ({', '.join(roots)}). Set HARVEST_MOUNT_ROOTS to change them."
+            ),
+        )
+    return normalised
+
+
 class HarvestRunStatus(BaseModel):
     run_id: str
     status: str
@@ -359,6 +403,8 @@ def start_harvest(case_id: str, req: HarvestRequest, _case: dict = Depends(requi
             raise HTTPException(status_code=400, detail=f"Unknown categories: {unknown}")
 
     # Validate source
+    if req.mounted_path:
+        req.mounted_path = _validate_mounted_path(req.mounted_path)
     if not req.minio_object_key and not req.mounted_path:
         raise HTTPException(
             status_code=400,

@@ -125,6 +125,29 @@ def _ensure_archive(target: str) -> Path:
         raise RuntimeError(f"Failed to download {spec.url}: {exc}") from exc
 
 
+def _safe_member_name(name: str, source: str) -> str | None:
+    """Return a member name safe to place under a folder prefix, or None.
+
+    Archive member names are attacker-chosen if the archive is: a name like
+    ``../../../../app/main.py`` escapes the intended directory when the caller
+    writes it out (zip-slip). The current sources are pinned python.org /
+    astral-sh URLs, so this is defence for the day that changes or the helper
+    is reused — cheap enough to just always enforce.
+    """
+    # Normalise separators: a Windows-style '..\\' is traversal too.
+    candidate = name.replace("\\", "/")
+    if candidate.startswith("/") or (len(candidate) > 1 and candidate[1] == ":"):
+        logger.warning("Skipping absolute member name in %s: %r", source, name)
+        return None
+    parts = [p for p in candidate.split("/") if p not in ("", ".")]
+    if any(p == ".." for p in parts):
+        logger.warning("Skipping traversing member name in %s: %r", source, name)
+        return None
+    if not parts:
+        return None
+    return "/".join(parts)
+
+
 def iter_embed_members(
     target: str,
     folder_prefix: str,
@@ -152,6 +175,7 @@ def iter_embed_members(
                 name = info.filename
                 if spec.strip_prefix and name.startswith(spec.strip_prefix):
                     name = name[len(spec.strip_prefix) :]
+                name = _safe_member_name(name, spec.url) if name else None
                 if not name:
                     continue
                 data = zf.read(info)
@@ -168,6 +192,7 @@ def iter_embed_members(
             name = member.name
             if spec.strip_prefix and name.startswith(spec.strip_prefix):
                 name = name[len(spec.strip_prefix) :]
+            name = _safe_member_name(name, spec.url) if name else None
             if not name:
                 continue
             fh = tf.extractfile(member)

@@ -613,10 +613,34 @@ async def _on_startup():
                 "SECURITY: ADMIN_PASSWORD is set to the default value. "
                 "Change it immediately after first login."
             )
-    if settings.MINIO_ACCESS_KEY == "minioadmin" and settings.MINIO_SECRET_KEY == "minioadmin":
+    # MinIO holds the forensic evidence — a deployment that never set its own
+    # credentials is readable by anyone who can reach port 9000. Fail CLOSED
+    # (same shape as the AUTH_ENABLED check above) rather than warn and serve.
+    _minio_creds_weak = (
+        not settings.MINIO_ACCESS_KEY.strip()
+        or not settings.MINIO_SECRET_KEY.strip()
+        or settings.MINIO_ACCESS_KEY == "minioadmin"
+        or settings.MINIO_SECRET_KEY == "minioadmin"
+    )
+    if _minio_creds_weak:
+        if not settings.ALLOW_DEFAULT_MINIO_CREDS:
+            raise RuntimeError(
+                "SECURITY: MINIO_ACCESS_KEY / MINIO_SECRET_KEY are unset or set to "
+                "the well-known 'minioadmin' default — refusing to start. Evidence "
+                "storage would be reachable with default credentials. Set both to "
+                "strong values (./foctl deploy generates them), or set "
+                "CITADEL_ALLOW_DEFAULT_MINIO_CREDS=true to override (dev only)."
+            )
+        logger.critical(
+            "SECURITY: MinIO is using unset/default credentials and "
+            "CITADEL_ALLOW_DEFAULT_MINIO_CREDS is set — evidence storage is "
+            "NOT protected. Never do this outside a throwaway dev environment."
+        )
+    if not settings.MINIO_SECURE:
         logger.warning(
-            "SECURITY: MinIO is using default credentials (minioadmin/minioadmin). "
-            "Set MINIO_ACCESS_KEY / MINIO_SECRET_KEY to protect evidence storage."
+            "SECURITY: MINIO_SECURE=false — object storage traffic (including "
+            "the MinIO credentials) is unencrypted. Enable TLS on MinIO and drop "
+            "MINIO_SECURE=false once certificates are in place."
         )
     # Ensure the relational schema (e.g. the authoritative evidence seal anchor
     # table) exists. create_all is idempotent; deployments that manage schema via
