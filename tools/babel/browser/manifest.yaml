@@ -3,14 +3,17 @@ name: Browser Forensics
 description: >-
   Parses browser artifacts from Chrome, Firefox, Brave, Opera, Edge, and Safari.
   Extracts browsing history, cookies, downloads, login data, bookmarks, web form
-  autofill, and favicons from SQLite databases. Handles both Chromium-based
-  (WebKit epoch) and Firefox (Unix microseconds) timestamp formats.
+  autofill, and favicons from SQLite databases, plus Safari's deleted-history
+  tombstones and the macOS LaunchServices quarantine database (download
+  provenance for every quarantine-aware app). Handles all three timestamp bases:
+  Chromium (WebKit epoch), Firefox (Unix microseconds) and Apple Core Data
+  (seconds since 2001-01-01).
 supported_extensions: [".sqlite", ".db", ".sqlite3"]
 supported_mime_types: []
 artifact_type: browser
 author: ForensicsOperator
 version: "1.0.0"
-tags: [browser, chrome, firefox, brave, opera, edge, safari, history, cookies, downloads, forensics]
+tags: [browser, chrome, firefox, brave, opera, edge, safari, history, cookies, downloads, quarantine, macos, forensics]
 handled_filenames:
   - History
   - Cookies
@@ -22,3 +25,8 @@ handled_filenames:
   - cookies.sqlite
   - favicons.sqlite
   - formhistory.sqlite
+  - downloads.sqlite
+  - key4.db
+  - History.db
+  - quarantine_events.sqlite
+  - com.apple.LaunchServices.QuarantineEventsV2

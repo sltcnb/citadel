@@ -432,6 +432,7 @@ DEFAULT_LINUX = {
     "config",
     "cron",
     "ssh",
+    "browser",
     "triage",
     "persistence",
     "network_config",
@@ -1700,6 +1701,7 @@ class WindowsCollector(Collector):
         CHROMIUM_FILES = [
             "History", "Web Data", "Cookies", "Login Data", "Bookmarks",
             r"Network\Cookies", "Shortcuts", "Top Sites",
+            "Favicons", "Preferences", "Network Action Predictor",
         ]
 
         def _is_profile(name: str) -> bool:
@@ -1774,7 +1776,12 @@ class WindowsCollector(Collector):
             for profile_dir in ff_profiles:
                 if not profile_dir.is_dir():
                     continue
-                for db in ("places.sqlite", "cookies.sqlite", "logins.json", "formhistory.sqlite"):
+                for db in (
+                    "places.sqlite", "cookies.sqlite", "logins.json", "formhistory.sqlite",
+                    "favicons.sqlite", "downloads.sqlite", "key4.db", "extensions.json",
+                    "addons.json", "handlers.json", "permissions.sqlite",
+                    "sessionstore.jsonlz4",
+                ):
                     try:
                         src = profile_dir / db
                         tmp = self.staging / f"{user_dir.name}_ff_{profile_dir.name}_{db}"
@@ -2309,6 +2316,7 @@ class LinuxCollector(Collector):
         # User activity
         self._run_cat("history", self._shell_history)
         self._run_cat("user_artifacts", self._user_artifacts)
+        self._run_cat("browser", self._browser)
         # Persistence
         self._run_cat("persistence", self._persistence)
         self._run_cat("cron", self._cron)
@@ -2992,6 +3000,190 @@ class LinuxCollector(Collector):
                         f"recent_{sub.lower()}.txt", out, f"user/{un}/recent_{sub.lower()}.txt"
                     )
 
+    def _browser(self) -> None:
+        """
+        Browser artifacts for every user, every browser, every profile.
+
+        Linux browsers live in three parallel worlds — native XDG paths, Snap
+        (~/snap/<app>/current/...) and Flatpak (~/.var/app/<id>/config/...) —
+        and the same browser installed two ways keeps two independent profile
+        trees. Collecting only the native path silently missed whichever one
+        the user actually browsed with, which on Ubuntu is usually the Snap.
+        """
+        print("  [*] Browser Artifacts")
+
+        # Chromium-family artifact set, matching the Windows collector so the
+        # `browser` parser sees the same files regardless of source OS.
+        CHROMIUM_FILES = [
+            "History",
+            "Cookies",
+            "Network/Cookies",  # newer Chromium moved the cookie jar here
+            "Web Data",
+            "Login Data",
+            "Bookmarks",
+            "Shortcuts",
+            "Top Sites",
+            "Favicons",
+            "Preferences",
+            "Network Action Predictor",
+        ]
+        FIREFOX_FILES = [
+            "places.sqlite",
+            "cookies.sqlite",
+            "formhistory.sqlite",
+            "favicons.sqlite",
+            "downloads.sqlite",
+            "logins.json",
+            "key4.db",
+            "extensions.json",
+            "addons.json",
+            "handlers.json",
+            "permissions.sqlite",
+            "search.json.mozlz4",
+        ]
+
+        # (label, relative dir under $HOME holding the profile dirs)
+        def _chromium_roots(home: Path) -> list[tuple[str, Path]]:
+            return [
+                # Native XDG
+                ("chromium", home / ".config/chromium"),
+                ("chrome", home / ".config/google-chrome"),
+                ("chrome-beta", home / ".config/google-chrome-beta"),
+                ("chrome-unstable", home / ".config/google-chrome-unstable"),
+                ("brave", home / ".config/BraveSoftware/Brave-Browser"),
+                ("edge", home / ".config/microsoft-edge"),
+                ("opera", home / ".config/opera"),
+                ("vivaldi", home / ".config/vivaldi"),
+                # Snap
+                ("chromium-snap", home / "snap/chromium/current/.config/chromium"),
+                ("brave-snap", home / "snap/brave/current/.config/BraveSoftware/Brave-Browser"),
+                ("opera-snap", home / "snap/opera/current/.config/opera"),
+                # Flatpak
+                ("chromium-flatpak", home / ".var/app/org.chromium.Chromium/config/chromium"),
+                ("chrome-flatpak", home / ".var/app/com.google.Chrome/config/google-chrome"),
+                (
+                    "brave-flatpak",
+                    home / ".var/app/com.brave.Browser/config/BraveSoftware/Brave-Browser",
+                ),
+                ("edge-flatpak", home / ".var/app/com.microsoft.Edge/config/microsoft-edge"),
+                ("vivaldi-flatpak", home / ".var/app/com.vivaldi.Vivaldi/config/vivaldi"),
+            ]
+
+        def _firefox_roots(home: Path) -> list[tuple[str, Path]]:
+            return [
+                ("firefox", home / ".mozilla/firefox"),
+                ("firefox-snap", home / "snap/firefox/common/.mozilla/firefox"),
+                ("firefox-flatpak", home / ".var/app/org.mozilla.firefox/.mozilla/firefox"),
+                ("thunderbird", home / ".thunderbird"),
+                (
+                    "tor-browser",
+                    home / ".local/share/torbrowser/tbb/x86_64/tor-browser"
+                    / "Browser/TorBrowser/Data/Browser",
+                ),
+            ]
+
+        def _is_chromium_profile(name: str) -> bool:
+            return name == "Default" or name.startswith("Profile ") or name == "Guest Profile"
+
+        candidates = [Path("/root")]
+        for base in (Path("/home"), Path("/Users")):
+            if base.exists():
+                try:
+                    candidates += sorted(base.iterdir())
+                except OSError as exc:
+                    self._warn(f"Cannot list {base}: {exc}")
+
+        for user_dir in candidates:
+            if not user_dir.is_dir():
+                continue
+            un = user_dir.name
+
+            # ── Chromium family: every profile under every install flavour ───
+            for label, root in _chromium_roots(user_dir):
+                if not root.is_dir():
+                    continue
+                try:
+                    profiles = [
+                        d for d in sorted(root.iterdir())
+                        if d.is_dir() and _is_chromium_profile(d.name)
+                    ]
+                except OSError as exc:
+                    self._warn(f"Cannot list {root}: {exc}")
+                    continue
+                # Opera keeps its single profile directly in the root, with no
+                # "Default" subdirectory.
+                if not profiles and (root / "History").is_file():
+                    profiles = [root]
+                for prof in profiles:
+                    pname = "Default" if prof == root else prof.name
+                    for rel in CHROMIUM_FILES:
+                        src = prof / rel
+                        if src.is_file():
+                            self._add(src, f"browser/{label}/{un}/{pname}/{Path(rel).name}")
+                    # Modern web-activity stores: LevelDB-backed Local/Session
+                    # Storage, IndexedDB and the installed extensions. Capped so
+                    # a heavy profile cannot run away with the bundle.
+                    for store in (
+                        "Local Storage/leveldb",
+                        "Session Storage",
+                        "IndexedDB",
+                        "Extensions",
+                    ):
+                        sdir = prof / store
+                        if not sdir.is_dir():
+                            continue
+                        n = 0
+                        try:
+                            for f in sorted(sdir.rglob("*")):
+                                if n >= 500:
+                                    break
+                                try:
+                                    if not f.is_file() or f.stat().st_size > 100 * 1024 * 1024:
+                                        continue
+                                except OSError:
+                                    continue
+                                rel_f = f.relative_to(prof)
+                                self._add(f, f"browser/{label}/{un}/{pname}/{rel_f}")
+                                n += 1
+                        except OSError as exc:
+                            self._warn(f"Cannot walk {sdir}: {exc}")
+
+            # ── Firefox family: every profile under every install flavour ────
+            for label, root in _firefox_roots(user_dir):
+                if not root.is_dir():
+                    continue
+                # profiles.ini names the active profile — needed to tell which
+                # of several profile dirs was actually in use.
+                for meta in ("profiles.ini", "installs.ini"):
+                    self._add(root / meta, f"browser/{label}/{un}/{meta}")
+                try:
+                    profiles = [d for d in sorted(root.iterdir()) if d.is_dir()]
+                except OSError as exc:
+                    self._warn(f"Cannot list {root}: {exc}")
+                    continue
+                for prof in profiles:
+                    for db in FIREFOX_FILES:
+                        src = prof / db
+                        if src.is_file():
+                            self._add(src, f"browser/{label}/{un}/{prof.name}/{db}")
+                    # Crash-recovery session state: the tabs that were open, in
+                    # a profile whose history may have been cleared.
+                    sess = prof / "sessionstore-backups"
+                    if sess.is_dir():
+                        try:
+                            for f in sorted(sess.iterdir()):
+                                if f.is_file():
+                                    self._add(
+                                        f,
+                                        f"browser/{label}/{un}/{prof.name}/sessionstore-backups/{f.name}",
+                                    )
+                        except OSError as exc:
+                            self._warn(f"Cannot list {sess}: {exc}")
+                    self._add(
+                        prof / "sessionstore.jsonlz4",
+                        f"browser/{label}/{un}/{prof.name}/sessionstore.jsonlz4",
+                    )
+
     def _network_config(self) -> None:
         """iptables/nftables rules, NetworkManager, netplan, /proc/net snapshots."""
         print("  [*] Network Configuration")
@@ -3467,24 +3659,112 @@ class MacOSCollector(Collector):
                 "          → add your Terminal app (Terminal.app / iTerm2 / etc.)\n"
                 "     Then re-run this script.\n"
             )
+        # Chromium-family artifact set, matching the Windows and Linux
+        # collectors so the `browser` parser sees the same files on every OS.
+        CHROMIUM_FILES = [
+            "History",
+            "Cookies",
+            "Network/Cookies",  # newer Chromium moved the cookie jar here
+            "Web Data",
+            "Login Data",
+            "Bookmarks",
+            "Shortcuts",
+            "Top Sites",
+            "Favicons",
+            "Preferences",
+            "Network Action Predictor",
+        ]
+        FIREFOX_FILES = [
+            "places.sqlite",
+            "cookies.sqlite",
+            "formhistory.sqlite",
+            "favicons.sqlite",
+            "downloads.sqlite",
+            "logins.json",
+            "key4.db",
+            "extensions.json",
+            "addons.json",
+            "handlers.json",
+            "permissions.sqlite",
+            "search.json.mozlz4",
+            "sessionstore.jsonlz4",
+        ]
+
+        def _is_chromium_profile(name: str) -> bool:
+            return name == "Default" or name.startswith("Profile ") or name == "Guest Profile"
+
         home = Path.home().parent
         candidates = sorted(home.iterdir()) if home.exists() else []
         for user_dir in candidates:
             if not user_dir.is_dir():
                 continue
             lib = user_dir / "Library"
-            # Chromium-based browsers (Chrome, Brave, Edge, Opera, Vivaldi)
+            app_support = lib / "Application Support"
+            # Chromium-based browsers. Each keeps one directory PER PROFILE
+            # (Default, Profile 1, …) — collecting only "Default" silently
+            # dropped every secondary profile, which is the common case.
             chromium_browsers = [
                 ("chrome", "Google/Chrome"),
+                ("chrome-beta", "Google/Chrome Beta"),
+                ("chrome-canary", "Google/Chrome Canary"),
+                ("chromium", "Chromium"),
                 ("brave", "BraveSoftware/Brave-Browser"),
                 ("edge", "Microsoft Edge"),
                 ("opera", "com.operasoftware.Opera"),
+                ("opera-gx", "com.operasoftware.OperaGX"),
                 ("vivaldi", "Vivaldi"),
+                ("arc", "Arc/User Data"),
             ]
             for bname, subpath in chromium_browsers:
-                profile = lib / "Application Support" / subpath / "Default"
-                for db in ["History", "Cookies", "Web Data", "Login Data", "Bookmarks"]:
-                    self._add(profile / db, f"browser/{user_dir.name}/{bname}/{db}")
+                root = app_support / subpath
+                if not root.is_dir():
+                    continue
+                try:
+                    profiles = [
+                        d for d in sorted(root.iterdir())
+                        if d.is_dir() and _is_chromium_profile(d.name)
+                    ]
+                except OSError as exc:
+                    self._warn(f"Cannot list {root}: {exc}")
+                    continue
+                # Opera keeps its single profile directly in the root.
+                if not profiles and (root / "History").is_file():
+                    profiles = [root]
+                for prof in profiles:
+                    pname = "Default" if prof == root else prof.name
+                    for rel in CHROMIUM_FILES:
+                        src = prof / rel
+                        if src.is_file():
+                            self._add(
+                                src, f"browser/{user_dir.name}/{bname}/{pname}/{Path(rel).name}"
+                            )
+                    for store in (
+                        "Local Storage/leveldb",
+                        "Session Storage",
+                        "IndexedDB",
+                        "Extensions",
+                    ):
+                        sdir = prof / store
+                        if not sdir.is_dir():
+                            continue
+                        n = 0
+                        try:
+                            for f in sorted(sdir.rglob("*")):
+                                if n >= 500:
+                                    break
+                                try:
+                                    if not f.is_file() or f.stat().st_size > 100 * 1024 * 1024:
+                                        continue
+                                except OSError:
+                                    continue
+                                self._add(
+                                    f,
+                                    f"browser/{user_dir.name}/{bname}/{pname}/{f.relative_to(prof)}",
+                                )
+                                n += 1
+                        except OSError as exc:
+                            self._warn(f"Cannot walk {sdir}: {exc}")
+
             # Safari
             safari_dir = lib / "Safari"
             for sf in [
@@ -3493,22 +3773,56 @@ class MacOSCollector(Collector):
                 "Bookmarks.plist",
                 "RecentlyClosedTabs.plist",
                 "LastSession.plist",
+                "TopSites.plist",
+                "Extensions/Extensions.plist",
+                "CloudTabs.db",
+                "UserNotificationPermissions.plist",
             ]:
-                self._add(safari_dir / sf, f"browser/{user_dir.name}/safari/{sf}")
-            # Firefox
-            ff_profiles = lib / "Application Support" / "Firefox" / "Profiles"
-            if ff_profiles.exists():
-                for profile in sorted(ff_profiles.iterdir()):
-                    for db in [
-                        "places.sqlite",
-                        "cookies.sqlite",
-                        "logins.json",
-                        "formhistory.sqlite",
-                    ]:
-                        self._add(
-                            profile / db, f"browser/{user_dir.name}/firefox/{profile.name}/{db}"
-                        )
-            # Quarantine database (file download history)
+                self._add(safari_dir / sf, f"browser/{user_dir.name}/safari/{Path(sf).name}")
+            # Safari cache (the response bodies behind those visits)
+            for rel in ("Caches/com.apple.Safari/Cache.db",):
+                self._add(lib / rel, f"browser/{user_dir.name}/safari/{Path(rel).name}")
+
+            # Firefox — native and Flatpak, every profile
+            for label, ff_root in [
+                ("firefox", app_support / "Firefox"),
+                ("firefox-flatpak", user_dir / ".var/app/org.mozilla.firefox/.mozilla/firefox"),
+                ("thunderbird", app_support / "Thunderbird"),
+                ("tor-browser", user_dir / "Library/Application Support/TorBrowser-Data/Browser"),
+            ]:
+                if not ff_root.is_dir():
+                    continue
+                for meta in ("profiles.ini", "installs.ini"):
+                    self._add(ff_root / meta, f"browser/{user_dir.name}/{label}/{meta}")
+                prof_root = ff_root / "Profiles" if (ff_root / "Profiles").is_dir() else ff_root
+                try:
+                    profiles = [d for d in sorted(prof_root.iterdir()) if d.is_dir()]
+                except OSError as exc:
+                    self._warn(f"Cannot list {prof_root}: {exc}")
+                    continue
+                for profile in profiles:
+                    for db in FIREFOX_FILES:
+                        src = profile / db
+                        if src.is_file():
+                            self._add(
+                                src, f"browser/{user_dir.name}/{label}/{profile.name}/{db}"
+                            )
+                    sess = profile / "sessionstore-backups"
+                    if sess.is_dir():
+                        try:
+                            for f in sorted(sess.iterdir()):
+                                if f.is_file():
+                                    self._add(
+                                        f,
+                                        f"browser/{user_dir.name}/{label}/{profile.name}"
+                                        f"/sessionstore-backups/{f.name}",
+                                    )
+                        except OSError as exc:
+                            self._warn(f"Cannot list {sess}: {exc}")
+
+            # LaunchServices quarantine — download provenance for EVERY app,
+            # not just browsers: which agent wrote the file, from what URL, and
+            # what page the user was on. Survives browser history being cleared.
             quarantine = lib / "Preferences" / "com.apple.LaunchServices.QuarantineEventsV2"
             self._add(quarantine, f"browser/{user_dir.name}/quarantine_events.sqlite")
 
@@ -4429,7 +4743,10 @@ class ExternalDiskCollector(Collector):
             ("brave", "AppData/Local/BraveSoftware/Brave-Browser/User Data"),
             ("vivaldi", "AppData/Local/Vivaldi/User Data"),
         ]
-        DB_FILES = ["History", "Web Data", "Cookies", "Login Data", "Bookmarks", "Network/Cookies"]
+        DB_FILES = [
+            "History", "Web Data", "Cookies", "Login Data", "Bookmarks", "Network/Cookies",
+            "Shortcuts", "Top Sites", "Favicons", "Preferences", "Network Action Predictor",
+        ]
 
         def _is_profile(name):
             return name == "Default" or name.startswith("Profile ") or name == "Guest Profile"
@@ -4479,6 +4796,14 @@ class ExternalDiskCollector(Collector):
                         "cookies.sqlite",
                         "logins.json",
                         "formhistory.sqlite",
+                        "favicons.sqlite",
+                        "downloads.sqlite",
+                        "key4.db",
+                        "extensions.json",
+                        "addons.json",
+                        "handlers.json",
+                        "permissions.sqlite",
+                        "sessionstore.jsonlz4",
                     ):
                         src = prof / db
                         try:
@@ -5189,6 +5514,36 @@ def _fmt_bytes(n: float) -> str:
     return f"{n:.1f} TB"
 
 
+# TLS verification is never disabled on its own. An unverified upload sends the
+# whole collection — logs, credentials, browser history — to whoever presented
+# the certificate, and an attacker who can intercept the connection can force
+# that state simply by presenting an invalid certificate. So the fallback is
+# opt-in: --insecure-tls on the command line, or FO_INSECURE_TLS=1 in the
+# environment, for a deliberate upload to an internal MinIO with a self-signed
+# certificate. Without it, a verification failure aborts the upload.
+_ALLOW_INSECURE_TLS = os.environ.get("FO_INSECURE_TLS", "").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
+
+
+def _tls_context(*, insecure: bool = False):
+    """A verified TLS context, or an unverified one only on explicit opt-in.
+
+    Passing ``insecure=True`` still requires ``--insecure-tls`` /
+    ``FO_INSECURE_TLS=1``; without it the caller gets a verifying context and
+    the connection fails on a bad certificate, which is the point.
+    """
+    import ssl
+
+    ctx = ssl.create_default_context()
+    if insecure and _ALLOW_INSECURE_TLS:
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+    return ctx
+
+
 def upload_via_presigned(zip_path: Path, presigned_url: str, max_retries: int = 4) -> None:
     """HTTP PUT to a pre-signed S3/MinIO URL — no credentials needed at runtime.
 
@@ -5253,12 +5608,8 @@ def upload_via_presigned(zip_path: Path, presigned_url: str, max_retries: int = 
         conn = None
         try:
             if is_https:
-                if insecure:
-                    ctx = ssl.create_default_context()
-                    ctx.check_hostname = False
-                    ctx.verify_mode = ssl.CERT_NONE
-                else:
-                    ctx = ssl.create_default_context()
+                # `insecure` is only ever set after the opt-in check below.
+                ctx = _tls_context(insecure=insecure)
                 conn = http.client.HTTPSConnection(parsed.netloc, context=ctx, timeout=timeout)
             else:
                 conn = http.client.HTTPConnection(parsed.netloc, timeout=timeout)
@@ -5306,11 +5657,31 @@ def upload_via_presigned(zip_path: Path, presigned_url: str, max_retries: int = 
         except SystemExit:
             raise
         except ssl.SSLCertVerificationError as exc:
-            # Self-signed / internal MinIO: retry the same attempt unverified.
+            if not insecure and not _ALLOW_INSECURE_TLS:
+                # Fail closed. Retrying unverified here would hand the whole
+                # collection to whatever presented the bad certificate, and an
+                # interceptor can trigger this path at will.
+                print(
+                    f"  [!] Upload aborted: the S3 endpoint's TLS certificate "
+                    f"did not verify ({exc}).",
+                    file=sys.stderr,
+                )
+                print(
+                    "  [!] The evidence has NOT been uploaded. Either fix the "
+                    "certificate chain on the endpoint, or — only if you know "
+                    "this endpoint uses a self-signed certificate — re-run with "
+                    "--insecure-tls (or FO_INSECURE_TLS=1) to accept an "
+                    "unauthenticated connection.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
             if not insecure:
+                # Explicitly opted in.
                 insecure = True
                 print(
-                    f"  [!] TLS certificate did not verify ({exc}); retrying without verification",
+                    f"  [!] TLS certificate did not verify ({exc}); retrying "
+                    f"WITHOUT verification because --insecure-tls was given. "
+                    f"This upload is not protected against interception.",
                     file=sys.stderr,
                 )
                 continue
@@ -5418,14 +5789,26 @@ def upload_via_multipart(zip_path: Path, mp: dict, max_retries: int = 5) -> None
             ) as _s:
                 with ctx.wrap_socket(_s, server_hostname=sample.hostname):
                     pass
-        except ssl.SSLCertVerificationError:
+        except ssl.SSLCertVerificationError as exc:
+            if not _ALLOW_INSECURE_TLS:
+                # Fail closed: every part of the evidence would otherwise go
+                # to whoever presented the certificate.
+                print(
+                    f"  [!] Upload aborted: the S3 endpoint's TLS certificate "
+                    f"did not verify ({exc}). The evidence has NOT been "
+                    f"uploaded. Fix the certificate chain, or re-run with "
+                    f"--insecure-tls if this endpoint is known to use a "
+                    f"self-signed certificate.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
             print(
-                "  [!] TLS certificate did not verify; continuing without verification.",
+                "  [!] TLS certificate did not verify; continuing WITHOUT "
+                "verification because --insecure-tls was given. This upload "
+                "is not protected against interception.",
                 file=sys.stderr,
             )
-            ctx = ssl.create_default_context()
-            ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE
+            ctx = _tls_context(insecure=True)
         except Exception:
             # Not a cert problem — let the per-part uploads surface it with retry.
             pass
@@ -5586,15 +5969,15 @@ def _abort_multipart(mp: dict) -> None:
     call back to initiate one at runtime); if we never use it, aborting here
     stops orphaned incomplete uploads from accruing storage cost. Never raises.
     """
-    import ssl
     import urllib.request
 
     abort_url = (mp or {}).get("abort_url")
     if not abort_url:
         return
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
+    # Verified, like every other request. This is best-effort cleanup, so a
+    # certificate failure just means the slot is not released — it is not a
+    # reason to talk to an unauthenticated peer with a presigned abort URL.
+    ctx = _tls_context(insecure=True)
     try:
         req = urllib.request.Request(abort_url, method="DELETE")
         with urllib.request.urlopen(req, timeout=60, context=ctx) as r:
@@ -5608,7 +5991,6 @@ def upload_log_via_presigned(log_path: Path, presigned_url: str) -> bool:
     """Best-effort PUT of the execution log to its own presigned S3 object.
     Returns True on success. Never raises — log upload must not mask the real
     collection outcome or crash the finally block."""
-    import ssl
     import urllib.error
     import urllib.request
 
@@ -5627,9 +6009,10 @@ def upload_log_via_presigned(log_path: Path, presigned_url: str) -> bool:
         headers={"Content-Type": "text/plain; charset=utf-8"},
         method="PUT",
     )
-    _ssl_ctx = ssl.create_default_context()
-    _ssl_ctx.check_hostname = False
-    _ssl_ctx.verify_mode = ssl.CERT_NONE
+    # The execution log is the audit trail for the collection, so it gets the
+    # same verified transport as the archive. This used to be unconditionally
+    # CERT_NONE, which meant any peer could collect it.
+    _ssl_ctx = _tls_context(insecure=True)
     try:
         with urllib.request.urlopen(req, timeout=120, context=_ssl_ctx) as resp:
             print(f"  [+] Execution log uploaded  (HTTP {resp.status})")
@@ -5768,6 +6151,14 @@ def main() -> None:
         help="Max size per fetched file in MB (default 100)",
     )
     parser.add_argument(
+        "--insecure-tls",
+        action="store_true",
+        help="Accept an unverifiable TLS certificate when uploading (for an "
+        "internal S3/MinIO with a self-signed certificate). Without this, an "
+        "upload whose certificate does not verify is ABORTED rather than "
+        "retried unencrypted-to-an-unknown-peer.",
+    )
+    parser.add_argument(
         "--bundle-manifest",
         type=Path,
         default=None,
@@ -5776,6 +6167,16 @@ def main() -> None:
         "bundle_manifest.schema.json) describing the collected artifacts",
     )
     args = parser.parse_args()
+
+    if args.insecure_tls:
+        global _ALLOW_INSECURE_TLS
+        _ALLOW_INSECURE_TLS = True
+        print(
+            "  [!] --insecure-tls: uploads will proceed even if the endpoint's "
+            "certificate cannot be verified. Evidence in transit is not "
+            "protected against interception.",
+            file=sys.stderr,
+        )
 
     t_start = time.monotonic()
 

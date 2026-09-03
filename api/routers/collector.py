@@ -798,19 +798,58 @@ def _find_uploader_script() -> Path:
     )
 
 
+class UploaderInjectionError(RuntimeError):
+    """A placeholder the injector must rewrite was not found in the template."""
+
+
+def _assign_re(name: str) -> re.Pattern:
+    r"""Match a top-level ``NAME = <literal>`` assignment, whatever the spacing.
+
+    The injector used to search for exact, column-aligned strings
+    (``'ENDPOINT   = ""'``). ``fo_uploader.py`` was later reformatted to
+    single-space assignments with trailing comments, so every ``replace()``
+    missed and the packaged script shipped with empty credentials: the download
+    succeeded, then the script refused to run with "Script is not configured",
+    pointing the operator back at the Collector page that had just produced it.
+    Matching the assignment rather than its formatting makes injection
+    independent of how the template is laid out.
+
+    The value match is lazy and stops at the lookahead, so the spacing and the
+    trailing ``#`` comment documenting each field survive the rewrite.
+    """
+    return re.compile(
+        rf"^{re.escape(name)}[ \t]*=[ \t]*[^\n#]*?(?=[ \t]*(?:#|$))",
+        re.MULTILINE,
+    )
+
+
+def _inject_assignment(source: str, name: str, value_repr: str) -> str:
+    """Rewrite ``name``'s value in ``source``, leaving any trailing comment."""
+    pattern = _assign_re(name)
+    if not pattern.search(source):
+        raise UploaderInjectionError(
+            f"{name} assignment not found in fo_uploader.py — the uploader "
+            "template and this injector are out of sync, so the package would "
+            "ship unconfigured."
+        )
+    # A lambda, not a replacement string: a JSON-escaped secret can contain a
+    # backslash, which re.sub would otherwise read as a group reference.
+    return pattern.sub(lambda _m: f"{name} = {value_repr}", source, count=1)
+
+
 def _inject_uploader_config(source: str, cfg: dict) -> str:
     """Inject S3 credentials into fo_uploader.py (legacy mode)."""
     use_ssl_str = "true" if cfg.get("use_ssl", True) else "false"
-    replacements = [
-        ('ENDPOINT   = ""', f"ENDPOINT   = {json.dumps(cfg.get('endpoint', ''))}"),
-        ('ACCESS_KEY = ""', f"ACCESS_KEY = {json.dumps(cfg.get('access_key', ''))}"),
-        ('SECRET_KEY = ""', f"SECRET_KEY = {json.dumps(cfg.get('secret_key', ''))}"),
-        ('BUCKET     = ""', f"BUCKET     = {json.dumps(cfg.get('bucket', ''))}"),
-        ('REGION     = ""', f"REGION     = {json.dumps(cfg.get('region', ''))}"),
-        ('USE_SSL    = "true"', f"USE_SSL    = {json.dumps(use_ssl_str)}"),
+    fields = [
+        ("ENDPOINT", cfg.get("endpoint", "")),
+        ("ACCESS_KEY", cfg.get("access_key", "")),
+        ("SECRET_KEY", cfg.get("secret_key", "")),
+        ("BUCKET", cfg.get("bucket", "")),
+        ("REGION", cfg.get("region", "")),
+        ("USE_SSL", use_ssl_str),
     ]
-    for old, new in replacements:
-        source = source.replace(old, new, 1)
+    for name, value in fields:
+        source = _inject_assignment(source, name, json.dumps(value))
     return source
 
 
@@ -818,9 +857,9 @@ def _inject_presigned_config(source: str, presigned_urls: list, multipart_upload
     """Inject pre-signed PUT URLs (and optional multipart sessions, one per file
     slot) into fo_uploader.py (preferred mode — no credentials)."""
     urls_repr = "[" + ", ".join(json.dumps(u) for u in presigned_urls) + "]"
-    out = source.replace("PRESIGNED_URLS = []", f"PRESIGNED_URLS = {urls_repr}", 1)
-    return out.replace(
-        "MULTIPART_UPLOADS = []", f"MULTIPART_UPLOADS = {json.dumps(multipart_uploads or [])}", 1
+    out = _inject_assignment(source, "PRESIGNED_URLS", urls_repr)
+    return _inject_assignment(
+        out, "MULTIPART_UPLOADS", json.dumps(multipart_uploads or [])
     )
 
 
@@ -1046,6 +1085,10 @@ $COLLECTOR_URL = "TPLCOLLECTOR_URL"
 $DELETE_URL    = "TPLDELETE_URL"
 $EXPIRES_AT    = "TPLEXPIRES_AT"
 $CASE_NAME     = "TPLCASE_NAME"
+# BitLocker recovery key, passed to the harvester at run time. Empty unless the
+# analyst asked for one. It lives only in this script — never in the package
+# uploaded to S3.
+$BITLOCKER_KEY = "TPLBITLOCKER_KEY"
 
 Write-Host ""
 Write-Host "=============================================================" -ForegroundColor Cyan
@@ -1088,12 +1131,14 @@ try {
     $prevDir = Get-Location
     Set-Location $workDir
     try {
+        $extraArgs = @()
+        if ($BITLOCKER_KEY) { $extraArgs += @("--bitlocker-key", $BITLOCKER_KEY) }
         if ($Local) {
             # $tmpDir is deleted in the finally block — write the ZIP to the
             # directory the operator invoked the script from instead.
-            & $python fo-harvester.py --output $prevDir.Path
+            & $python fo-harvester.py --output $prevDir.Path @extraArgs
         } else {
-            & $python fo-harvester.py
+            & $python fo-harvester.py @extraArgs
         }
         if ($LASTEXITCODE -ne 0) { throw "fo-harvester.py exited with code $LASTEXITCODE" }
     } finally {
@@ -1160,6 +1205,10 @@ COLLECTOR_URL="TPLCOLLECTOR_URL"
 DELETE_URL="TPLDELETE_URL"
 EXPIRES_AT="TPLEXPIRES_AT"
 CASE_NAME="TPLCASE_NAME"
+# BitLocker recovery key, passed to the harvester at run time. Empty unless the
+# analyst asked for one. It lives only in this script — never in the package
+# uploaded to S3.
+BITLOCKER_KEY="TPLBITLOCKER_KEY"
 LOCAL=0
 NO_S3_DEL=0
 OFFLINE=0
@@ -1221,13 +1270,18 @@ RUNDIR="${INNER:-$WORKDIR}"
 # --local: write the ZIP to the directory the operator ran this script from.
 # WORKDIR is removed by the EXIT trap, so anything staged inside it is lost.
 echo "  Running collection..."
+if [ -n "$BITLOCKER_KEY" ]; then
+    set -- --bitlocker-key "$BITLOCKER_KEY"
+else
+    set --
+fi
 if [ "$LOCAL" -eq 1 ]; then
     LOCAL_OUT=$(pwd)
-    (cd "$RUNDIR" && "$PYTHON" fo-harvester.py --output "$LOCAL_OUT")
+    (cd "$RUNDIR" && "$PYTHON" fo-harvester.py --output "$LOCAL_OUT" "$@")
     LOCAL_ZIP=$(find "$LOCAL_OUT" -maxdepth 1 -name "fo-artifacts-*.zip" 2>/dev/null | sort | tail -1 || true)
     [ -n "$LOCAL_ZIP" ] && echo "  Saved locally: $LOCAL_ZIP"
 else
-    (cd "$RUNDIR" && "$PYTHON" fo-harvester.py)
+    (cd "$RUNDIR" && "$PYTHON" fo-harvester.py "$@")
 fi
 echo "  Collection complete."
 
@@ -1350,8 +1404,15 @@ def download_s3_bootstrap(
         config["path"] = path_arg.strip()
     if disk_arg:
         config["disk"] = disk_arg.strip()
-    if bitlocker_key:
-        config["bitlocker_key"] = bitlocker_key.strip()
+    # bitlocker_key is deliberately NOT written into config.json. That file is
+    # packed into the collector zip and uploaded to the S3 triage bucket, where
+    # it sits behind a presigned GET URL valid for up to 168 hours — so the
+    # recovery key for the suspect's disk would be sitting in object storage,
+    # and best-effort cleanup ("delete the package afterwards") failing is
+    # logged rather than fatal. The key is injected into the BOOTSTRAP SCRIPT
+    # instead, which is returned to the analyst over the authenticated API and
+    # never uploaded anywhere; it reaches the harvester as a --bitlocker-key
+    # argument at run time and stays in memory on the target.
     _patterns = (
         [p.strip() for p in _re.split(r"[\n,]", fetch_patterns) if p.strip()]
         if fetch_patterns
@@ -1436,6 +1497,7 @@ def download_s3_bootstrap(
             .replace("TPLCASE_NAME", cn)
             .replace("TPLCOLLECTOR_URL", collector_get_url)
             .replace("TPLDELETE_URL", delete_url)
+            .replace("TPLBITLOCKER_KEY", _script_safe(bitlocker_key or ""))
         ).encode("utf-8")
 
     safe_name = _re.sub(r"[^\w-]", "_", cn)[:30]
@@ -2123,12 +2185,25 @@ def _k8s_request(
     if data is not None:
         req.add_header("Content-Type", "application/json")
 
+    # The cluster CA is the ONLY thing that authenticates the API server here,
+    # and the request carries the pod's service account token as a bearer
+    # credential. Falling back to an unverified context when the CA is missing
+    # handed that token to whatever answered on kubernetes.default.svc, so a
+    # missing CA is now a hard failure instead.
+    if not _K8S_CA_PATH.is_file():
+        logger.error(
+            "Cannot verify the Kubernetes API server: CA bundle %s is missing. "
+            "Refusing to send the service account token over an unverified "
+            "connection. In-cluster pods get this file automatically — check "
+            "that automountServiceAccountToken is not disabled for this pod.",
+            _K8S_CA_PATH,
+        )
+        return 0, {"error": "kubernetes CA certificate unavailable"}
+
     ssl_ctx = ssl.create_default_context()
-    if _K8S_CA_PATH.is_file():
-        ssl_ctx.load_verify_locations(str(_K8S_CA_PATH))
-    else:
-        ssl_ctx.check_hostname = False
-        ssl_ctx.verify_mode = ssl.CERT_NONE
+    ssl_ctx.load_verify_locations(str(_K8S_CA_PATH))
+    ssl_ctx.check_hostname = True
+    ssl_ctx.verify_mode = ssl.CERT_REQUIRED
 
     try:
         with urllib.request.urlopen(req, context=ssl_ctx, timeout=10) as resp:

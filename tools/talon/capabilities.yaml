@@ -42,7 +42,7 @@ capabilities:
           - { value: boot_uefi, group: "Security & Defense", label: "Boot Config (BCD / EFI)", desc: "BCD store, bootstat.dat — boot persistence indicators" }
           - { value: encryption, group: "Security & Defense", label: "Encryption Metadata", desc: "BitLocker FVE recovery info, EFS metadata" }
           - { value: etw_diagnostics, group: "Security & Defense", label: "ETW Diagnostic Traces", desc: "Windows/System32/LogFiles/WMI — .etl trace files" }
-          - { value: browser, group: "Browsers", label: "All Browsers", desc: "Chrome, Edge, Firefox, Brave, Opera, Vivaldi — history, cookies, logins" }
+          - { value: browser, group: "Browsers", label: "All Browsers", desc: "Chrome, Edge, Firefox, Brave, Opera, Vivaldi — history, cookies, downloads, logins, favicons, extensions, Local Storage / IndexedDB; every user, every profile" }
           - { value: browser_chrome, group: "Browsers", label: "Chrome", desc: "History, Cookies, Login Data, Bookmarks, Web Data for all users" }
           - { value: browser_edge, group: "Browsers", label: "Microsoft Edge", desc: "History, Cookies, Login Data, Web Data for all users" }
           - { value: browser_ie, group: "Browsers", label: "Internet Explorer", desc: "WebCacheV01.dat / WebCacheV24.dat — legacy IE cache database" }
@@ -113,10 +113,10 @@ capabilities:
         max: 100000
   - key: collect_linux
     label: Collect — Linux
-    description: Acquire Linux host artifacts (live or mounted). 21 categories.
+    description: Acquire Linux host artifacts (live or mounted). 23 categories.
     platforms: [linux]
     output: "bundle → Sluice (or S3 / local zip)"
-    group_order: ['Core System', 'Persistence', 'Network', 'Security & Defense', 'Inventory', 'Live Triage', 'Heavy / Opt-in']
+    group_order: ['Core System', 'Persistence', 'Browsers', 'User Data', 'Network', 'Security & Defense', 'Inventory', 'Live Triage', 'Heavy / Opt-in']
     inputs:
       - name: categories
         type: multiselect
@@ -128,6 +128,8 @@ capabilities:
           - { value: config, group: "Core System", label: "System Configuration", desc: "/etc/passwd, shadow, sudoers, hosts, ssh/sshd_config, PAM" }
           - { value: cron, group: "Persistence", label: "Cron Jobs", desc: "cron.d, cron.daily, crontabs, systemd timers" }
           - { value: persistence, group: "Persistence", label: "Persistence", desc: "systemd units, init.d, rc.local, profile.d, LD_PRELOAD, autostart" }
+          - { value: browser, group: "Browsers", label: "All Browsers", desc: "Chrome, Chromium, Edge, Brave, Opera, Vivaldi, Firefox, Thunderbird, Tor — history, cookies, downloads, logins, extensions, session state. Native, Snap and Flatpak paths; every user, every profile." }
+          - { value: user_artifacts, group: "User Data", label: "User Artifacts", desc: "Shell rc files, ~/.local/bin, GPG public keyring, SSH known_hosts/authorized_keys, recent Downloads/Desktop listings" }
           - { value: network_config, group: "Network", label: "Network Config", desc: "interfaces, iptables/nftables rules, resolv.conf, hosts.allow/deny" }
           - { value: ssh, group: "Network", label: "SSH Artifacts", desc: "known_hosts, authorized_keys, config (no private keys)" }
           - { value: network, group: "Network", label: "Network Captures", desc: "PCAP/PCAPNG from /var/log, /tmp — live tcpdump if none found" }
@@ -184,7 +186,7 @@ capabilities:
           - { value: history, group: "Core System", label: "Shell Histories", desc: ".bash_history, .zsh_history, fish_history for root and all users" }
           - { value: config, group: "Core System", label: "System Configuration", desc: "/etc/hosts, sudoers, ssh/sshd_config, /etc/passwd" }
           - { value: launchagents, group: "Persistence", label: "LaunchAgents/Daemons", desc: "/Library/LaunchAgents, /Library/LaunchDaemons, ~/Library/LaunchAgents — persistence" }
-          - { value: browser, group: "User Data", label: "Browsers", desc: "Safari History.db, Cookies, Bookmarks.plist; Chrome/Firefox if installed" }
+          - { value: browser, group: "User Data", label: "Browsers", desc: "Safari History.db (incl. deleted-history tombstones), Downloads/Bookmarks/LastSession plists; Chrome, Chromium, Edge, Brave, Opera, Vivaldi, Arc, Firefox, Thunderbird, Tor — every user, every profile; plus the LaunchServices quarantine database (download provenance for every app)" }
           - { value: plist, group: "User Data", label: "Preference Plists", desc: "/Library/Preferences, ~/Library/Preferences — app prefs and hidden settings" }
           - { value: network, group: "Network", label: "Network Captures", desc: "PCAP/PCAPNG from /var/log, /tmp — live tcpdump if none found" }
           - { value: triage, group: "Live Triage", label: "Live System Triage", desc: "ps, netstat, launchctl list, system_profiler, sw_vers" }

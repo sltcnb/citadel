@@ -266,6 +266,33 @@ artifact_types:
       "rule.name": "signature"
 
   # ---- Web / browser --------------------------------------------------------
+  # Browser artifacts (Chromium / Firefox / Safari History, downloads, cookies,
+  # logins, autofill, quarantine). Emitted by tools/babel/browser.
+  #
+  # These were previously unmapped, so every browser event landed on the
+  # `default` spec: no event.category, no url.*, no file.*. That made them
+  # invisible to any cross-artifact pivot — you could not join a downloaded
+  # file to the prefetch/MFT/Sysmon evidence of it being executed, which is
+  # exactly the question "what did the malware do after it landed" asks.
+  #
+  # url.full is decomposed into url.domain / url.path / url.scheme by the
+  # normalizer, so a download's source host is queryable as url.domain.
+  browser:
+    category: [web]
+    type: [access]
+    fields:
+      "url.full": "browser.url"
+      "url.domain": "browser.domain"
+      "file.path": "browser.target_path"
+      "file.name": "browser.filename"
+      "file.size": "browser.total_bytes"
+      "file.mime_type": "browser.mime_type"
+      "http.request.method": "browser.http_method"
+      "user.name": "browser.username"
+      "user_agent.original": "browser.user_agent"
+      "process.name": "browser.agent_name"
+      "service.name": "browser.browser_type"
+
   web:
     category: [web]
     type: [access]
