@@ -15,37 +15,35 @@ spec:
         app: frontend
     spec:
       # ── Pod security context ──────────────────────────────────────────────
-      # The stock nginx:alpine image must start as root to bind port 80 and to
-      # write its cache/pid; runAsNonRoot is therefore NOT set here. We still
-      # drop all capabilities except the minimum the stock entrypoint needs, and
-      # block privilege escalation. To run fully non-root, switch to
-      # nginxinc/nginx-unprivileged (listens on 8080) and update the
-      # Service/Ingress ports accordingly.
+      # The image is nginxinc/nginx-unprivileged (see frontend/Dockerfile): it
+      # runs as uid 101 start to finish and listens on 8080, so nothing here
+      # needs root or NET_BIND_SERVICE. The Service maps 80 → 8080, which is
+      # why the Ingress backend port is unchanged.
       securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
         seccompProfile:
           type: RuntimeDefault
+      # The frontend is a static-asset nginx: it never talks to the Kubernetes
+      # API, so don't hand its container a Service Account token that would
+      # turn any RCE in the pod into cluster-level access.
+      automountServiceAccountToken: false
       containers:
         - name: frontend
           image: __FO_FRONTEND_IMAGE__
           imagePullPolicy: __FO_PULL_POLICY__
           securityContext:
             allowPrivilegeEscalation: false
+            # No capabilities needed at all: the process never runs as root and
+            # 8080 is unprivileged.
             capabilities:
               drop: ["ALL"]
-              # The stock nginx entrypoint runs as root: it chowns the cache
-              # dirs (/var/cache/nginx/*) to the nginx user and the master then
-              # drops worker privileges. drop:[ALL] strips CAP_CHOWN, so even as
-              # root the chown fails ("Operation not permitted") and nginx exits.
-              # Add back the minimal set that root nginx requires:
-              #   CHOWN/DAC_OVERRIDE  — chown + write the cache/pid/temp dirs
-              #   SETUID/SETGID       — drop workers to the nginx (101) user
-              #   NET_BIND_SERVICE    — bind port 80
-              add: ["CHOWN", "DAC_OVERRIDE", "SETUID", "SETGID", "NET_BIND_SERVICE"]
             # readOnlyRootFilesystem left false: nginx writes cache/pid/temp
-            # under /var/cache/nginx and /var/run.
+            # under /var/cache/nginx and /tmp.
             readOnlyRootFilesystem: false
           ports:
-            - containerPort: 80
+            - containerPort: 8080
           resources:
             requests:
               memory: "__FO_FRONTEND_MEMORY_REQUEST__"
@@ -56,7 +54,7 @@ spec:
           livenessProbe:
             httpGet:
               path: /
-              port: 80
+              port: 8080
             initialDelaySeconds: 5
             periodSeconds: 20
 ---
@@ -69,5 +67,7 @@ spec:
   selector:
     app: frontend
   ports:
+    # Service port stays 80 so the Ingress backend port is unchanged; the pod
+    # listens on 8080 because it runs unprivileged.
     - port: 80
-      targetPort: 80
+      targetPort: 8080

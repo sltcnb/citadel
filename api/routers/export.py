@@ -228,14 +228,36 @@ def _flatten_doc(obj, prefix=""):
     return out
 
 
+# Leading characters that make Excel / LibreOffice / Google Sheets treat a cell
+# as a formula rather than as text. A field value from an ingested artifact is
+# attacker-controlled — a log line reading `=cmd|'/c calc'!A0` becomes a live
+# formula the moment an analyst opens the export.
+_CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_formula_safe(text: str) -> str:
+    """Neutralise a spreadsheet formula prefix without altering the value.
+
+    Prefixing with a single quote is the conventional escape: spreadsheets
+    strip it on display and treat the rest as text, and any tool reading the
+    CSV as data sees one leading quote rather than a mangled value. The
+    evidence itself is never rewritten — this is a presentation-layer escape
+    applied at the CSV boundary only, which is why it lives here and not in
+    the ingest or mapping path.
+    """
+    if text.startswith(_CSV_FORMULA_PREFIXES):
+        return "'" + text
+    return text
+
+
 def _csv_cell(v) -> str:
     if v is None:
         return ""
     if isinstance(v, (list, tuple)):
-        return ", ".join(str(x) for x in v)
+        return _csv_formula_safe(", ".join(str(x) for x in v))
     if isinstance(v, dict):
         return json.dumps(v, ensure_ascii=False)
-    return str(v)
+    return _csv_formula_safe(str(v))
 
 
 def _scroll_query(idx: str, query: dict):
@@ -335,7 +357,11 @@ def export_csv(
             flat = _flatten_doc(src)
             row = [_csv_cell(flat.get(c)) for c in cols]
             extra = {k: v for k, v in flat.items() if k not in colset}
-            row.append(json.dumps(extra, ensure_ascii=False) if extra else "")
+            # The _extra blob is JSON, so it starts with '{' — but escape it on
+            # the same path as every other cell rather than assuming that.
+            row.append(
+                _csv_formula_safe(json.dumps(extra, ensure_ascii=False)) if extra else ""
+            )
             yield _row(row)
 
     name = f"case-{case_id[:8]}-{artifact_type or 'all'}.csv"

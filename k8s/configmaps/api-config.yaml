@@ -4,9 +4,16 @@ metadata:
   name: api-config
   namespace: __FO_NAMESPACE__
 data:
-  ELASTICSEARCH_URL: "http://elasticsearch-service:9200"
-  REDIS_URL: "redis://redis-service:6379/0"
+  # Transport for the in-cluster datastores. The shipped Elasticsearch,
+  # Redis and MinIO manifests serve plaintext on the pod network, so the
+  # scheme is rendered from config.json (es_scheme / redis_scheme) rather
+  # than hardcoded: point these at https:// / rediss:// and set
+  # MINIO_SECURE=true once the datastores carry certificates.
+  # See docs/security-transport.md.
+  ELASTICSEARCH_URL: "__FO_ES_SCHEME__://elasticsearch-service:9200"
+  REDIS_URL: "__FO_REDIS_SCHEME__://redis-service:6379/0"
   MINIO_ENDPOINT: "minio-service:9000"
+  MINIO_SECURE: "__FO_MINIO_SECURE__"
   MINIO_BUCKET: "forensics-cases"
   PLUGINS_DIR: "/app/babel"
   DEFAULT_PAGE_SIZE: "100"

@@ -117,12 +117,20 @@ spec:
             # emptyDir; the module sandbox (SANDBOX_* env) bounds resource use.
             readOnlyRootFilesystem: false
           env:
+            # Datastore transport: schemes are rendered from config.json
+            # (transport.*) so the whole stack can be flipped to TLS in one
+            # place. The shipped datastore manifests serve plaintext, so the
+            # defaults are cleartext. See docs/security-transport.md.
+            # REDIS_URL carries no password here on purpose — the worker folds
+            # REDIS_PASSWORD in via citadel_contracts.redis_url_with_auth().
             - name: REDIS_URL
-              value: "redis://redis-service:6379/0"
+              value: "__FO_REDIS_SCHEME__://redis-service:6379/0"
             - name: ELASTICSEARCH_URL
-              value: "http://elasticsearch-service:9200"
+              value: "__FO_ES_SCHEME__://elasticsearch-service:9200"
             - name: MINIO_ENDPOINT
               value: "minio-service:9000"
+            - name: MINIO_SECURE
+              value: "__FO_MINIO_SECURE__"
             - name: MINIO_BUCKET
               value: "forensics-cases"
             - name: BULK_SIZE
@@ -166,7 +174,7 @@ spec:
               value: "/app/anvil"
             # Post-ingestion chain → API (CTI IOC match + AI risk).
             - name: INTERNAL_API_URL
-              value: "http://api-service:8000"
+              value: "__FO_API_SCHEME__://api-service:8000"
             - name: INTERNAL_SERVICE_TOKEN
               valueFrom:
                 secretKeyRef:

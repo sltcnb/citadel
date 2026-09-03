@@ -33,7 +33,11 @@ def test_redis_password_is_generated(foctl):
 def test_redis_password_substituted(foctl):
     foctl.NS = "citadel"
     subs = foctl.build_substitutions(
-        {"secrets": {"redis_password": "s3cret"},
+        {"secrets": {"redis_password": "s3cret",
+                     # required by build_substitutions — see
+                     # test_foctl_minio_creds.py
+                     "minio_access_key": "citadel-test",
+                     "minio_secret_key": "test-minio-secret"},
          "access": {"hostname": "h"}, "images": {"registry": "", "tag": "t"}},
         "IfNotPresent",
     )

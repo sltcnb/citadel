@@ -56,8 +56,11 @@ except Exception:  # noqa: BLE001 - metrics must never block a module run
 logger = logging.getLogger(__name__)
 
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "minio-service:9000")
-MINIO_ACCESS = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
-MINIO_SECRET = os.getenv("MINIO_SECRET_KEY", "minioadmin")
+MINIO_ACCESS = os.getenv("MINIO_ACCESS_KEY", "")
+MINIO_SECRET = os.getenv("MINIO_SECRET_KEY", "")
+# TLS for the object store. Secure by default; plaintext requires an explicit
+# MINIO_SECURE=false (set by the shipped in-cluster manifests / compose files).
+MINIO_SECURE = os.getenv("MINIO_SECURE", "true").lower() not in ("false", "0", "no")
 MINIO_BUCKET = os.getenv("MINIO_BUCKET", "forensics-cases")
 ELASTICSEARCH_URL = os.getenv("ELASTICSEARCH_URL", "http://elasticsearch-service:9200")
 # ES security is enabled — install scoped basic-auth for every urllib ES call.
@@ -172,6 +175,7 @@ def _run_custom_module(
             "minio_endpoint": MINIO_ENDPOINT,
             "minio_access": MINIO_ACCESS,
             "minio_secret": MINIO_SECRET,
+            "minio_secure": MINIO_SECURE,
             "minio_bucket": MINIO_BUCKET,
             "redis_url": REDIS_URL,
             # Propagate limit overrides so sandbox can log them
@@ -302,7 +306,12 @@ def get_redis() -> redis.Redis:
 def get_minio():
     from minio import Minio
 
-    return Minio(MINIO_ENDPOINT, access_key=MINIO_ACCESS, secret_key=MINIO_SECRET, secure=False)
+    return Minio(
+        MINIO_ENDPOINT,
+        access_key=MINIO_ACCESS,
+        secret_key=MINIO_SECRET,
+        secure=MINIO_SECURE,
+    )
 
 
 # Storage retry policy + byte-complete upload live in s3_retry so they are

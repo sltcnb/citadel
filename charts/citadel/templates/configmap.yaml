@@ -10,6 +10,9 @@ data:
   # In-cluster API URL for the worker's post-ingestion finalize chain.
   INTERNAL_API_URL: {{ .Values.config.internalApiUrl | default (printf "http://%s-api:8000" (include "citadel.fullname" .)) | quote }}
   MINIO_ENDPOINT: {{ .Values.config.minioEndpoint | quote }}
+  # TLS to the object store. The app defaults to secure=true, so a MinIO that
+  # serves plain HTTP inside the cluster has to opt out here explicitly.
+  MINIO_SECURE: {{ .Values.config.minioSecure | quote }}
   MINIO_BUCKET: {{ .Values.config.minioBucket | quote }}
   PLUGINS_DIR: {{ .Values.config.pluginsDir | quote }}
   MODULES_DIR: {{ .Values.config.modulesDir | quote }}

@@ -235,11 +235,15 @@ def provision_user(email: str, name: str, provider: str) -> bool:
         return False
     # Auto-provisioning consumes a seat — enforce the plan's user limit just
     # like the admin create-user endpoint does (raises HTTP 402 when full).
-    from license.gate import check_user_limit
+    from license.gate import check_user_limit, limit_lock
 
-    check_user_limit()
     random_pw = secrets.token_urlsafe(32)
-    service.create_user(email, random_pw, role=conf["default_role"])
+    # Count-check-create under one lock, same as the admin create-user path:
+    # a burst of first-time SSO logins would otherwise all pass the seat check
+    # together and over-provision the plan.
+    with limit_lock("users"):
+        check_user_limit()
+        service.create_user(email, random_pw, role=conf["default_role"])
     try:
         _get_redis().hset(
             f"fo:user:{email}",

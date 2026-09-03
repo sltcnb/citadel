@@ -21,13 +21,14 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.processor.runtimeClassName }}
-      # Optional sandbox runtime for the processor, which executes untrusted
-      # third-party analysis modules (gVisor "runsc"/"gvisor" or Kata). Empty by
-      # default so clusters without a sandbox runtime still schedule. When set,
-      # the named RuntimeClass MUST already be installed cluster-side
+      {{- if .Values.processor.runtimeClassName }}
+      # Sandbox runtime for the processor, which executes untrusted third-party
+      # analysis modules (gVisor "runsc"/"gvisor" or Kata). The named
+      # RuntimeClass MUST already be installed cluster-side
       # (`kubectl get runtimeclass`) or pods will not schedule.
-      runtimeClassName: {{ . }}
+      runtimeClassName: {{ .Values.processor.runtimeClassName }}
+      {{- else if not .Values.processor.allowUnsandboxedModules }}
+      {{- fail "processor.runtimeClassName is empty: the processor executes untrusted third-party analysis modules, and without a sandbox RuntimeClass (gVisor \"runsc\"/\"gvisor\" or Kata) a malicious module only has to break standard container isolation to reach the node. Install a sandbox runtime and set processor.runtimeClassName, or set processor.allowUnsandboxedModules=true to accept the risk explicitly." }}
       {{- end }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}

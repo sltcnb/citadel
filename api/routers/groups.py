@@ -10,11 +10,12 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from auth import rbac
-from auth.dependencies import require_permission, resolve_effective
+from auth.dependencies import get_company_filter, require_permission, resolve_effective
 from auth.service import (
     VALID_ROLES,
     create_group,
     delete_group,
+    get_group,
     get_user,
     groups_index,
     list_groups,
@@ -27,6 +28,68 @@ router = APIRouter(prefix="/groups", tags=["groups"])
 
 # Shared dependency: anyone who can manage users can manage groups.
 _manage = require_permission(rbac.USERS_MANAGE)
+
+
+# ── Tenant scoping ────────────────────────────────────────────────────────────
+#
+# users.manage says "may administer groups", not "may administer EVERY tenant's
+# groups". On a multi-tenant deployment a company-scoped manager could
+# previously read, rewrite or delete any group in the installation just by
+# knowing its id — the group_id went straight from the URL into the store call
+# with no ownership check.
+#
+# A group's own `companies` list is its scope ([] meaning installation-wide).
+# A restricted manager may only touch a group whose scope overlaps their own,
+# and never an installation-wide group: that is strictly broader than they are.
+
+
+def _group_scope_error(detail: str) -> HTTPException:
+    return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
+
+
+def _visible_to(group: dict, company_filter: list[str] | None) -> bool:
+    """True if a manager limited to ``company_filter`` may see this group."""
+    if company_filter is None:  # admin / unrestricted
+        return True
+    group_companies = group.get("companies") or []
+    if not group_companies:
+        # Installation-wide group: broader than the caller's own scope.
+        return False
+    return bool(set(group_companies) & set(company_filter))
+
+
+def _require_group_scope(group_id: str, company_filter: list[str] | None) -> dict:
+    """Load a group and confirm the caller's tenant scope covers it."""
+    group = get_group(group_id)
+    if group is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Group '{group_id}' not found"
+        )
+    if not _visible_to(group, company_filter):
+        # 404, not 403: a scoped manager should not be able to probe for the
+        # existence of another tenant's groups.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Group '{group_id}' not found"
+        )
+    return group
+
+
+def _require_assignable_scope(
+    companies: list[str] | None, company_filter: list[str] | None
+) -> None:
+    """Reject a write that would place a group outside the caller's own scope."""
+    if company_filter is None or companies is None:
+        return
+    if not companies:
+        raise _group_scope_error(
+            "Cannot create or move a group to installation-wide scope: your "
+            "account is limited to specific companies."
+        )
+    outside = sorted(set(companies) - set(company_filter))
+    if outside:
+        raise _group_scope_error(
+            f"Cannot scope a group to companies outside your own access: {', '.join(outside)}"
+        )
 
 
 # ── Pydantic schemas ──────────────────────────────────────────────────────────
@@ -58,13 +121,15 @@ class GroupUpdateRequest(BaseModel):
 
 
 @router.get("", summary="List all groups")
-async def list_all_groups(_: dict = Depends(_manage)):
-    return {"groups": list_groups()}
+async def list_all_groups(current_user: dict = Depends(_manage)):
+    flt = get_company_filter(current_user)
+    return {"groups": [g for g in list_groups() if _visible_to(g, flt)]}
 
 
 @router.post("", status_code=status.HTTP_201_CREATED, summary="Create a group")
-async def create_new_group(body: GroupCreateRequest, _: dict = Depends(_manage)):
+async def create_new_group(body: GroupCreateRequest, current_user: dict = Depends(_manage)):
     _validate_roles(body.roles)
+    _require_assignable_scope(body.companies, get_company_filter(current_user))
     try:
         group = create_group(
             name=body.name,
@@ -81,10 +146,13 @@ async def create_new_group(body: GroupCreateRequest, _: dict = Depends(_manage))
 
 @router.put("/{group_id}", summary="Update a group")
 async def update_existing_group(
-    group_id: str, body: GroupUpdateRequest, _: dict = Depends(_manage)
+    group_id: str, body: GroupUpdateRequest, current_user: dict = Depends(_manage)
 ):
     if body.roles is not None:
         _validate_roles(body.roles)
+    flt = get_company_filter(current_user)
+    _require_group_scope(group_id, flt)
+    _require_assignable_scope(body.companies, flt)
     try:
         group = update_group(
             group_id,
@@ -101,7 +169,8 @@ async def update_existing_group(
 
 
 @router.delete("/{group_id}", summary="Delete a group")
-async def delete_existing_group(group_id: str, _: dict = Depends(_manage)):
+async def delete_existing_group(group_id: str, current_user: dict = Depends(_manage)):
+    _require_group_scope(group_id, get_company_filter(current_user))
     if not delete_group(group_id):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=f"Group '{group_id}' not found"

@@ -110,6 +110,23 @@ _request = es_request
 _BALANCED_REGEX_RE = re.compile(r"/(?:[^/\\]|\\.)+/")
 
 
+# Cost bounds for user-supplied Lucene. `query_string` with fields: ["*"]
+# accepts inline /regex/ and leading wildcards on purpose — that is the search
+# feature — so the defence is to bound what a query may COST rather than to
+# escape the syntax away (escaping every metacharacter would remove
+# field:value, AND/OR and wildcard search entirely).
+#
+# MAX_DETERMINIZED_STATES caps the automaton Lucene will build for a regex or
+# wildcard: past it Elasticsearch answers with a "too complex" error instead
+# of burning CPU. ES's own default is 10 000; we pass it explicitly so the
+# bound is visible and cannot drift with a version bump.
+_MAX_QUERY_LEN = 4096
+_MAX_DETERMINIZED_STATES = 10000
+# Server-side wall clock per shard. A query that cannot finish in this budget
+# returns partial results rather than pinning a data node.
+_SEARCH_TIMEOUT = "30s"
+
+
 def validate_lucene_query(query: str) -> str | None:
     """Cheap structural pre-check for a Lucene ``query_string`` expression.
 
@@ -124,6 +141,12 @@ def validate_lucene_query(query: str) -> str | None:
     """
     if not query or not query.strip():
         return None
+
+    if len(query) > _MAX_QUERY_LEN:
+        return (
+            f"Query is too long ({len(query)} characters; limit "
+            f"{_MAX_QUERY_LEN}). Narrow it or use filters instead."
+        )
 
     # Walk the string, tracking quote and escape state so brackets/parens inside
     # a quoted phrase or escaped with a backslash don't count toward balance.
@@ -185,6 +208,12 @@ def escape_lucene_query(query: str, preserve_regex: bool = False) -> str:
 
     With ``preserve_regex=True`` a query that contains a balanced ``/regex/``
     token is left untouched, so the UI's deliberate regex search still works.
+
+    NOTE: this is a parse-error guard, NOT a sanitiser. Lucene syntax
+    (``field:value``, ``AND``/``OR``, wildcards, ranges, inline regex) reaches
+    Elasticsearch intentionally — that is the search feature. Escaping every
+    metacharacter here would remove it. Query *cost* is bounded separately by
+    ``_MAX_QUERY_LEN`` and ``max_determinized_states`` on each query_string.
     """
     if not query:
         return query
@@ -409,6 +438,7 @@ def search_events(
                     "fields": ["*"],
                     "allow_leading_wildcard": True,
                     "analyze_wildcard": True,
+                    "max_determinized_states": _MAX_DETERMINIZED_STATES,
                 }
             }
         ]
@@ -421,6 +451,7 @@ def search_events(
                         "fields": ["*"],
                         "allow_leading_wildcard": True,
                         "analyze_wildcard": True,
+                        "max_determinized_states": _MAX_DETERMINIZED_STATES,
                     }
                 }
             )
@@ -581,6 +612,7 @@ def get_search_facets(
                     # regexp and ES 400s the whole panel.
                     "query": escape_lucene_query(query, preserve_regex=True),
                     "fields": _SEARCH_FIELDS,
+                    "max_determinized_states": _MAX_DETERMINIZED_STATES,
                 }
             }
         ]
@@ -752,6 +784,7 @@ def search_events_for_rule(case_id: str, query: str, size: int = 10) -> list[dic
                 "fields": ["*"],
                 "allow_leading_wildcard": True,
                 "analyze_wildcard": True,
+                "max_determinized_states": _MAX_DETERMINIZED_STATES,
             }
         },
         "size": size,

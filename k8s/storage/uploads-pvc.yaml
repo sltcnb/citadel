@@ -18,6 +18,14 @@ metadata:
   name: uploads-pvc
   namespace: __FO_NAMESPACE__
 spec:
+  # Evidence at rest. Encryption-at-rest is a property of the StorageClass,
+  # not of the claim, so the class is rendered from config.json
+  # (storage.uploads_storage_class) instead of silently inheriting whichever
+  # class the cluster happens to mark as default — which may well be
+  # unencrypted local-path. Set it to an encrypted class (e.g. an
+  # encrypted-ssd / LUKS-backed Longhorn class); an empty value keeps the
+  # cluster default and foctl warns about it at deploy time.
+  storageClassName: __FO_UPLOADS_STORAGE_CLASS__
   accessModes:
     - ReadWriteOnce
   resources:

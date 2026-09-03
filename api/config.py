@@ -18,10 +18,36 @@ class Settings:
         os.getenv("REDIS_URL", "redis://redis-service:6379/0")
     )
     MINIO_ENDPOINT: str = os.getenv("MINIO_ENDPOINT", "minio-service:9000")
-    MINIO_ACCESS_KEY: str = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
-    MINIO_SECRET_KEY: str = os.getenv("MINIO_SECRET_KEY", "minioadmin")
+    # No default credentials: an unset key is empty, and main.py refuses to
+    # serve with empty/known-default MinIO credentials (see _verify_secrets).
+    MINIO_ACCESS_KEY: str = os.getenv("MINIO_ACCESS_KEY", "")
+    MINIO_SECRET_KEY: str = os.getenv("MINIO_SECRET_KEY", "")
     MINIO_BUCKET: str = os.getenv("MINIO_BUCKET", "forensics-cases")
+    # Evidence storage is the chain-of-custody root: refuse to serve with
+    # unset or known-default MinIO credentials. Mirrors CITADEL_ALLOW_NO_AUTH —
+    # an explicit second opt-in for dev/trusted-LAN use only.
+    ALLOW_DEFAULT_MINIO_CREDS: bool = os.getenv(
+        "CITADEL_ALLOW_DEFAULT_MINIO_CREDS", "false"
+    ).lower() in ("true", "1", "yes")
+    # TLS for the object store. Secure by default; deployments that terminate
+    # MinIO on plain HTTP inside the cluster must opt out explicitly with
+    # MINIO_SECURE=false (the shipped manifests and compose files do).
+    MINIO_SECURE: bool = os.getenv("MINIO_SECURE", "true").lower() not in (
+        "false",
+        "0",
+        "no",
+    )
     PLUGINS_DIR: str = os.getenv("PLUGINS_DIR", "/app/babel")
+    # Directory prefixes a harvest may be pointed at. The harvest endpoint takes
+    # a worker-side path (e.g. /mnt/disk after a BitLocker unlock) and the
+    # worker reads whatever it is given, so without a containment check an
+    # analyst could harvest /etc or /root. Comma-separated; a path must resolve
+    # inside one of these to be accepted.
+    HARVEST_MOUNT_ROOTS: list[str] = [
+        p.strip().rstrip("/") or "/"
+        for p in os.getenv("HARVEST_MOUNT_ROOTS", "/mnt,/data").split(",")
+        if p.strip()
+    ]
 
     # ── Logging ────────────────────────────────────────────────────────────
     # Root log level; LOG_JSON emits one structured JSON object per line

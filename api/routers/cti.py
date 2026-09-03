@@ -52,10 +52,20 @@ _FEED_PAGE_SIZE = 10000        # records per request
 _FEED_MAX_TOTAL = 2_000_000    # hard safety ceiling per pull
 
 
-def _validate_feed_url(url: str) -> None:
-    """Block SSRF: refuse non-http(s), localhost/.local, and any hostname that
-    RESOLVES to a private/reserved/loopback/link-local address (not just literal
-    IPs). Defeats internal-service / cloud-metadata (169.254.169.254) targeting."""
+def _validate_feed_url(url: str) -> str:
+    """Block SSRF and return the IP the request must be pinned to.
+
+    Refuses non-http(s), localhost/.local, and any hostname that RESOLVES to a
+    private/reserved/loopback/link-local address (not just literal IPs), which
+    defeats internal-service / cloud-metadata (169.254.169.254) targeting.
+
+    Returns the validated address so the caller can connect straight to it.
+    Validation and connection are separate operations, and a hostname the
+    attacker controls can answer differently between the two (DNS rebinding
+    with a short TTL): the check passes on a public IP, then the connect
+    resolves again and lands on 169.254.169.254. Handing the checked address
+    back means only one resolution ever happens — see _safe_urlopen.
+    """
     import socket
 
     parsed = urlparse(url)
@@ -71,6 +81,7 @@ def _validate_feed_url(url: str) -> None:
         infos = socket.getaddrinfo(hostname, None)
     except OSError:
         raise HTTPException(status_code=400, detail=f"Feed URL host does not resolve: {hostname}")
+    pinned: str | None = None
     for info in infos:
         ip = info[4][0]
         try:
@@ -83,30 +94,90 @@ def _validate_feed_url(url: str) -> None:
                 status_code=400,
                 detail="Feed URL must not resolve to a private/reserved/internal address",
             )
+        # Every address must be public (checked above), so the first is as good
+        # as any; pin it so the connect cannot re-resolve to something else.
+        if pinned is None:
+            pinned = ip
+    if pinned is None:
+        raise HTTPException(
+            status_code=400, detail=f"Feed URL host does not resolve: {hostname}"
+        )
+    return pinned
 
 
-def _safe_urlopen(req, timeout: int, verify: bool = True):
-    """urlopen that re-validates every redirect target against _validate_feed_url.
+def _safe_urlopen(req, timeout: int):
+    """urlopen that validates every hop and connects only to checked addresses.
 
-    The initial URL is validated by callers, but urllib follows 3xx redirects by
-    default — a validated public host could 302 us to 169.254.169.254 or an
-    internal service. Re-checking each hop closes that bypass. (Residual: a
-    DNS-rebinding TOCTOU between validation and connect is not addressed here.)
+    Two SSRF bypasses are closed here:
 
-    `verify=False` disables TLS certificate verification — for an internal
-    TAXII/STIX server with a self-signed cert the operator trusts."""
-    import ssl
+    * **Redirects.** urllib follows 3xx by default, so a validated public host
+      could 302 us to 169.254.169.254 or an internal service. Each hop is
+      re-validated before it is followed.
+    * **DNS rebinding.** Validating a hostname and then connecting to it are
+      two separate resolutions, and an attacker who controls the zone can
+      answer differently for each (short TTL). The socket is therefore opened
+      against the address ``_validate_feed_url`` actually checked, while the
+      Host header and TLS SNI keep the original hostname — so certificate
+      verification still applies to the name, and no second lookup happens.
+
+    TLS is always verified; there is no opt-out (see the note on FeedCreate).
+    """
+    import http.client
+    import socket
     import urllib.request
+
+    # host -> validated address. Populated for the initial URL and for every
+    # redirect target as it is validated.
+    pins: dict[str, str] = {}
+
+    def _pin(url: str) -> None:
+        ip = _validate_feed_url(url)
+        host = (urlparse(url).hostname or "").strip().lower()
+        if host:
+            pins[host] = ip
+
+    _pin(req.full_url)
+
+    def _pinned_address(host: str) -> str | None:
+        return pins.get(host.strip().lower())
+
+    class _PinnedHTTPConnection(http.client.HTTPConnection):
+        def connect(self):
+            target = _pinned_address(self.host) or self.host
+            self.sock = socket.create_connection(
+                (target, self.port), self.timeout, self.source_address
+            )
+            if self._tunnel_host:
+                self._tunnel()
+
+    class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+        def connect(self):
+            target = _pinned_address(self.host) or self.host
+            self.sock = socket.create_connection(
+                (target, self.port), self.timeout, self.source_address
+            )
+            if self._tunnel_host:
+                self._tunnel()
+            # server_hostname stays the NAME, not the pinned address, so the
+            # certificate is validated against the host we meant to reach.
+            self.sock = self._context.wrap_socket(self.sock, server_hostname=self.host)
+
+    class _PinnedHTTPHandler(urllib.request.HTTPHandler):
+        def http_open(self, r):
+            return self.do_open(_PinnedHTTPConnection, r)
+
+    class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
+        def https_open(self, r):
+            return self.do_open(_PinnedHTTPSConnection, r)
 
     class _ValidatingRedirect(urllib.request.HTTPRedirectHandler):
         def redirect_request(self, request, fp, code, msg, headers, newurl):
-            _validate_feed_url(newurl)
+            _pin(newurl)
             return super().redirect_request(request, fp, code, msg, headers, newurl)
 
-    handlers = [_ValidatingRedirect()]
-    if not verify:
-        handlers.append(urllib.request.HTTPSHandler(context=ssl._create_unverified_context()))
-    opener = urllib.request.build_opener(*handlers)
+    opener = urllib.request.build_opener(
+        _ValidatingRedirect(), _PinnedHTTPHandler(), _PinnedHTTPSHandler()
+    )
     return opener.open(req, timeout=timeout)
 
 
@@ -133,9 +204,13 @@ class FeedCreate(BaseModel):
     poll_interval_value: int = 24
     poll_interval_unit: str = "hours"  # "minutes" | "hours" | "days"
     auto_pull: bool = True
-    # Verify the feed server's TLS certificate. Default True; set False only for
-    # an internal MISP/TAXII with a self-signed cert you trust.
-    verify_ssl: bool = True
+    # NOTE: there is deliberately no verify_ssl option. TLS verification for
+    # threat-intel feeds is always on — a feed is a channel through which
+    # someone else's data becomes detection logic in this platform, so an
+    # unauthenticated peer is allowed to influence what the analysts see. For
+    # an internal MISP/TAXII with a private certificate, add its CA to the
+    # container trust store (see SECURITY.md) instead of turning verification
+    # off. Any verify_ssl value on a stored feed record is ignored.
 
 
 class FeedUpdate(BaseModel):
@@ -147,7 +222,6 @@ class FeedUpdate(BaseModel):
     poll_interval_unit: str | None = None
     auto_pull: bool | None = None
     enabled: bool | None = None
-    verify_ssl: bool | None = None
 
 
 class BundleImport(BaseModel):
@@ -621,7 +695,7 @@ def _taxii_fetch(feed: dict) -> dict:
 
     req = urllib.request.Request(objects_url, headers=headers, method="GET")
     try:
-        with _safe_urlopen(req, 60, verify=feed.get("verify_ssl", True)) as resp:
+        with _safe_urlopen(req, 60) as resp:
             data = json.loads(resp.read())
             # TAXII 2.1 envelope has "objects" at top level
             if "objects" in data:
@@ -651,7 +725,7 @@ def _stix_url_fetch(feed: dict) -> dict:
 
     req = urllib.request.Request(url, headers=headers, method="GET")
     try:
-        with _safe_urlopen(req, 60, verify=feed.get("verify_ssl", True)) as resp:
+        with _safe_urlopen(req, 60) as resp:
             return json.loads(resp.read())
     except urllib.error.HTTPError as exc:
         raise HTTPException(
@@ -724,7 +798,6 @@ def _misp_fetch(feed: dict) -> list:
                 f"{base_url}/attributes/restSearch",
                 json=payload, headers=headers, timeout=120,
                 allow_redirects=False,  # SSRF: don't follow a redirect off the validated host
-                verify=feed.get("verify_ssl", True),
             )
             resp.raise_for_status()
             attrs = resp.json().get("response", {}).get("Attribute", [])
@@ -835,7 +908,6 @@ def _yeti_fetch(feed: dict) -> list:
                 json={"query": {"name": ""}, "type": "all", "count": per_page, "page": page},
                 headers=headers, timeout=120,
                 allow_redirects=False,  # SSRF: don't follow a redirect off the validated host
-                verify=feed.get("verify_ssl", True),
             )
             resp.raise_for_status()
             data = resp.json()

@@ -26,6 +26,12 @@ def foctl():
 
 
 def _cfg(**secrets):
+    # minio_access_key/minio_secret_key are REQUIRED by build_substitutions —
+    # it refuses to render a manifest with unset or minioadmin credentials
+    # (see test_foctl_minio_creds.py). Supply throwaway ones so these tests
+    # exercise only the ES wiring.
+    secrets.setdefault("minio_access_key", "citadel-test")
+    secrets.setdefault("minio_secret_key", "test-minio-secret")
     return {"secrets": secrets,
             "access": {"hostname": "h"}, "images": {"registry": "", "tag": "t"}}
 
@@ -123,11 +129,13 @@ def test_set_kibana_system_password_skips_without_secret(foctl, monkeypatch):
 def test_fill_env_secrets_generates_and_is_stable(foctl, tmp_path):
     env = tmp_path / ".env"
     env.write_text("JWT_SECRET=\nELASTIC_PASSWORD=\nKIBANA_PASSWORD=\n"
-                   "REDIS_PASSWORD=\nPROXY_PORT=80\n")
+                   "REDIS_PASSWORD=\nMINIO_ACCESS_KEY=\nMINIO_SECRET_KEY=\n"
+                   "PROXY_PORT=80\n")
 
     generated = foctl._fill_env_secrets(env)
     assert sorted(generated) == [
-        "ELASTIC_PASSWORD", "JWT_SECRET", "KIBANA_PASSWORD", "REDIS_PASSWORD"]
+        "ELASTIC_PASSWORD", "JWT_SECRET", "KIBANA_PASSWORD",
+        "MINIO_ACCESS_KEY", "MINIO_SECRET_KEY", "REDIS_PASSWORD"]
 
     values = dict(
         line.split("=", 1) for line in env.read_text().splitlines() if "=" in line)

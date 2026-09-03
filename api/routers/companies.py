@@ -7,7 +7,7 @@ import json
 import redis_keys as rk
 from auth.dependencies import require_admin, require_analyst_plus
 from fastapi import APIRouter, Depends, HTTPException
-from license.gate import check_company_limit, require_feature
+from license.gate import check_company_limit, limit_lock, require_feature
 from pydantic import BaseModel, Field
 
 from config import get_redis
@@ -48,14 +48,19 @@ def list_companies():
 )
 def add_company(body: CompanyIn):
     """Add a company to the registry (admin only, plan company cap enforced)."""
-    check_company_limit()
-    r = get_redis()
-    companies = _load(r)
-    if body.name in companies:
-        raise HTTPException(status_code=409, detail="Company already exists")
-    companies.append(body.name)
-    _save(r, companies)
-    return {"companies": _load(r)}
+    # Count-check-create under one lock (see limit_lock) — and the duplicate
+    # check plus append is itself a read-modify-write that two requests could
+    # interleave into a lost update.
+    with limit_lock("companies"):
+        check_company_limit()
+        r = get_redis()
+        companies = _load(r)
+        if body.name in companies:
+            raise HTTPException(status_code=409, detail="Company already exists")
+        companies.append(body.name)
+        _save(r, companies)
+        result = _load(r)
+    return {"companies": result}
 
 
 @router.delete(

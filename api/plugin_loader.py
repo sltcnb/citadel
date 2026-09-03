@@ -49,7 +49,13 @@ class PluginLoader:
         if parent_str not in sys.path:
             sys.path.insert(0, parent_str)
 
-        from citadel_contracts import BasePlugin  # noqa: F401
+        from citadel_contracts import BasePlugin, PluginTrustStore  # noqa: F401
+
+        # Importing a plugin executes it. Gate every candidate on file mode and
+        # (when a manifest is configured) a sha256 allowlist, so a file that
+        # merely appeared in the plugins volume cannot run just because its
+        # name matches the glob. See citadel_contracts.plugin_trust.
+        trust = PluginTrustStore()
 
         # Built-in plugins (*_plugin.py under plugins/). Skip scaffolding
         # templates — cookiecutter dirs hold un-rendered `{{ }}` source that is
@@ -59,12 +65,16 @@ class PluginLoader:
                 continue
             if _is_template_path(plugin_file):
                 continue
+            if not trust.allows(plugin_file, self.plugins_dir):
+                continue
             self._load_module(plugin_file)
 
         # Custom ingesters (*_ingester.py under ingester/)
         if self.ingester_dir.exists():
             for plugin_file in sorted(self.ingester_dir.glob("*_ingester.py")):
                 if plugin_file.name.startswith("_"):
+                    continue
+                if not trust.allows(plugin_file, self.ingester_dir):
                     continue
                 self._load_module(plugin_file)
         else:

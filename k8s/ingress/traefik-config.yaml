@@ -5,12 +5,20 @@ metadata:
   namespace: kube-system
 spec:
   valuesContent: |-
+    # readTimeout bounds how long a single request may take to be read. It was
+    # 0 (unlimited) so that large evidence uploads could never be cut off, but
+    # unlimited also means a client dribbling one byte per minute pins a
+    # connection forever (Slowloris) until Traefik's pool is exhausted.
+    # 600s is far longer than any legitimate chunk upload and still finite;
+    # idleTimeout reaps connections that go quiet between requests.
     ports:
       web:
         transport:
           respondingTimeouts:
-            readTimeout: 0
+            readTimeout: 600s
+            idleTimeout: 180s
       websecure:
         transport:
           respondingTimeouts:
-            readTimeout: 0
+            readTimeout: 600s
+            idleTimeout: 180s

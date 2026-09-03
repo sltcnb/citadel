@@ -67,12 +67,17 @@ processor:
     # digest: ""  # TODO digest-pin: set to sha256:... of the citadel-processor image
                  # built by the CI Build workflow (renders repo:tag@digest)
     pullPolicy: ""
-  # Optional sandbox RuntimeClass. The processor runs untrusted third-party
-  # analysis modules, so a hardened runtime (gVisor "runsc"/"gvisor" or Kata)
-  # is recommended. Leave empty (default) so clusters without a sandbox runtime
-  # still schedule. When set, the named RuntimeClass MUST already be installed
-  # cluster-side (`kubectl get runtimeclass`) or pods will not schedule.
+  # Sandbox RuntimeClass. The processor runs untrusted third-party analysis
+  # modules, so a hardened runtime (gVisor "runsc"/"gvisor" or Kata) is the
+  # only thing standing between a malicious module and the node. The named
+  # RuntimeClass MUST already be installed cluster-side
+  # (`kubectl get runtimeclass`) or pods will not schedule.
+  # Set this to the sandbox class your cluster has installed, e.g. "runsc".
   runtimeClassName: ""
+  # Rendering FAILS while both of these are unset, so a cluster with no sandbox
+  # runtime has to say so out loud rather than quietly running untrusted module
+  # code under standard container isolation. Set to true to accept that.
+  allowUnsandboxedModules: false
   resources:
     requests:
       cpu: "500m"
@@ -103,8 +108,10 @@ frontend:
     pullPolicy: ""
   service:
     type: ClusterIP
+    # Service port stays 80 so the Ingress backend is unchanged; the container
+    # listens on 8080 because nginx-unprivileged cannot bind a privileged port.
     port: 80
-    targetPort: 80
+    targetPort: 8080
   resources:
     requests:
       cpu: "50m"
@@ -115,7 +122,7 @@ frontend:
   livenessProbe:
     httpGet:
       path: /
-      port: 80
+      port: 8080
     initialDelaySeconds: 5
     periodSeconds: 20
 
@@ -205,9 +212,15 @@ persistence:
 # substrate subchart is disabled (the default) point these at your external
 # services. When enabled, set them to the in-cluster subchart service names.
 config:
+  # Datastore transport. These default to the cleartext schemes because the
+  # bundled Elasticsearch / Redis / MinIO serve plaintext on the pod network.
+  # Point them at https:// / rediss:// and set minioSecure: true once those
+  # services carry certificates — see docs/security-transport.md. Credentials
+  # and evidence bytes cross the pod network unencrypted until you do.
   elasticsearchUrl: "http://elasticsearch-service:9200"
   redisUrl: "redis://redis-service:6379/0"
   minioEndpoint: "minio-service:9000"
+  minioSecure: false
   minioBucket: "forensics-cases"
   pluginsDir: "/app/babel"
   modulesDir: "/app/anvil"

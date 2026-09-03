@@ -117,6 +117,14 @@ jobs:
         # Scoped to tests that run without native deps or a live Redis.
         # The seal chain and the audit lock both go through Redis EVAL, which
         # fakeredis only implements with the [lua] extra installed above.
+        #
+        # api/services/test_evidence_seal.py used to be excluded as "not
+        # reliable against fakeredis". It was never flaky: the seal lock is a
+        # Lua spin-lock, and plain `fakeredis` answers EVAL with "unknown
+        # command 'eval'" because Lua support is an extra. Installing
+        # fakeredis[lua] (which brings lupa) makes both seal suites pass, so the
+        # chain-of-custody seal — the whole point of the feature — is covered
+        # again rather than skipped.
         run: |
           pytest -q \
             api/auth api/services api/routers \
@@ -182,7 +190,7 @@ jobs:
         # .trivyignore. Add new findings to .trivyignore with a justification
         # and a review-by date rather than raising the severity threshold or
         # re-adding continue-on-error.
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
           scan-ref: .
@@ -193,7 +201,7 @@ jobs:
           trivyignores: .trivyignore
       - name: Trivy filesystem scan (LOW/MEDIUM, informational)
         continue-on-error: true
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
           scan-ref: .

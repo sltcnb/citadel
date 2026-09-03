@@ -69,12 +69,37 @@ function EditorToolbar({ editorRef }) {
       <ToolbarBtn title="Horizontal rule" onClick={() => cmd('insertHorizontalRule')}><Minus size={13} /></ToolbarBtn>
       <ToolbarBtn title="Insert link" onClick={() => {
         const url = prompt('URL:')
-        if (url) cmd('createLink', url)
+        if (!url) return
+        // createLink accepts whatever it is given, so a `javascript:` URL
+        // would sit in the note as a live handler — and survive into the
+        // export window, which runs in its own document. Allow only schemes
+        // that navigate.
+        if (!isSafeUrl(url)) {
+          alert('Only http://, https://, and mailto: links can be inserted.')
+          return
+        }
+        cmd('createLink', url)
       }}><Link size={13} /></ToolbarBtn>
       <ToolbarSep />
       <ToolbarBtn title="Remove formatting" onClick={() => cmd('removeFormat')}><RemoveFormatting size={13} /></ToolbarBtn>
     </div>
   )
+}
+
+// Schemes that are safe to put in an href. Everything else — javascript:,
+// data:, vbscript:, and any future scheme — is refused rather than blocklisted.
+const SAFE_URL_SCHEMES = ['http:', 'https:', 'mailto:']
+
+function isSafeUrl(raw) {
+  const trimmed = String(raw).trim()
+  // A relative URL has no scheme and cannot execute; resolve against the page
+  // origin so the parse below sees a concrete scheme either way.
+  try {
+    const parsed = new URL(trimmed, window.location.origin)
+    return SAFE_URL_SCHEMES.includes(parsed.protocol)
+  } catch {
+    return false
+  }
 }
 
 // ── Tab: Notes ────────────────────────────────────────────────────────────────
@@ -189,10 +214,19 @@ function NotesTab({ caseId }) {
   }, [])
 
   const handleExportPDF = useCallback(() => {
-    const content = editorRef.current?.innerHTML || ''
+    // Sanitize on the way OUT as well as on the way in (reload() sanitizes
+    // what the API returns). Anything added during this session — a pasted
+    // fragment, a link inserted through the toolbar — has never been through
+    // DOMPurify, and document.write into a fresh window executes it.
+    const content = DOMPurify.sanitize(editorRef.current?.innerHTML || '')
     const win = window.open('', '_blank')
     if (!win) return
-    const esc = s => String(s).replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]))
+    // caseId lands in <title> element content, so <>& is what matters there;
+    // quotes are escaped as well so this helper stays correct if it is ever
+    // reused in an attribute position.
+    const esc = s => String(s).replace(/[<>&"']/g, c => ({
+      '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;',
+    }[c]))
     win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8">
 <title>Notes — Case ${esc(caseId)}</title>
 <style>body{font-family:monospace;font-size:13px;padding:32px;line-height:1.7;color:#111;white-space:pre-wrap;word-break:break-word;}img{max-width:100%;display:block;margin:8px 0;}@media print{body{padding:0;}}</style>

