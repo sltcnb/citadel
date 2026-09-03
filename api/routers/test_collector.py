@@ -277,9 +277,10 @@ def test_package_token_lands_only_in_config_json(fake_collect):
 
 # ── fo-uploader config injection ──────────────────────────────────────────────
 
-# Source shaped the way _inject_uploader_config expects (aligned assignments).
+# Column-aligned assignments — the shape the injector originally hardcoded.
 ALIGNED_UPLOADER_SRC = (
     "PRESIGNED_URLS = []\n"
+    "MULTIPART_UPLOADS = []\n"
     'ENDPOINT   = ""\n'
     'ACCESS_KEY = ""\n'
     'SECRET_KEY = ""\n'
@@ -287,6 +288,48 @@ ALIGNED_UPLOADER_SRC = (
     'REGION     = ""\n'
     'USE_SSL    = "true"\n'
 )
+
+# Single-space assignments with trailing comments — the shape the real
+# fo_uploader.py was reformatted to, which the old injector silently missed.
+COMMENTED_UPLOADER_SRC = (
+    "PRESIGNED_URLS = []  # pre-signed PUT URLs\n"
+    "MULTIPART_UPLOADS = []  # multipart sessions\n"
+    'ENDPOINT = ""  # S3 endpoint hostname (credentials mode)\n'
+    'ACCESS_KEY = ""  # S3 access key        (credentials mode)\n'
+    'SECRET_KEY = ""  # S3 secret key        (credentials mode)\n'
+    'BUCKET = ""  # S3 bucket name       (credentials mode)\n'
+    'REGION = ""  # S3 region            (credentials mode)\n'
+    'USE_SSL = "true"  # "true" / "false"     (credentials mode)\n'
+)
+
+
+_CONFIG_NAMES = (
+    "PRESIGNED_URLS",
+    "MULTIPART_UPLOADS",
+    "ENDPOINT",
+    "ACCESS_KEY",
+    "SECRET_KEY",
+    "BUCKET",
+    "REGION",
+    "USE_SSL",
+)
+
+
+def _exec_config_block(source: str) -> dict:
+    """Execute only the injected assignments and return the resulting values.
+
+    Evaluating the real values is the point: a substring assertion passes on a
+    template whose placeholder was never rewritten. The rest of the script
+    (argparse, boto3) is irrelevant here, so only the assignment lines are run.
+    """
+    lines = [
+        ln
+        for ln in source.splitlines()
+        if any(ln.startswith(f"{name} =") for name in _CONFIG_NAMES)
+    ]
+    ns: dict = {}
+    exec("\n".join(lines), ns)
+    return {name: ns[name] for name in _CONFIG_NAMES if name in ns}
 
 
 def test_inject_uploader_config_injects_all_fields_json_escaped():
@@ -311,10 +354,14 @@ def test_inject_uploader_config_injects_all_fields_json_escaped():
 
 def test_inject_presigned_config_replaces_url_list():
     urls = ["https://s3/put1?sig=a&b=c", "https://s3/put2"]
-    out = co._inject_presigned_config("X = 1\nPRESIGNED_URLS = []\n", urls)
+    # Both placeholders must be present: injection is strict now, because a
+    # template missing one used to ship an unconfigured package silently.
+    src = "X = 1\nPRESIGNED_URLS = []\nMULTIPART_UPLOADS = []\n"
+    out = co._inject_presigned_config(src, urls)
     ns: dict = {}
     exec(out, ns)
     assert ns["PRESIGNED_URLS"] == urls
+    assert ns["MULTIPART_UPLOADS"] == []
 
 
 @pytest.mark.skipif(not TALON_UPLOADER.exists(), reason="tools/talon not present")
@@ -325,15 +372,15 @@ def test_presigned_placeholder_matches_real_talon_uploader():
 
 
 @pytest.mark.skipif(not TALON_UPLOADER.exists(), reason="tools/talon not present")
-@pytest.mark.xfail(
-    reason="BUG: _inject_uploader_config expects aligned placeholders "
-    "('ENDPOINT   = \"\"') but tools/talon/fo_uploader.py (mounted at "
-    "/app/collector in docker-compose) uses single-space assignments — "
-    "ENDPOINT/BUCKET/REGION/USE_SSL are silently NOT injected in credentials "
-    "mode.",
-    strict=False,
-)
 def test_creds_placeholders_match_real_talon_uploader():
+    """The packaged script must actually carry the credentials.
+
+    Regression guard: the injector used to search for column-aligned
+    placeholders while fo_uploader.py used single-space assignments, so every
+    field was silently skipped and the downloaded script exited with "Script is
+    not configured". Executing the injected source is the only assertion that
+    catches that — a substring check on the template does not.
+    """
     src = TALON_UPLOADER.read_text(encoding="utf-8")
     cfg = {
         "endpoint": "s3.example.com",
@@ -344,8 +391,49 @@ def test_creds_placeholders_match_real_talon_uploader():
         "use_ssl": True,
     }
     out = co._inject_uploader_config(src, cfg)
-    assert 'ENDPOINT = "s3.example.com"' in out or 'ENDPOINT   = "s3.example.com"' in out
-    assert '"b"' in out.split("BUCKET", 1)[1].splitlines()[0]
+    values = _exec_config_block(out)
+    assert values["ENDPOINT"] == "s3.example.com"
+    assert values["ACCESS_KEY"] == "AK"
+    assert values["SECRET_KEY"] == "SK"
+    assert values["BUCKET"] == "b"
+    assert values["REGION"] == "r"
+    assert values["USE_SSL"] == "true"
+
+
+@pytest.mark.parametrize("src", [ALIGNED_UPLOADER_SRC, COMMENTED_UPLOADER_SRC])
+def test_injection_is_independent_of_template_formatting(src):
+    """Aligned or single-space-with-comment: both must inject identically."""
+    cfg = {
+        "endpoint": "https://s3.example.com:9000",
+        "access_key": "AKIAXXXX",
+        "secret_key": 'se"cret\\key',
+        "bucket": "triage",
+        "region": "eu-west-1",
+        "use_ssl": False,
+    }
+    ns: dict = {}
+    exec(co._inject_uploader_config(src, cfg), ns)
+    assert ns["ENDPOINT"] == cfg["endpoint"]
+    assert ns["SECRET_KEY"] == cfg["secret_key"]
+    assert ns["BUCKET"] == cfg["bucket"]
+    assert ns["REGION"] == cfg["region"]
+    assert ns["USE_SSL"] == "false"
+
+    urls = ["https://s3/put1?sig=a&b=c"]
+    ns2: dict = {}
+    exec(co._inject_presigned_config(src, urls, [{"key": "k"}]), ns2)
+    assert ns2["PRESIGNED_URLS"] == urls
+    assert ns2["MULTIPART_UPLOADS"] == [{"key": "k"}]
+
+
+def test_injection_refuses_a_template_missing_a_placeholder():
+    """Shipping an unconfigured package is worse than failing the download."""
+    with pytest.raises(co.UploaderInjectionError, match="BUCKET"):
+        co._inject_uploader_config(
+            'ENDPOINT = ""\nACCESS_KEY = ""\nSECRET_KEY = ""\n', {"bucket": "b"}
+        )
+    with pytest.raises(co.UploaderInjectionError, match="MULTIPART_UPLOADS"):
+        co._inject_presigned_config("PRESIGNED_URLS = []\n", ["https://s3/put1"])
 
 
 # ── /collector/uploader (zip with injected creds) ─────────────────────────────
@@ -497,3 +585,126 @@ def test_network_interfaces_docker_only_sets_hint(monkeypatch):
     out = co.get_network_interfaces()
     assert out["only_docker_ips"] is True
     assert "FO_PUBLIC_URL" in out["public_url_hint"]
+
+
+def _ca_pem() -> bytes:
+    """A throwaway self-signed cert — load_verify_locations only needs a
+    parseable PEM, and generating one keeps this test hermetic."""
+    from datetime import UTC, datetime, timedelta
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "test-ca")])
+    now = datetime.now(UTC)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(days=1))
+        .not_valid_after(now + timedelta(days=1))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .sign(key, hashes.SHA256())
+    )
+    return cert.public_bytes(serialization.Encoding.PEM)
+
+
+# ── Kubernetes API transport must be verified ─────────────────────────────────
+#
+# _k8s_request sends the pod's service account token as a bearer credential.
+# It used to fall back to an unverified TLS context when the cluster CA bundle
+# was missing, which handed that token to whatever answered on
+# kubernetes.default.svc. A missing CA is now a hard failure.
+
+
+def test_k8s_request_refuses_to_run_without_the_cluster_ca(monkeypatch, tmp_path):
+    token = tmp_path / "token"
+    token.write_text("sa-token-value")
+    monkeypatch.setattr(co, "_K8S_TOKEN_PATH", token)
+    monkeypatch.setattr(co, "_K8S_CA_PATH", tmp_path / "absent-ca.crt")
+
+    def _must_not_connect(*a, **kw):  # pragma: no cover - asserts it isn't hit
+        raise AssertionError("connected without verifying the API server")
+
+    monkeypatch.setattr(co.urllib.request, "urlopen", _must_not_connect)
+
+    status, body = co._k8s_request("GET", "/api/v1/namespaces")
+    assert status == 0
+    assert "CA certificate unavailable" in body["error"]
+
+
+def test_k8s_request_verifies_when_the_ca_is_present(monkeypatch, tmp_path):
+    """With the CA in place the context must verify — not merely load the file."""
+    token = tmp_path / "token"
+    token.write_text("sa-token-value")
+    ca = tmp_path / "ca.crt"
+    # Any real PEM works; load_verify_locations only needs a parseable cert.
+    ca.write_bytes(_ca_pem())
+    monkeypatch.setattr(co, "_K8S_TOKEN_PATH", token)
+    monkeypatch.setattr(co, "_K8S_CA_PATH", ca)
+
+    seen = {}
+
+    class _Resp:
+        status = 200
+
+        def read(self):
+            return b'{"ok": true}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def _fake_urlopen(req, context=None, timeout=None):
+        seen["ctx"] = context
+        seen["auth"] = req.get_header("Authorization")
+        return _Resp()
+
+    monkeypatch.setattr(co.urllib.request, "urlopen", _fake_urlopen)
+
+    status, body = co._k8s_request("GET", "/api/v1/namespaces")
+    assert (status, body) == (200, {"ok": True})
+    assert seen["auth"] == "Bearer sa-token-value"
+    ctx = seen["ctx"]
+    assert ctx.verify_mode == co.ssl.CERT_REQUIRED
+    assert ctx.check_hostname is True
+
+
+# ── BitLocker recovery key must not reach object storage ──────────────────────
+#
+# The S3 bootstrap flow packs config.json into the collector zip and uploads it
+# to the triage bucket behind a presigned GET URL valid for up to 168 hours.
+# A recovery key embedded there is a disk-decryption secret sitting in object
+# storage, and the post-collection cleanup is best-effort (a failed DELETE is
+# logged, not fatal). The key belongs in the bootstrap script instead, which is
+# returned over the authenticated API and never uploaded.
+
+
+def test_bitlocker_key_is_not_written_into_the_uploaded_config():
+    """config.json is the file that goes to S3 — the key must not be in it."""
+    src = Path(co.__file__).read_text()
+    assert 'config["bitlocker_key"]' not in src, (
+        "bitlocker_key is being written into the S3-uploaded config.json again"
+    )
+
+
+def test_bootstrap_scripts_pass_the_key_at_run_time():
+    """Both bootstrap flavours must forward it as a --bitlocker-key argument,
+    so the capability is preserved without the key leaving the analyst."""
+    src = Path(co.__file__).read_text()
+    assert "TPLBITLOCKER_KEY" in src
+    assert src.count("TPLBITLOCKER_KEY") >= 3          # ps1 + sh + the fill
+    assert "--bitlocker-key" in src
+
+
+def test_the_key_is_script_sanitised_before_interpolation():
+    """It lands in a double-quoted shell/PowerShell assignment."""
+    src = Path(co.__file__).read_text()
+    assert '.replace("TPLBITLOCKER_KEY", _script_safe(' in src

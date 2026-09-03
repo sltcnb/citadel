@@ -11,6 +11,7 @@ import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -91,6 +92,58 @@ def _get(source: dict[str, Any], dotted: str) -> Any:
         else:
             return None
     return cur
+
+
+def _decompose_url(doc: dict[str, Any]) -> None:
+    """
+    Fill url.scheme / url.domain / url.port / url.path / url.query / url.extension
+    from url.full when the field-map did not already provide them.
+
+    A field-map can only copy values, so an artifact that records a whole URL
+    (browser history, a download's source, a web access log) yields nothing
+    queryable by host. Splitting it here means one indicator — the C2 domain —
+    matches across every artifact that saw the URL, without each parser having
+    to reimplement the split.
+    """
+    url = doc.get("url")
+    if not isinstance(url, dict):
+        return
+    full = url.get("full")
+    if not isinstance(full, str) or not full:
+        return
+    try:
+        parts = urlsplit(full)
+    except ValueError:
+        return
+    if not parts.scheme and not parts.netloc:
+        return  # not a URL (e.g. a bare file path) — leave it alone
+
+    if parts.scheme and not url.get("scheme"):
+        url["scheme"] = parts.scheme
+    if not url.get("domain"):
+        try:
+            host = parts.hostname
+        except ValueError:
+            host = None
+        if host:
+            url["domain"] = host
+    if not url.get("port"):
+        try:
+            port = parts.port
+        except ValueError:
+            port = None
+        if port:
+            url["port"] = port
+    if parts.path and not url.get("path"):
+        url["path"] = parts.path
+    if parts.query and not url.get("query"):
+        url["query"] = parts.query
+    if parts.fragment and not url.get("fragment"):
+        url["fragment"] = parts.fragment
+    if parts.path and not url.get("extension"):
+        suffix = Path(parts.path).suffix
+        if suffix:
+            url["extension"] = suffix.lstrip(".")
 
 
 def _set(target: dict[str, Any], dotted: str, value: Any) -> None:
@@ -189,6 +242,10 @@ class Normalizer:
         # drop an empty event block defensively (shouldn't happen)
         if not doc["event"]:
             doc.pop("event")
+
+        # Split url.full into its parts so one indicator matches across every
+        # artifact that recorded the URL.
+        _decompose_url(doc)
 
         # Network enrichment (GeoIP/ASN/rDNS). Graceful no-op when the geoip2
         # library or .mmdb databases are absent; never raises, so it can't
