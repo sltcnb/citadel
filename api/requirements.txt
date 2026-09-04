@@ -4,7 +4,7 @@
 # constraint is intentional (see comments).
 fastapi==0.141.1
 uvicorn[standard]==0.52.4
-pydantic==2.13.4
+pydantic==2.13.5
 pydantic-settings==2.15.0
 python-multipart==0.0.32
 redis==8.1.0
