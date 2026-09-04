@@ -18,7 +18,7 @@ python-magic==0.4.27
 pyyaml==6.0.3
 httpx==0.28.1
 yara-python==4.5.4
-anthropic==0.119.0
+anthropic==1.2.0
 openai==2.48.0
 # License validation
 PyJWT==2.13.0
