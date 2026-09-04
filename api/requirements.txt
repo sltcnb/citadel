@@ -19,7 +19,7 @@ pyyaml==6.0.3
 httpx==0.28.1
 yara-python==4.5.4
 anthropic==0.119.0
-openai==2.48.0
+openai==3.6.0
 # License validation
 PyJWT==2.13.0
 requests==2.34.2
