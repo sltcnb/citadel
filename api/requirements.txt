@@ -3,14 +3,14 @@
 # to a concrete version for reproducible builds; ranges are used only where a
 # constraint is intentional (see comments).
 fastapi==0.141.1
-uvicorn[standard]==0.52.4
-pydantic==2.13.4
+uvicorn[standard]==0.53.0
+pydantic==2.13.5
 pydantic-settings==2.15.0
 python-multipart==0.0.32
 redis==8.1.0
 # Relational DB layer (SQLAlchemy 2.x) — backs the authoritative, out-of-band
 # evidence seal chain-of-custody anchor (services/evidence_seal.py).
-SQLAlchemy==2.0.52
+SQLAlchemy==2.0.53
 celery==5.6.3
 minio==7.2.20
 python-magic==0.4.27
@@ -21,7 +21,7 @@ yara-python==4.5.4
 anthropic==0.119.0
 openai==2.48.0
 # License validation
-PyJWT==2.13.0
+PyJWT==2.14.0
 requests==2.34.2
 # Auth
 python-jose[cryptography]==3.5.0
