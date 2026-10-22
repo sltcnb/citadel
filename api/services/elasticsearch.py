@@ -450,7 +450,9 @@ def search_events(
                     "query_string": {
                         "lenient": True,
                         "query": wq,
-                        "fields": ["*"],
+                        # Leading wildcard over fields:["*"] took ~15 s on a 12M-event
+                        # case; the core fields take ~50 ms.
+                        "fields": _SEARCH_FIELDS,
                         "allow_leading_wildcard": True,
                         "analyze_wildcard": True,
                         "max_determinized_states": _MAX_DETERMINIZED_STATES,
