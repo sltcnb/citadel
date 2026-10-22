@@ -718,6 +718,7 @@ def search_cross_case(body: dict, current_user: dict = Depends(get_current_user)
         "size": 0,
         "query": {
             "query_string": {
+                "lenient": True,
                 "query": query,
                 "default_operator": "AND",
                 "fields": ["*"],
@@ -863,6 +864,7 @@ def aggregate(
         [
             {
                 "query_string": {
+                    "lenient": True,
                     "query": q,
                     "default_operator": "AND",
                     "fields": ["*"],
