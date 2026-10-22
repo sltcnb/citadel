@@ -365,9 +365,9 @@ def _looks_like_bare_ioc(q: str) -> bool:
         return False
     if _LUCENE_OPERATORS_RE.search(q):
         return False
-    # Don't double-wildcard a short word; only meaningful for IOC-like strings
-    # containing punctuation (dots/dashes/slashes/colons).
-    return any(c in q for c in ".-/_")
+    # Most fields are keyword (exact match), so a bare word like "gallot" only
+    # finds "ggallotlegrand" via the *term* variant. Single token, 3+ chars.
+    return len(q) >= 3 and not any(c.isspace() for c in q)
 
 
 _ARTIFACT_TYPE_RE = re.compile(r"[a-z0-9_]+")
