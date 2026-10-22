@@ -343,31 +343,26 @@ _SEARCH_FIELDS = [
 ]
 
 
-# Detect Lucene operators / structure; if any present, treat the input as a
-# crafted query and don't apply the smart-wildcard fallback.
-_LUCENE_OPERATORS_RE = __import__("re").compile(
-    r"""(?:                       # any of:
-        :|                        # field qualifier
-        \bAND\b|\bOR\b|\bNOT\b|   # boolean ops
-        [()\[\]{}"\\]|            # grouping / quoting / escape
-        /[^/]+/|                  # /regex/
-        [*?]|                     # wildcards
-        \^[0-9]                   # boost
-    )""",
-    __import__("re").VERBOSE,
-)
+# A bare word: not an operator, not a field name or field value, no wildcard.
+_BARE_TERM_RE = re.compile(r'(?<![\w.:*?"\\/])(\w[\w.\-]{2,})(?![\w.:*?"\\/])')
+_LEADING_WILDCARD_RE = re.compile(r"(?:^|[\s(:])[*?]")
 
 
-def _looks_like_bare_ioc(q: str) -> bool:
-    """True if q has no Lucene operators — treat as a bare IOC-style token."""
+def _substring_variant(q: str) -> str | None:
+    """Rewrite each bare word of q as *word* so it substring-matches.
+
+    Most fields are keyword (exact match), so "gallot" only finds
+    "ggallotlegrand" — and "signal AND NOT SignalBot" only works — via this
+    variant. None when there is nothing to rewrite or the query uses phrases,
+    ranges or /regex/, whose insides must not be touched.
+    """
     q = (q or "").strip()
-    if not q:
-        return False
-    if _LUCENE_OPERATORS_RE.search(q):
-        return False
-    # Most fields are keyword (exact match), so a bare word like "gallot" only
-    # finds "ggallotlegrand" via the *term* variant. Single token, 3+ chars.
-    return len(q) >= 3 and not any(c.isspace() for c in q)
+    if not q or any(c in q for c in '"[]{}') or re.search(r"(?<!\\)/", q):
+        return None
+    out = _BARE_TERM_RE.sub(
+        lambda m: m.group(1) if m.group(1) in ("AND", "OR", "NOT", "TO") else f"*{m.group(1)}*", q
+    )
+    return out if out != q else None
 
 
 _ARTIFACT_TYPE_RE = re.compile(r"[a-z0-9_]+")
@@ -425,33 +420,30 @@ def search_events(
         query = escape_lucene_query(query, preserve_regex=True)
         # Full Lucene query_string over all indexed fields.
         # Inline regexes work natively: /pattern/ syntax in the query string.
-        #
-        # Smart-bare-term: if the input is a single token with NO Lucene operators
-        # (e.g. "pan.bar", "192.168.1.1", "evil.exe"), augment the search with
-        # a wildcard variant so substring/IOC-style searches match across
-        # tokenized URL/path fields where analyzer splits on punctuation.
+        # Leading wildcards over fields:["*"] took 15-20 s (or timed out) on a
+        # 12M-event case; the core fields answer in ~50 ms.
+        fields = _SEARCH_FIELDS if _LEADING_WILDCARD_RE.search(query) else ["*"]
         clauses = [
             {
                 "query_string": {
                     "lenient": True,
                     "query": query,
                     "default_operator": "AND",
-                    "fields": ["*"],
+                    "fields": fields,
                     "allow_leading_wildcard": True,
                     "analyze_wildcard": True,
                     "max_determinized_states": _MAX_DETERMINIZED_STATES,
                 }
             }
         ]
-        if _looks_like_bare_ioc(query):
-            wq = f"*{query.strip()}*"
+        wq = _substring_variant(query)
+        if wq:
             clauses.append(
                 {
                     "query_string": {
                         "lenient": True,
                         "query": wq,
-                        # Leading wildcard over fields:["*"] took ~15 s on a 12M-event
-                        # case; the core fields take ~50 ms.
+                        "default_operator": "AND",
                         "fields": _SEARCH_FIELDS,
                         "allow_leading_wildcard": True,
                         "analyze_wildcard": True,
