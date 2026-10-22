@@ -231,6 +231,7 @@ def evaluate_watchlist(_: dict = Depends(get_current_user)):
             "track_total_hits": True,
             "query": {
                 "query_string": {
+                    "lenient": True,
                     "query": q,
                     "default_operator": "AND",
                     "fields": ["*"],

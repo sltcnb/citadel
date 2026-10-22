@@ -433,6 +433,7 @@ def search_events(
         clauses = [
             {
                 "query_string": {
+                    "lenient": True,
                     "query": query,
                     "default_operator": "AND",
                     "fields": ["*"],
@@ -447,6 +448,7 @@ def search_events(
             clauses.append(
                 {
                     "query_string": {
+                        "lenient": True,
                         "query": wq,
                         "fields": ["*"],
                         "allow_leading_wildcard": True,
@@ -607,6 +609,7 @@ def get_search_facets(
         [
             {
                 "query_string": {
+                    "lenient": True,
                     # Same slash-escaping search_events applies — a stray '/'
                     # otherwise turns the facet query into an unparseable Lucene
                     # regexp and ES 400s the whole panel.
@@ -779,6 +782,7 @@ def search_events_for_rule(case_id: str, query: str, size: int = 10) -> list[dic
     body = {
         "query": {
             "query_string": {
+                "lenient": True,
                 "query": escape_lucene_query(query, preserve_regex=True),
                 "default_operator": "AND",
                 "fields": ["*"],
