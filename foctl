@@ -1244,15 +1244,10 @@ def backfill_aliases_in_pod(tmpl):
         if not aliases:
             return
         step(f"Back-filling {len(aliases)} aliases on existing fo-case-* indices")
-        # Pick a pod that has python — the api pod always does.
-        r_pod = run(["kubectl", "get", "pod", "-n", NS, "-l", "app=api",
-                     "-o", "jsonpath={.items[0].metadata.name}"],
-                    capture=True, check=False)
-        pod = (r_pod.stdout or "").strip()
-        if not pod:
-            warn("No api pod found — alias back-fill skipped")
-            return
-        r = run(["kubectl", "exec", "-n", NS, "-i", pod, "--",
+        # The api pod always has python. deploy/api, not .items[0]: the manifest
+        # apply just rolled the deployment, and kubectl exec on a deployment
+        # prefers a ready pod over one still in its init containers.
+        r = run(["kubectl", "exec", "-n", NS, "-i", "deploy/api", "-c", "api", "--",
                  "python3", "-c", _BACKFILL_PY],
                 stdin_text=_json.dumps(aliases), capture=True, check=False)
         out = (r.stdout or "").strip()
