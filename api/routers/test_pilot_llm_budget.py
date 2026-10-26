@@ -93,7 +93,7 @@ def test_budget_exhaustion_retries_once_with_bigger_budget(monkeypatch):
 
     def fake_urlopen(req, timeout=None):
         body = json.loads(req.data)
-        sent.append(body["max_tokens"])
+        sent.append((body["max_tokens"], body.get("reasoning_effort")))
         content = None if len(sent) == 1 else '{"action": "conclude"}'
         resp = {"choices": [{"message": {"content": content}, "finish_reason": "length"}]}
         r = io.BytesIO(json.dumps(resp).encode())
@@ -105,4 +105,4 @@ def test_budget_exhaustion_retries_once_with_bigger_budget(monkeypatch):
     cfg = {"provider": "openai", "model": "qwen", "base_url": "http://x/v1"}
     out = service._call_llm_with_system(cfg, "s", "u", max_tokens=2000, json_mode=True)
     assert out == '{"action": "conclude"}'
-    assert sent == [2000, 8000]
+    assert sent == [(2000, None), (8000, "low")]

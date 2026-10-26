@@ -7657,10 +7657,11 @@ def _call_llm_with_system_impl(
             try:
                 data = _post_openai(_body)
             except urllib.error.HTTPError as exc:
-                # Some gateways reject response_format — retry once without it so
-                # JSON mode degrades gracefully instead of breaking the agent.
-                if json_mode and exc.code in (400, 422) and "response_format" in _body:
+                # Some gateways reject response_format / reasoning_effort — retry
+                # once without them so the call degrades instead of failing.
+                if exc.code in (400, 422) and ("response_format" in _body or "reasoning_effort" in _body):
                     _body.pop("response_format", None)
+                    _body.pop("reasoning_effort", None)
                     data = _post_openai(_body)
                 else:
                     raise
@@ -7682,11 +7683,13 @@ def _call_llm_with_system_impl(
         except LLMBudgetExhausted:
             # A reasoning model's chain of thought grows with the prompt (late
             # agent steps carry a long transcript): retry once with a bigger
-            # budget before failing the whole run.
+            # budget and low reasoning effort (GLM: 1327 -> 304 tokens, same
+            # answer) before failing the whole run.
             retry_budget = min(max_tokens * 4, 8000)
             if retry_budget <= max_tokens:
                 raise
             _body["max_tokens"] = retry_budget
+            _body["reasoning_effort"] = "low"
             return _extract_llm_text(_post_and_track(), retry_budget, where)
 
 
