@@ -79,3 +79,30 @@ def test_no_unguarded_none_subscript_remains():
     # raw.strip() when explaining what used to break.
     assert "clean = raw.strip()" not in src
     assert 'clean = (raw or "").strip()' in src
+
+
+def test_budget_exhaustion_retries_once_with_bigger_budget(monkeypatch):
+    """Step 25 of an agent run: 2000 tokens all spent on reasoning."""
+    import io
+    import json
+    import urllib.request
+
+    from pilot import service
+
+    sent = []
+
+    def fake_urlopen(req, timeout=None):
+        body = json.loads(req.data)
+        sent.append(body["max_tokens"])
+        content = None if len(sent) == 1 else '{"action": "conclude"}'
+        resp = {"choices": [{"message": {"content": content}, "finish_reason": "length"}]}
+        r = io.BytesIO(json.dumps(resp).encode())
+        return r
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(service, "_track_llm_usage", lambda *a, **k: None)
+    monkeypatch.setattr(service, "_redis", lambda: None)
+    cfg = {"provider": "openai", "model": "qwen", "base_url": "http://x/v1"}
+    out = service._call_llm_with_system(cfg, "s", "u", max_tokens=2000, json_mode=True)
+    assert out == '{"action": "conclude"}'
+    assert sent == [2000, 8000]

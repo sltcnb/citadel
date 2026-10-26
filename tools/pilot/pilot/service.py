@@ -7653,27 +7653,41 @@ def _call_llm_with_system_impl(
             with _ur.urlopen(req_http, timeout=60) as resp:
                 return json.loads(resp.read())
 
-        try:
-            data = _post_openai(_body)
-        except urllib.error.HTTPError as exc:
-            # Some gateways reject response_format — retry once without it so
-            # JSON mode degrades gracefully instead of breaking the agent.
-            if json_mode and exc.code in (400, 422) and "response_format" in _body:
-                _body.pop("response_format", None)
+        def _post_and_track() -> dict:
+            try:
                 data = _post_openai(_body)
-            else:
+            except urllib.error.HTTPError as exc:
+                # Some gateways reject response_format — retry once without it so
+                # JSON mode degrades gracefully instead of breaking the agent.
+                if json_mode and exc.code in (400, 422) and "response_format" in _body:
+                    _body.pop("response_format", None)
+                    data = _post_openai(_body)
+                else:
+                    raise
+            usage = data.get("usage", {})
+            # Some APIs (OpenRouter, etc.) report actual cost in usage
+            actual_cost = usage.get("total_cost") or usage.get("cost") or usage.get("price")
+            _track_llm_usage(
+                url,
+                model,
+                usage.get("prompt_tokens", 0),
+                usage.get("completion_tokens", 0),
+                actual_cost_usd=float(actual_cost) if actual_cost is not None else None,
+            )
+            return data
+
+        where = f"{model or 'model'} @ {url}"
+        try:
+            return _extract_llm_text(_post_and_track(), max_tokens, where)
+        except LLMBudgetExhausted:
+            # A reasoning model's chain of thought grows with the prompt (late
+            # agent steps carry a long transcript): retry once with a bigger
+            # budget before failing the whole run.
+            retry_budget = min(max_tokens * 4, 8000)
+            if retry_budget <= max_tokens:
                 raise
-        usage = data.get("usage", {})
-        # Some APIs (OpenRouter, etc.) report actual cost in usage
-        actual_cost = usage.get("total_cost") or usage.get("cost") or usage.get("price")
-        _track_llm_usage(
-            url,
-            model,
-            usage.get("prompt_tokens", 0),
-            usage.get("completion_tokens", 0),
-            actual_cost_usd=float(actual_cost) if actual_cost is not None else None,
-        )
-        return _extract_llm_text(data, max_tokens, f"{model or 'model'} @ {url}")
+            _body["max_tokens"] = retry_budget
+            return _extract_llm_text(_post_and_track(), retry_budget, where)
 
 
 # ── YARA rule generation ───────────────────────────────────────────────────────
