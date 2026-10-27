@@ -252,6 +252,55 @@ def inprocess_run(case_id: str, scenario: dict, max_steps_cap: int | None = None
     return run
 
 
+# ── before / after ──────────────────────────────────────────────────────────
+
+_COMPARE_COLS = ("verdict", "attribution", "required_content", "unjustified_refuted",
+                 "malicious_not_refuted", "exact_iocs", "calibration", "duplicates")
+
+
+def compare(scenarios: list[dict], before: str, after: str) -> int:
+    """Per-scenario metric table for two saved runs files, plus totals."""
+    by_id = {s["id"]: s for s in scenarios}
+
+    def load(path: str) -> dict:
+        out = {}
+        for entry in json.loads(Path(path).read_text()).get("runs", []):
+            s = by_id.get(entry["scenario"])
+            if s:
+                out[s["id"]] = (entry["run"], scoring.score(entry["run"], s["rubric"], corpus_ids(s)))
+        return out
+
+    b, a = load(before), load(after)
+    mark = lambda m: "-" if m is None else ("✓" if m.passed else "✗")  # noqa: E731
+    head = f"{'scenario':24} {'side':6} " + " ".join(f"{c[:10]:>10}" for c in _COMPARE_COLS) + \
+        f" {'steps':>5} {'conf':>4} {'unjust.':>7} pass"
+    print(head)
+    totals = {"before": [0, 0, 0, 0, 0], "after": [0, 0, 0, 0, 0]}
+    for sid in [s["id"] for s in scenarios if s["id"] in b or s["id"] in a]:
+        for side, data in (("before", b), ("after", a)):
+            if sid not in data:
+                continue
+            run, card = data[sid]
+            un = len([h for h in (run.get("final") or {}).get("hypotheses") or []
+                      if isinstance(h, dict) and h.get("status") == "refuted"
+                      and not any(f in json.dumps(h.get("against_evidence") or []) for f in corpus_ids(by_id[sid]))])
+            steps = int(run.get("step_count") or 0)
+            dups = sum(1 for st in run.get("steps") or [] if st.get("cached_from_step"))
+            t = totals[side]
+            t[0] += card.passed
+            t[1] += bool(card.get("verdict") and card.get("verdict").passed)
+            t[2] += un
+            t[3] += dups
+            t[4] += steps
+            print(f"{sid[:24]:24} {side:6} " + " ".join(f"{mark(card.get(c)):>10}" for c in _COMPARE_COLS)
+                  + f" {steps:>5} {str((run.get('final') or {}).get('confidence', '-')):>4} {un:>7} "
+                  + ("PASS" if card.passed else "fail"))
+    for side, t in totals.items():
+        print(f"TOTAL {side:6}: {t[0]} passed, {t[1]} correct verdicts, {t[2]} unjustified refuted, "
+              f"{t[3]} duplicate calls, {t[4]} steps")
+    return 0
+
+
 # ── reporting ────────────────────────────────────────────────────────────────
 
 
@@ -291,6 +340,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="run inside the API container: seed + drive the agent in this process")
     ap.add_argument("--pilot-path", help="import the pilot package from here (compare versions)")
     ap.add_argument("--max-steps-cap", type=int, help="cap every scenario's step budget")
+    ap.add_argument("--compare", nargs=2, metavar=("BEFORE", "AFTER"),
+                    help="score two saved runs files side by side")
     args = ap.parse_args(argv)
 
     scenarios = load_scenarios(args.only)
@@ -314,6 +365,9 @@ def main(argv: list[str] | None = None) -> int:
                   f"key_evidence={len(r.get('key_evidence') or [])} "
                   f"budget={r.get('max_steps','-')}  {s['_file']}")
         return 0
+
+    if args.compare:
+        return compare(scenarios, *args.compare)
 
     if args.replay:
         saved = json.loads(Path(args.replay).read_text())

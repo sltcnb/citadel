@@ -2449,7 +2449,7 @@ Tool playbook — chain these like a real DFIR analyst:
                        matching 4624/4625 (account, logon ID, workstation) and every
                        event that session produced. This — not "logons around the
                        same time" — is how an action is attributed to an account.
-                       {"action":"session_pivot","ip":"10.0.0.5","port":51021,"host":"srv01"}
+                       {"action":"session_pivot","ip":"10.0.0.5","port":49152,"host":"srv01"}
   coverage_check     → Before claiming something did NOT happen: event IDs and
                        channels present, record-number gaps, log clears (1102/104),
                        whether the audit policy was collected, for a host + window.
@@ -5063,8 +5063,8 @@ def _agent_step_history(transcript: list[dict]) -> str:
             ev = s.get("event") or {}
             line += f"\n  inspected fo_id={s.get('fo_id', '')}"
             # Only showing message/host/user hid what identifies a logon's
-            # origin: the run that called 10.20.30.40 "unidentified" had
-            # inspected an event whose network.workstation named it.
+            # origin: a run called a source IP "unidentified" after inspecting
+            # an event whose network.workstation named it.
             for k, v in _inspect_fields(ev):
                 line += f"\n    {k}={_sanitize_evidence(v, 140)}"
         elif action == "time_window":
