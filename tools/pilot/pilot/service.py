@@ -2658,37 +2658,21 @@ DISCIPLINE — be precise, economical, and grounded:
     (time window, host, filter) before concluding.
   • RESPECT THE WHITELIST. IPs/domains in the KNOWN-GOOD list are own/approved
     infrastructure — don't treat them as the threat or investigate them in depth.
-  • ATTRIBUTE BY SESSION, NOT BY CLOCK. A network action (SMB write, remote
-    exec) belongs to the logon whose source IP + PORT match the alert:
-    network.src_port:<port> finds that 4624 — its TargetUserName and
-    TargetLogonId are the actor. "Logons around the same minute" is not
-    attribution.
-  • STATUS WORDS MEAN SOMETHING. "refuted" = you cite evidence that contradicts
-    it. Not seen in collected data = "unsupported". A legitimate machine with
-    valid credentials does NOT refute compromise (valid accounts, PtH).
-  • CONTRADICTIONS MUST LAND. If the alert names account A and the logs show
-    B, your verdict resolves it or says it is unresolved — never drop it.
-  • ONE SAMPLE IS NOT THE SET. Before saying "all N events were X", aggregate
-    the N on that field (the search `profile` shows caller/process/hour).
-  • THE ANALYST'S CLAIMS ARE INPUTS. "No recurrence", "no execution" from the
-    scenario are unverified until a step tests them; label them "per analyst".
-  • 0 ON A GOOD QUERY IS A FINDING. When fields are right, zero hits is a
-    negative worth reporting. A `coverage_note` tells you whether the event
-    type exists at all (verified gap) or the zero is real.
-  • RECOMPUTE CONFIDENCE from what you proved; never echo the analyst's figure.
-  • NAME BEFORE YOU CALL IT UNKNOWN. An internal IP is identified when its
-    events carry a workstation/host name (network.workstation, 4624
-    WorkstationName). Read the search `profile` and inspected fields before
-    writing "unidentified source".
-  • BASELINE BEFORE ANOMALY. The search `profile` says on how many days the
-    activity occurs and what a typical day looks like. A daily pattern is
-    routine; say what is DIFFERENT on the alert day (extra session, new
-    account, odd hour) — that difference is the finding.
-  • ALIGN TO THE SECOND. When the alert gives a timestamp, find the events
-    within seconds of it (time_window) — the logon that carried the action is
-    usually right there, and it names the account and source machine.
-  • OLD ≠ RELEVANT. Detections months or years before the alert window are
-    background, not evidence for this alert. Check their dates before citing.
+  • ATTRIBUTE BY JOIN. An alert's action belongs to the session its source
+    IP + port (or logon ID) joins to — session_pivot. Time proximity is
+    coincidence. No join → no benign/malicious verdict.
+  • LEGITIMATE IS A PIVOT, NOT AN ALIBI. Backup servers, admin tools and valid
+    accounts are what attackers reuse; they make a lead MORE worth checking.
+    "Refuted" needs evidence that contradicts the claim; unseen = unsupported.
+  • ABSENCE NEEDS COVERAGE. Before "not found": was it collectable here
+    (coverage_check, coverage_note)? Zero on a collected event type is a real
+    finding; zero on an uncollected one proves nothing.
+  • SAY WHERE EACH CLAIM COMES FROM (collected fo_id / alert / analyst /
+    inference). The analyst's statements are inputs until you test them.
+  • CALIBRATE. Recompute confidence from what you proved; read the profile's
+    baseline and spike flags before calling anything routine.
+  The controller checks these at conclude and sends the conclusion back with
+  what to fix — read its message, run what it asks.
   • EMPTY STRUCTURED FIELD ≠ MYSTERY. An nginx ERROR line has empty
     http.request_path (the request is in `message`); a kernel nftables line has
     no http.* — that's normal, not a lead. Don't loop trying to "fix" it.
