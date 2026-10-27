@@ -4242,6 +4242,21 @@ AGENT_TOOLS = {
 }
 
 
+_MAX_BAD_REPLY_STREAK = 3
+_BAD_REPLY_NUDGE = (
+    "\n\nYOUR PREVIOUS REPLY WAS NOT A VALID STEP (it had no \"action\" field, or was not "
+    "JSON): {snippet}\nReply again with exactly ONE JSON object whose \"action\" is one of "
+    "the actions listed in your instructions."
+)
+
+
+def _unusable_agent_step(step: dict) -> bool:
+    """True when a parsed agent reply carries no usable action: empty, not
+    JSON, or JSON without an "action" string (GLM sometimes answers with a
+    bare fragment such as {"hypotheses": [...]})."""
+    return bool(step.get("_unparsed")) or not isinstance(step.get("action"), str) or not step["action"]
+
+
 def _parse_agent_step(raw: str) -> dict:
     """Robust parser for an agent's JSON step output. Handles:
       - clean JSON
@@ -4256,6 +4271,7 @@ def _parse_agent_step(raw: str) -> dict:
             "verdict": "Empty LLM response.",
             "evidence": [],
             "indicators": [],
+            "_unparsed": True,
         }
     # Strip code fences
     s = raw.strip()
@@ -4296,6 +4312,7 @@ def _parse_agent_step(raw: str) -> dict:
         "evidence": [],
         "indicators": [],
         "_raw_snippet": raw[:400],
+        "_unparsed": True,
     }
 
 
@@ -4946,7 +4963,7 @@ def _llm_forced_conclude(cfg, system_prompt, base_intro, transcript, reason):
         )
         raw = _call_llm_with_system(cfg, system_prompt, msg, max_tokens=2000, json_mode=True)
         step = _parse_agent_step(raw)
-        if step.get("action") == "conclude":
+        if step.get("action") == "conclude" and not step.get("_unparsed"):
             return step
     except Exception:
         pass
@@ -5643,6 +5660,8 @@ def _agent_run(
     # infrastructure failure, NOT an analytical outcome (see the fallback
     # conclude block after the loop).
     llm_error: str | None = None
+    # Consecutive steps whose reply had no usable action (see below).
+    bad_reply_streak = 0
 
     supervisor_note = ""  # injected into the next turn when control speaks
 
@@ -6060,6 +6079,13 @@ def _agent_run(
             # MITRE + next_steps); 900 tokens was hitting cap and producing
             # truncated JSON. 2000 leaves headroom without becoming wasteful.
             raw = _call_llm_with_system(cfg, system_prompt, user_msg, max_tokens=2000, json_mode=True)
+            if _unusable_agent_step(_parse_agent_step(raw)):
+                # One corrective re-ask: an unusable reply used to be read as
+                # "conclude" and silently end the run with an empty verdict.
+                raw = _call_llm_with_system(
+                    cfg, system_prompt, user_msg + _BAD_REPLY_NUDGE.format(snippet=(raw or "")[:300]),
+                    max_tokens=2000, json_mode=True,
+                )
         except Exception as exc:
             err_step = {"step": step_no, "action": "error", "thought": f"LLM failed: {exc}"}
             transcript.append(err_step)
@@ -6075,7 +6101,31 @@ def _agent_run(
         step = _parse_agent_step(raw)
         step["step"] = step_no
 
-        action = step.get("action") or "conclude"
+        if _unusable_agent_step(step):
+            # Still no action after the re-ask: record it and keep investigating
+            # rather than ending the run; give up only on a persistent streak.
+            bad_reply_streak += 1
+            logger.warning("Agent step %s: unusable LLM reply: %r", step_no, (raw or "")[:500])
+            err_step = {
+                "step": step_no,
+                "action": "error",
+                "thought": f"Unusable LLM reply (no valid action): {(raw or '<empty>')[:200]}",
+            }
+            transcript.append(err_step)
+            if run_id:
+                _append_step_log(case_id, run_id, err_step)
+                _update_active_run(case_id, run_id, step_count=len(transcript))
+            yield {"type": "step", "step": err_step}
+            if bad_reply_streak >= _MAX_BAD_REPLY_STREAK:
+                llm_error = (
+                    f"the model returned {bad_reply_streak} unusable replies in a row "
+                    f"(no valid 'action') by step {step_no}"
+                )
+                break
+            continue
+        bad_reply_streak = 0
+
+        action = step["action"]
 
         if action == "conclude":
             # Evidence-cited gate: the model tried to conclude with NO evidence/
@@ -6137,6 +6187,7 @@ def _agent_run(
                             }
                         )
                 step["hypotheses"] = concluded_h
+            step["action"] = "conclude"
             final = step
             transcript.append(step)
             if run_id:
