@@ -2387,7 +2387,8 @@ At every step return ONE JSON object — no markdown, no commentary outside it:
       {
         "id":           "H1",
         "claim":        "the analyst's stated scenario",
-        "status":       "supported" | "refuted" | "partial" | "untested",
+        "status":       "supported" | "unsupported" | "refuted" | "partial" | "untested",
+        //  refuted = you cite fo_ids that CONTRADICT it. Not seen ≠ refuted (→ unsupported).
         "for_evidence": ["evidence FOR this hypothesis"],
         "against_evidence": ["evidence AGAINST this hypothesis"],
         "missing":      "what would clinch it (data not in case)"
@@ -2399,7 +2400,22 @@ At every step return ONE JSON object — no markdown, no commentary outside it:
     "indicators": ["IOCs surfaced — IPs/hashes/filenames"],
     "mitre_techniques": ["T1059 - Command and Scripting Interpreter"],
     "next_steps": ["concrete actions the analyst should take next"],
-    "confidence": 75   // 0-100; honest self-rating of how solid the verdict is
+    "confidence": 75,   // 0-100, recomputed from YOUR evidence
+    // ── schema v2 — the controller checks these and sends the conclusion back if wrong ──
+    "entities": [{"kind": "account|ip|host|path|file|share", "value": "…",
+                  "status": "confirmed|contradicted|unresolved", "fo_ids": ["…"], "note": "…"}],
+                  // one per entity the ALERT names; confirmed/contradicted cite joining fo_ids
+    "discrepancies": [{"field": "account", "alert_value": "…", "evidence_value": "…",
+                       "fo_ids": ["…"], "resolved": false, "resolution": "…"}],
+    "open_questions": ["what is still unknown"],
+    "claims": [{"text": "…", "provenance": "collected|alert|analyst|inference", "fo_ids": ["…"]}],
+    "case_context": [{"id": "<prior detection id>", "status": "related|unrelated|unchecked", "reason": "…"}],
+    "baseline": [{"metric": "logons from X at 08h", "alert_value": 12, "baseline_value": 2}],
+    "prior_confidence": 60,          // the alert's / prior analysis' figure, if given
+    "confidence_rationale": "which evidence moved the confidence and why",
+    "next_actions": [{"tool": "session_pivot", "params": {"ip": "…", "port": 1},
+                      "addresses": "open question / entity it resolves"},
+                     {"owner": "backup team", "question": "…", "addresses": "…"}]
   }
 
 Tool playbook — chain these like a real DFIR analyst:
@@ -5778,7 +5794,7 @@ def _conclusion_has_evidence(step: dict) -> bool:
     return bool(step.get("evidence") or step.get("indicators") or step.get("mitre_techniques"))
 
 
-_MAX_REVIEW_BOUNCES = 2
+_MAX_REVIEW_BOUNCES = 3
 
 # What a senior reviewer checks — each item is a failure seen in a real run.
 _REVIEW_RUBRIC = """Check the verdict against the transcript, item by item:
@@ -5812,6 +5828,78 @@ def _review_blockers(v) -> list[str]:
     if not isinstance(v, dict) or v.get("holds") is not False:
         return []
     return [str(i)[:300] for i in (v.get("issues") or []) if str(i).strip()][:6]
+
+
+def _prior_detections(case_id: str, circumstance: str, anchors, hours: int | None = None) -> list[dict]:
+    """Detections already in the case within ±hours of the alert, on its hosts.
+
+    A run noted "log clearing, brute force, pass-the-hash" in step 1 and never
+    looked at their dates. These are injected into the prompt and the
+    conclusion must address each one. Only per-event detections carry the time
+    of the matched event (hayabusa / module findings); rule-sweep summaries are
+    timestamped at sweep time and are left out."""
+    from pilot.conclusion import alert_time
+
+    when = alert_time(circumstance)
+    if when is None:
+        return []
+    if hours is None:
+        try:
+            from routers.pilot_settings import get_pilot_config
+
+            hours = int(get_pilot_config().get("case_context_hours") or 24)
+        except Exception:
+            hours = 24
+    hosts = sorted({a.value for a in anchors if a.kind == "host"} | {a.value.lower() for a in anchors if a.kind == "host"})
+    flt = [
+        {"terms": {"artifact_type": ["hayabusa", "finding"]}},
+        {"range": {"timestamp": {"gte": (when - _td_hours(hours)).isoformat(), "lte": (when + _td_hours(hours)).isoformat()}}},
+        {"bool": {"should": [
+            {"terms": {"hayabusa.level": ["medium", "high", "critical"]}},
+            {"terms": {"severity": ["medium", "high", "critical"]}},
+        ], "minimum_should_match": 1}},
+    ]
+    if hosts:
+        flt.append({"bool": {"should": [{"terms": {"host.hostname.keyword": hosts}},
+                                        {"terms": {"finding.payload.computer": hosts}}], "minimum_should_match": 1}})
+    try:
+        from services.elasticsearch import _request as _es_req
+
+        res = _es_req("POST", f"/fo-case-{case_id}-*/_search", {
+            "size": 12, "query": {"bool": {"filter": flt}},
+            "sort": [{"timestamp": "asc"}],
+            "_source": ["fo_id", "timestamp", "message", "host.hostname", "hayabusa", "finding.title", "severity"],
+        })
+    except Exception:
+        return []
+    out = []
+    for h in (res.get("hits") or {}).get("hits") or []:
+        src = h.get("_source") or {}
+        hb = src.get("hayabusa") or {}
+        out.append({
+            "id": src.get("fo_id") or h.get("_id"),
+            "timestamp": src.get("timestamp"),
+            "host": (src.get("host") or {}).get("hostname"),
+            "title": hb.get("rule_title") or (src.get("finding") or {}).get("title") or src.get("message"),
+            "level": hb.get("level") or src.get("severity"),
+        })
+    return out
+
+
+def _td_hours(h: int):
+    from datetime import timedelta
+
+    return timedelta(hours=h)
+
+
+def _render_prior_detections(dets: list[dict]) -> str:
+    if not dets:
+        return ""
+    lines = ["\nPRIOR DETECTIONS within the alert window (address EACH in case_context by id — "
+             "related / unrelated with reason / unchecked):"]
+    for d in dets:
+        lines.append(f"  [{d['id']}] {d.get('timestamp')} {d.get('host') or ''} {d.get('level')}: {d.get('title')}")
+    return "\n".join(lines) + "\n"
 
 
 def _verify_conclusion(cfg, base_intro, step, transcript=None):
@@ -6187,6 +6275,14 @@ def _agent_run(
     # Times a conclusion was sent back (reviewer issues / untested anchors).
     review_bounces = 0
     review_note = ""
+    from pilot import conclusion as _conclusion
+
+    _prior_conf = _conclusion.parse_prior_confidence(circumstance)
+    _case_dets = _prior_detections(case_id, circumstance, anchors)
+
+    def _cctx():
+        return _conclusion.Context(anchors=anchors, transcript=transcript,
+                                   prior_confidence=_prior_conf, case_detections=_case_dets)
 
     supervisor_note = ""  # injected into the next turn when control speaks
 
@@ -6602,6 +6698,7 @@ def _agent_run(
             # Last, so it is the closest instruction to the model's turn: the
             # supervisor overrides the agent's own sense of what to do next.
             + _render_anchors(_anchor_status(anchors, transcript))
+            + _render_prior_detections(_case_dets)
             # A rejected conclusion outranks the supervisor's "conclude now" for
             # this turn — both at once contradict each other.
             + (review_note or supervisor_note)
@@ -6685,25 +6782,30 @@ def _agent_run(
                     step["step"] = step_no
                     step["action"] = "conclude"
 
-            # Adversarial verify pass — one skeptical review of the verdict.
-            try:
-                v = _verify_conclusion(cfg, base_intro + _render_ledger(ledger), step, transcript)
-                if isinstance(v, dict):
-                    step["verification"] = v
-                    if v.get("adjusted_confidence") is not None:
-                        try:
-                            step["confidence"] = int(v["adjusted_confidence"])
-                        except Exception:
-                            pass
-            except Exception:
-                pass
+            # Deterministic validation first (pilot.conclusion): cheap, exact, and
+            # its messages say what to do. The LLM reviewer only sees a
+            # conclusion that already passes the checks code can make.
+            _det = _conclusion.validate(step, _cctx())
+            if not _det:
+                # Adversarial verify pass — one skeptical review of the verdict.
+                try:
+                    v = _verify_conclusion(cfg, base_intro + _render_ledger(ledger), step, transcript)
+                    if isinstance(v, dict):
+                        step["verification"] = v
+                        if v.get("adjusted_confidence") is not None:
+                            try:
+                                step["confidence"] = int(v["adjusted_confidence"])
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
 
             # Review gate: the reviewer used to only nudge the confidence, so a
             # conclusion it found unsupported ("H2 refuted" from absence of
             # evidence, a port never correlated) shipped anyway. Now its issues,
             # and any alert anchor never tested, send the conclusion back —
             # bounded, and only while there are steps left to act on it.
-            _issues = _review_blockers(step.get("verification"))
+            _issues = _det or _review_blockers(step.get("verification"))
             _untested = [a for a, st in _anchor_status(anchors, transcript) if st is None]
             if (_issues or _untested) and review_bounces < _MAX_REVIEW_BOUNCES and step_no < max_steps - 2:
                 review_bounces += 1
@@ -6753,6 +6855,11 @@ def _agent_run(
                         )
                 step["hypotheses"] = concluded_h
             step["action"] = "conclude"
+            # Whatever is still unmet once the bounces are spent is recorded,
+            # and the deterministic outcomes (downgrades, gating) are applied.
+            _fin = _conclusion.finalize(step, _cctx(), unmet=_issues)
+            step.clear()
+            step.update(_fin)
             final = step
             transcript.append(step)
             if run_id:
@@ -7093,6 +7200,12 @@ def _agent_run(
             _append_step_log(case_id, run_id, forced)
             _update_active_run(case_id, run_id, step_count=len(transcript))
         yield {"type": "step", "step": forced}
+
+    if isinstance(final, dict) and final.get("schema_version") is None:
+        _fin = _conclusion.finalize(final, _cctx(), unmet=[
+            f"conclusion produced by the controller ({final.get('stopped_by') or 'forced'}), not validated"])
+        final.clear()
+        final.update(_fin)
 
     result_doc = {
         "circumstance": circumstance,

@@ -402,6 +402,7 @@ function AgentStepRow({ step: s, onPivot }) {
                 supported: 'bg-red-50 border-red-200 text-red-800',
                 refuted:   'bg-emerald-50 border-emerald-200 text-emerald-800',
                 partial:   'bg-amber-50 border-amber-200 text-amber-800',
+                unsupported: 'bg-slate-50 border-slate-200 text-slate-700',
                 untested:  'bg-gray-50 border-gray-200 text-gray-700',
               })[h.status] || 'bg-gray-50 border-gray-200 text-gray-700'
               return (
@@ -448,6 +449,36 @@ function AgentStepRow({ step: s, onPivot }) {
         {isFinal && (s.mitre_techniques || []).length > 0 && (
           <div className="flex flex-wrap gap-1 mt-1">
             {s.mitre_techniques.map((t, j) => <Tag key={j} color="red">{t}</Tag>)}
+          </div>
+        )}
+        {isFinal && (s.discrepancies || []).length > 0 && (
+          <div className="mt-1">
+            <p className="text-[9px] font-semibold text-gray-500 uppercase tracking-widest mb-1">Discrepancies</p>
+            <ul className="space-y-0.5">
+              {s.discrepancies.map((d, j) => (
+                <li key={j} className="text-[11px] text-amber-800">
+                  {typeof d === 'string' ? d : `${d.field || 'field'}: alert says ${d.alert_value}, evidence shows ${d.evidence_value}${d.resolved ? ' (resolved)' : ''}`}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {isFinal && (s.open_questions || []).length > 0 && (
+          <div className="mt-1">
+            <p className="text-[9px] font-semibold text-gray-500 uppercase tracking-widest mb-1">Open questions</p>
+            <ul className="space-y-0.5">
+              {s.open_questions.map((q, j) => (
+                <li key={j} className="text-[11px] text-gray-700">? {q}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {isFinal && ((s.validation?.adjustments || []).length > 0 || (s.ioc_warnings || []).length > 0) && (
+          <div className="mt-1 rounded bg-slate-50 border border-slate-200 px-2 py-1 text-[10px] text-slate-700 space-y-0.5">
+            {(s.validation?.adjustments || []).map((t, j) => <p key={`a${j}`}>Controller: {t}</p>)}
+            {(s.ioc_warnings || []).map((w, j) => (
+              <p key={`w${j}`}>IOC withheld: <code className="font-mono">{w.value}</code> — {w.problem}; possibly {w.possible_original}</p>
+            ))}
           </div>
         )}
         {isFinal && (s.next_steps || []).length > 0 && (

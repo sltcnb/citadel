@@ -14,7 +14,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 _CONCLUDE = (
     '{"action":"conclude","verdict":"benign","incident_confirmed":"no",'
-    '"evidence":["e1"],"indicators":[],"confidence":70}'
+    '"evidence":["e1"],"indicators":[],"confidence":70,'
+    '"confidence_rationale":"e1 settles it"}'
 )
 
 
@@ -81,7 +82,7 @@ def test_conclusion_is_sent_back_while_an_alert_anchor_is_untested(monkeypatch):
     monkeypatch.setattr(service, "_redis", lambda: fake)
     replies = iter([
         _CONCLUDE,                                                     # too early
-        '{"action":"search","thought":"t","query":"network.src_port:64721"}',
+        '{"action":"session_pivot","thought":"t","port":64721}',
         _CONCLUDE,                                                     # now accepted
     ])
     seen_prompts = []
@@ -93,9 +94,11 @@ def test_conclusion_is_sent_back_while_an_alert_anchor_is_untested(monkeypatch):
         return '{"holds": true, "issues": []}'
 
     monkeypatch.setattr(service, "_call_llm_with_system", fake_llm)
+    monkeypatch.setitem(service.AGENT_TOOLS, "session_pivot", lambda cid, step: {
+        "query_status": "ok", "result_count": 1, "logons": [{"fo_id": "e1"}], "summary": ["JOIN → e1"]})
     events = list(service._agent_run("c1", "Source port : 64721", 10, {"provider": "openai"}, None))
     run = next(e["run"] for e in events if e.get("type") == "done")
-    assert [s.get("action") for s in run["steps"]] == ["review", "search", "conclude"]
+    assert [s.get("action") for s in run["steps"]] == ["review", "session_pivot", "conclude"]
     assert "untested anchor port 64721" in run["steps"][0]["thought"]
     assert "REVIEW — your conclusion was NOT accepted" in seen_prompts[1]
     assert run["stopped_reason"] == "concluded"
