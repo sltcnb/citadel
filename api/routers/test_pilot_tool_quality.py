@@ -146,3 +146,8 @@ def test_review_blockers_only_when_the_reviewer_says_it_does_not_hold():
     assert s._review_blockers({"holds": True, "issues": ["minor"]}) == []
     assert s._review_blockers(None) == []
     assert s._review_blockers({"holds": False, "issues": ["port not correlated", " "]}) == ["port not correlated"]
+
+
+def test_scenario_sanitiser_keeps_windows_paths_verbatim():
+    for path in (r"C:\Windows\testX.tmp", r"C:\a\new\run", r"\\srv\ADMIN$\t.exe"):
+        assert path in s._sanitize_scenario(f"dropped {path} via SMB")

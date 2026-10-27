@@ -23,7 +23,16 @@ _ACCOUNT_LINE = re.compile(r"(?im)^\s*(?:comptes?|accounts?|users?|utilisateurs?
 _ACCOUNT_TOKEN = re.compile(r"(?i)\b(?:app|sa|svc|srv|adm|admin)_[a-z0-9][a-z0-9._-]{2,}\b")
 _HOST_LINE = re.compile(r"(?im)^\s*(?:machines?|hosts?|hôtes?|computers?|endpoints?)\s*:\s*(.+)$")
 _SHARE = re.compile(r"\b([A-Za-z]{1,12}\$)(?=\W|$)")
-_FILE = re.compile(r"\b([\w-]{6,}\.(?:exe|dll|sys|ps1|psm1|bat|cmd|vbs|js|hta|lnk|scr|zip|7z|rar|iso|quq|tmp|dat|bin))\b", re.I)
+_FILE = re.compile(r"\b([\w-]{6,}\.(?:exe|dll|sys|ps1|psm1|bat|cmd|vbs|js|hta|lnk|scr|zip|7z|rar|iso|quq|tmp|dat|bin|msi))\b", re.I)
+# Full Windows paths (drive or UNC), taken verbatim — backslashes included.
+_PATH = re.compile(r"(?<![\w\\])((?:[A-Za-z]:\\|\\\\[\w.$-]+\\)[^\s\"'<>|*?]+)")
+# Join keys: the values that tie an alert to one session / process / trace.
+_LOGON_ID = re.compile(r"(?i)\blogon\s*id\s*[:=]?\s*(0x[0-9a-f]{2,16})\b")
+_PID = re.compile(r"(?i)\b(?:pid|process\s*id)\s*[:=]?\s*(\d{1,7})\b")
+_SESSION_ID = re.compile(r"(?i)\bsession\s*id\s*[:=]?\s*([0-9a-fx{}-]{1,40})\b")
+_CORRELATION_ID = re.compile(
+    r"(?i)\b(?:correlation|activity)\s*id\s*[:=]?\s*\{?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\}?"
+)
 
 # Built-in identities that every Windows host shows — not an anchor.
 _NOISE_ACCOUNTS = {"nt authority\\system", "system", "local service", "network service"}
@@ -41,7 +50,16 @@ _RECIPES = {
     "host": "host_profile {v}  → what evidence exists for it",
     "share": '*{v}*  → share access events (5140/5145) if that auditing is collected',
     "file": "*{v}*  → any artifact that recorded the file",
+    "path": "*{v}*  → any artifact that recorded the path (keep the path verbatim in IOCs)",
+    "logon_id": "session_pivot logon_id={v}  → the logon and everything done under it",
+    "pid": "search process.pid:{v} OR evtx.event_data.ProcessId:*{v}*  → the process and its parent",
+    "session_id": "search *{v}*  → events carrying this session identifier",
+    "correlation_id": "search *{v}*  → events sharing this correlation / activity ID",
 }
+
+# Kinds that pin one session or trace: a conclusion without them tested cannot
+# attribute the alert's action to an actor.
+JOIN_KEYS = ("port", "logon_id", "pid", "session_id", "correlation_id")
 
 
 @dataclass(frozen=True)
@@ -57,7 +75,7 @@ def _split_values(line: str) -> list[str]:
     return [v.strip(" .;") for v in re.split(r"[,;]| et | and ", line) if v.strip(" .;")]
 
 
-def extract_anchors(text: str, limit: int = 12) -> list[Anchor]:
+def extract_anchors(text: str, limit: int = 16) -> list[Anchor]:
     """Observables named in an alert / scenario, deduplicated, in a stable order."""
     text = text or ""
     found: list[Anchor] = []
@@ -72,6 +90,10 @@ def extract_anchors(text: str, limit: int = 12) -> list[Anchor]:
 
     for m in _PORT.finditer(text):
         add("port", m.group(1))
+    for rx, kind in ((_LOGON_ID, "logon_id"), (_PID, "pid"), (_SESSION_ID, "session_id"),
+                     (_CORRELATION_ID, "correlation_id")):
+        for m in rx.finditer(text):
+            add(kind, m.group(1))
     for ip in _IPV4.findall(text):
         add("ip", ip)
     account_lines = _ACCOUNT_LINE.findall(text)
@@ -90,8 +112,12 @@ def extract_anchors(text: str, limit: int = 12) -> list[Anchor]:
                 add("host", v)
     for share in _SHARE.findall(text):
         add("share", share)
+    for path in _PATH.findall(text):
+        add("path", path.rstrip(".,;:)"))
     for f in _FILE.findall(text):
-        add("file", f)
+        # The basename is already covered when its full path was found.
+        if not any(a.kind == "path" and a.value.endswith(f) for a in found):
+            add("file", f)
     return found[:limit]
 
 
