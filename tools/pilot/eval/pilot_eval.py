@@ -227,6 +227,9 @@ def inprocess_run(case_id: str, scenario: dict, max_steps_cap: int | None = None
         es("PUT", f"/fo-case-{case_id}-{entry['artifact_type']}/_doc/{doc['fo_id']}?refresh=true", doc)
 
     service._autolaunch_modules = lambda cid: ""
+    # The client-facing report is a separate, slow LLM call that also persists
+    # a report document — not what the eval measures.
+    service._auto_write_report_from_run = lambda *a, **k: None
     stub = lambda cid, step: {"query_status": "ok", "note": "(eval) not executed"}  # noqa: E731
     for name in ("save_finding", "launch_module"):
         if name in service.AGENT_TOOLS:
