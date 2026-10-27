@@ -1,0 +1,801 @@
+id: wrong_account_join
+description: 'The alert names the wrong account: the port join shows the nightly SQL agent account. Benign,
+  with the discrepancy stated.'
+scenario: 'Alert: Uncommon File Dropped Under Noteworthy Folder via SMB
+
+
+  Machine : srv-web03
+
+
+  Comptes : NT AUTHORITY\SYSTEM, jsmith
+
+
+  Indicateurs : 10.70.0.20 (IP) ; 10.70.0.12 (IP)
+
+
+  Heure de l''occurrence : 2026-10-11 03:15:02 UTC
+
+
+  Source port : 50550
+
+
+  Application : SMB
+
+
+  Partage SMB : ADMIN$
+
+
+  The file C:\Windows\Temp\sqlprobe_31.tmp was written to the ADMIN$ share of srv-web03 (10.70.0.20) from
+  10.70.0.12, under the account jsmith. Prior analysis: benign at 60 % confidence, most likely an internal
+  tool testing write access; the source machine was not found in the inventories. The analyst reports
+  no recurrence over 7 days and no execution after the drop.'
+seed:
+- artifact_type: evtx
+  doc:
+    fo_id: acc-001
+    timestamp: '2026-09-28T03:15:11.000Z'
+    message: Account logon success on srv-web03 [Security]
+    host:
+      hostname: srv-web03
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-web03
+      event_data:
+        TargetUserName: svc_sql
+        TargetDomainName: SRV-WEB03
+        TargetLogonId: '0x1ce'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: SQLAGENT01
+        IpAddress: 10.70.0.12
+        IpPort: '50028'
+      record_id: 1001
+    user:
+      name: svc_sql
+      domain: SRV-WEB03
+    network:
+      src_ip: 10.70.0.12
+      src_port: 50028
+      workstation: SQLAGENT01
+- artifact_type: evtx
+  doc:
+    fo_id: acc-002
+    timestamp: '2026-09-28T03:20:11.000Z'
+    message: Account logoff on srv-web03 [Security]
+    host:
+      hostname: srv-web03
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-web03
+      event_data:
+        TargetUserName: svc_sql
+        TargetLogonId: '0x1ce'
+        LogonType: '3'
+      record_id: 1002
+    user:
+      name: svc_sql
+      domain: SRV-WEB03
+- artifact_type: evtx
+  doc:
+    fo_id: acc-003
+    timestamp: '2026-09-29T03:15:11.000Z'
+    message: Account logon success on srv-web03 [Security]
+    host:
+      hostname: srv-web03
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-web03
+      event_data:
+        TargetUserName: svc_sql
+        TargetDomainName: SRV-WEB03
+        TargetLogonId: '0x1de'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: SQLAGENT01
+        IpAddress: 10.70.0.12
+        IpPort: '50029'
+      record_id: 1003
+    user:
+      name: svc_sql
+      domain: SRV-WEB03
+    network:
+      src_ip: 10.70.0.12
+      src_port: 50029
+      workstation: SQLAGENT01
+- artifact_type: evtx
+  doc:
+    fo_id: acc-004
+    timestamp: '2026-09-29T03:20:11.000Z'
+    message: Account logoff on srv-web03 [Security]
+    host:
+      hostname: srv-web03
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-web03
+      event_data:
+        TargetUserName: svc_sql
+        TargetLogonId: '0x1de'
+        LogonType: '3'
+      record_id: 1004
+    user:
+      name: svc_sql
+      domain: SRV-WEB03
+- artifact_type: evtx
+  doc:
+    fo_id: acc-005
+    timestamp: '2026-09-30T03:15:11.000Z'
+    message: Account logon success on srv-web03 [Security]
+    host:
+      hostname: srv-web03
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-web03
+      event_data:
+        TargetUserName: svc_sql
+        TargetDomainName: SRV-WEB03
+        TargetLogonId: '0x1ee'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: SQLAGENT01
+        IpAddress: 10.70.0.12
+        IpPort: '50030'
+      record_id: 1005
+    user:
+      name: svc_sql
+      domain: SRV-WEB03
+    network:
+      src_ip: 10.70.0.12
+      src_port: 50030
+      workstation: SQLAGENT01
+- artifact_type: evtx
+  doc:
+    fo_id: acc-006
+    timestamp: '2026-09-30T03:20:11.000Z'
+    message: Account logoff on srv-web03 [Security]
+    host:
+      hostname: srv-web03
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-web03
+      event_data:
+        TargetUserName: svc_sql
+        TargetLogonId: '0x1ee'
+        LogonType: '3'
+      record_id: 1006
+    user:
+      name: svc_sql
+      domain: SRV-WEB03
+- artifact_type: evtx
+  doc:
+    fo_id: acc-007
+    timestamp: '2026-10-01T03:15:11.000Z'
+    message: Account logon success on srv-web03 [Security]
+    host:
+      hostname: srv-web03
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-web03
+      event_data:
+        TargetUserName: svc_sql
+        TargetDomainName: SRV-WEB03
+        TargetLogonId: '0x01e'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: SQLAGENT01
+        IpAddress: 10.70.0.12
+        IpPort: '50001'
+      record_id: 1007
+    user:
+      name: svc_sql
+      domain: SRV-WEB03
+    network:
+      src_ip: 10.70.0.12
+      src_port: 50001
+      workstation: SQLAGENT01
+- artifact_type: evtx
+  doc:
+    fo_id: acc-008
+    timestamp: '2026-10-01T03:20:11.000Z'
+    message: Account logoff on srv-web03 [Security]
+    host:
+      hostname: srv-web03
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-web03
+      event_data:
+        TargetUserName: svc_sql
+        TargetLogonId: '0x01e'
+        LogonType: '3'
+      record_id: 1008
+    user:
+      name: svc_sql
+      domain: SRV-WEB03
+- artifact_type: evtx
+  doc:
+    fo_id: acc-009
+    timestamp: '2026-10-02T03:15:11.000Z'
+    message: Account logon success on srv-web03 [Security]
+    host:
+      hostname: srv-web03
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-web03
+      event_data:
+        TargetUserName: svc_sql
+        TargetDomainName: SRV-WEB03
+        TargetLogonId: '0x02e'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: SQLAGENT01
+        IpAddress: 10.70.0.12
+        IpPort: '50002'
+      record_id: 1009
+    user:
+      name: svc_sql
+      domain: SRV-WEB03
+    network:
+      src_ip: 10.70.0.12
+      src_port: 50002
+      workstation: SQLAGENT01
+- artifact_type: evtx
+  doc:
+    fo_id: acc-010
+    timestamp: '2026-10-02T03:20:11.000Z'
+    message: Account logoff on srv-web03 [Security]
+    host:
+      hostname: srv-web03
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-web03
+      event_data:
+        TargetUserName: svc_sql
+        TargetLogonId: '0x02e'
+        LogonType: '3'
+      record_id: 1010
+    user:
+      name: svc_sql
+      domain: SRV-WEB03
+- artifact_type: evtx
+  doc:
+    fo_id: acc-011
+    timestamp: '2026-10-03T03:15:11.000Z'
+    message: Account logon success on srv-web03 [Security]
+    host:
+      hostname: srv-web03
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-web03
+      event_data:
+        TargetUserName: svc_sql
+        TargetDomainName: SRV-WEB03
+        TargetLogonId: '0x03e'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: SQLAGENT01
+        IpAddress: 10.70.0.12
+        IpPort: '50003'
+      record_id: 1011
+    user:
+      name: svc_sql
+      domain: SRV-WEB03
+    network:
+      src_ip: 10.70.0.12
+      src_port: 50003
+      workstation: SQLAGENT01
+- artifact_type: evtx
+  doc:
+    fo_id: acc-012
+    timestamp: '2026-10-03T03:20:11.000Z'
+    message: Account logoff on srv-web03 [Security]
+    host:
+      hostname: srv-web03
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-web03
+      event_data:
+        TargetUserName: svc_sql
+        TargetLogonId: '0x03e'
+        LogonType: '3'
+      record_id: 1012
+    user:
+      name: svc_sql
+      domain: SRV-WEB03
+- artifact_type: evtx
+  doc:
+    fo_id: acc-013
+    timestamp: '2026-10-04T03:15:11.000Z'
+    message: Account logon success on srv-web03 [Security]
+    host:
+      hostname: srv-web03
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-web03
+      event_data:
+        TargetUserName: svc_sql
+        TargetDomainName: SRV-WEB03
+        TargetLogonId: '0x04e'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: SQLAGENT01
+        IpAddress: 10.70.0.12
+        IpPort: '50004'
+      record_id: 1013
+    user:
+      name: svc_sql
+      domain: SRV-WEB03
+    network:
+      src_ip: 10.70.0.12
+      src_port: 50004
+      workstation: SQLAGENT01
+- artifact_type: evtx
+  doc:
+    fo_id: acc-014
+    timestamp: '2026-10-04T03:20:11.000Z'
+    message: Account logoff on srv-web03 [Security]
+    host:
+      hostname: srv-web03
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-web03
+      event_data:
+        TargetUserName: svc_sql
+        TargetLogonId: '0x04e'
+        LogonType: '3'
+      record_id: 1014
+    user:
+      name: svc_sql
+      domain: SRV-WEB03
+- artifact_type: evtx
+  doc:
+    fo_id: acc-015
+    timestamp: '2026-10-05T03:15:11.000Z'
+    message: Account logon success on srv-web03 [Security]
+    host:
+      hostname: srv-web03
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-web03
+      event_data:
+        TargetUserName: svc_sql
+        TargetDomainName: SRV-WEB03
+        TargetLogonId: '0x05e'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: SQLAGENT01
+        IpAddress: 10.70.0.12
+        IpPort: '50005'
+      record_id: 1015
+    user:
+      name: svc_sql
+      domain: SRV-WEB03
+    network:
+      src_ip: 10.70.0.12
+      src_port: 50005
+      workstation: SQLAGENT01
+- artifact_type: evtx
+  doc:
+    fo_id: acc-016
+    timestamp: '2026-10-05T03:20:11.000Z'
+    message: Account logoff on srv-web03 [Security]
+    host:
+      hostname: srv-web03
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-web03
+      event_data:
+        TargetUserName: svc_sql
+        TargetLogonId: '0x05e'
+        LogonType: '3'
+      record_id: 1016
+    user:
+      name: svc_sql
+      domain: SRV-WEB03
+- artifact_type: evtx
+  doc:
+    fo_id: acc-017
+    timestamp: '2026-10-06T03:15:11.000Z'
+    message: Account logon success on srv-web03 [Security]
+    host:
+      hostname: srv-web03
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-web03
+      event_data:
+        TargetUserName: svc_sql
+        TargetDomainName: SRV-WEB03
+        TargetLogonId: '0x06e'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: SQLAGENT01
+        IpAddress: 10.70.0.12
+        IpPort: '50006'
+      record_id: 1017
+    user:
+      name: svc_sql
+      domain: SRV-WEB03
+    network:
+      src_ip: 10.70.0.12
+      src_port: 50006
+      workstation: SQLAGENT01
+- artifact_type: evtx
+  doc:
+    fo_id: acc-018
+    timestamp: '2026-10-06T03:20:11.000Z'
+    message: Account logoff on srv-web03 [Security]
+    host:
+      hostname: srv-web03
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-web03
+      event_data:
+        TargetUserName: svc_sql
+        TargetLogonId: '0x06e'
+        LogonType: '3'
+      record_id: 1018
+    user:
+      name: svc_sql
+      domain: SRV-WEB03
+- artifact_type: evtx
+  doc:
+    fo_id: acc-019
+    timestamp: '2026-10-07T03:15:11.000Z'
+    message: Account logon success on srv-web03 [Security]
+    host:
+      hostname: srv-web03
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-web03
+      event_data:
+        TargetUserName: svc_sql
+        TargetDomainName: SRV-WEB03
+        TargetLogonId: '0x07e'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: SQLAGENT01
+        IpAddress: 10.70.0.12
+        IpPort: '50007'
+      record_id: 1019
+    user:
+      name: svc_sql
+      domain: SRV-WEB03
+    network:
+      src_ip: 10.70.0.12
+      src_port: 50007
+      workstation: SQLAGENT01
+- artifact_type: evtx
+  doc:
+    fo_id: acc-020
+    timestamp: '2026-10-07T03:20:11.000Z'
+    message: Account logoff on srv-web03 [Security]
+    host:
+      hostname: srv-web03
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-web03
+      event_data:
+        TargetUserName: svc_sql
+        TargetLogonId: '0x07e'
+        LogonType: '3'
+      record_id: 1020
+    user:
+      name: svc_sql
+      domain: SRV-WEB03
+- artifact_type: evtx
+  doc:
+    fo_id: acc-021
+    timestamp: '2026-10-08T03:15:11.000Z'
+    message: Account logon success on srv-web03 [Security]
+    host:
+      hostname: srv-web03
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-web03
+      event_data:
+        TargetUserName: svc_sql
+        TargetDomainName: SRV-WEB03
+        TargetLogonId: '0x08e'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: SQLAGENT01
+        IpAddress: 10.70.0.12
+        IpPort: '50008'
+      record_id: 1021
+    user:
+      name: svc_sql
+      domain: SRV-WEB03
+    network:
+      src_ip: 10.70.0.12
+      src_port: 50008
+      workstation: SQLAGENT01
+- artifact_type: evtx
+  doc:
+    fo_id: acc-022
+    timestamp: '2026-10-08T03:20:11.000Z'
+    message: Account logoff on srv-web03 [Security]
+    host:
+      hostname: srv-web03
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-web03
+      event_data:
+        TargetUserName: svc_sql
+        TargetLogonId: '0x08e'
+        LogonType: '3'
+      record_id: 1022
+    user:
+      name: svc_sql
+      domain: SRV-WEB03
+- artifact_type: evtx
+  doc:
+    fo_id: acc-023
+    timestamp: '2026-10-09T03:15:11.000Z'
+    message: Account logon success on srv-web03 [Security]
+    host:
+      hostname: srv-web03
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-web03
+      event_data:
+        TargetUserName: svc_sql
+        TargetDomainName: SRV-WEB03
+        TargetLogonId: '0x09e'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: SQLAGENT01
+        IpAddress: 10.70.0.12
+        IpPort: '50009'
+      record_id: 1023
+    user:
+      name: svc_sql
+      domain: SRV-WEB03
+    network:
+      src_ip: 10.70.0.12
+      src_port: 50009
+      workstation: SQLAGENT01
+- artifact_type: evtx
+  doc:
+    fo_id: acc-024
+    timestamp: '2026-10-09T03:20:11.000Z'
+    message: Account logoff on srv-web03 [Security]
+    host:
+      hostname: srv-web03
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-web03
+      event_data:
+        TargetUserName: svc_sql
+        TargetLogonId: '0x09e'
+        LogonType: '3'
+      record_id: 1024
+    user:
+      name: svc_sql
+      domain: SRV-WEB03
+- artifact_type: evtx
+  doc:
+    fo_id: acc-025
+    timestamp: '2026-10-10T03:15:11.000Z'
+    message: Account logon success on srv-web03 [Security]
+    host:
+      hostname: srv-web03
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-web03
+      event_data:
+        TargetUserName: svc_sql
+        TargetDomainName: SRV-WEB03
+        TargetLogonId: '0x0ae'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: SQLAGENT01
+        IpAddress: 10.70.0.12
+        IpPort: '50010'
+      record_id: 1025
+    user:
+      name: svc_sql
+      domain: SRV-WEB03
+    network:
+      src_ip: 10.70.0.12
+      src_port: 50010
+      workstation: SQLAGENT01
+- artifact_type: evtx
+  doc:
+    fo_id: acc-026
+    timestamp: '2026-10-10T03:20:11.000Z'
+    message: Account logoff on srv-web03 [Security]
+    host:
+      hostname: srv-web03
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-web03
+      event_data:
+        TargetUserName: svc_sql
+        TargetLogonId: '0x0ae'
+        LogonType: '3'
+      record_id: 1026
+    user:
+      name: svc_sql
+      domain: SRV-WEB03
+- artifact_type: evtx
+  doc:
+    fo_id: acc-027
+    timestamp: '2026-10-11T03:15:11.000Z'
+    message: Account logon success on srv-web03 [Security]
+    host:
+      hostname: srv-web03
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-web03
+      event_data:
+        TargetUserName: svc_sql
+        TargetDomainName: SRV-WEB03
+        TargetLogonId: '0x0be'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: SQLAGENT01
+        IpAddress: 10.70.0.12
+        IpPort: '50011'
+      record_id: 1028
+    user:
+      name: svc_sql
+      domain: SRV-WEB03
+    network:
+      src_ip: 10.70.0.12
+      src_port: 50011
+      workstation: SQLAGENT01
+- artifact_type: evtx
+  doc:
+    fo_id: acc-028
+    timestamp: '2026-10-11T03:20:11.000Z'
+    message: Account logoff on srv-web03 [Security]
+    host:
+      hostname: srv-web03
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-web03
+      event_data:
+        TargetUserName: svc_sql
+        TargetLogonId: '0x0be'
+        LogonType: '3'
+      record_id: 1030
+    user:
+      name: svc_sql
+      domain: SRV-WEB03
+- artifact_type: evtx
+  doc:
+    fo_id: acc-029
+    timestamp: '2026-10-11T03:15:01.000Z'
+    message: Account logon success on srv-web03 [Security]
+    host:
+      hostname: srv-web03
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-web03
+      event_data:
+        TargetUserName: svc_sql
+        TargetDomainName: SRV-WEB03
+        TargetLogonId: '0x5e11'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: SQLAGENT01
+        IpAddress: 10.70.0.12
+        IpPort: '50550'
+      record_id: 1027
+    user:
+      name: svc_sql
+      domain: SRV-WEB03
+    network:
+      src_ip: 10.70.0.12
+      src_port: 50550
+      workstation: SQLAGENT01
+  key: true
+- artifact_type: evtx
+  doc:
+    fo_id: acc-030
+    timestamp: '2026-10-11T03:20:02.000Z'
+    message: Account logoff on srv-web03 [Security]
+    host:
+      hostname: srv-web03
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-web03
+      event_data:
+        TargetUserName: svc_sql
+        TargetLogonId: '0x5e11'
+        LogonType: '3'
+      record_id: 1029
+    user:
+      name: svc_sql
+      domain: SRV-WEB03
+- artifact_type: evtx
+  doc:
+    fo_id: acc-031
+    timestamp: '2026-10-10T09:12:00.000Z'
+    message: Account logon success on ws-jsmith [Security]
+    host:
+      hostname: ws-jsmith
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: ws-jsmith
+      event_data:
+        TargetUserName: jsmith
+        TargetDomainName: WS-JSMITH
+        TargetLogonId: '0x7a1'
+        LogonType: '2'
+        LogonProcessName: User32
+        AuthenticationPackageName: Negotiate
+        WorkstationName: WS-JSMITH
+        IpAddress: 10.70.5.21
+        IpPort: '50123'
+      record_id: 1001
+    user:
+      name: jsmith
+      domain: WS-JSMITH
+    network:
+      src_ip: 10.70.5.21
+      src_port: 50123
+      workstation: WS-JSMITH
+rubric:
+  key_evidence:
+  - acc-029
+  incident_confirmed_any:
+  - 'no'
+  - inconclusive
+  attribution:
+    actor: svc_sql
+  required_content:
+    account discrepancy:
+    - jsmith
+    - svc_sql
+  exact_iocs:
+  - C:\Windows\Temp\sqlprobe_31.tmp
+  confidence_range:
+  - 50
+  - 95
+  require_citations: true
+  max_steps: 30

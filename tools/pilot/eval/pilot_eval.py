@@ -193,6 +193,65 @@ def run_agent(api: str, token: str, case_id: str, scenario: dict,
     return runs[0]  # newest first
 
 
+# ── in-process mode (inside the API container) ──────────────────────────────
+
+
+def inprocess_run(case_id: str, scenario: dict, max_steps_cap: int | None = None) -> dict:
+    """Seed, run the agent loop in this process, clean up, return the run doc.
+
+    For running inside the API container, where Elasticsearch, Redis and the LLM
+    config are reachable without a session token. Side effects a real run has
+    beyond its own case are stubbed: module launches, findings persistence and
+    the cross-case memory. Import pilot from --pilot-path to compare two
+    harness versions against identical data.
+    """
+    from services.elasticsearch import _request as es
+
+    from pilot import service
+
+    def drop() -> None:
+        try:
+            for row in es("GET", f"/_cat/indices/fo-case-{case_id}-*?format=json", None) or []:
+                es("DELETE", f"/{row['index']}", None)
+        except Exception:
+            pass
+        r = service._redis()
+        for k in r.scan_iter(f"case:{case_id}:*"):
+            r.delete(k)
+
+    drop()
+    for entry in scenario["seed"]:
+        doc = dict(entry["doc"])
+        doc.setdefault("artifact_type", entry["artifact_type"])
+        doc.setdefault("case_id", case_id)
+        es("PUT", f"/fo-case-{case_id}-{entry['artifact_type']}/_doc/{doc['fo_id']}?refresh=true", doc)
+
+    service._autolaunch_modules = lambda cid: ""
+    stub = lambda cid, step: {"query_status": "ok", "note": "(eval) not executed"}  # noqa: E731
+    for name in ("save_finding", "launch_module"):
+        if name in service.AGENT_TOOLS:
+            service.AGENT_TOOLS[name] = stub
+    try:
+        from services import pilot_memory
+
+        pilot_memory.remember = lambda *a, **k: None
+    except Exception:
+        pass
+
+    cfg = service._get_config(service._redis())
+    steps = int(scenario["rubric"].get("max_steps") or 20)
+    if max_steps_cap:
+        steps = min(steps, max_steps_cap)
+    run = {}
+    try:
+        for ev in service._agent_run(case_id, scenario["scenario"], steps, cfg, None):
+            if ev.get("type") == "done":
+                run = ev.get("run") or {}
+    finally:
+        drop()
+    return run
+
+
 # ── reporting ────────────────────────────────────────────────────────────────
 
 
@@ -228,6 +287,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--list", action="store_true", help="list scenarios and exit")
     ap.add_argument("--check", action="store_true", help="validate scenarios and exit")
     ap.add_argument("--json", action="store_true", help="machine-readable output")
+    ap.add_argument("--inprocess", action="store_true",
+                    help="run inside the API container: seed + drive the agent in this process")
+    ap.add_argument("--pilot-path", help="import the pilot package from here (compare versions)")
+    ap.add_argument("--max-steps-cap", type=int, help="cap every scenario's step budget")
     args = ap.parse_args(argv)
 
     scenarios = load_scenarios(args.only)
@@ -264,6 +327,25 @@ def main(argv: list[str] | None = None) -> int:
             cards.append(scoring.score(entry["run"], s["rubric"], corpus_ids(s)))
         if not cards:
             raise SystemExit("replay file scored nothing")
+        return report(cards, args.json)
+
+    if args.inprocess:
+        if args.pilot_path:
+            sys.path.insert(0, args.pilot_path)
+        if Path("/app").is_dir():
+            sys.path.insert(1, "/app")  # the API app: config, services, redis_keys
+        cards, saved_runs = [], []
+        for s in scenarios:
+            case_id = f"{args.case_id}-{s['id']}".lower().replace("_", "-")[:60]
+            print(f"→ {s['id']}: in-process run on case {case_id}", file=sys.stderr)
+            started = time.time()
+            run = inprocess_run(case_id, s, args.max_steps_cap)
+            print(f"  done in {time.time() - started:.0f}s, {run.get('step_count')} step(s), "
+                  f"stopped_reason={run.get('stopped_reason')}", file=sys.stderr)
+            saved_runs.append({"scenario": s["id"], "run": run})
+            cards.append(scoring.score(run, s["rubric"], corpus_ids(s)))
+            if args.save:  # after every scenario: a long run must survive an interruption
+                Path(args.save).write_text(json.dumps({"runs": saved_runs}, default=str) + "\n")
         return report(cards, args.json)
 
     if not (args.api and args.es):

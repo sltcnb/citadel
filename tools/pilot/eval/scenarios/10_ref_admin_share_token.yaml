@@ -1,0 +1,1250 @@
+id: ref_admin_share_token
+description: 'Reference-equivalent: the port join names a backup service account the alert did not; the
+  session is off-schedule; a detection fired a minute before.'
+scenario: 'Alert: Uncommon File Dropped Under Noteworthy Folder via SMB
+
+
+  Machine : srv-files01
+
+
+  Comptes : NT AUTHORITY\SYSTEM, app_jdoe
+
+
+  Indicateurs : 10.20.30.10 (IP) ; 10.20.30.40 (IP)
+
+
+  Heure de l''occurrence : 2026-10-21 08:04:14 UTC
+
+
+  Source port : 51021
+
+
+  Application : SMB
+
+
+  Partage SMB : ADMIN$
+
+
+  The file C:\Windows\testIsShareWriteable_q8w2e4r6.tmp was written to the ADMIN$ share of srv-files01
+  (10.20.30.10) from 10.20.30.40, under the account app_jdoe. Prior analysis: benign at 60 % confidence,
+  most likely an internal tool testing write access; the source machine was not found in the inventories.
+  The analyst reports no recurrence over 7 days and no execution after the drop.'
+seed:
+- artifact_type: evtx
+  doc:
+    fo_id: ref-001
+    timestamp: '2026-10-07T19:00:11.000Z'
+    message: Account logon success on srv-files01 [Security]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-files01
+      event_data:
+        TargetUserName: svc_backup
+        TargetDomainName: SRV-FILES01
+        TargetLogonId: '0x07a1'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: BKP-SRV01
+        IpAddress: 10.20.30.40
+        IpPort: '50007'
+      record_id: 1002
+    user:
+      name: svc_backup
+      domain: SRV-FILES01
+    network:
+      src_ip: 10.20.30.40
+      src_port: 50007
+      workstation: BKP-SRV01
+- artifact_type: evtx
+  doc:
+    fo_id: ref-002
+    timestamp: '2026-10-07T19:03:11.000Z'
+    message: Account logoff on srv-files01 [Security]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-files01
+      event_data:
+        TargetUserName: svc_backup
+        TargetLogonId: '0x07a1'
+        LogonType: '3'
+      record_id: 1003
+    user:
+      name: svc_backup
+      domain: SRV-FILES01
+- artifact_type: evtx
+  doc:
+    fo_id: ref-003
+    timestamp: '2026-10-08T19:00:11.000Z'
+    message: Account logon success on srv-files01 [Security]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-files01
+      event_data:
+        TargetUserName: svc_backup
+        TargetDomainName: SRV-FILES01
+        TargetLogonId: '0x08a1'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: BKP-SRV01
+        IpAddress: 10.20.30.40
+        IpPort: '50008'
+      record_id: 1005
+    user:
+      name: svc_backup
+      domain: SRV-FILES01
+    network:
+      src_ip: 10.20.30.40
+      src_port: 50008
+      workstation: BKP-SRV01
+- artifact_type: evtx
+  doc:
+    fo_id: ref-004
+    timestamp: '2026-10-08T19:03:11.000Z'
+    message: Account logoff on srv-files01 [Security]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-files01
+      event_data:
+        TargetUserName: svc_backup
+        TargetLogonId: '0x08a1'
+        LogonType: '3'
+      record_id: 1006
+    user:
+      name: svc_backup
+      domain: SRV-FILES01
+- artifact_type: evtx
+  doc:
+    fo_id: ref-005
+    timestamp: '2026-10-09T19:00:11.000Z'
+    message: Account logon success on srv-files01 [Security]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-files01
+      event_data:
+        TargetUserName: svc_backup
+        TargetDomainName: SRV-FILES01
+        TargetLogonId: '0x09a1'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: BKP-SRV01
+        IpAddress: 10.20.30.40
+        IpPort: '50009'
+      record_id: 1007
+    user:
+      name: svc_backup
+      domain: SRV-FILES01
+    network:
+      src_ip: 10.20.30.40
+      src_port: 50009
+      workstation: BKP-SRV01
+- artifact_type: evtx
+  doc:
+    fo_id: ref-006
+    timestamp: '2026-10-09T19:03:11.000Z'
+    message: Account logoff on srv-files01 [Security]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-files01
+      event_data:
+        TargetUserName: svc_backup
+        TargetLogonId: '0x09a1'
+        LogonType: '3'
+      record_id: 1008
+    user:
+      name: svc_backup
+      domain: SRV-FILES01
+- artifact_type: evtx
+  doc:
+    fo_id: ref-007
+    timestamp: '2026-10-10T19:00:11.000Z'
+    message: Account logon success on srv-files01 [Security]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-files01
+      event_data:
+        TargetUserName: svc_backup
+        TargetDomainName: SRV-FILES01
+        TargetLogonId: '0x0aa1'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: BKP-SRV01
+        IpAddress: 10.20.30.40
+        IpPort: '50010'
+      record_id: 1009
+    user:
+      name: svc_backup
+      domain: SRV-FILES01
+    network:
+      src_ip: 10.20.30.40
+      src_port: 50010
+      workstation: BKP-SRV01
+- artifact_type: evtx
+  doc:
+    fo_id: ref-008
+    timestamp: '2026-10-10T19:03:11.000Z'
+    message: Account logoff on srv-files01 [Security]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-files01
+      event_data:
+        TargetUserName: svc_backup
+        TargetLogonId: '0x0aa1'
+        LogonType: '3'
+      record_id: 1010
+    user:
+      name: svc_backup
+      domain: SRV-FILES01
+- artifact_type: evtx
+  doc:
+    fo_id: ref-009
+    timestamp: '2026-10-11T19:00:11.000Z'
+    message: Account logon success on srv-files01 [Security]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-files01
+      event_data:
+        TargetUserName: svc_backup
+        TargetDomainName: SRV-FILES01
+        TargetLogonId: '0x0ba1'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: BKP-SRV01
+        IpAddress: 10.20.30.40
+        IpPort: '50011'
+      record_id: 1011
+    user:
+      name: svc_backup
+      domain: SRV-FILES01
+    network:
+      src_ip: 10.20.30.40
+      src_port: 50011
+      workstation: BKP-SRV01
+- artifact_type: evtx
+  doc:
+    fo_id: ref-010
+    timestamp: '2026-10-11T19:03:11.000Z'
+    message: Account logoff on srv-files01 [Security]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-files01
+      event_data:
+        TargetUserName: svc_backup
+        TargetLogonId: '0x0ba1'
+        LogonType: '3'
+      record_id: 1012
+    user:
+      name: svc_backup
+      domain: SRV-FILES01
+- artifact_type: evtx
+  doc:
+    fo_id: ref-011
+    timestamp: '2026-10-12T19:00:11.000Z'
+    message: Account logon success on srv-files01 [Security]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-files01
+      event_data:
+        TargetUserName: svc_backup
+        TargetDomainName: SRV-FILES01
+        TargetLogonId: '0x0ca1'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: BKP-SRV01
+        IpAddress: 10.20.30.40
+        IpPort: '50012'
+      record_id: 1013
+    user:
+      name: svc_backup
+      domain: SRV-FILES01
+    network:
+      src_ip: 10.20.30.40
+      src_port: 50012
+      workstation: BKP-SRV01
+- artifact_type: evtx
+  doc:
+    fo_id: ref-012
+    timestamp: '2026-10-12T19:03:11.000Z'
+    message: Account logoff on srv-files01 [Security]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-files01
+      event_data:
+        TargetUserName: svc_backup
+        TargetLogonId: '0x0ca1'
+        LogonType: '3'
+      record_id: 1014
+    user:
+      name: svc_backup
+      domain: SRV-FILES01
+- artifact_type: evtx
+  doc:
+    fo_id: ref-013
+    timestamp: '2026-10-13T19:00:11.000Z'
+    message: Account logon success on srv-files01 [Security]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-files01
+      event_data:
+        TargetUserName: svc_backup
+        TargetDomainName: SRV-FILES01
+        TargetLogonId: '0x0da1'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: BKP-SRV01
+        IpAddress: 10.20.30.40
+        IpPort: '50013'
+      record_id: 1015
+    user:
+      name: svc_backup
+      domain: SRV-FILES01
+    network:
+      src_ip: 10.20.30.40
+      src_port: 50013
+      workstation: BKP-SRV01
+- artifact_type: evtx
+  doc:
+    fo_id: ref-014
+    timestamp: '2026-10-13T19:03:11.000Z'
+    message: Account logoff on srv-files01 [Security]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-files01
+      event_data:
+        TargetUserName: svc_backup
+        TargetLogonId: '0x0da1'
+        LogonType: '3'
+      record_id: 1016
+    user:
+      name: svc_backup
+      domain: SRV-FILES01
+- artifact_type: evtx
+  doc:
+    fo_id: ref-015
+    timestamp: '2026-10-14T19:00:11.000Z'
+    message: Account logon success on srv-files01 [Security]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-files01
+      event_data:
+        TargetUserName: svc_backup
+        TargetDomainName: SRV-FILES01
+        TargetLogonId: '0x0ea1'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: BKP-SRV01
+        IpAddress: 10.20.30.40
+        IpPort: '50014'
+      record_id: 1018
+    user:
+      name: svc_backup
+      domain: SRV-FILES01
+    network:
+      src_ip: 10.20.30.40
+      src_port: 50014
+      workstation: BKP-SRV01
+- artifact_type: evtx
+  doc:
+    fo_id: ref-016
+    timestamp: '2026-10-14T19:03:11.000Z'
+    message: Account logoff on srv-files01 [Security]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-files01
+      event_data:
+        TargetUserName: svc_backup
+        TargetLogonId: '0x0ea1'
+        LogonType: '3'
+      record_id: 1019
+    user:
+      name: svc_backup
+      domain: SRV-FILES01
+- artifact_type: evtx
+  doc:
+    fo_id: ref-017
+    timestamp: '2026-10-15T19:00:11.000Z'
+    message: Account logon success on srv-files01 [Security]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-files01
+      event_data:
+        TargetUserName: svc_backup
+        TargetDomainName: SRV-FILES01
+        TargetLogonId: '0x0fa1'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: BKP-SRV01
+        IpAddress: 10.20.30.40
+        IpPort: '50015'
+      record_id: 1020
+    user:
+      name: svc_backup
+      domain: SRV-FILES01
+    network:
+      src_ip: 10.20.30.40
+      src_port: 50015
+      workstation: BKP-SRV01
+- artifact_type: evtx
+  doc:
+    fo_id: ref-018
+    timestamp: '2026-10-15T19:03:11.000Z'
+    message: Account logoff on srv-files01 [Security]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-files01
+      event_data:
+        TargetUserName: svc_backup
+        TargetLogonId: '0x0fa1'
+        LogonType: '3'
+      record_id: 1021
+    user:
+      name: svc_backup
+      domain: SRV-FILES01
+- artifact_type: evtx
+  doc:
+    fo_id: ref-019
+    timestamp: '2026-10-16T19:00:11.000Z'
+    message: Account logon success on srv-files01 [Security]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-files01
+      event_data:
+        TargetUserName: svc_backup
+        TargetDomainName: SRV-FILES01
+        TargetLogonId: '0x10a1'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: BKP-SRV01
+        IpAddress: 10.20.30.40
+        IpPort: '50016'
+      record_id: 1022
+    user:
+      name: svc_backup
+      domain: SRV-FILES01
+    network:
+      src_ip: 10.20.30.40
+      src_port: 50016
+      workstation: BKP-SRV01
+- artifact_type: evtx
+  doc:
+    fo_id: ref-020
+    timestamp: '2026-10-16T19:03:11.000Z'
+    message: Account logoff on srv-files01 [Security]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-files01
+      event_data:
+        TargetUserName: svc_backup
+        TargetLogonId: '0x10a1'
+        LogonType: '3'
+      record_id: 1023
+    user:
+      name: svc_backup
+      domain: SRV-FILES01
+- artifact_type: evtx
+  doc:
+    fo_id: ref-021
+    timestamp: '2026-10-17T19:00:11.000Z'
+    message: Account logon success on srv-files01 [Security]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-files01
+      event_data:
+        TargetUserName: svc_backup
+        TargetDomainName: SRV-FILES01
+        TargetLogonId: '0x11a1'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: BKP-SRV01
+        IpAddress: 10.20.30.40
+        IpPort: '50017'
+      record_id: 1024
+    user:
+      name: svc_backup
+      domain: SRV-FILES01
+    network:
+      src_ip: 10.20.30.40
+      src_port: 50017
+      workstation: BKP-SRV01
+- artifact_type: evtx
+  doc:
+    fo_id: ref-022
+    timestamp: '2026-10-17T19:03:11.000Z'
+    message: Account logoff on srv-files01 [Security]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-files01
+      event_data:
+        TargetUserName: svc_backup
+        TargetLogonId: '0x11a1'
+        LogonType: '3'
+      record_id: 1025
+    user:
+      name: svc_backup
+      domain: SRV-FILES01
+- artifact_type: evtx
+  doc:
+    fo_id: ref-023
+    timestamp: '2026-10-18T19:00:11.000Z'
+    message: Account logon success on srv-files01 [Security]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-files01
+      event_data:
+        TargetUserName: svc_backup
+        TargetDomainName: SRV-FILES01
+        TargetLogonId: '0x12a1'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: BKP-SRV01
+        IpAddress: 10.20.30.40
+        IpPort: '50018'
+      record_id: 1026
+    user:
+      name: svc_backup
+      domain: SRV-FILES01
+    network:
+      src_ip: 10.20.30.40
+      src_port: 50018
+      workstation: BKP-SRV01
+- artifact_type: evtx
+  doc:
+    fo_id: ref-024
+    timestamp: '2026-10-18T19:03:11.000Z'
+    message: Account logoff on srv-files01 [Security]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-files01
+      event_data:
+        TargetUserName: svc_backup
+        TargetLogonId: '0x12a1'
+        LogonType: '3'
+      record_id: 1027
+    user:
+      name: svc_backup
+      domain: SRV-FILES01
+- artifact_type: evtx
+  doc:
+    fo_id: ref-025
+    timestamp: '2026-10-19T19:00:11.000Z'
+    message: Account logon success on srv-files01 [Security]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-files01
+      event_data:
+        TargetUserName: svc_backup
+        TargetDomainName: SRV-FILES01
+        TargetLogonId: '0x13a1'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: BKP-SRV01
+        IpAddress: 10.20.30.40
+        IpPort: '50019'
+      record_id: 1028
+    user:
+      name: svc_backup
+      domain: SRV-FILES01
+    network:
+      src_ip: 10.20.30.40
+      src_port: 50019
+      workstation: BKP-SRV01
+- artifact_type: evtx
+  doc:
+    fo_id: ref-026
+    timestamp: '2026-10-19T19:03:11.000Z'
+    message: Account logoff on srv-files01 [Security]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-files01
+      event_data:
+        TargetUserName: svc_backup
+        TargetLogonId: '0x13a1'
+        LogonType: '3'
+      record_id: 1029
+    user:
+      name: svc_backup
+      domain: SRV-FILES01
+- artifact_type: evtx
+  doc:
+    fo_id: ref-027
+    timestamp: '2026-10-20T19:00:11.000Z'
+    message: Account logon success on srv-files01 [Security]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-files01
+      event_data:
+        TargetUserName: svc_backup
+        TargetDomainName: SRV-FILES01
+        TargetLogonId: '0x14a1'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: BKP-SRV01
+        IpAddress: 10.20.30.40
+        IpPort: '50020'
+      record_id: 1030
+    user:
+      name: svc_backup
+      domain: SRV-FILES01
+    network:
+      src_ip: 10.20.30.40
+      src_port: 50020
+      workstation: BKP-SRV01
+- artifact_type: evtx
+  doc:
+    fo_id: ref-028
+    timestamp: '2026-10-20T19:03:11.000Z'
+    message: Account logoff on srv-files01 [Security]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-files01
+      event_data:
+        TargetUserName: svc_backup
+        TargetLogonId: '0x14a1'
+        LogonType: '3'
+      record_id: 1031
+    user:
+      name: svc_backup
+      domain: SRV-FILES01
+- artifact_type: evtx
+  doc:
+    fo_id: ref-029
+    timestamp: '2026-10-21T08:03:14.000Z'
+    message: Account logon success on srv-files01 [Security]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-files01
+      event_data:
+        TargetUserName: svc_backup
+        TargetDomainName: SRV-FILES01
+        TargetLogonId: '0x1a2b3c00'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: BKP-SRV01
+        IpAddress: 10.20.30.40
+        IpPort: '51010'
+      record_id: 1033
+    user:
+      name: svc_backup
+      domain: SRV-FILES01
+    network:
+      src_ip: 10.20.30.40
+      src_port: 51010
+      workstation: BKP-SRV01
+- artifact_type: evtx
+  doc:
+    fo_id: ref-030
+    timestamp: '2026-10-21T08:03:14.000Z'
+    message: Special privileges assigned to new logon on srv-files01 [Security]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 4672
+      channel: Security
+      computer: srv-files01
+      event_data:
+        SubjectUserName: svc_backup
+        SubjectDomainName: SRV-FILES01
+        SubjectLogonId: '0x1a2b3c00'
+        PrivilegeList: SeBackupPrivilege SeRestorePrivilege SeDebugPrivilege
+      record_id: 1034
+    user:
+      name: svc_backup
+      domain: SRV-FILES01
+- artifact_type: evtx
+  doc:
+    fo_id: ref-031
+    timestamp: '2026-10-21T08:03:54.000Z'
+    message: Account logoff on srv-files01 [Security]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-files01
+      event_data:
+        TargetUserName: svc_backup
+        TargetLogonId: '0x1a2b3c00'
+        LogonType: '3'
+      record_id: 1035
+    user:
+      name: svc_backup
+      domain: SRV-FILES01
+- artifact_type: evtx
+  doc:
+    fo_id: ref-032
+    timestamp: '2026-10-21T08:04:13.000Z'
+    message: Account logon success on srv-files01 [Security]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-files01
+      event_data:
+        TargetUserName: svc_backup
+        TargetDomainName: SRV-FILES01
+        TargetLogonId: '0x1a2b3c01'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: BKP-SRV01
+        IpAddress: 10.20.30.40
+        IpPort: '51015'
+      record_id: 1036
+    user:
+      name: svc_backup
+      domain: SRV-FILES01
+    network:
+      src_ip: 10.20.30.40
+      src_port: 51015
+      workstation: BKP-SRV01
+- artifact_type: evtx
+  doc:
+    fo_id: ref-033
+    timestamp: '2026-10-21T08:04:13.000Z'
+    message: Special privileges assigned to new logon on srv-files01 [Security]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 4672
+      channel: Security
+      computer: srv-files01
+      event_data:
+        SubjectUserName: svc_backup
+        SubjectDomainName: SRV-FILES01
+        SubjectLogonId: '0x1a2b3c01'
+        PrivilegeList: SeBackupPrivilege SeRestorePrivilege SeDebugPrivilege
+      record_id: 1037
+    user:
+      name: svc_backup
+      domain: SRV-FILES01
+- artifact_type: evtx
+  doc:
+    fo_id: ref-034
+    timestamp: '2026-10-21T08:04:53.000Z'
+    message: Account logoff on srv-files01 [Security]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-files01
+      event_data:
+        TargetUserName: svc_backup
+        TargetLogonId: '0x1a2b3c01'
+        LogonType: '3'
+      record_id: 1042
+    user:
+      name: svc_backup
+      domain: SRV-FILES01
+- artifact_type: evtx
+  doc:
+    fo_id: ref-035
+    timestamp: '2026-10-21T08:04:14.000Z'
+    message: Account logon success on srv-files01 [Security]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-files01
+      event_data:
+        TargetUserName: svc_backup
+        TargetDomainName: SRV-FILES01
+        TargetLogonId: '0x1a2b3c02'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: BKP-SRV01
+        IpAddress: 10.20.30.40
+        IpPort: '51021'
+      record_id: 1038
+    user:
+      name: svc_backup
+      domain: SRV-FILES01
+    network:
+      src_ip: 10.20.30.40
+      src_port: 51021
+      workstation: BKP-SRV01
+  key: true
+- artifact_type: evtx
+  doc:
+    fo_id: ref-036
+    timestamp: '2026-10-21T08:04:14.000Z'
+    message: Special privileges assigned to new logon on srv-files01 [Security]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 4672
+      channel: Security
+      computer: srv-files01
+      event_data:
+        SubjectUserName: svc_backup
+        SubjectDomainName: SRV-FILES01
+        SubjectLogonId: '0x1a2b3c02'
+        PrivilegeList: SeBackupPrivilege SeRestorePrivilege SeDebugPrivilege
+      record_id: 1039
+    user:
+      name: svc_backup
+      domain: SRV-FILES01
+- artifact_type: evtx
+  doc:
+    fo_id: ref-037
+    timestamp: '2026-10-21T08:04:54.000Z'
+    message: Account logoff on srv-files01 [Security]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-files01
+      event_data:
+        TargetUserName: svc_backup
+        TargetLogonId: '0x1a2b3c02'
+        LogonType: '3'
+      record_id: 1043
+    user:
+      name: svc_backup
+      domain: SRV-FILES01
+- artifact_type: evtx
+  doc:
+    fo_id: ref-038
+    timestamp: '2026-10-21T08:04:33.000Z'
+    message: Account logon success on srv-files01 [Security]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-files01
+      event_data:
+        TargetUserName: svc_backup
+        TargetDomainName: SRV-FILES01
+        TargetLogonId: '0x1a2b3c03'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: BKP-SRV01
+        IpAddress: 10.20.30.40
+        IpPort: '51030'
+      record_id: 1040
+    user:
+      name: svc_backup
+      domain: SRV-FILES01
+    network:
+      src_ip: 10.20.30.40
+      src_port: 51030
+      workstation: BKP-SRV01
+- artifact_type: evtx
+  doc:
+    fo_id: ref-039
+    timestamp: '2026-10-21T08:04:33.000Z'
+    message: Special privileges assigned to new logon on srv-files01 [Security]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 4672
+      channel: Security
+      computer: srv-files01
+      event_data:
+        SubjectUserName: svc_backup
+        SubjectDomainName: SRV-FILES01
+        SubjectLogonId: '0x1a2b3c03'
+        PrivilegeList: SeBackupPrivilege SeRestorePrivilege SeDebugPrivilege
+      record_id: 1041
+    user:
+      name: svc_backup
+      domain: SRV-FILES01
+- artifact_type: evtx
+  doc:
+    fo_id: ref-040
+    timestamp: '2026-10-21T08:05:13.000Z'
+    message: Account logoff on srv-files01 [Security]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-files01
+      event_data:
+        TargetUserName: svc_backup
+        TargetLogonId: '0x1a2b3c03'
+        LogonType: '3'
+      record_id: 1044
+    user:
+      name: svc_backup
+      domain: SRV-FILES01
+- artifact_type: evtx
+  doc:
+    fo_id: ref-041
+    timestamp: '2026-10-08T15:18:00.000Z'
+    message: Account logon success on srv-files01 [Security]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-files01
+      event_data:
+        TargetUserName: app_jdoe
+        TargetDomainName: SRV-FILES01
+        TargetLogonId: '0x53'
+        LogonType: '10'
+        LogonProcessName: User32
+        AuthenticationPackageName: Negotiate
+        WorkstationName: WS-CLIENT01
+        IpAddress: 10.20.40.86
+        IpPort: '61003'
+      record_id: 1004
+    user:
+      name: app_jdoe
+      domain: SRV-FILES01
+    network:
+      src_ip: 10.20.40.86
+      src_port: 61003
+      workstation: WS-CLIENT01
+- artifact_type: evtx
+  doc:
+    fo_id: ref-042
+    timestamp: '2026-10-14T15:18:00.000Z'
+    message: Account logon success on srv-files01 [Security]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-files01
+      event_data:
+        TargetUserName: app_jdoe
+        TargetDomainName: SRV-FILES01
+        TargetLogonId: '0x59'
+        LogonType: '10'
+        LogonProcessName: User32
+        AuthenticationPackageName: Negotiate
+        WorkstationName: WS-CLIENT01
+        IpAddress: 10.20.40.86
+        IpPort: '61009'
+      record_id: 1017
+    user:
+      name: app_jdoe
+      domain: SRV-FILES01
+    network:
+      src_ip: 10.20.40.86
+      src_port: 61009
+      workstation: WS-CLIENT01
+- artifact_type: evtx
+  doc:
+    fo_id: ref-043
+    timestamp: '2026-10-21T15:04:14.000Z'
+    message: EventID 4798 on srv-files01 [Security]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 4798
+      channel: Security
+      computer: srv-files01
+      event_data:
+        TargetUserName: app_jdoe
+        SubjectUserName: SRV-FILES01$
+        SubjectLogonId: '0x3e7'
+        CallerProcessName: C:\Program Files\EDR\Agent\responder.exe
+      record_id: 1045
+    user:
+      name: app_jdoe
+      domain: SRV-FILES01
+- artifact_type: evtx
+  doc:
+    fo_id: ref-044
+    timestamp: '2026-10-21T15:04:14.000Z'
+    message: EventID 4798 on srv-files01 [Security]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 4798
+      channel: Security
+      computer: srv-files01
+      event_data:
+        TargetUserName: app_jdoe
+        SubjectUserName: SRV-FILES01$
+        SubjectLogonId: '0x3e7'
+        CallerProcessName: C:\Program Files\EDR\Agent\responder.exe
+      record_id: 1046
+    user:
+      name: app_jdoe
+      domain: SRV-FILES01
+- artifact_type: evtx
+  doc:
+    fo_id: ref-045
+    timestamp: '2026-10-21T00:34:14.000Z'
+    message: EventID 4798 on srv-files01 [Security]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 4798
+      channel: Security
+      computer: srv-files01
+      event_data:
+        TargetUserName: app_jdoe
+        SubjectUserName: SRV-FILES01$
+        SubjectLogonId: '0x3e7'
+        CallerProcessName: C:\Windows\System32\wbem\WmiPrvSE.exe
+      record_id: 1032
+    user:
+      name: app_jdoe
+      domain: SRV-FILES01
+- artifact_type: evtx
+  doc:
+    fo_id: ref-046
+    timestamp: '2026-10-21T06:30:00.000Z'
+    message: Service state change on srv-files01 [System]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 7036
+      channel: System
+      computer: srv-files01
+      event_data:
+        param1: MSSQLSERVER
+        param2: running
+      record_id: 1001
+- artifact_type: evtx
+  doc:
+    fo_id: ref-047
+    timestamp: '2026-10-21T07:30:00.000Z'
+    message: Service state change on srv-files01 [System]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 7036
+      channel: System
+      computer: srv-files01
+      event_data:
+        param1: MSSQLSERVER
+        param2: running
+      record_id: 1002
+- artifact_type: evtx
+  doc:
+    fo_id: ref-048
+    timestamp: '2026-10-21T08:30:00.000Z'
+    message: Service state change on srv-files01 [System]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 7036
+      channel: System
+      computer: srv-files01
+      event_data:
+        param1: MSSQLSERVER
+        param2: running
+      record_id: 1003
+- artifact_type: evtx
+  doc:
+    fo_id: ref-049
+    timestamp: '2026-10-21T09:30:00.000Z'
+    message: Service state change on srv-files01 [System]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 7036
+      channel: System
+      computer: srv-files01
+      event_data:
+        param1: MSSQLSERVER
+        param2: running
+      record_id: 1004
+- artifact_type: evtx
+  doc:
+    fo_id: ref-050
+    timestamp: '2026-10-21T10:30:00.000Z'
+    message: Service state change on srv-files01 [System]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 7036
+      channel: System
+      computer: srv-files01
+      event_data:
+        param1: MSSQLSERVER
+        param2: running
+      record_id: 1005
+- artifact_type: evtx
+  doc:
+    fo_id: ref-051
+    timestamp: '2026-03-31T10:02:00.000Z'
+    message: The audit log was cleared on srv-files01 [Security]
+    host:
+      hostname: srv-files01
+    evtx:
+      event_id: 1102
+      channel: Security
+      computer: srv-files01
+      event_data:
+        SubjectUserName: Administrator
+        SubjectLogonId: '0x9f1'
+      record_id: 1001
+    user:
+      name: Administrator
+      domain: SRV-FILES01
+- artifact_type: hayabusa
+  doc:
+    fo_id: ref-052
+    timestamp: '2026-03-31T10:02:00.000Z'
+    message: '[HIGH] Security Log Cleared on srv-files01'
+    host:
+      hostname: srv-files01
+    hayabusa:
+      rule_title: Security Log Cleared
+      level: high
+      computer: srv-files01
+- artifact_type: hayabusa
+  doc:
+    fo_id: ref-053
+    timestamp: '2026-10-21T08:03:14.000Z'
+    message: '[MEDIUM] NTLM Logon from Backup Account on srv-files01'
+    host:
+      hostname: srv-files01
+    hayabusa:
+      rule_title: NTLM Logon from Backup Account
+      level: medium
+      computer: srv-files01
+- artifact_type: hayabusa
+  doc:
+    fo_id: ref-054
+    timestamp: '2026-10-12T15:18:00.000Z'
+    message: '[INFORMATIONAL] RDP Logon on srv-files01'
+    host:
+      hostname: srv-files01
+    hayabusa:
+      rule_title: RDP Logon
+      level: informational
+      computer: srv-files01
+rubric:
+  key_evidence:
+  - ref-035
+  incident_confirmed_any:
+  - 'no'
+  - inconclusive
+  attribution:
+    actor: svc_backup
+    unresolved_ok_when:
+    - inconclusive
+  required_content:
+    account discrepancy:
+    - app_jdoe
+    - svc_backup
+    prior detection near the alert:
+    - NTLM Logon from Backup Account
+  forbid_refuted_keywords:
+  - malicious
+  - compromis
+  - attack
+  - recon
+  - lateral
+  exact_iocs:
+  - C:\Windows\testIsShareWriteable_q8w2e4r6.tmp
+  confidence_range:
+  - 30
+  - 85
+  require_citations: true
+  max_steps: 40

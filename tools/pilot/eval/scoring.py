@@ -246,7 +246,15 @@ def score(run: dict, rubric: dict, corpus_ids: set[str] | None = None) -> Scorec
     # ── verdict ──
     want = str(rubric.get("incident_confirmed") or "").strip().lower()
     got = str((run.get("final") or {}).get("incident_confirmed") or "").strip().lower()
-    if want:
+    any_of = [str(v).strip().lower() for v in (rubric.get("incident_confirmed_any") or [])]
+    if any_of:
+        bad = [v for v in any_of if v not in _VERDICT_VALUES]
+        if bad:
+            raise ValueError(f"rubric incident_confirmed_any has unknown values {bad}")
+        hit = got in any_of
+        card.metrics.append(Metric(
+            "verdict", 1.0 if hit else 0.0, hit, f"expected one of {any_of}, got {got or '(none)'!r}"))
+    elif want:
         if want not in _VERDICT_VALUES:
             raise ValueError(
                 f"rubric incident_confirmed={want!r} must be one of {sorted(_VERDICT_VALUES)}"
@@ -295,11 +303,100 @@ def score(run: dict, rubric: dict, corpus_ids: set[str] | None = None) -> Scorec
             f"{used} step(s), no budget set"
             + (f", {len(waste)} wasted" if waste else "")))
 
+    card.metrics.extend(_attribution_metrics(run, rubric, got, corpus_ids))
+
     card.composite = sum(_WEIGHTS[m.name] * m.value for m in card.metrics if m.name in _WEIGHTS)
     # A scenario passes only when every GATING metric passes. Efficiency is
     # reported but never gates: a correct slow answer beats a fast wrong one.
-    card.passed = all(m.passed for m in card.metrics if m.name != "efficiency")
+    card.passed = all(m.passed for m in card.metrics if m.name not in _REPORT_ONLY)
     return card
+
+
+# Reported, never gating: a correct slow answer beats a fast wrong one.
+_REPORT_ONLY = {"efficiency", "duplicates"}
+
+
+def final_text(run: dict) -> str:
+    """Everything the conclusion says, v1 and v2 fields alike, for content checks."""
+    return json.dumps(run.get("final") or {}, ensure_ascii=False, default=str).lower()
+
+
+def _attribution_metrics(run: dict, rubric: dict, verdict: str,
+                         corpus: set[str] | None) -> list[Metric]:
+    """Metrics for the attribution failure classes — each optional per rubric.
+
+    Content checks read the whole conclusion text on purpose: they must score a
+    pre-v2 run (free-text evidence) and a v2 run (structured entities) alike, so
+    a before/after comparison measures the agent and not the schema.
+    """
+    final = run.get("final") or {}
+    text = final_text(run)
+    out: list[Metric] = []
+
+    att = rubric.get("attribution") or {}
+    if att.get("actor"):
+        actor = str(att["actor"]).lower()
+        named = actor in text
+        unresolved_ok = verdict in [str(v).lower() for v in att.get("unresolved_ok_when") or []]
+        ok = named or unresolved_ok
+        out.append(Metric(
+            "attribution", 1.0 if named else (0.5 if unresolved_ok else 0.0), ok,
+            f"actor {att['actor']!r} " + ("named" if named else
+                                           "not named (verdict leaves attribution open)" if unresolved_ok
+                                           else "NOT named")))
+
+    req = rubric.get("required_content") or {}
+    if req:
+        missing = {name: [t for t in terms if str(t).lower() not in text]
+                   for name, terms in req.items()}
+        missing = {k: v for k, v in missing.items() if v}
+        out.append(Metric(
+            "required_content", 1.0 - len(missing) / len(req), not missing,
+            "all present" if not missing else
+            "; ".join(f"{k}: missing {v}" for k, v in missing.items())))
+
+    refuted = [h for h in final.get("hypotheses") or []
+               if isinstance(h, dict) and str(h.get("status", "")).lower() == "refuted"]
+    unjustified = []
+    for h in refuted:
+        against = json.dumps(h.get("against_evidence") or [], default=str)
+        if not any(fid in against for fid in (corpus or set())):
+            unjustified.append(str(h.get("id") or h.get("claim", "?"))[:40])
+    out.append(Metric(
+        "unjustified_refuted", 0.0 if unjustified else 1.0, not unjustified,
+        f"{len(unjustified)} refuted without a contradicting fo_id"
+        + (f": {unjustified}" if unjustified else "")))
+
+    kws = [str(k).lower() for k in rubric.get("forbid_refuted_keywords") or []]
+    if kws:
+        bad = [str(h.get("id") or "?") for h in refuted
+               if any(k in str(h.get("claim", "")).lower() for k in kws)]
+        out.append(Metric(
+            "malicious_not_refuted", 0.0 if bad else 1.0, not bad,
+            "ok" if not bad else f"malicious hypothesis refuted: {bad}"))
+
+    iocs = rubric.get("exact_iocs") or []
+    if iocs:
+        raw = json.dumps(final, ensure_ascii=False, default=str)
+        # json.dumps escapes backslashes; compare against the escaped form.
+        missing = [i for i in iocs if json.dumps(i, ensure_ascii=False)[1:-1] not in raw]
+        out.append(Metric(
+            "exact_iocs", 1.0 - len(missing) / len(iocs), not missing,
+            "verbatim" if not missing else f"missing/corrupted: {missing}"))
+
+    rng = rubric.get("confidence_range")
+    if rng:
+        conf = final.get("confidence")
+        ok = isinstance(conf, (int, float)) and rng[0] <= conf <= rng[1]
+        out.append(Metric(
+            "calibration", 1.0 if ok else 0.0, ok, f"confidence {conf} vs expected {rng}"))
+
+    dups = [s.get("step") for s in run.get("steps") or []
+            if s.get("cached_from_step") or str(s.get("note", "")).startswith("DUPLICATE")]
+    out.append(Metric(
+        "duplicates", 1.0 if not dups else max(0.0, 1 - len(dups) / 10), not dups,
+        f"{len(dups)} duplicate call(s)" + (f" at steps {dups}" if dups else "")))
+    return out
 
 
 def score_many(results: list[tuple[dict, dict, set[str] | None]]) -> dict[str, Any]:

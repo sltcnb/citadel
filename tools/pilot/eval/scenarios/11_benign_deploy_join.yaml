@@ -1,0 +1,910 @@
+id: benign_deploy_join
+description: 'Genuinely benign: the port join confirms the alert''s own account, on the nightly schedule
+  it has kept for two weeks. High confidence is correct.'
+scenario: 'Alert: Uncommon File Dropped Under Noteworthy Folder via SMB
+
+
+  Machine : srv-app02
+
+
+  Comptes : NT AUTHORITY\SYSTEM, svc_deploy
+
+
+  Indicateurs : 10.30.0.20 (IP) ; 10.30.0.15 (IP)
+
+
+  Heure de l''occurrence : 2026-10-05 02:05:40 UTC
+
+
+  Source port : 49822
+
+
+  Application : SMB
+
+
+  Partage SMB : ADMIN$
+
+
+  The file C:\Windows\Temp\agent_update_7.msi was written to the ADMIN$ share of srv-app02 (10.30.0.20)
+  from 10.30.0.15, under the account svc_deploy. Prior analysis: benign at 70 % confidence, most likely
+  an internal tool testing write access; the source machine was not found in the inventories. The analyst
+  reports no recurrence over 7 days and no execution after the drop.'
+seed:
+- artifact_type: evtx
+  doc:
+    fo_id: ben-001
+    timestamp: '2026-09-20T02:05:11.000Z'
+    message: Account logon success on srv-app02 [Security]
+    host:
+      hostname: srv-app02
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-app02
+      event_data:
+        TargetUserName: svc_deploy
+        TargetDomainName: SRV-APP02
+        TargetLogonId: '0x14b'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: DEPLOY01
+        IpAddress: 10.30.0.15
+        IpPort: '49020'
+      record_id: 1001
+    user:
+      name: svc_deploy
+      domain: SRV-APP02
+    network:
+      src_ip: 10.30.0.15
+      src_port: 49020
+      workstation: DEPLOY01
+- artifact_type: evtx
+  doc:
+    fo_id: ben-002
+    timestamp: '2026-09-20T02:09:11.000Z'
+    message: Account logoff on srv-app02 [Security]
+    host:
+      hostname: srv-app02
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-app02
+      event_data:
+        TargetUserName: svc_deploy
+        TargetLogonId: '0x14b'
+        LogonType: '3'
+      record_id: 1002
+    user:
+      name: svc_deploy
+      domain: SRV-APP02
+- artifact_type: evtx
+  doc:
+    fo_id: ben-003
+    timestamp: '2026-09-21T02:05:11.000Z'
+    message: Account logon success on srv-app02 [Security]
+    host:
+      hostname: srv-app02
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-app02
+      event_data:
+        TargetUserName: svc_deploy
+        TargetDomainName: SRV-APP02
+        TargetLogonId: '0x15b'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: DEPLOY01
+        IpAddress: 10.30.0.15
+        IpPort: '49021'
+      record_id: 1003
+    user:
+      name: svc_deploy
+      domain: SRV-APP02
+    network:
+      src_ip: 10.30.0.15
+      src_port: 49021
+      workstation: DEPLOY01
+- artifact_type: evtx
+  doc:
+    fo_id: ben-004
+    timestamp: '2026-09-21T02:09:11.000Z'
+    message: Account logoff on srv-app02 [Security]
+    host:
+      hostname: srv-app02
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-app02
+      event_data:
+        TargetUserName: svc_deploy
+        TargetLogonId: '0x15b'
+        LogonType: '3'
+      record_id: 1004
+    user:
+      name: svc_deploy
+      domain: SRV-APP02
+- artifact_type: evtx
+  doc:
+    fo_id: ben-005
+    timestamp: '2026-09-22T02:05:11.000Z'
+    message: Account logon success on srv-app02 [Security]
+    host:
+      hostname: srv-app02
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-app02
+      event_data:
+        TargetUserName: svc_deploy
+        TargetDomainName: SRV-APP02
+        TargetLogonId: '0x16b'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: DEPLOY01
+        IpAddress: 10.30.0.15
+        IpPort: '49022'
+      record_id: 1005
+    user:
+      name: svc_deploy
+      domain: SRV-APP02
+    network:
+      src_ip: 10.30.0.15
+      src_port: 49022
+      workstation: DEPLOY01
+- artifact_type: evtx
+  doc:
+    fo_id: ben-006
+    timestamp: '2026-09-22T02:09:11.000Z'
+    message: Account logoff on srv-app02 [Security]
+    host:
+      hostname: srv-app02
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-app02
+      event_data:
+        TargetUserName: svc_deploy
+        TargetLogonId: '0x16b'
+        LogonType: '3'
+      record_id: 1006
+    user:
+      name: svc_deploy
+      domain: SRV-APP02
+- artifact_type: evtx
+  doc:
+    fo_id: ben-007
+    timestamp: '2026-09-23T02:05:11.000Z'
+    message: Account logon success on srv-app02 [Security]
+    host:
+      hostname: srv-app02
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-app02
+      event_data:
+        TargetUserName: svc_deploy
+        TargetDomainName: SRV-APP02
+        TargetLogonId: '0x17b'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: DEPLOY01
+        IpAddress: 10.30.0.15
+        IpPort: '49023'
+      record_id: 1007
+    user:
+      name: svc_deploy
+      domain: SRV-APP02
+    network:
+      src_ip: 10.30.0.15
+      src_port: 49023
+      workstation: DEPLOY01
+- artifact_type: evtx
+  doc:
+    fo_id: ben-008
+    timestamp: '2026-09-23T02:09:11.000Z'
+    message: Account logoff on srv-app02 [Security]
+    host:
+      hostname: srv-app02
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-app02
+      event_data:
+        TargetUserName: svc_deploy
+        TargetLogonId: '0x17b'
+        LogonType: '3'
+      record_id: 1008
+    user:
+      name: svc_deploy
+      domain: SRV-APP02
+- artifact_type: evtx
+  doc:
+    fo_id: ben-009
+    timestamp: '2026-09-24T02:05:11.000Z'
+    message: Account logon success on srv-app02 [Security]
+    host:
+      hostname: srv-app02
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-app02
+      event_data:
+        TargetUserName: svc_deploy
+        TargetDomainName: SRV-APP02
+        TargetLogonId: '0x18b'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: DEPLOY01
+        IpAddress: 10.30.0.15
+        IpPort: '49024'
+      record_id: 1009
+    user:
+      name: svc_deploy
+      domain: SRV-APP02
+    network:
+      src_ip: 10.30.0.15
+      src_port: 49024
+      workstation: DEPLOY01
+- artifact_type: evtx
+  doc:
+    fo_id: ben-010
+    timestamp: '2026-09-24T02:09:11.000Z'
+    message: Account logoff on srv-app02 [Security]
+    host:
+      hostname: srv-app02
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-app02
+      event_data:
+        TargetUserName: svc_deploy
+        TargetLogonId: '0x18b'
+        LogonType: '3'
+      record_id: 1010
+    user:
+      name: svc_deploy
+      domain: SRV-APP02
+- artifact_type: evtx
+  doc:
+    fo_id: ben-011
+    timestamp: '2026-09-25T02:05:11.000Z'
+    message: Account logon success on srv-app02 [Security]
+    host:
+      hostname: srv-app02
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-app02
+      event_data:
+        TargetUserName: svc_deploy
+        TargetDomainName: SRV-APP02
+        TargetLogonId: '0x19b'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: DEPLOY01
+        IpAddress: 10.30.0.15
+        IpPort: '49025'
+      record_id: 1011
+    user:
+      name: svc_deploy
+      domain: SRV-APP02
+    network:
+      src_ip: 10.30.0.15
+      src_port: 49025
+      workstation: DEPLOY01
+- artifact_type: evtx
+  doc:
+    fo_id: ben-012
+    timestamp: '2026-09-25T02:09:11.000Z'
+    message: Account logoff on srv-app02 [Security]
+    host:
+      hostname: srv-app02
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-app02
+      event_data:
+        TargetUserName: svc_deploy
+        TargetLogonId: '0x19b'
+        LogonType: '3'
+      record_id: 1012
+    user:
+      name: svc_deploy
+      domain: SRV-APP02
+- artifact_type: evtx
+  doc:
+    fo_id: ben-013
+    timestamp: '2026-09-26T02:05:11.000Z'
+    message: Account logon success on srv-app02 [Security]
+    host:
+      hostname: srv-app02
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-app02
+      event_data:
+        TargetUserName: svc_deploy
+        TargetDomainName: SRV-APP02
+        TargetLogonId: '0x1ab'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: DEPLOY01
+        IpAddress: 10.30.0.15
+        IpPort: '49026'
+      record_id: 1013
+    user:
+      name: svc_deploy
+      domain: SRV-APP02
+    network:
+      src_ip: 10.30.0.15
+      src_port: 49026
+      workstation: DEPLOY01
+- artifact_type: evtx
+  doc:
+    fo_id: ben-014
+    timestamp: '2026-09-26T02:09:11.000Z'
+    message: Account logoff on srv-app02 [Security]
+    host:
+      hostname: srv-app02
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-app02
+      event_data:
+        TargetUserName: svc_deploy
+        TargetLogonId: '0x1ab'
+        LogonType: '3'
+      record_id: 1014
+    user:
+      name: svc_deploy
+      domain: SRV-APP02
+- artifact_type: evtx
+  doc:
+    fo_id: ben-015
+    timestamp: '2026-09-27T02:05:11.000Z'
+    message: Account logon success on srv-app02 [Security]
+    host:
+      hostname: srv-app02
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-app02
+      event_data:
+        TargetUserName: svc_deploy
+        TargetDomainName: SRV-APP02
+        TargetLogonId: '0x1bb'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: DEPLOY01
+        IpAddress: 10.30.0.15
+        IpPort: '49027'
+      record_id: 1015
+    user:
+      name: svc_deploy
+      domain: SRV-APP02
+    network:
+      src_ip: 10.30.0.15
+      src_port: 49027
+      workstation: DEPLOY01
+- artifact_type: evtx
+  doc:
+    fo_id: ben-016
+    timestamp: '2026-09-27T02:09:11.000Z'
+    message: Account logoff on srv-app02 [Security]
+    host:
+      hostname: srv-app02
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-app02
+      event_data:
+        TargetUserName: svc_deploy
+        TargetLogonId: '0x1bb'
+        LogonType: '3'
+      record_id: 1016
+    user:
+      name: svc_deploy
+      domain: SRV-APP02
+- artifact_type: evtx
+  doc:
+    fo_id: ben-017
+    timestamp: '2026-09-28T02:05:11.000Z'
+    message: Account logon success on srv-app02 [Security]
+    host:
+      hostname: srv-app02
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-app02
+      event_data:
+        TargetUserName: svc_deploy
+        TargetDomainName: SRV-APP02
+        TargetLogonId: '0x1cb'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: DEPLOY01
+        IpAddress: 10.30.0.15
+        IpPort: '49028'
+      record_id: 1017
+    user:
+      name: svc_deploy
+      domain: SRV-APP02
+    network:
+      src_ip: 10.30.0.15
+      src_port: 49028
+      workstation: DEPLOY01
+- artifact_type: evtx
+  doc:
+    fo_id: ben-018
+    timestamp: '2026-09-28T02:09:11.000Z'
+    message: Account logoff on srv-app02 [Security]
+    host:
+      hostname: srv-app02
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-app02
+      event_data:
+        TargetUserName: svc_deploy
+        TargetLogonId: '0x1cb'
+        LogonType: '3'
+      record_id: 1018
+    user:
+      name: svc_deploy
+      domain: SRV-APP02
+- artifact_type: evtx
+  doc:
+    fo_id: ben-019
+    timestamp: '2026-09-29T02:05:11.000Z'
+    message: Account logon success on srv-app02 [Security]
+    host:
+      hostname: srv-app02
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-app02
+      event_data:
+        TargetUserName: svc_deploy
+        TargetDomainName: SRV-APP02
+        TargetLogonId: '0x1db'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: DEPLOY01
+        IpAddress: 10.30.0.15
+        IpPort: '49029'
+      record_id: 1019
+    user:
+      name: svc_deploy
+      domain: SRV-APP02
+    network:
+      src_ip: 10.30.0.15
+      src_port: 49029
+      workstation: DEPLOY01
+- artifact_type: evtx
+  doc:
+    fo_id: ben-020
+    timestamp: '2026-09-29T02:09:11.000Z'
+    message: Account logoff on srv-app02 [Security]
+    host:
+      hostname: srv-app02
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-app02
+      event_data:
+        TargetUserName: svc_deploy
+        TargetLogonId: '0x1db'
+        LogonType: '3'
+      record_id: 1020
+    user:
+      name: svc_deploy
+      domain: SRV-APP02
+- artifact_type: evtx
+  doc:
+    fo_id: ben-021
+    timestamp: '2026-09-30T02:05:11.000Z'
+    message: Account logon success on srv-app02 [Security]
+    host:
+      hostname: srv-app02
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-app02
+      event_data:
+        TargetUserName: svc_deploy
+        TargetDomainName: SRV-APP02
+        TargetLogonId: '0x1eb'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: DEPLOY01
+        IpAddress: 10.30.0.15
+        IpPort: '49030'
+      record_id: 1021
+    user:
+      name: svc_deploy
+      domain: SRV-APP02
+    network:
+      src_ip: 10.30.0.15
+      src_port: 49030
+      workstation: DEPLOY01
+- artifact_type: evtx
+  doc:
+    fo_id: ben-022
+    timestamp: '2026-09-30T02:09:11.000Z'
+    message: Account logoff on srv-app02 [Security]
+    host:
+      hostname: srv-app02
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-app02
+      event_data:
+        TargetUserName: svc_deploy
+        TargetLogonId: '0x1eb'
+        LogonType: '3'
+      record_id: 1022
+    user:
+      name: svc_deploy
+      domain: SRV-APP02
+- artifact_type: evtx
+  doc:
+    fo_id: ben-023
+    timestamp: '2026-10-01T02:05:11.000Z'
+    message: Account logon success on srv-app02 [Security]
+    host:
+      hostname: srv-app02
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-app02
+      event_data:
+        TargetUserName: svc_deploy
+        TargetDomainName: SRV-APP02
+        TargetLogonId: '0x01b'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: DEPLOY01
+        IpAddress: 10.30.0.15
+        IpPort: '49001'
+      record_id: 1023
+    user:
+      name: svc_deploy
+      domain: SRV-APP02
+    network:
+      src_ip: 10.30.0.15
+      src_port: 49001
+      workstation: DEPLOY01
+- artifact_type: evtx
+  doc:
+    fo_id: ben-024
+    timestamp: '2026-10-01T02:09:11.000Z'
+    message: Account logoff on srv-app02 [Security]
+    host:
+      hostname: srv-app02
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-app02
+      event_data:
+        TargetUserName: svc_deploy
+        TargetLogonId: '0x01b'
+        LogonType: '3'
+      record_id: 1024
+    user:
+      name: svc_deploy
+      domain: SRV-APP02
+- artifact_type: evtx
+  doc:
+    fo_id: ben-025
+    timestamp: '2026-10-02T02:05:11.000Z'
+    message: Account logon success on srv-app02 [Security]
+    host:
+      hostname: srv-app02
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-app02
+      event_data:
+        TargetUserName: svc_deploy
+        TargetDomainName: SRV-APP02
+        TargetLogonId: '0x02b'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: DEPLOY01
+        IpAddress: 10.30.0.15
+        IpPort: '49002'
+      record_id: 1025
+    user:
+      name: svc_deploy
+      domain: SRV-APP02
+    network:
+      src_ip: 10.30.0.15
+      src_port: 49002
+      workstation: DEPLOY01
+- artifact_type: evtx
+  doc:
+    fo_id: ben-026
+    timestamp: '2026-10-02T02:09:11.000Z'
+    message: Account logoff on srv-app02 [Security]
+    host:
+      hostname: srv-app02
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-app02
+      event_data:
+        TargetUserName: svc_deploy
+        TargetLogonId: '0x02b'
+        LogonType: '3'
+      record_id: 1026
+    user:
+      name: svc_deploy
+      domain: SRV-APP02
+- artifact_type: evtx
+  doc:
+    fo_id: ben-027
+    timestamp: '2026-10-03T02:05:11.000Z'
+    message: Account logon success on srv-app02 [Security]
+    host:
+      hostname: srv-app02
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-app02
+      event_data:
+        TargetUserName: svc_deploy
+        TargetDomainName: SRV-APP02
+        TargetLogonId: '0x03b'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: DEPLOY01
+        IpAddress: 10.30.0.15
+        IpPort: '49003'
+      record_id: 1027
+    user:
+      name: svc_deploy
+      domain: SRV-APP02
+    network:
+      src_ip: 10.30.0.15
+      src_port: 49003
+      workstation: DEPLOY01
+- artifact_type: evtx
+  doc:
+    fo_id: ben-028
+    timestamp: '2026-10-03T02:09:11.000Z'
+    message: Account logoff on srv-app02 [Security]
+    host:
+      hostname: srv-app02
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-app02
+      event_data:
+        TargetUserName: svc_deploy
+        TargetLogonId: '0x03b'
+        LogonType: '3'
+      record_id: 1028
+    user:
+      name: svc_deploy
+      domain: SRV-APP02
+- artifact_type: evtx
+  doc:
+    fo_id: ben-029
+    timestamp: '2026-10-04T02:05:11.000Z'
+    message: Account logon success on srv-app02 [Security]
+    host:
+      hostname: srv-app02
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-app02
+      event_data:
+        TargetUserName: svc_deploy
+        TargetDomainName: SRV-APP02
+        TargetLogonId: '0x04b'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: DEPLOY01
+        IpAddress: 10.30.0.15
+        IpPort: '49004'
+      record_id: 1029
+    user:
+      name: svc_deploy
+      domain: SRV-APP02
+    network:
+      src_ip: 10.30.0.15
+      src_port: 49004
+      workstation: DEPLOY01
+- artifact_type: evtx
+  doc:
+    fo_id: ben-030
+    timestamp: '2026-10-04T02:09:11.000Z'
+    message: Account logoff on srv-app02 [Security]
+    host:
+      hostname: srv-app02
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-app02
+      event_data:
+        TargetUserName: svc_deploy
+        TargetLogonId: '0x04b'
+        LogonType: '3'
+      record_id: 1030
+    user:
+      name: svc_deploy
+      domain: SRV-APP02
+- artifact_type: evtx
+  doc:
+    fo_id: ben-031
+    timestamp: '2026-10-05T02:05:39.000Z'
+    message: Account logon success on srv-app02 [Security]
+    host:
+      hostname: srv-app02
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-app02
+      event_data:
+        TargetUserName: svc_deploy
+        TargetDomainName: SRV-APP02
+        TargetLogonId: '0x77d1'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: DEPLOY01
+        IpAddress: 10.30.0.15
+        IpPort: '49822'
+      record_id: 1031
+    user:
+      name: svc_deploy
+      domain: SRV-APP02
+    network:
+      src_ip: 10.30.0.15
+      src_port: 49822
+      workstation: DEPLOY01
+  key: true
+- artifact_type: evtx
+  doc:
+    fo_id: ben-032
+    timestamp: '2026-10-05T02:05:39.000Z'
+    message: Special privileges assigned to new logon on srv-app02 [Security]
+    host:
+      hostname: srv-app02
+    evtx:
+      event_id: 4672
+      channel: Security
+      computer: srv-app02
+      event_data:
+        SubjectUserName: svc_deploy
+        SubjectDomainName: SRV-APP02
+        SubjectLogonId: '0x77d1'
+        PrivilegeList: SeBackupPrivilege SeRestorePrivilege SeDebugPrivilege
+      record_id: 1032
+    user:
+      name: svc_deploy
+      domain: SRV-APP02
+- artifact_type: evtx
+  doc:
+    fo_id: ben-033
+    timestamp: '2026-10-05T02:08:40.000Z'
+    message: Account logoff on srv-app02 [Security]
+    host:
+      hostname: srv-app02
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-app02
+      event_data:
+        TargetUserName: svc_deploy
+        TargetLogonId: '0x77d1'
+        LogonType: '3'
+      record_id: 1033
+    user:
+      name: svc_deploy
+      domain: SRV-APP02
+- artifact_type: evtx
+  doc:
+    fo_id: ben-034
+    timestamp: '2026-10-01T02:06:00.000Z'
+    message: Service state change on srv-app02 [System]
+    host:
+      hostname: srv-app02
+    evtx:
+      event_id: 7036
+      channel: System
+      computer: srv-app02
+      event_data:
+        param1: AppAgent
+        param2: running
+      record_id: 1001
+- artifact_type: evtx
+  doc:
+    fo_id: ben-035
+    timestamp: '2026-10-02T02:06:00.000Z'
+    message: Service state change on srv-app02 [System]
+    host:
+      hostname: srv-app02
+    evtx:
+      event_id: 7036
+      channel: System
+      computer: srv-app02
+      event_data:
+        param1: AppAgent
+        param2: running
+      record_id: 1002
+- artifact_type: evtx
+  doc:
+    fo_id: ben-036
+    timestamp: '2026-10-03T02:06:00.000Z'
+    message: Service state change on srv-app02 [System]
+    host:
+      hostname: srv-app02
+    evtx:
+      event_id: 7036
+      channel: System
+      computer: srv-app02
+      event_data:
+        param1: AppAgent
+        param2: running
+      record_id: 1003
+- artifact_type: evtx
+  doc:
+    fo_id: ben-037
+    timestamp: '2026-10-04T02:06:00.000Z'
+    message: Service state change on srv-app02 [System]
+    host:
+      hostname: srv-app02
+    evtx:
+      event_id: 7036
+      channel: System
+      computer: srv-app02
+      event_data:
+        param1: AppAgent
+        param2: running
+      record_id: 1004
+- artifact_type: evtx
+  doc:
+    fo_id: ben-038
+    timestamp: '2026-10-05T02:06:00.000Z'
+    message: Service state change on srv-app02 [System]
+    host:
+      hostname: srv-app02
+    evtx:
+      event_id: 7036
+      channel: System
+      computer: srv-app02
+      event_data:
+        param1: AppAgent
+        param2: running
+      record_id: 1005
+rubric:
+  key_evidence:
+  - ben-031
+  incident_confirmed: 'no'
+  attribution:
+    actor: svc_deploy
+  required_content: {}
+  exact_iocs:
+  - C:\Windows\Temp\agent_update_7.msi
+  confidence_range:
+  - 70
+  - 100
+  require_citations: true
+  max_steps: 30

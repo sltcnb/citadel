@@ -1,0 +1,666 @@
+id: logs_cleared
+description: 'Logs cleared two minutes after the alert: the session that would answer it is gone. ''No
+  4624 for the port'' is not ''nothing happened''.'
+scenario: 'Alert: Uncommon File Dropped Under Noteworthy Folder via SMB
+
+
+  Machine : srv-db02
+
+
+  Comptes : NT AUTHORITY\SYSTEM, svc_mon
+
+
+  Indicateurs : 10.60.0.40 (IP) ; 10.60.0.33 (IP)
+
+
+  Heure de l''occurrence : 2026-10-14 23:52:03 UTC
+
+
+  Source port : 60001
+
+
+  Application : SMB
+
+
+  Partage SMB : ADMIN$
+
+
+  The file C:\Windows\svc_probe.tmp was written to the ADMIN$ share of srv-db02 (10.60.0.40) from 10.60.0.33,
+  under the account svc_mon. Prior analysis: benign at 60 % confidence, most likely an internal tool testing
+  write access; the source machine was not found in the inventories. The analyst reports no recurrence
+  over 7 days and no execution after the drop.'
+seed:
+- artifact_type: evtx
+  doc:
+    fo_id: clr-001
+    timestamp: '2026-10-01T04:00:11.000Z'
+    message: Account logon success on srv-db02 [Security]
+    host:
+      hostname: srv-db02
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-db02
+      event_data:
+        TargetUserName: svc_mon
+        TargetDomainName: SRV-DB02
+        TargetLogonId: '0x01d'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: MON01
+        IpAddress: 10.60.0.33
+        IpPort: '58001'
+      record_id: 1001
+    user:
+      name: svc_mon
+      domain: SRV-DB02
+    network:
+      src_ip: 10.60.0.33
+      src_port: 58001
+      workstation: MON01
+- artifact_type: evtx
+  doc:
+    fo_id: clr-002
+    timestamp: '2026-10-01T04:01:11.000Z'
+    message: Account logoff on srv-db02 [Security]
+    host:
+      hostname: srv-db02
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-db02
+      event_data:
+        TargetUserName: svc_mon
+        TargetLogonId: '0x01d'
+        LogonType: '3'
+      record_id: 1002
+    user:
+      name: svc_mon
+      domain: SRV-DB02
+- artifact_type: evtx
+  doc:
+    fo_id: clr-003
+    timestamp: '2026-10-02T04:00:11.000Z'
+    message: Account logon success on srv-db02 [Security]
+    host:
+      hostname: srv-db02
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-db02
+      event_data:
+        TargetUserName: svc_mon
+        TargetDomainName: SRV-DB02
+        TargetLogonId: '0x02d'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: MON01
+        IpAddress: 10.60.0.33
+        IpPort: '58002'
+      record_id: 1003
+    user:
+      name: svc_mon
+      domain: SRV-DB02
+    network:
+      src_ip: 10.60.0.33
+      src_port: 58002
+      workstation: MON01
+- artifact_type: evtx
+  doc:
+    fo_id: clr-004
+    timestamp: '2026-10-02T04:01:11.000Z'
+    message: Account logoff on srv-db02 [Security]
+    host:
+      hostname: srv-db02
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-db02
+      event_data:
+        TargetUserName: svc_mon
+        TargetLogonId: '0x02d'
+        LogonType: '3'
+      record_id: 1004
+    user:
+      name: svc_mon
+      domain: SRV-DB02
+- artifact_type: evtx
+  doc:
+    fo_id: clr-005
+    timestamp: '2026-10-03T04:00:11.000Z'
+    message: Account logon success on srv-db02 [Security]
+    host:
+      hostname: srv-db02
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-db02
+      event_data:
+        TargetUserName: svc_mon
+        TargetDomainName: SRV-DB02
+        TargetLogonId: '0x03d'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: MON01
+        IpAddress: 10.60.0.33
+        IpPort: '58003'
+      record_id: 1005
+    user:
+      name: svc_mon
+      domain: SRV-DB02
+    network:
+      src_ip: 10.60.0.33
+      src_port: 58003
+      workstation: MON01
+- artifact_type: evtx
+  doc:
+    fo_id: clr-006
+    timestamp: '2026-10-03T04:01:11.000Z'
+    message: Account logoff on srv-db02 [Security]
+    host:
+      hostname: srv-db02
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-db02
+      event_data:
+        TargetUserName: svc_mon
+        TargetLogonId: '0x03d'
+        LogonType: '3'
+      record_id: 1006
+    user:
+      name: svc_mon
+      domain: SRV-DB02
+- artifact_type: evtx
+  doc:
+    fo_id: clr-007
+    timestamp: '2026-10-04T04:00:11.000Z'
+    message: Account logon success on srv-db02 [Security]
+    host:
+      hostname: srv-db02
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-db02
+      event_data:
+        TargetUserName: svc_mon
+        TargetDomainName: SRV-DB02
+        TargetLogonId: '0x04d'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: MON01
+        IpAddress: 10.60.0.33
+        IpPort: '58004'
+      record_id: 1007
+    user:
+      name: svc_mon
+      domain: SRV-DB02
+    network:
+      src_ip: 10.60.0.33
+      src_port: 58004
+      workstation: MON01
+- artifact_type: evtx
+  doc:
+    fo_id: clr-008
+    timestamp: '2026-10-04T04:01:11.000Z'
+    message: Account logoff on srv-db02 [Security]
+    host:
+      hostname: srv-db02
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-db02
+      event_data:
+        TargetUserName: svc_mon
+        TargetLogonId: '0x04d'
+        LogonType: '3'
+      record_id: 1008
+    user:
+      name: svc_mon
+      domain: SRV-DB02
+- artifact_type: evtx
+  doc:
+    fo_id: clr-009
+    timestamp: '2026-10-05T04:00:11.000Z'
+    message: Account logon success on srv-db02 [Security]
+    host:
+      hostname: srv-db02
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-db02
+      event_data:
+        TargetUserName: svc_mon
+        TargetDomainName: SRV-DB02
+        TargetLogonId: '0x05d'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: MON01
+        IpAddress: 10.60.0.33
+        IpPort: '58005'
+      record_id: 1009
+    user:
+      name: svc_mon
+      domain: SRV-DB02
+    network:
+      src_ip: 10.60.0.33
+      src_port: 58005
+      workstation: MON01
+- artifact_type: evtx
+  doc:
+    fo_id: clr-010
+    timestamp: '2026-10-05T04:01:11.000Z'
+    message: Account logoff on srv-db02 [Security]
+    host:
+      hostname: srv-db02
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-db02
+      event_data:
+        TargetUserName: svc_mon
+        TargetLogonId: '0x05d'
+        LogonType: '3'
+      record_id: 1010
+    user:
+      name: svc_mon
+      domain: SRV-DB02
+- artifact_type: evtx
+  doc:
+    fo_id: clr-011
+    timestamp: '2026-10-06T04:00:11.000Z'
+    message: Account logon success on srv-db02 [Security]
+    host:
+      hostname: srv-db02
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-db02
+      event_data:
+        TargetUserName: svc_mon
+        TargetDomainName: SRV-DB02
+        TargetLogonId: '0x06d'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: MON01
+        IpAddress: 10.60.0.33
+        IpPort: '58006'
+      record_id: 1011
+    user:
+      name: svc_mon
+      domain: SRV-DB02
+    network:
+      src_ip: 10.60.0.33
+      src_port: 58006
+      workstation: MON01
+- artifact_type: evtx
+  doc:
+    fo_id: clr-012
+    timestamp: '2026-10-06T04:01:11.000Z'
+    message: Account logoff on srv-db02 [Security]
+    host:
+      hostname: srv-db02
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-db02
+      event_data:
+        TargetUserName: svc_mon
+        TargetLogonId: '0x06d'
+        LogonType: '3'
+      record_id: 1012
+    user:
+      name: svc_mon
+      domain: SRV-DB02
+- artifact_type: evtx
+  doc:
+    fo_id: clr-013
+    timestamp: '2026-10-07T04:00:11.000Z'
+    message: Account logon success on srv-db02 [Security]
+    host:
+      hostname: srv-db02
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-db02
+      event_data:
+        TargetUserName: svc_mon
+        TargetDomainName: SRV-DB02
+        TargetLogonId: '0x07d'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: MON01
+        IpAddress: 10.60.0.33
+        IpPort: '58007'
+      record_id: 1013
+    user:
+      name: svc_mon
+      domain: SRV-DB02
+    network:
+      src_ip: 10.60.0.33
+      src_port: 58007
+      workstation: MON01
+- artifact_type: evtx
+  doc:
+    fo_id: clr-014
+    timestamp: '2026-10-07T04:01:11.000Z'
+    message: Account logoff on srv-db02 [Security]
+    host:
+      hostname: srv-db02
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-db02
+      event_data:
+        TargetUserName: svc_mon
+        TargetLogonId: '0x07d'
+        LogonType: '3'
+      record_id: 1014
+    user:
+      name: svc_mon
+      domain: SRV-DB02
+- artifact_type: evtx
+  doc:
+    fo_id: clr-015
+    timestamp: '2026-10-08T04:00:11.000Z'
+    message: Account logon success on srv-db02 [Security]
+    host:
+      hostname: srv-db02
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-db02
+      event_data:
+        TargetUserName: svc_mon
+        TargetDomainName: SRV-DB02
+        TargetLogonId: '0x08d'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: MON01
+        IpAddress: 10.60.0.33
+        IpPort: '58008'
+      record_id: 1015
+    user:
+      name: svc_mon
+      domain: SRV-DB02
+    network:
+      src_ip: 10.60.0.33
+      src_port: 58008
+      workstation: MON01
+- artifact_type: evtx
+  doc:
+    fo_id: clr-016
+    timestamp: '2026-10-08T04:01:11.000Z'
+    message: Account logoff on srv-db02 [Security]
+    host:
+      hostname: srv-db02
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-db02
+      event_data:
+        TargetUserName: svc_mon
+        TargetLogonId: '0x08d'
+        LogonType: '3'
+      record_id: 1016
+    user:
+      name: svc_mon
+      domain: SRV-DB02
+- artifact_type: evtx
+  doc:
+    fo_id: clr-017
+    timestamp: '2026-10-09T04:00:11.000Z'
+    message: Account logon success on srv-db02 [Security]
+    host:
+      hostname: srv-db02
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-db02
+      event_data:
+        TargetUserName: svc_mon
+        TargetDomainName: SRV-DB02
+        TargetLogonId: '0x09d'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: MON01
+        IpAddress: 10.60.0.33
+        IpPort: '58009'
+      record_id: 1017
+    user:
+      name: svc_mon
+      domain: SRV-DB02
+    network:
+      src_ip: 10.60.0.33
+      src_port: 58009
+      workstation: MON01
+- artifact_type: evtx
+  doc:
+    fo_id: clr-018
+    timestamp: '2026-10-09T04:01:11.000Z'
+    message: Account logoff on srv-db02 [Security]
+    host:
+      hostname: srv-db02
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-db02
+      event_data:
+        TargetUserName: svc_mon
+        TargetLogonId: '0x09d'
+        LogonType: '3'
+      record_id: 1018
+    user:
+      name: svc_mon
+      domain: SRV-DB02
+- artifact_type: evtx
+  doc:
+    fo_id: clr-019
+    timestamp: '2026-10-10T04:00:11.000Z'
+    message: Account logon success on srv-db02 [Security]
+    host:
+      hostname: srv-db02
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-db02
+      event_data:
+        TargetUserName: svc_mon
+        TargetDomainName: SRV-DB02
+        TargetLogonId: '0x0ad'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: MON01
+        IpAddress: 10.60.0.33
+        IpPort: '58010'
+      record_id: 1019
+    user:
+      name: svc_mon
+      domain: SRV-DB02
+    network:
+      src_ip: 10.60.0.33
+      src_port: 58010
+      workstation: MON01
+- artifact_type: evtx
+  doc:
+    fo_id: clr-020
+    timestamp: '2026-10-10T04:01:11.000Z'
+    message: Account logoff on srv-db02 [Security]
+    host:
+      hostname: srv-db02
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-db02
+      event_data:
+        TargetUserName: svc_mon
+        TargetLogonId: '0x0ad'
+        LogonType: '3'
+      record_id: 1020
+    user:
+      name: svc_mon
+      domain: SRV-DB02
+- artifact_type: evtx
+  doc:
+    fo_id: clr-021
+    timestamp: '2026-10-11T04:00:11.000Z'
+    message: Account logon success on srv-db02 [Security]
+    host:
+      hostname: srv-db02
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-db02
+      event_data:
+        TargetUserName: svc_mon
+        TargetDomainName: SRV-DB02
+        TargetLogonId: '0x0bd'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: MON01
+        IpAddress: 10.60.0.33
+        IpPort: '58011'
+      record_id: 1021
+    user:
+      name: svc_mon
+      domain: SRV-DB02
+    network:
+      src_ip: 10.60.0.33
+      src_port: 58011
+      workstation: MON01
+- artifact_type: evtx
+  doc:
+    fo_id: clr-022
+    timestamp: '2026-10-11T04:01:11.000Z'
+    message: Account logoff on srv-db02 [Security]
+    host:
+      hostname: srv-db02
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-db02
+      event_data:
+        TargetUserName: svc_mon
+        TargetLogonId: '0x0bd'
+        LogonType: '3'
+      record_id: 1022
+    user:
+      name: svc_mon
+      domain: SRV-DB02
+- artifact_type: evtx
+  doc:
+    fo_id: clr-023
+    timestamp: '2026-10-12T04:00:11.000Z'
+    message: Account logon success on srv-db02 [Security]
+    host:
+      hostname: srv-db02
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-db02
+      event_data:
+        TargetUserName: svc_mon
+        TargetDomainName: SRV-DB02
+        TargetLogonId: '0x0cd'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: MON01
+        IpAddress: 10.60.0.33
+        IpPort: '58012'
+      record_id: 1023
+    user:
+      name: svc_mon
+      domain: SRV-DB02
+    network:
+      src_ip: 10.60.0.33
+      src_port: 58012
+      workstation: MON01
+- artifact_type: evtx
+  doc:
+    fo_id: clr-024
+    timestamp: '2026-10-12T04:01:11.000Z'
+    message: Account logoff on srv-db02 [Security]
+    host:
+      hostname: srv-db02
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-db02
+      event_data:
+        TargetUserName: svc_mon
+        TargetLogonId: '0x0cd'
+        LogonType: '3'
+      record_id: 1024
+    user:
+      name: svc_mon
+      domain: SRV-DB02
+- artifact_type: evtx
+  doc:
+    fo_id: clr-025
+    timestamp: '2026-10-14T23:54:03.000Z'
+    message: The audit log was cleared on srv-db02 [Security]
+    host:
+      hostname: srv-db02
+    evtx:
+      event_id: 1102
+      channel: Security
+      computer: srv-db02
+      event_data:
+        SubjectUserName: adm_tmp
+        SubjectLogonId: '0x9f1'
+      record_id: 7000
+    user:
+      name: adm_tmp
+      domain: SRV-DB02
+  key: true
+- artifact_type: hayabusa
+  doc:
+    fo_id: clr-026
+    timestamp: '2026-10-14T23:54:03.000Z'
+    message: '[HIGH] Security Log Cleared on srv-db02'
+    host:
+      hostname: srv-db02
+    hayabusa:
+      rule_title: Security Log Cleared
+      level: high
+      computer: srv-db02
+rubric:
+  key_evidence:
+  - clr-025
+  incident_confirmed_any:
+  - inconclusive
+  - partial
+  - 'yes'
+  attribution:
+    actor: adm_tmp
+    unresolved_ok_when:
+    - inconclusive
+    - partial
+  required_content:
+    log clearing:
+    - '1102'
+  forbid_refuted_keywords:
+  - malicious
+  - compromis
+  - attack
+  - anti-forensic
+  - tamper
+  exact_iocs:
+  - C:\Windows\svc_probe.tmp
+  confidence_range:
+  - 20
+  - 80
+  require_citations: true
+  max_steps: 30

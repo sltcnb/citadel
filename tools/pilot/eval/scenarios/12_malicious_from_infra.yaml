@@ -1,0 +1,857 @@
+id: malicious_from_infra
+description: 'Malicious from a legitimate backup server: the join shows a local Administrator, not the
+  backup account, then a service install. ''Known infrastructure with valid credentials'' must not read
+  as benign.'
+scenario: 'Alert: Uncommon File Dropped Under Noteworthy Folder via SMB
+
+
+  Machine : srv-hr03
+
+
+  Comptes : NT AUTHORITY\SYSTEM, svc_bkp
+
+
+  Indicateurs : 10.50.0.30 (IP) ; 10.50.0.20 (IP)
+
+
+  Heure de l''occurrence : 2026-10-09 13:41:07 UTC
+
+
+  Source port : 53110
+
+
+  Application : SMB
+
+
+  Partage SMB : ADMIN$
+
+
+  The file C:\Windows\upd_k2.exe was written to the ADMIN$ share of srv-hr03 (10.50.0.30) from 10.50.0.20,
+  under the account svc_bkp. Prior analysis: benign at 60 % confidence, most likely an internal tool testing
+  write access; the source machine was not found in the inventories. The analyst reports no recurrence
+  over 7 days and no execution after the drop.'
+seed:
+- artifact_type: evtx
+  doc:
+    fo_id: mal-001
+    timestamp: '2026-09-25T21:00:11.000Z'
+    message: Account logon success on srv-hr03 [Security]
+    host:
+      hostname: srv-hr03
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-hr03
+      event_data:
+        TargetUserName: svc_bkp
+        TargetDomainName: SRV-HR03
+        TargetLogonId: '0x19c'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: BKP-SRV02
+        IpAddress: 10.50.0.20
+        IpPort: '52025'
+      record_id: 1001
+    user:
+      name: svc_bkp
+      domain: SRV-HR03
+    network:
+      src_ip: 10.50.0.20
+      src_port: 52025
+      workstation: BKP-SRV02
+- artifact_type: evtx
+  doc:
+    fo_id: mal-002
+    timestamp: '2026-09-25T21:02:11.000Z'
+    message: Account logoff on srv-hr03 [Security]
+    host:
+      hostname: srv-hr03
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-hr03
+      event_data:
+        TargetUserName: svc_bkp
+        TargetLogonId: '0x19c'
+        LogonType: '3'
+      record_id: 1002
+    user:
+      name: svc_bkp
+      domain: SRV-HR03
+- artifact_type: evtx
+  doc:
+    fo_id: mal-003
+    timestamp: '2026-09-26T21:00:11.000Z'
+    message: Account logon success on srv-hr03 [Security]
+    host:
+      hostname: srv-hr03
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-hr03
+      event_data:
+        TargetUserName: svc_bkp
+        TargetDomainName: SRV-HR03
+        TargetLogonId: '0x1ac'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: BKP-SRV02
+        IpAddress: 10.50.0.20
+        IpPort: '52026'
+      record_id: 1003
+    user:
+      name: svc_bkp
+      domain: SRV-HR03
+    network:
+      src_ip: 10.50.0.20
+      src_port: 52026
+      workstation: BKP-SRV02
+- artifact_type: evtx
+  doc:
+    fo_id: mal-004
+    timestamp: '2026-09-26T21:02:11.000Z'
+    message: Account logoff on srv-hr03 [Security]
+    host:
+      hostname: srv-hr03
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-hr03
+      event_data:
+        TargetUserName: svc_bkp
+        TargetLogonId: '0x1ac'
+        LogonType: '3'
+      record_id: 1004
+    user:
+      name: svc_bkp
+      domain: SRV-HR03
+- artifact_type: evtx
+  doc:
+    fo_id: mal-005
+    timestamp: '2026-09-27T21:00:11.000Z'
+    message: Account logon success on srv-hr03 [Security]
+    host:
+      hostname: srv-hr03
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-hr03
+      event_data:
+        TargetUserName: svc_bkp
+        TargetDomainName: SRV-HR03
+        TargetLogonId: '0x1bc'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: BKP-SRV02
+        IpAddress: 10.50.0.20
+        IpPort: '52027'
+      record_id: 1005
+    user:
+      name: svc_bkp
+      domain: SRV-HR03
+    network:
+      src_ip: 10.50.0.20
+      src_port: 52027
+      workstation: BKP-SRV02
+- artifact_type: evtx
+  doc:
+    fo_id: mal-006
+    timestamp: '2026-09-27T21:02:11.000Z'
+    message: Account logoff on srv-hr03 [Security]
+    host:
+      hostname: srv-hr03
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-hr03
+      event_data:
+        TargetUserName: svc_bkp
+        TargetLogonId: '0x1bc'
+        LogonType: '3'
+      record_id: 1006
+    user:
+      name: svc_bkp
+      domain: SRV-HR03
+- artifact_type: evtx
+  doc:
+    fo_id: mal-007
+    timestamp: '2026-09-28T21:00:11.000Z'
+    message: Account logon success on srv-hr03 [Security]
+    host:
+      hostname: srv-hr03
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-hr03
+      event_data:
+        TargetUserName: svc_bkp
+        TargetDomainName: SRV-HR03
+        TargetLogonId: '0x1cc'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: BKP-SRV02
+        IpAddress: 10.50.0.20
+        IpPort: '52028'
+      record_id: 1007
+    user:
+      name: svc_bkp
+      domain: SRV-HR03
+    network:
+      src_ip: 10.50.0.20
+      src_port: 52028
+      workstation: BKP-SRV02
+- artifact_type: evtx
+  doc:
+    fo_id: mal-008
+    timestamp: '2026-09-28T21:02:11.000Z'
+    message: Account logoff on srv-hr03 [Security]
+    host:
+      hostname: srv-hr03
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-hr03
+      event_data:
+        TargetUserName: svc_bkp
+        TargetLogonId: '0x1cc'
+        LogonType: '3'
+      record_id: 1008
+    user:
+      name: svc_bkp
+      domain: SRV-HR03
+- artifact_type: evtx
+  doc:
+    fo_id: mal-009
+    timestamp: '2026-09-29T21:00:11.000Z'
+    message: Account logon success on srv-hr03 [Security]
+    host:
+      hostname: srv-hr03
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-hr03
+      event_data:
+        TargetUserName: svc_bkp
+        TargetDomainName: SRV-HR03
+        TargetLogonId: '0x1dc'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: BKP-SRV02
+        IpAddress: 10.50.0.20
+        IpPort: '52029'
+      record_id: 1009
+    user:
+      name: svc_bkp
+      domain: SRV-HR03
+    network:
+      src_ip: 10.50.0.20
+      src_port: 52029
+      workstation: BKP-SRV02
+- artifact_type: evtx
+  doc:
+    fo_id: mal-010
+    timestamp: '2026-09-29T21:02:11.000Z'
+    message: Account logoff on srv-hr03 [Security]
+    host:
+      hostname: srv-hr03
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-hr03
+      event_data:
+        TargetUserName: svc_bkp
+        TargetLogonId: '0x1dc'
+        LogonType: '3'
+      record_id: 1010
+    user:
+      name: svc_bkp
+      domain: SRV-HR03
+- artifact_type: evtx
+  doc:
+    fo_id: mal-011
+    timestamp: '2026-09-30T21:00:11.000Z'
+    message: Account logon success on srv-hr03 [Security]
+    host:
+      hostname: srv-hr03
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-hr03
+      event_data:
+        TargetUserName: svc_bkp
+        TargetDomainName: SRV-HR03
+        TargetLogonId: '0x1ec'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: BKP-SRV02
+        IpAddress: 10.50.0.20
+        IpPort: '52030'
+      record_id: 1011
+    user:
+      name: svc_bkp
+      domain: SRV-HR03
+    network:
+      src_ip: 10.50.0.20
+      src_port: 52030
+      workstation: BKP-SRV02
+- artifact_type: evtx
+  doc:
+    fo_id: mal-012
+    timestamp: '2026-09-30T21:02:11.000Z'
+    message: Account logoff on srv-hr03 [Security]
+    host:
+      hostname: srv-hr03
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-hr03
+      event_data:
+        TargetUserName: svc_bkp
+        TargetLogonId: '0x1ec'
+        LogonType: '3'
+      record_id: 1012
+    user:
+      name: svc_bkp
+      domain: SRV-HR03
+- artifact_type: evtx
+  doc:
+    fo_id: mal-013
+    timestamp: '2026-10-01T21:00:11.000Z'
+    message: Account logon success on srv-hr03 [Security]
+    host:
+      hostname: srv-hr03
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-hr03
+      event_data:
+        TargetUserName: svc_bkp
+        TargetDomainName: SRV-HR03
+        TargetLogonId: '0x01c'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: BKP-SRV02
+        IpAddress: 10.50.0.20
+        IpPort: '52001'
+      record_id: 1013
+    user:
+      name: svc_bkp
+      domain: SRV-HR03
+    network:
+      src_ip: 10.50.0.20
+      src_port: 52001
+      workstation: BKP-SRV02
+- artifact_type: evtx
+  doc:
+    fo_id: mal-014
+    timestamp: '2026-10-01T21:02:11.000Z'
+    message: Account logoff on srv-hr03 [Security]
+    host:
+      hostname: srv-hr03
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-hr03
+      event_data:
+        TargetUserName: svc_bkp
+        TargetLogonId: '0x01c'
+        LogonType: '3'
+      record_id: 1014
+    user:
+      name: svc_bkp
+      domain: SRV-HR03
+- artifact_type: evtx
+  doc:
+    fo_id: mal-015
+    timestamp: '2026-10-02T21:00:11.000Z'
+    message: Account logon success on srv-hr03 [Security]
+    host:
+      hostname: srv-hr03
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-hr03
+      event_data:
+        TargetUserName: svc_bkp
+        TargetDomainName: SRV-HR03
+        TargetLogonId: '0x02c'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: BKP-SRV02
+        IpAddress: 10.50.0.20
+        IpPort: '52002'
+      record_id: 1015
+    user:
+      name: svc_bkp
+      domain: SRV-HR03
+    network:
+      src_ip: 10.50.0.20
+      src_port: 52002
+      workstation: BKP-SRV02
+- artifact_type: evtx
+  doc:
+    fo_id: mal-016
+    timestamp: '2026-10-02T21:02:11.000Z'
+    message: Account logoff on srv-hr03 [Security]
+    host:
+      hostname: srv-hr03
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-hr03
+      event_data:
+        TargetUserName: svc_bkp
+        TargetLogonId: '0x02c'
+        LogonType: '3'
+      record_id: 1016
+    user:
+      name: svc_bkp
+      domain: SRV-HR03
+- artifact_type: evtx
+  doc:
+    fo_id: mal-017
+    timestamp: '2026-10-03T21:00:11.000Z'
+    message: Account logon success on srv-hr03 [Security]
+    host:
+      hostname: srv-hr03
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-hr03
+      event_data:
+        TargetUserName: svc_bkp
+        TargetDomainName: SRV-HR03
+        TargetLogonId: '0x03c'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: BKP-SRV02
+        IpAddress: 10.50.0.20
+        IpPort: '52003'
+      record_id: 1017
+    user:
+      name: svc_bkp
+      domain: SRV-HR03
+    network:
+      src_ip: 10.50.0.20
+      src_port: 52003
+      workstation: BKP-SRV02
+- artifact_type: evtx
+  doc:
+    fo_id: mal-018
+    timestamp: '2026-10-03T21:02:11.000Z'
+    message: Account logoff on srv-hr03 [Security]
+    host:
+      hostname: srv-hr03
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-hr03
+      event_data:
+        TargetUserName: svc_bkp
+        TargetLogonId: '0x03c'
+        LogonType: '3'
+      record_id: 1018
+    user:
+      name: svc_bkp
+      domain: SRV-HR03
+- artifact_type: evtx
+  doc:
+    fo_id: mal-019
+    timestamp: '2026-10-04T21:00:11.000Z'
+    message: Account logon success on srv-hr03 [Security]
+    host:
+      hostname: srv-hr03
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-hr03
+      event_data:
+        TargetUserName: svc_bkp
+        TargetDomainName: SRV-HR03
+        TargetLogonId: '0x04c'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: BKP-SRV02
+        IpAddress: 10.50.0.20
+        IpPort: '52004'
+      record_id: 1019
+    user:
+      name: svc_bkp
+      domain: SRV-HR03
+    network:
+      src_ip: 10.50.0.20
+      src_port: 52004
+      workstation: BKP-SRV02
+- artifact_type: evtx
+  doc:
+    fo_id: mal-020
+    timestamp: '2026-10-04T21:02:11.000Z'
+    message: Account logoff on srv-hr03 [Security]
+    host:
+      hostname: srv-hr03
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-hr03
+      event_data:
+        TargetUserName: svc_bkp
+        TargetLogonId: '0x04c'
+        LogonType: '3'
+      record_id: 1020
+    user:
+      name: svc_bkp
+      domain: SRV-HR03
+- artifact_type: evtx
+  doc:
+    fo_id: mal-021
+    timestamp: '2026-10-05T21:00:11.000Z'
+    message: Account logon success on srv-hr03 [Security]
+    host:
+      hostname: srv-hr03
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-hr03
+      event_data:
+        TargetUserName: svc_bkp
+        TargetDomainName: SRV-HR03
+        TargetLogonId: '0x05c'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: BKP-SRV02
+        IpAddress: 10.50.0.20
+        IpPort: '52005'
+      record_id: 1021
+    user:
+      name: svc_bkp
+      domain: SRV-HR03
+    network:
+      src_ip: 10.50.0.20
+      src_port: 52005
+      workstation: BKP-SRV02
+- artifact_type: evtx
+  doc:
+    fo_id: mal-022
+    timestamp: '2026-10-05T21:02:11.000Z'
+    message: Account logoff on srv-hr03 [Security]
+    host:
+      hostname: srv-hr03
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-hr03
+      event_data:
+        TargetUserName: svc_bkp
+        TargetLogonId: '0x05c'
+        LogonType: '3'
+      record_id: 1022
+    user:
+      name: svc_bkp
+      domain: SRV-HR03
+- artifact_type: evtx
+  doc:
+    fo_id: mal-023
+    timestamp: '2026-10-06T21:00:11.000Z'
+    message: Account logon success on srv-hr03 [Security]
+    host:
+      hostname: srv-hr03
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-hr03
+      event_data:
+        TargetUserName: svc_bkp
+        TargetDomainName: SRV-HR03
+        TargetLogonId: '0x06c'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: BKP-SRV02
+        IpAddress: 10.50.0.20
+        IpPort: '52006'
+      record_id: 1023
+    user:
+      name: svc_bkp
+      domain: SRV-HR03
+    network:
+      src_ip: 10.50.0.20
+      src_port: 52006
+      workstation: BKP-SRV02
+- artifact_type: evtx
+  doc:
+    fo_id: mal-024
+    timestamp: '2026-10-06T21:02:11.000Z'
+    message: Account logoff on srv-hr03 [Security]
+    host:
+      hostname: srv-hr03
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-hr03
+      event_data:
+        TargetUserName: svc_bkp
+        TargetLogonId: '0x06c'
+        LogonType: '3'
+      record_id: 1024
+    user:
+      name: svc_bkp
+      domain: SRV-HR03
+- artifact_type: evtx
+  doc:
+    fo_id: mal-025
+    timestamp: '2026-10-07T21:00:11.000Z'
+    message: Account logon success on srv-hr03 [Security]
+    host:
+      hostname: srv-hr03
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-hr03
+      event_data:
+        TargetUserName: svc_bkp
+        TargetDomainName: SRV-HR03
+        TargetLogonId: '0x07c'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: BKP-SRV02
+        IpAddress: 10.50.0.20
+        IpPort: '52007'
+      record_id: 1025
+    user:
+      name: svc_bkp
+      domain: SRV-HR03
+    network:
+      src_ip: 10.50.0.20
+      src_port: 52007
+      workstation: BKP-SRV02
+- artifact_type: evtx
+  doc:
+    fo_id: mal-026
+    timestamp: '2026-10-07T21:02:11.000Z'
+    message: Account logoff on srv-hr03 [Security]
+    host:
+      hostname: srv-hr03
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-hr03
+      event_data:
+        TargetUserName: svc_bkp
+        TargetLogonId: '0x07c'
+        LogonType: '3'
+      record_id: 1026
+    user:
+      name: svc_bkp
+      domain: SRV-HR03
+- artifact_type: evtx
+  doc:
+    fo_id: mal-027
+    timestamp: '2026-10-08T21:00:11.000Z'
+    message: Account logon success on srv-hr03 [Security]
+    host:
+      hostname: srv-hr03
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-hr03
+      event_data:
+        TargetUserName: svc_bkp
+        TargetDomainName: SRV-HR03
+        TargetLogonId: '0x08c'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: BKP-SRV02
+        IpAddress: 10.50.0.20
+        IpPort: '52008'
+      record_id: 1027
+    user:
+      name: svc_bkp
+      domain: SRV-HR03
+    network:
+      src_ip: 10.50.0.20
+      src_port: 52008
+      workstation: BKP-SRV02
+- artifact_type: evtx
+  doc:
+    fo_id: mal-028
+    timestamp: '2026-10-08T21:02:11.000Z'
+    message: Account logoff on srv-hr03 [Security]
+    host:
+      hostname: srv-hr03
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-hr03
+      event_data:
+        TargetUserName: svc_bkp
+        TargetLogonId: '0x08c'
+        LogonType: '3'
+      record_id: 1028
+    user:
+      name: svc_bkp
+      domain: SRV-HR03
+- artifact_type: evtx
+  doc:
+    fo_id: mal-029
+    timestamp: '2026-10-09T13:41:05.000Z'
+    message: Account logon success on srv-hr03 [Security]
+    host:
+      hostname: srv-hr03
+    evtx:
+      event_id: 4624
+      channel: Security
+      computer: srv-hr03
+      event_data:
+        TargetUserName: Administrator
+        TargetDomainName: SRV-HR03
+        TargetLogonId: '0x9c41'
+        LogonType: '3'
+        LogonProcessName: NtLmSsp
+        AuthenticationPackageName: NTLM
+        WorkstationName: BKP-SRV02
+        IpAddress: 10.50.0.20
+        IpPort: '53110'
+      record_id: 1029
+    user:
+      name: Administrator
+      domain: SRV-HR03
+    network:
+      src_ip: 10.50.0.20
+      src_port: 53110
+      workstation: BKP-SRV02
+  key: true
+- artifact_type: evtx
+  doc:
+    fo_id: mal-030
+    timestamp: '2026-10-09T13:41:05.000Z'
+    message: Special privileges assigned to new logon on srv-hr03 [Security]
+    host:
+      hostname: srv-hr03
+    evtx:
+      event_id: 4672
+      channel: Security
+      computer: srv-hr03
+      event_data:
+        SubjectUserName: Administrator
+        SubjectDomainName: SRV-HR03
+        SubjectLogonId: '0x9c41'
+        PrivilegeList: SeBackupPrivilege SeRestorePrivilege SeDebugPrivilege
+      record_id: 1030
+    user:
+      name: Administrator
+      domain: SRV-HR03
+- artifact_type: evtx
+  doc:
+    fo_id: mal-031
+    timestamp: '2026-10-09T13:41:27.000Z'
+    message: New service installed on srv-hr03 [System]
+    host:
+      hostname: srv-hr03
+    evtx:
+      event_id: 7045
+      channel: System
+      computer: srv-hr03
+      event_data:
+        ServiceName: WinSvcUpd
+        ImagePath: '%COMSPEC% /c C:\Windows\upd_k2.exe'
+        ServiceType: user mode service
+        StartType: demand start
+        AccountName: LocalSystem
+      record_id: 1001
+  key: true
+- artifact_type: evtx
+  doc:
+    fo_id: mal-032
+    timestamp: '2026-10-09T13:41:28.000Z'
+    message: A new process has been created on srv-hr03 [Security]
+    host:
+      hostname: srv-hr03
+    evtx:
+      event_id: 4688
+      channel: Security
+      computer: srv-hr03
+      event_data:
+        SubjectUserName: Administrator
+        SubjectLogonId: '0x9c41'
+        NewProcessName: C:\Windows\upd_k2.exe
+        CommandLine: C:\Windows\upd_k2.exe -c 10.50.0.20:443
+        ParentProcessName: C:\Windows\System32\services.exe
+      record_id: 1031
+    user:
+      name: Administrator
+      domain: SRV-HR03
+    process:
+      name: upd_k2.exe
+      command_line: C:\Windows\upd_k2.exe -c 10.50.0.20:443
+      parent:
+        name: services.exe
+  key: true
+- artifact_type: evtx
+  doc:
+    fo_id: mal-033
+    timestamp: '2026-10-09T13:43:07.000Z'
+    message: Account logoff on srv-hr03 [Security]
+    host:
+      hostname: srv-hr03
+    evtx:
+      event_id: 4634
+      channel: Security
+      computer: srv-hr03
+      event_data:
+        TargetUserName: Administrator
+        TargetLogonId: '0x9c41'
+        LogonType: '3'
+      record_id: 1032
+    user:
+      name: Administrator
+      domain: SRV-HR03
+- artifact_type: hayabusa
+  doc:
+    fo_id: mal-034
+    timestamp: '2026-10-09T13:41:27.000Z'
+    message: '[HIGH] Suspicious Service Installation on srv-hr03'
+    host:
+      hostname: srv-hr03
+    hayabusa:
+      rule_title: Suspicious Service Installation
+      level: high
+      computer: srv-hr03
+rubric:
+  key_evidence:
+  - mal-029
+  - mal-031
+  - mal-032
+  incident_confirmed_any:
+  - 'yes'
+  - partial
+  attribution:
+    actor: Administrator
+  required_content:
+    account discrepancy:
+    - svc_bkp
+    - Administrator
+    prior detection near the alert:
+    - Suspicious Service Installation
+  techniques:
+  - T1021
+  - T1543
+  exact_iocs:
+  - C:\Windows\upd_k2.exe
+  confidence_range:
+  - 60
+  - 100
+  require_citations: true
+  max_steps: 40

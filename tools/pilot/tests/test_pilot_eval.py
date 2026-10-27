@@ -310,3 +310,82 @@ def _main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(_main())
+
+
+# ── attribution-class metrics ────────────────────────────────────────────────
+
+ATT_RUBRIC = {
+    "id": "attr",
+    "key_evidence": [],
+    "incident_confirmed_any": ["no", "inconclusive"],
+    "attribution": {"actor": "svc_backup", "unresolved_ok_when": ["inconclusive"]},
+    "required_content": {"discrepancy": ["app_jdoe", "svc_backup"]},
+    "forbid_refuted_keywords": ["malicious"],
+    "exact_iocs": [r"C:\Windows\testIsShareWriteable_x.tmp"],
+    "confidence_range": [30, 85],
+    "require_citations": False,
+}
+
+
+def _att_run(**final):
+    base = {
+        "incident_confirmed": "no",
+        "verdict": "svc_backup session wrote the file; alert named app_jdoe",
+        "indicators": [r"C:\Windows\testIsShareWriteable_x.tmp"],
+        "hypotheses": [{"id": "H2", "claim": "malicious lateral movement", "status": "unsupported"}],
+        "confidence": 70,
+    }
+    base.update(final)
+    return {"final": base, "steps": [], "stopped_reason": "concluded", "step_count": 5}
+
+
+def _m(card, name):
+    return card.get(name)
+
+
+def test_verdict_any_of():
+    assert _m(scoring.score(_att_run(), ATT_RUBRIC, CORPUS), "verdict").passed
+    assert not _m(scoring.score(_att_run(incident_confirmed="yes"), ATT_RUBRIC, CORPUS), "verdict").passed
+
+
+def test_attribution_named_or_honestly_open():
+    assert _m(scoring.score(_att_run(), ATT_RUBRIC, CORPUS), "attribution").passed
+    open_run = _att_run(incident_confirmed="inconclusive", verdict="attribution unresolved")
+    assert _m(scoring.score(open_run, ATT_RUBRIC, CORPUS), "attribution").passed
+    wrong = _att_run(verdict="benign backup activity")
+    assert not _m(scoring.score(wrong, ATT_RUBRIC, CORPUS), "attribution").passed
+
+
+def test_required_content_names_what_is_missing():
+    m = _m(scoring.score(_att_run(verdict="svc_backup only"), ATT_RUBRIC, CORPUS), "required_content")
+    assert not m.passed and "app_jdoe" in m.detail
+
+
+def test_refuted_needs_a_contradicting_corpus_id():
+    legit = [{"id": "H2", "claim": "malicious use", "status": "refuted",
+              "against_evidence": ["source is the legitimate backup server"]}]
+    card = scoring.score(_att_run(hypotheses=legit), ATT_RUBRIC, CORPUS)
+    assert not _m(card, "unjustified_refuted").passed
+    assert not _m(card, "malicious_not_refuted").passed
+    cited = [{"id": "H3", "claim": "file never written", "status": "refuted",
+              "against_evidence": ["write seen in ev-3"]}]
+    card = scoring.score(_att_run(hypotheses=cited), ATT_RUBRIC, CORPUS)
+    assert _m(card, "unjustified_refuted").passed and _m(card, "malicious_not_refuted").passed
+
+
+def test_exact_iocs_reject_a_tab_mangled_path():
+    bad = _att_run(indicators=["C:Windows\testIsShareWriteable_x.tmp"])  # \t became a tab
+    assert not _m(scoring.score(bad, ATT_RUBRIC, CORPUS), "exact_iocs").passed
+    assert _m(scoring.score(_att_run(), ATT_RUBRIC, CORPUS), "exact_iocs").passed
+
+
+def test_calibration_range():
+    assert not _m(scoring.score(_att_run(confidence=95), ATT_RUBRIC, CORPUS), "calibration").passed
+
+
+def test_duplicates_are_reported_but_never_gate():
+    run = _att_run()
+    run["steps"] = [{"step": 3, "action": "search", "cached_from_step": 2}]
+    card = scoring.score(run, ATT_RUBRIC, CORPUS)
+    assert not _m(card, "duplicates").passed
+    assert card.passed
