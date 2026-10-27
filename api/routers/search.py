@@ -208,6 +208,9 @@ def search(
         "size": size,
         "events": events,
         "next_search_after": json.dumps(next_cursor) if next_cursor else None,
+        # all-fields | mixed | core-fields | none — the UI warns when a plain-term
+        # search could not cover every field (case indexed before search_all).
+        "search_scope": result.get("search_scope", "none"),
     }
 
 

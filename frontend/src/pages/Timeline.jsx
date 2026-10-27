@@ -414,6 +414,8 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
 
   const [events, setEvents]               = useState([])
   const [total, setTotal]                 = useState(0)
+  const [searchScope, setSearchScope]     = useState('none')
+  const [upgradeMsg, setUpgradeMsg]       = useState('')
   const [page, setPage]                   = useState(0)
   const [hasMore, setHasMore]             = useState(true)  // last page was full → more to load
   const [loading, setLoading]             = useState(false)
@@ -772,6 +774,7 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
         ? await api.search.search(caseId, { ...params, q: effectiveQ })
         : await api.search.timeline(caseId, params)
       setTotal(r.total || 0)
+      setSearchScope(r.search_scope || 'none')
       searchAfterRef.current = r.next_search_after || null
       setHasMore((r.events || []).length >= PAGE_SIZE && !!r.next_search_after)
       const incoming = deduplicateEvents(r.events || [])
@@ -2109,6 +2112,9 @@ export default function Timeline({ caseId, artifactTypes, initialQuery = '' }) {
           </div>
         )}
 
+        {query && (searchScope === 'core-fields' || searchScope === 'mixed') && (
+          <SearchScopeBanner caseId={caseId} scope={searchScope} msg={upgradeMsg} setMsg={setUpgradeMsg} />
+        )}
         {/* Events table */}
         <div className="flex-1 overflow-y-auto overflow-x-auto">
           {/* First load, nothing yet: a single centered spinner — do NOT also
@@ -3728,5 +3734,35 @@ function EventRow({ event, index, onSelect, selected, keyboardSelected, onFilter
         )
       })()}
     </tr>
+  )
+}
+
+// Plain-term search covers every field only on indices built with search_all.
+// Older cases fall back to a few core fields, so results can be incomplete —
+// say so, and let an admin rebuild the case's indices.
+function SearchScopeBanner({ caseId, scope, msg, setMsg }) {
+  let isAdmin = false
+  try { isAdmin = JSON.parse(localStorage.getItem('fo_user') || 'null')?.role === 'admin' } catch { /* ignore */ }
+  async function upgrade() {
+    setMsg('Starting…')
+    try {
+      const r = await api.admin.startSearchUpgrade(caseId)
+      setMsg(r.status === 'started'
+        ? 'Upgrade started — it rebuilds the case indices (a few minutes per million events). Search again when it finishes.'
+        : (r.reason || r.status))
+    } catch (e) { setMsg(e.message) }
+  }
+  return (
+    <div className="mx-3 mt-2 mb-1 rounded border border-amber-200 bg-amber-50 px-3 py-1.5 text-[11px] text-amber-800 flex items-center gap-2 flex-wrap">
+      <span>
+        {scope === 'mixed'
+          ? 'Part of this case was indexed before full-field search: those parts were searched on core fields only.'
+          : 'This case was indexed before full-field search: words were matched on core fields only, so results may be incomplete.'}
+      </span>
+      {isAdmin && !msg && (
+        <button onClick={upgrade} className="btn-outline text-[11px] h-6 px-2">Upgrade search</button>
+      )}
+      {msg && <span className="text-amber-700">{msg}</span>}
+    </div>
   )
 }

@@ -17,6 +17,26 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["admin"])
 
 
+@router.post("/admin/cases/{case_id}/search-upgrade")
+def start_search_upgrade(case_id: str):
+    """Rebuild a case's pre-search_all indices so full-text search covers every
+    field. Refused while the case still has ingest jobs in flight."""
+    from services import search_upgrade
+
+    if not case_id.isalnum():
+        raise HTTPException(status_code=400, detail="invalid case id")
+    return search_upgrade.start_upgrade(case_id)
+
+
+@router.get("/admin/cases/{case_id}/search-upgrade")
+def search_upgrade_status(case_id: str):
+    from services import search_upgrade
+
+    if not case_id.isalnum():
+        raise HTTPException(status_code=400, detail="invalid case id")
+    return search_upgrade.upgrade_status(case_id)
+
+
 @router.get("/admin/storage-reconcile/report")
 def get_storage_reconcile_report():
     """Return the latest persisted storage-reconcile report (report-only).

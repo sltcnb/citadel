@@ -574,6 +574,8 @@ export const api = {
 
   admin: {
     purgeOrphaned:         () => request('POST', '/admin/purge-orphaned-data'),
+    startSearchUpgrade:    (caseId) => request('POST', `/admin/cases/${caseId}/search-upgrade`),
+    searchUpgradeStatus:   (caseId) => request('GET',  `/admin/cases/${caseId}/search-upgrade`),
     wipeAll:               () => request('POST', '/admin/wipe-all-data', { confirm: 'WIPE' }),
     getArchiveSettings:    () => request('GET',  '/admin/archive-settings'),
     getReportTemplate:     ()     => request('GET',    '/admin/report-template'),

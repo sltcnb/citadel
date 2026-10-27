@@ -365,6 +365,128 @@ def _substring_variant(q: str) -> str | None:
     return out if out != q else None
 
 
+# ── Full-text search over search_all ────────────────────────────────────────
+# Every string value of an event is copied (index template copy_to) into one
+# `wildcard`-type field, indexed for fast *substring* matching. A plain-term
+# search — what an analyst types first — is a case-insensitive substring match
+# on that field: "kalmoghrabi" finds "app_kalmoghrabi" in any field, "tmirt"
+# finds "TMIRT.exe", "192.168.100" finds the subnet. Field queries and
+# parenthesised expressions keep the Lucene query_string path.
+
+SEARCH_ALL = "search_all"
+_FIELD_TOKEN_RE = re.compile(r"^-?[A-Za-z_@][\w.@]*:(?!\\)")
+_DRIVE_PATH_RE = re.compile(r"^[A-Za-z]:\\")
+_SEARCH_ALL_CACHE: dict[str, tuple[float, set[str], set[str]]] = {}
+
+
+def _tokens(q: str) -> list[str] | None:
+    """Whitespace tokens, double-quoted phrases kept whole (quotes included)."""
+    out, cur, quoted = [], "", False
+    for ch in q:
+        if ch == '"':
+            quoted = not quoted
+            cur += ch
+        elif ch.isspace() and not quoted:
+            if cur:
+                out.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    if quoted:
+        return None
+    if cur:
+        out.append(cur)
+    return out
+
+
+def _wildcard_value(term: str) -> str | None:
+    """A wildcard-query value matching *term* as a substring.
+
+    Quotes are dropped (`*"ShareWriteable"*` means ShareWriteable), user `*` /
+    `?` are kept, a backslash is literal (Windows paths), and a term without
+    wildcards is wrapped as *term*."""
+    t = term.strip()
+    if len(t) >= 2 and t.startswith('"') and t.endswith('"'):
+        t = t[1:-1]
+    t = t.replace('"', "")
+    if not t.strip("*?"):
+        return None
+    t = t.replace("\\", "\\\\")
+    if "*" not in t and "?" not in t:
+        t = f"*{t}*"
+    return t
+
+
+def plain_terms_query(q: str) -> dict | None:
+    """ES bool query on search_all for a plain-term search, or None when the
+    query needs Lucene (field:value, parentheses, ranges, /regex/)."""
+    q = (q or "").strip()
+    if not q or any(c in q for c in "()[]{}") or _BALANCED_REGEX_RE.search(q):
+        return None
+    toks = _tokens(q)
+    if not toks:
+        return None
+    groups: list[dict] = [{"must": [], "must_not": []}]
+    negate = False
+    for tok in toks:
+        up = tok.upper()
+        if up in ("AND", "&&"):
+            continue
+        if up in ("OR", "||"):
+            groups.append({"must": [], "must_not": []})
+            continue
+        if up == "NOT":
+            negate = True
+            continue
+        if _FIELD_TOKEN_RE.match(tok) and not _DRIVE_PATH_RE.match(tok.lstrip("-")):
+            return None  # field:value — Lucene semantics
+        neg = negate or (tok.startswith("-") and len(tok) > 1)
+        value = _wildcard_value(tok[1:] if tok.startswith("-") and len(tok) > 1 else tok)
+        negate = False
+        if value is None:
+            continue
+        clause = {"wildcard": {SEARCH_ALL: {"value": value, "case_insensitive": True}}}
+        groups[-1]["must_not" if neg else "must"].append(clause)
+    groups = [g for g in groups if g["must"] or g["must_not"]]
+    if not groups:
+        return None
+    if len(groups) == 1:
+        return {"bool": {k: v for k, v in groups[0].items() if v}}
+    return {"bool": {"should": [{"bool": {k: v for k, v in g.items() if v}} for g in groups],
+                     "minimum_should_match": 1}}
+
+
+def search_all_indices(index: str) -> tuple[set[str], set[str]]:
+    """(indices with search_all, indices without) for an index expression.
+
+    Cached briefly: a case is migrated index by index, and an index created by
+    the new template has the field even before its first document."""
+    import time as _t
+
+    hit = _SEARCH_ALL_CACHE.get(index)
+    if hit and _t.monotonic() - hit[0] < 60:
+        return hit[1], hit[2]
+    try:
+        caps = _request("GET", f"/{index}/_field_caps?fields={SEARCH_ALL}&include_unmapped=true", None)
+    except Exception:
+        return set(), set()
+    all_idx = set(caps.get("indices") or [])
+    info = (caps.get("fields") or {}).get(SEARCH_ALL) or {}
+    # field_caps reports a wildcard field under its family type ("keyword").
+    # Only indices built from the current template have search_all at all, so
+    # mapped vs unmapped is the whole question.
+    mapped = [t for t in info if t != "unmapped"]
+    if not mapped:
+        with_f: set[str] = set()
+    elif "unmapped" in info:
+        with_f = all_idx - set(info["unmapped"].get("indices") or [])
+    else:
+        with_f = set(all_idx)
+    without = all_idx - with_f
+    _SEARCH_ALL_CACHE[index] = (_t.monotonic(), with_f, without)
+    return with_f, without
+
+
 _ARTIFACT_TYPE_RE = re.compile(r"[a-z0-9_]+")
 
 
@@ -413,6 +535,15 @@ def search_events(
     must_clauses: list[dict] = []
     filter_clauses: list[dict] = []
 
+    plain = plain_terms_query(query) if query else None
+    upgraded, legacy = search_all_indices(index) if plain else (set(), set())
+    # all-fields: words matched in every field | mixed: some indices predate
+    # search_all | core-fields: none do | lucene: field/complex query, as typed.
+    search_scope = ("lucene" if not plain else "all-fields" if upgraded and not legacy
+                    else "mixed" if upgraded else "core-fields")
+    if plain and upgraded and not legacy:
+        must_clauses.append(plain)
+        query = ""  # fully answered by search_all
     if query:
         # Stray forward slashes (URL paths, "HTTP/2") otherwise make Lucene
         # try to parse a regexp and 400 the whole query. Escape them — but keep
@@ -451,10 +582,16 @@ def search_events(
                     }
                 }
             )
-        if len(clauses) == 1:
-            must_clauses.extend(clauses)
+        legacy_q = clauses[0] if len(clauses) == 1 else {"bool": {"should": clauses, "minimum_should_match": 1}}
+        if plain and upgraded:
+            # Mid-migration: upgraded indices answer from search_all, the rest
+            # keep the old behaviour instead of silently returning nothing.
+            must_clauses.append({"bool": {"should": [
+                {"bool": {"filter": [{"terms": {"_index": sorted(upgraded)}}], "must": [plain]}},
+                {"bool": {"filter": [{"terms": {"_index": sorted(legacy)}}], "must": [legacy_q]}},
+            ], "minimum_should_match": 1}})
         else:
-            must_clauses.append({"bool": {"should": clauses, "minimum_should_match": 1}})
+            must_clauses.append(legacy_q)
 
     if from_ts or to_ts:
         range_filter: dict = {"range": {"timestamp": {}}}
@@ -516,6 +653,7 @@ def search_events(
 
     try:
         result = _request("POST", f"/{index}/_search", body)
+        result["search_scope"] = search_scope if query or plain else "none"
         return result
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
