@@ -4732,8 +4732,36 @@ _BAD_REPLY_NUDGE = (
 def _unusable_agent_step(step: dict) -> bool:
     """True when a parsed agent reply carries no usable action: empty, not
     JSON, or JSON without an "action" string (GLM sometimes answers with a
-    bare fragment such as {"hypotheses": [...]})."""
-    return bool(step.get("_unparsed")) or not isinstance(step.get("action"), str) or not step["action"]
+    bare fragment such as {"hypotheses": [...]}) — or a tool step with no
+    reasoning at all ("..."), which is how empty steps reached the trace."""
+    if bool(step.get("_unparsed")) or not isinstance(step.get("action"), str) or not step["action"]:
+        return True
+    return step["action"] != "conclude" and not str(step.get("thought") or "").strip(" .…")
+
+
+_LANG_NAMES = {"en": "English", "fr": "French", "es": "Spanish", "de": "German", "it": "Italian", "pt": "Portuguese"}
+_NON_LATIN = _re.compile(r"[\u0400-\u04ff\u0590-\u06ff\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]")
+_FR_WORDS = _re.compile(r"\b(le|la|les|des|est|une|pour|dans|que|sur|avec|pas|du|je|cette|sont)\b", _re.I)
+_EN_WORDS = _re.compile(r"\b(the|and|is|of|to|in|for|with|not|this|that|are|was|from)\b", _re.I)
+
+
+def _wrong_language(thought, lang: str) -> bool:
+    """Reasoning written outside the run's working language.
+
+    Script check for every Latin-script language (one run drifted into
+    Chinese mid-investigation); for the en/fr pair, also a stopword vote,
+    since a scenario pasted in French pulls the model into French."""
+    t = str(thought or "")
+    if not t or (lang or "en") not in _LANG_NAMES:
+        return False
+    if _NON_LATIN.search(t):
+        return True
+    fr, en = len(_FR_WORDS.findall(t)), len(_EN_WORDS.findall(t))
+    if lang == "en":
+        return fr >= 5 and fr > 2 * en
+    if lang == "fr":
+        return en >= 5 and en > 2 * fr
+    return False
 
 
 def _parse_agent_step(raw: str) -> dict:
@@ -6703,7 +6731,7 @@ def _agent_run(
             # this turn — both at once contradict each other.
             + (review_note or supervisor_note)
             + f"\nThis is step {step_no} of {max_steps}. Output the next JSON object "
-            "(write `thought` in English)."
+            f"(write `thought` in {_LANG_NAMES.get(language, 'English')})."
         )
         review_note = ""
         try:
@@ -6711,11 +6739,13 @@ def _agent_run(
             # MITRE + next_steps); 900 tokens was hitting cap and producing
             # truncated JSON. 2000 leaves headroom without becoming wasteful.
             raw = _call_llm_with_system(cfg, system_prompt, user_msg, max_tokens=2000, json_mode=True)
-            if _unusable_agent_step(_parse_agent_step(raw)):
+            _first = _parse_agent_step(raw)
+            if _unusable_agent_step(_first) or _wrong_language(_first.get("thought"), language):
                 # One corrective re-ask: an unusable reply used to be read as
                 # "conclude" and silently end the run with an empty verdict.
                 raw = _call_llm_with_system(
-                    cfg, system_prompt, user_msg + _BAD_REPLY_NUDGE.format(snippet=(raw or "")[:300]),
+                    cfg, system_prompt, user_msg + _BAD_REPLY_NUDGE.format(snippet=(raw or "")[:300])
+                    + f"\nWrite `thought` in {_LANG_NAMES.get(language, 'English')}, with real reasoning.",
                     max_tokens=2000, json_mode=True,
                 )
         except Exception as exc:
@@ -6756,6 +6786,8 @@ def _agent_run(
                 break
             continue
         bad_reply_streak = 0
+        if _wrong_language(step.get("thought"), language):
+            step["language_violation"] = True
 
         action = step["action"]
 
@@ -6957,6 +6989,18 @@ def _agent_run(
                     ),
                 }
             )
+            transcript.append(step)
+            if run_id:
+                _append_step_log(case_id, run_id, step)
+                _update_active_run(case_id, run_id, step_count=len(transcript))
+            yield {"type": "step", "step": step}
+            continue
+
+        _last_tool = next((s for s in reversed(transcript) if s.get("action") not in ("error", "review")), None)
+        if action == "findings" and _last_tool and _last_tool.get("action") == "findings":
+            step.update({"query_status": "invalid", "query_error": (
+                "findings again with no new evidence since the last call — the store has not changed. "
+                "Use that result, run a tool that adds evidence, or conclude.")})
             transcript.append(step)
             if run_id:
                 _append_step_log(case_id, run_id, step)

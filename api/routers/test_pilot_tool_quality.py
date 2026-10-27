@@ -204,3 +204,17 @@ def test_zero_hit_coverage_is_scoped_to_host_and_window(monkeypatch):
     assert "absence may be ERASURE" in note
     assert "event 5145 occurs 0 times in the WHOLE case" in note
     assert "event 4624 is collected (300× on srv-x01)" in note
+
+
+def test_reasoning_language_detection():
+    assert s._wrong_language("关键新证据：源机器已识别", "en")
+    fr = "Le compte est inconnu, la machine source est absente des inventaires et le fichier est dans le partage"
+    assert s._wrong_language(fr, "en") and not s._wrong_language(fr, "fr")
+    assert not s._wrong_language("Check the logon on port 51021 for the session id", "en")
+    assert not s._wrong_language("anything", "xx")
+
+
+def test_empty_reasoning_is_an_unusable_step():
+    assert s._unusable_agent_step({"action": "search", "thought": "...", "query": ""})
+    assert not s._unusable_agent_step({"action": "conclude"})
+    assert not s._unusable_agent_step({"action": "search", "thought": "pivot on the port"})

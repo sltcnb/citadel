@@ -120,3 +120,38 @@ def test_reviewer_rejection_sends_the_conclusion_back_once_then_accepts(run_agen
     assert [s.get("action") for s in run["steps"]] == ["review", "conclude"]
     assert "refuted from absence" in run["steps"][0]["thought"]
     assert run["final"]["confidence"] == 55
+
+
+def test_back_to_back_findings_are_rejected(run_agent):
+    run = run_agent([
+        '{"action":"findings","thought":"what is known"}',
+        '{"action":"findings","thought":"what is known again","kind":"ioc"}',
+        _CONCLUDE,
+    ])
+    acts = [(st.get("action"), st.get("query_status")) for st in run["steps"]]
+    assert acts[1] == ("findings", "invalid")
+    assert "no new evidence" in run["steps"][1]["query_error"]
+
+
+def test_off_language_reasoning_is_re_asked(monkeypatch):
+    fake = fakeredis.FakeRedis(decode_responses=True)
+    import config
+    import services.cases as cases
+    from pilot import service
+
+    monkeypatch.setattr(config, "get_redis", lambda: fake)
+    monkeypatch.setattr(cases, "get_redis", lambda: fake)
+    monkeypatch.setattr(cases, "get_case", lambda cid: {"case_id": cid, "name": "t"})
+    monkeypatch.setattr(service, "_redis", lambda: fake)
+    replies = iter(['{"action":"findings","thought":"关键新证据"}', _CONCLUDE])
+    prompts = []
+
+    def fake_llm(cfg, system, user, max_tokens=600, json_mode=False):
+        if system.startswith("You are an autonomous DFIR investigation agent"):
+            prompts.append(user)
+            return next(replies, _CONCLUDE)
+        return '{"holds": true, "issues": []}'
+
+    monkeypatch.setattr(service, "_call_llm_with_system", fake_llm)
+    list(service._agent_run("c1", "test", 5, {"provider": "openai"}, None))
+    assert "Write `thought` in English" in prompts[1]
