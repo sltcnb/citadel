@@ -492,6 +492,10 @@ def delete_user(username: str) -> bool:
         return False
     r.delete(key)
     r.srem(_USERS_SET, username)
+    # Drop API keys too: otherwise re-creating the same username revives them.
+    for key_id in r.smembers(rk.user_api_keys(username)):
+        r.delete(rk.api_key(key_id))
+    r.delete(rk.user_api_keys(username))
     _sync_group_members_for_user(username, [])  # drop from every group's members
     return True
 

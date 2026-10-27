@@ -24,12 +24,14 @@ def fake_redis(monkeypatch):
     """
     fake = fakeredis.FakeRedis(decode_responses=True)
 
+    import auth.api_keys as api_keys
     import auth.service as svc
     import services.cases as cases
     import services.sigma_settings as ss
 
-    # auth.service imports `from config import get_redis as _redis`
+    # auth.service / auth.api_keys import `from config import get_redis as _redis`
     monkeypatch.setattr(svc, "_redis", lambda: fake, raising=True)
+    monkeypatch.setattr(api_keys, "_redis", lambda: fake, raising=True)
     # services.cases / sigma_settings import `get_redis` into their namespace
     monkeypatch.setattr(cases, "get_redis", lambda: fake, raising=True)
     monkeypatch.setattr(ss, "get_redis", lambda: fake, raising=True)

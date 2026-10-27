@@ -314,6 +314,9 @@ export const api = {
     totpSetup:          ()                   => request('POST',   '/auth/me/totp/setup'),
     totpEnable:         (code)               => request('POST',   '/auth/me/totp/enable', { code }),
     totpDisable:        (password)           => request('POST',   '/auth/me/totp/disable', { password }),
+    listApiKeys:        ()                   => request('GET',    '/auth/me/api-keys'),
+    createApiKey:       (data)               => request('POST',   '/auth/me/api-keys', data),
+    revokeApiKey:       (id)                 => request('DELETE', `/auth/me/api-keys/${id}`),
     // RBAC — groups, permission catalog, effective access
     listGroups:         ()                   => request('GET',    '/groups'),
     createGroup:        (data)               => request('POST',   '/groups', data),

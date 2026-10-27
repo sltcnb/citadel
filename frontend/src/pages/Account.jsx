@@ -98,7 +98,171 @@ export default function Account() {
       <div className="max-w-3xl mt-4">
         <MfaSection />
       </div>
+
+      <div className="max-w-3xl mt-4">
+        <ApiKeysSection />
+      </div>
     </PageShell>
+  )
+}
+
+// ── Personal API keys ────────────────────────────────────────────────────────
+
+const fmtDate = ts => (ts ? new Date(ts * 1000).toLocaleString() : '—')
+
+function quickStart(base, key) {
+  return `# Every Citadel API route accepts this key — it acts as you, with your permissions.
+export CITADEL=${base}
+export KEY=${key}
+H="Authorization: Bearer $KEY"
+
+# 1. Create a case
+curl -sk -H "$H" -H 'Content-Type: application/json' -X POST $CITADEL/cases \\
+     -d '{"name":"IR-2026-001"}'                      # -> {"case_id": ...}
+
+# 2. Get a collector for it (embeds a scoped, short-lived upload token — never this key)
+curl -sk -H "$H" -o collect.py \\
+     "$CITADEL/collector/download?platform=py&case_id=<case_id>&api_url=$CITADEL&api_token=1"
+
+# 3. Or upload evidence yourself
+curl -sk -H "$H" -F files=@triage.zip $CITADEL/cases/<case_id>/ingest
+
+# 4. Launch a module and follow it
+curl -sk -H "$H" $CITADEL/cases/<case_id>/recommended-modules
+curl -sk -H "$H" -H 'Content-Type: application/json' -X POST $CITADEL/cases/<case_id>/module-runs \\
+     -d '{"module_id":"<module_id>"}'
+curl -sk -H "$H" $CITADEL/module-runs/<run_id>
+
+# 5. Run the Pilot investigation, then fetch the LLM analysis
+curl -sk -H "$H" -H 'Content-Type: application/json' -X POST $CITADEL/cases/<case_id>/ai/agent \\
+     -d '{"circumstance":"Suspected phishing on WS-12"}'
+curl -sk -H "$H" $CITADEL/cases/<case_id>/ai/results
+
+# Full reference: ${base}/docs`
+}
+
+function ApiKeysSection() {
+  const [keys, setKeys]     = useState(null)
+  const [name, setName]     = useState('')
+  const [days, setDays]     = useState('90')
+  const [created, setCreated] = useState(null)  // { key, ... } — plaintext, shown once
+  const [busy, setBusy]     = useState(false)
+  const [err, setErr]       = useState('')
+  const base = `${window.location.origin}/api/v1`
+
+  const refresh = () => api.auth.listApiKeys().then(setKeys).catch(e => { setKeys([]); setErr(e.message) })
+  useEffect(() => { refresh() }, [])
+
+  async function create(e) {
+    e.preventDefault(); setErr(''); setBusy(true)
+    try {
+      const res = await api.auth.createApiKey({
+        name: name.trim(),
+        expires_in_days: days ? Number(days) : null,
+      })
+      setCreated(res); setName(''); refresh()
+    } catch (e) { setErr(e.message) } finally { setBusy(false) }
+  }
+
+  async function revoke(id) {
+    setErr('')
+    try { await api.auth.revokeApiKey(id); refresh() } catch (e) { setErr(e.message) }
+  }
+
+  return (
+    <section className="card p-5 space-y-4">
+      <div className="flex items-center gap-2">
+        <KeyRound size={15} className="text-brand-accent" />
+        <h2 className="font-semibold text-brand-text">API Keys</h2>
+      </div>
+      <p className="text-xs text-gray-500">
+        For scripts and external tools: a key works on every API route and acts as you, with your
+        current permissions. It stops working when you revoke it, when it expires, or when your
+        password or role changes.
+      </p>
+
+      {err && (
+        <p className="text-xs text-red-600 flex items-center gap-1.5"><AlertCircle size={12} /> {err}</p>
+      )}
+
+      {created && (
+        <div className="space-y-2 border border-green-200 bg-green-50 rounded-lg p-3">
+          <p className="text-xs text-green-700 flex items-center gap-1.5">
+            <Check size={12} /> Key “{created.name}” created. Copy it now — it will not be shown again.
+          </p>
+          <code className="block text-xs bg-white border border-gray-200 rounded px-2 py-1.5 break-all font-mono">
+            {created.key}
+          </code>
+          <div className="flex gap-2">
+            <button onClick={() => navigator.clipboard?.writeText(created.key)}
+              className="btn-outline text-xs inline-flex items-center gap-1.5">
+              <Copy size={13} /> Copy key
+            </button>
+            <button onClick={() => navigator.clipboard?.writeText(quickStart(base, created.key))}
+              className="btn-outline text-xs inline-flex items-center gap-1.5">
+              <Copy size={13} /> Copy quick-start script
+            </button>
+            <button onClick={() => setCreated(null)} className="btn-primary text-xs">Done</button>
+          </div>
+          <pre className="text-[11px] bg-white border border-gray-200 rounded p-2 overflow-x-auto font-mono whitespace-pre">
+            {quickStart(base, '<your key>')}
+          </pre>
+        </div>
+      )}
+
+      <form onSubmit={create} className="flex flex-col sm:flex-row gap-2 sm:items-end">
+        <div className="flex-1">
+          <Input label="Name" value={name} onChange={setName} placeholder="e.g. SOAR integration"
+            maxLength={80} required />
+        </div>
+        <div>
+          <label htmlFor="apikey-expiry" className="block text-xs font-medium text-gray-600 mb-1">Expires</label>
+          <select id="apikey-expiry" className="input text-sm" value={days} onChange={e => setDays(e.target.value)}>
+            <option value="30">30 days</option>
+            <option value="90">90 days</option>
+            <option value="365">1 year</option>
+            <option value="">Never</option>
+          </select>
+        </div>
+        <button type="submit" disabled={busy || !name.trim()}
+          className="btn-primary text-xs inline-flex items-center gap-1.5 h-9">
+          {busy ? <Loader2 size={13} className="animate-spin" /> : <KeyRound size={13} />} Create key
+        </button>
+      </form>
+
+      {!keys && <Loader2 size={14} className="animate-spin text-gray-400" />}
+      {keys && keys.length === 0 && <p className="text-xs text-gray-400">No API keys yet.</p>}
+      {keys && keys.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-left text-gray-500 border-b border-gray-100">
+                <th className="py-1.5 pr-2 font-medium">Name</th>
+                <th className="py-1.5 pr-2 font-medium">Key</th>
+                <th className="py-1.5 pr-2 font-medium">Created</th>
+                <th className="py-1.5 pr-2 font-medium">Last used</th>
+                <th className="py-1.5 pr-2 font-medium">Expires</th>
+                <th className="py-1.5" />
+              </tr>
+            </thead>
+            <tbody>
+              {keys.map(k => (
+                <tr key={k.id} className="border-b border-gray-100 last:border-0">
+                  <td className="py-1.5 pr-2 font-medium text-brand-text">{k.name}</td>
+                  <td className="py-1.5 pr-2 font-mono text-gray-500">{k.prefix}</td>
+                  <td className="py-1.5 pr-2 text-gray-500">{fmtDate(k.created_at)}</td>
+                  <td className="py-1.5 pr-2 text-gray-500">{fmtDate(k.last_used_at)}</td>
+                  <td className="py-1.5 pr-2 text-gray-500">{k.expires_at ? fmtDate(k.expires_at) : 'Never'}</td>
+                  <td className="py-1.5 text-right">
+                    <button onClick={() => revoke(k.id)} className="text-red-600 hover:underline">Revoke</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
   )
 }
 

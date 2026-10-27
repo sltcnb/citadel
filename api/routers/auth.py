@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 logger = logging.getLogger(__name__)
 
 import redis_keys as rk
+from auth.api_keys import create_api_key, list_api_keys, revoke_api_key
 from auth.dependencies import get_current_user, require_admin
 from auth.service import (
     authenticate,
@@ -547,6 +548,43 @@ async def totp_disable(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Password is incorrect")
     disable_totp(username)
     return {"detail": "Two-factor authentication disabled"}
+
+
+# ── Self-service: personal API keys ──────────────────────────────────────────
+
+
+class ApiKeyCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=80)
+    expires_in_days: int | None = Field(None, ge=1, le=3650)
+
+
+@router.get("/me/api-keys", summary="List your API keys")
+async def api_keys_list(current_user: dict = Depends(get_current_user)):
+    return list_api_keys(_resolve_username(current_user))
+
+
+@router.post("/me/api-keys", summary="Create an API key (plaintext shown once)")
+async def api_keys_create(
+    body: ApiKeyCreateRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    # A leaked key must not be able to mint more keys that survive its revocation.
+    if current_user.get("_api_key_id"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="API keys can only be created from an interactive session",
+        )
+    try:
+        return create_api_key(_resolve_username(current_user), body.name.strip(), body.expires_in_days)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
+@router.delete("/me/api-keys/{key_id}", summary="Revoke one of your API keys")
+async def api_keys_revoke(key_id: str, current_user: dict = Depends(get_current_user)):
+    if not revoke_api_key(_resolve_username(current_user), key_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API key not found")
+    return {"detail": "API key revoked"}
 
 
 def _qr_png_data_uri(payload: str) -> str:

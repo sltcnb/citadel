@@ -362,8 +362,12 @@ def _audit_actor_from_scope(scope) -> tuple[str, str]:
     if not token:
         return "anonymous", ""
     try:
+        from auth.api_keys import is_api_key, resolve_api_key
         from auth.service import decode_token
 
+        if is_api_key(token):
+            owner = resolve_api_key(token)
+            return (owner["username"], owner.get("role") or "") if owner else ("anonymous", "")
         payload = decode_token(token)
         return payload.get("sub") or "anonymous", payload.get("role") or ""
     except Exception:  # noqa: BLE001 — never let token decode break auditing
@@ -529,9 +533,20 @@ class CoreHTTPMiddleware:
         if not token:
             return None
         try:
+            from auth.api_keys import is_api_key, resolve_api_key
             from auth.service import decode_token, get_user
 
-            if settings.AUTH_ENABLED:
+            if settings.AUTH_ENABLED and is_api_key(token):
+                # Not a JWT: decode_token would raise and this guard fails open.
+                owner = resolve_api_key(token)
+                if owner and (owner.get("role") or "guest") == "guest" and not _guest_path_allowed(method, path):
+                    return JSONResponse(
+                        status_code=403,
+                        content={
+                            "detail": "Guest accounts can create cases and work inside them, but cannot touch platform settings."
+                        },
+                    )
+            elif settings.AUTH_ENABLED:
                 payload = decode_token(token)
                 # Enforce against the FRESH role from the user record, not the
                 # JWT claim: the claim stays stale until token expiry, so a

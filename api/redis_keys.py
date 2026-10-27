@@ -20,6 +20,18 @@ def login_ratelimit(ip: str) -> str:
     return f"fo:ratelimit:login:{ip}"
 
 
+def api_key(key_id: str) -> str:
+    return f"fo:apikey:{key_id}"
+
+
+def api_key_touch(key_id: str) -> str:
+    return f"fo:apikey:touch:{key_id}"
+
+
+def user_api_keys(username: str) -> str:
+    return f"fo:apikeys:user:{username}"
+
+
 # ── Cases ─────────────────────────────────────────────────────────────────────
 def case_alert_rules(case_id: str) -> str:
     return f"fo:alert_rules:{case_id}"

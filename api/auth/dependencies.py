@@ -8,6 +8,7 @@ from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError
 
 from auth import rbac
+from auth.api_keys import is_api_key, resolve_api_key
 from auth.service import (
     decode_token,
     get_user,
@@ -128,6 +129,21 @@ def _session_idle_expired(payload: dict) -> bool:
         return False
 
 
+def _api_key_user(key: str) -> dict:
+    """Resolve a personal API key (``cit_…``) to its owner, or 401. Not cached:
+    revoking a key must take effect on the very next request."""
+    user = resolve_api_key(key)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid, expired or revoked API key",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if not user.get("role"):
+        user["role"] = "guest"  # least privilege — no admin backfill for keys
+    return user
+
+
 async def get_current_user(
     request: Request,
     token: str | None = Depends(_oauth2),
@@ -156,6 +172,8 @@ async def get_current_user(
             detail="Not authenticated",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    if is_api_key(effective_token):
+        return _api_key_user(effective_token)
     cached = _cache_get(effective_token)
     if cached is not None:
         # Still enforce revocation on a cache hit so logout/revoke takes effect
@@ -406,6 +424,8 @@ def require_upload_access(
             detail="Not authenticated",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    if is_api_key(effective):
+        return require_case_access(case_id, _api_key_user(effective))
     try:
         payload = decode_token(effective)
     except JWTError:
