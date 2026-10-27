@@ -2325,7 +2325,7 @@ At every step return ONE JSON object — no markdown, no commentary outside it:
 
   {
     "thought": "what you're trying to verify and why",
-    "action":  "set_hypotheses" | "search" | "aggregate" | "inspect" | "time_window" | "correlate" | "mitre_hits" | "entity_graph" | "stack_rare" | "cti_seen_before" | "detection_rules" | "watchlist" | "module_runs" | "list_modules" | "launch_module" | "read_module_result" | "ioc_sweep" | "host_profile" | "request_collection" | "findings" | "save_finding" | "conclude",
+    "action":  "set_hypotheses" | "search" | "aggregate" | "inspect" | "time_window" | "correlate" | "mitre_hits" | "entity_graph" | "stack_rare" | "cti_seen_before" | "detection_rules" | "watchlist" | "module_runs" | "list_modules" | "launch_module" | "read_module_result" | "ioc_sweep" | "host_profile" | "session_pivot" | "coverage_check" | "request_collection" | "findings" | "save_finding" | "conclude",
 
     // action=search — full Elasticsearch query_string against fo-case-{id}-*
     "query":   "host.hostname:DESKTOP-* AND artifact_type:evtx",
@@ -2428,6 +2428,16 @@ Tool playbook — chain these like a real DFIR analyst:
                        that is a leading wildcard over a rendered summary and
                        misses every indicator held in a structured field.
                        {"action":"ioc_sweep","indicators":["evil[.]com","1.2.3.4"]}
+  session_pivot      → JOIN an alert to its logon session. Give the alert's source
+                       ip + port (or a logon_id), optionally host. Returns the
+                       matching 4624/4625 (account, logon ID, workstation) and every
+                       event that session produced. This — not "logons around the
+                       same time" — is how an action is attributed to an account.
+                       {"action":"session_pivot","ip":"10.0.0.5","port":51021,"host":"srv01"}
+  coverage_check     → Before claiming something did NOT happen: event IDs and
+                       channels present, record-number gaps, log clears (1102/104),
+                       whether the audit policy was collected, for a host + window.
+                       {"action":"coverage_check","host":"srv01","start":"2026-01-01T08:00:00Z","end":"2026-01-01T09:00:00Z"}
   host_profile       → SKILL. One-call orientation on a host: artifact types,
                        users, processes, event count. Run it BEFORE searching a
                        host, so you know what evidence exists before hunting for
@@ -4657,7 +4667,42 @@ AGENT_TOOLS = {
     "host_profile": _tool_host_profile,
     "request_collection": _tool_request_collection,
     "web_search": _tool_web_search,
+    "session_pivot": None,   # bound below (defined after the registry)
+    "coverage_check": None,
 }
+
+
+def _tool_session_pivot(case_id: str, step: dict) -> dict:
+    """Join an alert's source IP + port (or a logon ID) to its logon session."""
+    from services.elasticsearch import _request as _es_req
+
+    from pilot.forensics import session_pivot
+
+    try:
+        return session_pivot(
+            _es_req, f"fo-case-{case_id}-*", ip=str(step.get("ip") or ""), port=step.get("port") or "",
+            logon_id=str(step.get("logon_id") or ""), host=str(step.get("host") or ""),
+            minutes=min(1440, max(5, int(step.get("minutes") or 240))),
+        )
+    except Exception as exc:
+        return {"query_status": "invalid", "query_error": _es_error_text(exc)}
+
+
+def _tool_coverage_check(case_id: str, step: dict) -> dict:
+    """What the collected logs can show for a host and window."""
+    from services.elasticsearch import _request as _es_req
+
+    from pilot.forensics import coverage_check
+
+    try:
+        return coverage_check(_es_req, f"fo-case-{case_id}-*", host=str(step.get("host") or ""),
+                              start=str(step.get("start") or ""), end=str(step.get("end") or ""))
+    except Exception as exc:
+        return {"query_status": "invalid", "query_error": _es_error_text(exc)}
+
+
+AGENT_TOOLS["session_pivot"] = _tool_session_pivot
+AGENT_TOOLS["coverage_check"] = _tool_coverage_check
 
 
 _MAX_BAD_REPLY_STREAK = 3
@@ -5010,6 +5055,9 @@ def _agent_step_history(transcript: list[dict]) -> str:
             )
         elif action == "mitre_hits":
             line += f"\n  technique={s.get('technique_id', '')} hits={hits_str}"
+        elif action in ("session_pivot", "coverage_check"):
+            for x in (s.get("summary") or [])[:14]:
+                line += f"\n    {_sanitize_evidence(x, 260)}"
         # Common sample preview for any tool that returned events
         if s.get("sample"):
             line += "\n  sample=" + " | ".join(_sanitize_evidence(x, 160) for x in s["sample"][:3])
@@ -6220,6 +6268,11 @@ def _agent_run(
             "timestamp",
             "technique_id",
             "minutes",
+            "ip",
+            "port",
+            "logon_id",
+            "start",
+            "end",
         )
         for s in reversed(recent):
             ids = tuple(sorted(s.get("sample_ids") or []))
@@ -6770,6 +6823,7 @@ def _agent_run(
             "mitre_hits", "module_runs", "detection_rules", "watchlist",
             "list_modules", "cti_seen_before", "entity_graph", "stack_rare",
             "ioc_sweep", "host_profile", "request_collection", "findings",
+            "session_pivot", "coverage_check",
         }
         # Canonical form: "a AND  b" and "a and b" are the same query.
         sig = (

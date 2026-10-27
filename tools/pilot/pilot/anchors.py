@@ -124,7 +124,8 @@ def extract_anchors(text: str, limit: int = 16) -> list[Anchor]:
 def _touched_text(step: dict) -> str:
     """Everything a tool call was asked about — the query side, not the result."""
     parts = []
-    for k in ("query", "agg_query", "agg_field", "host", "user", "fo_id", "technique_id", "value"):
+    for k in ("query", "agg_query", "agg_field", "host", "user", "fo_id", "technique_id", "value",
+              "ip", "port", "logon_id"):
         v = step.get(k)
         if v:
             parts.append(str(v))
