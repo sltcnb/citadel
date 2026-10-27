@@ -3000,6 +3000,117 @@ def _hour_baseline(hour_buckets: list[dict], n_days: int) -> str:
     return "hours (UTC): " + " · ".join(parts)
 
 
+def _canon_arg(v):
+    """Canonical tool argument for duplicate detection."""
+    if not isinstance(v, str):
+        return v
+    v = _re.sub(r"\s+", " ", v.strip())
+    return _re.sub(r"\b(and|or|not|to)\b", lambda m: m.group(1).upper(), v, flags=_re.I)
+
+
+def _split_clauses(query: str) -> list[str]:
+    return [c.strip(" ()") for c in _re.split(r"\s+AND\s+", query or "", flags=_re.I) if c.strip(" ()")]
+
+
+def _dropped_clauses(original: str, broader: str) -> list[str]:
+    """Top-level AND clauses of *original* that *broader* no longer carries."""
+    kept = _canon_arg(broader)
+    return [c for c in _split_clauses(original) if _canon_arg(c) not in kept]
+
+
+def _one_of_n_note(step: dict, transcript: list[dict]) -> str:
+    """When the inspected event came from an N-hit search, say it is 1 of N.
+
+    Six enumeration events were attributed to one caller after inspecting one
+    of them; two came from a different process."""
+    fo = step.get("fo_id") or ""
+    for prior in reversed(transcript):
+        if fo and fo in (prior.get("sample_ids") or []) and (prior.get("result_count") or 0) > 1:
+            ev = step.get("event") or {}
+            data = ((ev.get("evtx") or {}).get("event_data") or {}) if isinstance(ev, dict) else {}
+            fields = [f"evtx.event_data.{k}.keyword" for k in (
+                "CallerProcessName", "ProcessName", "TargetUserName", "IpAddress", "IpPort", "LogonType",
+            ) if data.get(k) not in (None, "", "-")][:3]
+            hint = f" — aggregate the step-{prior.get('step')} query on {', '.join(fields)}" if fields else ""
+            return (
+                f"This is 1 of {prior['result_count']} events from step {prior.get('step')}. Nothing "
+                f"here holds for the other {prior['result_count'] - 1} until you check them{hint}."
+            )
+    return ""
+
+
+def _scope_of(query: str) -> tuple[str, tuple[str, str] | None]:
+    """Host and time window a query is constrained to, if any."""
+    host = ""
+    m = _re.search(r'host\.hostname(?:\.keyword)?\s*:\s*"?([\w.-]+)"?', query or "")
+    if m:
+        host = m.group(1)
+    w = _re.search(r"timestamp\s*:\s*\[\s*(\S+)\s+TO\s+(\S+?)\s*\]", query or "")
+    return host, ((w.group(1), w.group(2)) if w else None)
+
+
+def _zero_hit_coverage(index: str, query: str) -> str:
+    """For a 0-hit query: was the thing it looked for collectable at all?
+
+    Scoped like the query (host, window) and then case-wide, so the agent can
+    tell "did not happen" (the event type exists here, just not matching) from
+    "not collected" (the event type never occurs) from "erased" (the log was
+    cleared around the window)."""
+    from services.elasticsearch import _request as _es_req
+
+    ids = sorted({int(x) for x in _re.findall(r"evtx\.event_id\s*:\s*\(?\s*(\d{3,5})", query or "")})
+    ids += sorted({int(x) for x in _re.findall(r"\bOR\s+(\d{3,5})\b", query or "")} - set(ids))
+    if not ids:
+        return ""
+    host, window = _scope_of(query)
+    host_f = [{"term": {"host.hostname.keyword": host}}] if host else []
+    aggs: dict = {}
+    for i in ids[:6]:
+        aggs[f"case{i}"] = {"filter": {"term": {"evtx.event_id": i}}}
+        if host:
+            aggs[f"host{i}"] = {"filter": {"bool": {"filter": [{"term": {"evtx.event_id": i}}, *host_f]}}}
+    clear_scope = list(host_f)
+    if window:
+        clear_scope.append({"range": {"timestamp": {"gte": f"{window[0]}||-1h", "lte": f"{window[1]}||+1h"}}})
+    aggs["clear_near"] = {"filter": {"bool": {"filter": [{"terms": {"evtx.event_id": [1102, 104]}}, *clear_scope]}}}
+    aggs["clear_any"] = {"filter": {"term": {"evtx.event_id": 1102}}, "aggs": {"last": {"max": {"field": "timestamp"}}}}
+    aggs["span_first"] = {"min": {"field": "timestamp"}}
+    aggs["span_last"] = {"max": {"field": "timestamp"}}
+    if window:
+        aggs["in_window"] = {"filter": {"bool": {"filter": [
+            {"range": {"timestamp": {"gte": window[0], "lte": window[1]}}}, *host_f]}}}
+    try:
+        res = _es_req("POST", f"/{index}/_search",
+                      {"size": 0, "query": {"term": {"artifact_type": "evtx"}}, "aggs": aggs})
+    except Exception:
+        return ""
+    a = res.get("aggregations") or {}
+    n = lambda k: int((a.get(k) or {}).get("doc_count", 0))  # noqa: E731
+    span = f"{((a.get('span_first') or {}).get('value_as_string') or '?')[:10]} → {((a.get('span_last') or {}).get('value_as_string') or '?')[:10]}"
+    scope = " ".join(x for x in (f"on {host}" if host else "", "in the window" if window else "") if x)
+    notes = [f"executed query had 0 hits {scope}".strip()]
+    if window:
+        notes.append(f"{n('in_window')} evtx event(s) exist {scope} at all")
+    if n("clear_near"):
+        notes.append(f"⚠ log cleared (1102/104) {n('clear_near')}× {scope or 'in the case'} ±1h — absence may be ERASURE")
+    elif a.get("clear_any", {}).get("doc_count"):
+        last = ((a["clear_any"].get("last") or {}).get("value_as_string") or "?")[:10]
+        notes.append(f"Security log cleared (1102) {n('clear_any')}× in the case, last {last} — not near this window")
+    else:
+        notes.append("no Security log clear (1102) in the collected log")
+    for i in ids[:6]:
+        case_n, host_n = n(f"case{i}"), (n(f"host{i}") if host else None)
+        if case_n == 0:
+            notes.append(f"event {i} occurs 0 times in the WHOLE case (evtx {span}) — its audit category is "
+                         "not enabled/collected: a VERIFIED collection gap, absence proves nothing")
+        elif host and host_n == 0:
+            notes.append(f"event {i} exists in the case ({case_n}×) but never on {host} — not collected for this host")
+        else:
+            where = f"{host_n}× on {host}" if host else f"{case_n}× in the case"
+            notes.append(f"event {i} is collected ({where}) — the 0 is a REAL negative for your filter")
+    return " | ".join(notes)
+
+
 def _event_id_coverage(index: str, query: str) -> str:
     """For a 0-hit query on event IDs: does that ID exist ANYWHERE in the case?
 
@@ -3185,13 +3296,15 @@ def _tool_search(case_id: str, step: dict) -> dict:
             "sample": samples,
             "sample_ids": sample_ids,
             "query_status": "ok",
+            # What Elasticsearch actually ran, after aliasing / widening / escaping.
+            "executed_query": _search_qstr,
         }
         if total > 0:
             prof = _hit_profile(index, _search_qstr)
             if prof:
                 out["profile"] = prof
         else:
-            cov = _event_id_coverage(index, _normalize_agent_query(raw_q))
+            cov = _zero_hit_coverage(index, _normalize_agent_query(raw_q))
             if cov:
                 out["coverage_note"] = cov
         if capped:
@@ -4855,12 +4968,15 @@ def _agent_step_history(transcript: list[dict]) -> str:
                 line += f"\n    {_sanitize_evidence(p, 240)}"
             if s.get("coverage_note"):
                 line += f"\n  ⓘ {str(s['coverage_note'])[:500]}"
+            if s.get("result_count") == 0 and s.get("executed_query") and s["executed_query"] != s.get("query"):
+                line += f"\n  executed as: {str(s['executed_query'])[:200]}"
             b = s.get("broadened")
             if isinstance(b, dict):
+                dropped = ", ".join(b.get("filters_dropped") or []) or "some constraints"
                 line += (
-                    f"\n  ⓘ 0 hits is the answer to YOUR query. Separately, the broader "
-                    f"'{str(b.get('query', ''))[:100]}' (constraints removed) has {b.get('result_count')} hits — "
-                    "they do NOT satisfy your filters; don't read them as if they did."
+                    f"\n  ⚠ 0 hits is the answer to YOUR query. FILTERS DROPPED: {dropped[:160]} — "
+                    f"the broader '{str(b.get('query', ''))[:100]}' has {b.get('result_count')} hits that are "
+                    "NOT scoped by those filters; never read them as matching your query."
                 )
                 for x in (b.get("sample") or [])[:2]:
                     line += f"\n      {_sanitize_evidence(x, 160)}"
@@ -4921,6 +5037,8 @@ def _agent_step_history(transcript: list[dict]) -> str:
                 line += f"\n    rungs tried: {'; '.join(s['broaden_path'][-3:])[:200]}"
         if s.get("broaden_skipped"):
             line += f"\n  ⚠ {str(s['broaden_skipped'])[:200]}"
+        if s.get("sample_note"):
+            line += f"\n  ⚠ {str(s['sample_note'])[:300]}"
         if s.get("coverage_warning"):
             line += f"\n  ⚠ {str(s['coverage_warning'])[:600]}"
         if s.get("note"):
@@ -6009,6 +6127,7 @@ def _agent_run(
     llm_error: str | None = None
     # Consecutive steps whose reply had no usable action (see below).
     bad_reply_streak = 0
+    duplicate_count = 0
     # Observables the alert names (IP, port, account, host, share, file): shown
     # every turn with their tested/untested status; a conclusion is sent back
     # while any is untested. See pilot.anchors.
@@ -6652,9 +6771,10 @@ def _agent_run(
             "list_modules", "cti_seen_before", "entity_graph", "stack_rare",
             "ioc_sweep", "host_profile", "request_collection", "findings",
         }
+        # Canonical form: "a AND  b" and "a and b" are the same query.
         sig = (
             action,
-            tuple((k, step.get(k)) for k in _ARG_KEYS if step.get(k) is not None),
+            tuple((k, _canon_arg(step.get(k))) for k in _ARG_KEYS if step.get(k) is not None),
         )
 
         # Hard stop on a call that has already failed the same way twice. The
@@ -6685,12 +6805,13 @@ def _agent_run(
 
         if action in _CACHEABLE and sig in query_cache:
             cached = query_cache[sig]
+            duplicate_count += 1
             step.update(cached["result"])
             step["cached_from_step"] = cached["step"]
             step["note"] = (
-                f"DUPLICATE — you already ran this exact query at step {cached['step']}. "
-                "Same result shown again below. Do NOT repeat it; use these results, "
-                "try a DIFFERENT query, or conclude."
+                f"DUPLICATE #{duplicate_count} — same call as step {cached['step']}, same result, "
+                f"and it cost a step ({max_steps - step_no} left). Use that result, run a "
+                "DIFFERENT query, or conclude."
             )
             result = cached["result"]
         else:
@@ -6700,6 +6821,11 @@ def _agent_run(
                 query_cache[sig] = {"step": step_no, "result": result}
             if step.get("query_status") == "invalid":
                 failed_sigs[sig] = failed_sigs.get(sig, 0) + 1
+
+        if action == "inspect" and step.get("query_status") != "invalid":
+            note = _one_of_n_note(step, transcript)
+            if note:
+                step["sample_note"] = note
 
         # Field coverage: tell the agent when the fields it just constrained
         # cannot see the whole case. This runs on hits AND on misses — a query
@@ -6779,6 +6905,7 @@ def _agent_run(
                         "sample": r.get("sample"),
                         "sample_ids": r.get("sample_ids"),
                         "path": attempted + [rung],
+                        "filters_dropped": _dropped_clauses(step.get("query", ""), rung),
                     }
                     break
                 attempted.append(f"{rung} → {cnt} hits")

@@ -151,3 +151,56 @@ def test_review_blockers_only_when_the_reviewer_says_it_does_not_hold():
 def test_scenario_sanitiser_keeps_windows_paths_verbatim():
     for path in (r"C:\Windows\testX.tmp", r"C:\a\new\run", r"\\srv\ADMIN$\t.exe"):
         assert path in s._sanitize_scenario(f"dropped {path} via SMB")
+
+
+def test_duplicate_detection_ignores_spacing_and_operator_case():
+    assert s._canon_arg("a  and   b OR c") == s._canon_arg("a AND b or c")
+    assert s._canon_arg(5) == 5
+
+
+def test_broadening_names_the_filters_it_dropped():
+    q = 'user.name:bob AND timestamp:[2026-01-01T00:00:00Z TO 2026-01-02T00:00:00Z] AND network.src_ip:10.0.0.1'
+    assert s._dropped_clauses(q, "user.name:bob") == [
+        "timestamp:[2026-01-01T00:00:00Z TO 2026-01-02T00:00:00Z]", "network.src_ip:10.0.0.1"]
+
+
+def test_broadened_result_is_rendered_with_an_unmissable_header():
+    step = {"step": 4, "action": "search", "query": "a AND b", "result_count": 0,
+            "broadened": {"query": "a", "result_count": 1241, "filters_dropped": ["b"]}}
+    out = s._agent_step_history([step])
+    assert "FILTERS DROPPED: b" in out and "NOT scoped" in out
+
+
+def test_inspecting_one_of_n_says_so_and_suggests_the_aggregate():
+    transcript = [{"step": 3, "action": "search", "result_count": 6, "sample_ids": ["e1", "e2", "e3"]}]
+    step = {"action": "inspect", "fo_id": "e2",
+            "event": {"evtx": {"event_data": {"CallerProcessName": r"C:\x\edr.exe", "TargetUserName": "u"}}}}
+    note = s._one_of_n_note(step, transcript)
+    assert "1 of 6 events from step 3" in note
+    assert "evtx.event_data.CallerProcessName.keyword" in note
+    assert s._one_of_n_note({"fo_id": "zz", "event": {}}, transcript) == ""
+
+
+def test_zero_hit_coverage_is_scoped_to_host_and_window(monkeypatch):
+    import services.elasticsearch as es
+
+    def fake(method, path, body):
+        names = set(body["aggs"])
+        assert {"host5145", "case5145", "in_window", "clear_near"} <= names
+        return {"aggregations": {
+            "case5145": {"doc_count": 0}, "host5145": {"doc_count": 0},
+            "case4624": {"doc_count": 900}, "host4624": {"doc_count": 300},
+            "in_window": {"doc_count": 42}, "clear_near": {"doc_count": 1},
+            "clear_any": {"doc_count": 1}, "span_first": {"value_as_string": "2026-10-01T00:00:00Z"},
+            "span_last": {"value_as_string": "2026-10-20T00:00:00Z"},
+        }}
+
+    monkeypatch.setattr(es, "_request", fake)
+    q = ('host.hostname:srv-x01 AND (evtx.event_id:5145 OR evtx.event_id:4624) AND '
+         'timestamp:[2026-10-14T23:00:00Z TO 2026-10-15T00:00:00Z]')
+    note = s._zero_hit_coverage("i", q)
+    assert "on srv-x01 in the window" in note
+    assert "42 evtx event(s) exist" in note
+    assert "absence may be ERASURE" in note
+    assert "event 5145 occurs 0 times in the WHOLE case" in note
+    assert "event 4624 is collected (300× on srv-x01)" in note
