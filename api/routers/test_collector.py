@@ -725,3 +725,14 @@ def test_powershell_templates_work_on_windows_powershell_5_1():
             if call in tpl:
                 first = tpl.index(call)
                 assert tls < first and http < first, (name, call)
+
+
+def test_powershell_templates_switch_python_and_console_to_utf8():
+    """Python's UTF-8 progress glyphs showed as "collectingÖ" / "∑" in a Windows
+    console on its OEM code page, hiding the per-category ✓/✗ results."""
+    import routers.collector as c
+
+    for name in ("_BOOTSTRAP_PS1", "_BUNDLE_PS1", "_RUN_PS1"):
+        tpl = getattr(c, name)
+        assert '$env:PYTHONIOENCODING = "utf-8"' in tpl, name
+        assert "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8" in tpl, name

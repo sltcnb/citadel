@@ -415,6 +415,11 @@ $ErrorActionPreference = "Stop"
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 # HttpClient lives in an assembly 5.1 does not load by default.
 Add-Type -AssemblyName System.Net.Http
+# The collector prints UTF-8 (… — ✓ ✗); a console left on its OEM code page
+# turns them into "collectingÖ" / "∑" and hides which categories succeeded.
+$env:PYTHONIOENCODING = "utf-8"
+$env:PYTHONUTF8 = "1"
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 $DIR = $PSScriptRoot
 Write-Host "ForensicsOperator Harvester - starting collection..."
 """
@@ -1092,6 +1097,11 @@ $ErrorActionPreference = "Stop"
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 # HttpClient lives in an assembly 5.1 does not load by default.
 Add-Type -AssemblyName System.Net.Http
+# The collector prints UTF-8 (… — ✓ ✗); a console left on its OEM code page
+# turns them into "collectingÖ" / "∑" and hides which categories succeeded.
+$env:PYTHONIOENCODING = "utf-8"
+$env:PYTHONUTF8 = "1"
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 
 $COLLECTOR_URL = "TPLCOLLECTOR_URL"
 $DELETE_URL    = "TPLDELETE_URL"
@@ -1613,6 +1623,11 @@ $ErrorActionPreference = "Stop"
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 # HttpClient lives in an assembly 5.1 does not load by default.
 Add-Type -AssemblyName System.Net.Http
+# The collector prints UTF-8 (… — ✓ ✗); a console left on its OEM code page
+# turns them into "collectingÖ" / "∑" and hides which categories succeeded.
+$env:PYTHONIOENCODING = "utf-8"
+$env:PYTHONUTF8 = "1"
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 $PRESIGNED_URL = "TPLPRESIGNED_URL"
