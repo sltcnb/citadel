@@ -13,6 +13,7 @@ import {
   Globe, RefreshCw, Trash2,
 } from 'lucide-react'
 import { api } from '../api/client'
+import { bootstrapOneLiner } from '../utils/bootstrapOneLiner'
 import ArtifactSelector from '../components/shared/ArtifactSelector'
 import ErrorBox from '../components/shared/ErrorBox'
 import Toast from '../components/Toast'
@@ -593,9 +594,7 @@ export default function Collector() {
 
   async function handleCopyBootstrapB64() {
     if (!bootstrapScriptText) return
-    const b64 = btoa(unescape(encodeURIComponent(bootstrapScriptText)))
-    const oneliner = `echo "${b64}" | base64 -d | bash`
-    await navigator.clipboard.writeText(oneliner)
+    await navigator.clipboard.writeText(bootstrapOneLiner(bootstrapPlatform, bootstrapScriptText))
     setBootstrapB64Copied(true)
     setTimeout(() => setBootstrapB64Copied(false), 2000)
   }
@@ -1516,11 +1515,13 @@ export default function Collector() {
                       : <>Generate ({bootstrapPlatform === 'ps1' ? '.ps1' : '.sh'})</>
                     }
                   </button>
-                  {bootstrapScriptText && bootstrapPlatform === 'sh' && (
+                  {bootstrapScriptText && (
                     <button
                       className={`btn-outline h-10 px-3 gap-1.5 text-sm transition-colors font-mono text-[11px] ${bootstrapB64Copied ? '!border-green-500 !text-green-700' : '!border-orange-400 !text-orange-600 hover:!bg-orange-50'}`}
                       onClick={handleCopyBootstrapB64}
-                      title="Copy base64 one-liner — paste directly into SSH terminal"
+                      title={bootstrapPlatform === 'ps1'
+                        ? 'Copy base64 one-liner — paste into an elevated PowerShell (RDP / remote shell)'
+                        : 'Copy base64 one-liner — paste directly into SSH terminal'}
                     >
                       {bootstrapB64Copied ? <Check size={14} /> : <Copy size={14} />}
                       {bootstrapB64Copied ? 'Copied!' : 'base64'}
@@ -1555,7 +1556,7 @@ export default function Collector() {
                       onClick={handleCopyBootstrapB64}
                       title="Click to copy"
                     >
-                      {`echo "${btoa(unescape(encodeURIComponent(bootstrapScriptText)))}" | base64 -d | bash`}
+                      {bootstrapOneLiner('sh', bootstrapScriptText)}
                     </div>
                     {collectionMode !== 'live' && (
                       <div className="text-gray-500 pt-1">
@@ -1567,7 +1568,15 @@ export default function Collector() {
 
                 {bootstrapScriptText && bootstrapPlatform === 'ps1' && (
                   <div className="mt-3 bg-gray-950 rounded-lg p-3 text-[11px] font-mono leading-relaxed space-y-1.5">
-                    <div className="text-gray-500"># Run on Windows as Administrator:</div>
+                    <div className="text-gray-400"># PowerShell one-liner — paste into an elevated PowerShell, no file transfer needed:</div>
+                    <div
+                      className="text-orange-300 break-all cursor-pointer hover:text-orange-200 transition-colors"
+                      onClick={handleCopyBootstrapB64}
+                      title="Click to copy"
+                    >
+                      {bootstrapOneLiner('ps1', bootstrapScriptText)}
+                    </div>
+                    <div className="text-gray-500 pt-1"># Or from the saved file, as Administrator:</div>
                     <div className="text-green-400">powershell -ExecutionPolicy Bypass -File fo-bootstrap-*.ps1</div>
                     <div className="text-gray-500 pt-1"># Flags: -Local (save locally), -NoCleanup (keep temp)</div>
                   </div>
