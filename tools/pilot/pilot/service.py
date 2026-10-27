@@ -508,6 +508,10 @@ def _call_llm(cfg: dict, prompt: str) -> str:
         return _call_llm_impl(cfg, prompt)
 
 
+# Optional OpenAI-compatible request fields a gateway may reject (400/422).
+_OPTIONAL_OPENAI_KNOBS = ("response_format", "reasoning_effort", "chat_template_kwargs")
+
+
 def _call_llm_with_system(
     cfg: dict, system_prompt: str, user_msg: str, max_tokens: int = 600, json_mode: bool = False
 ) -> str:
@@ -7657,11 +7661,11 @@ def _call_llm_with_system_impl(
             try:
                 data = _post_openai(_body)
             except urllib.error.HTTPError as exc:
-                # Some gateways reject response_format / reasoning_effort — retry
-                # once without them so the call degrades instead of failing.
-                if exc.code in (400, 422) and ("response_format" in _body or "reasoning_effort" in _body):
-                    _body.pop("response_format", None)
-                    _body.pop("reasoning_effort", None)
+                # Some gateways reject response_format or the reasoning knobs —
+                # retry once without them so the call degrades instead of failing.
+                if exc.code in (400, 422) and any(k in _body for k in _OPTIONAL_OPENAI_KNOBS):
+                    for k in _OPTIONAL_OPENAI_KNOBS:
+                        _body.pop(k, None)
                     data = _post_openai(_body)
                 else:
                     raise
@@ -7681,15 +7685,16 @@ def _call_llm_with_system_impl(
         try:
             return _extract_llm_text(_post_and_track(), max_tokens, where)
         except LLMBudgetExhausted:
-            # A reasoning model's chain of thought grows with the prompt (late
-            # agent steps carry a long transcript): retry once with a bigger
-            # budget and low reasoning effort (GLM: 1327 -> 304 tokens, same
-            # answer) before failing the whole run.
-            retry_budget = min(max_tokens * 4, 8000)
-            if retry_budget <= max_tokens:
-                raise
+            # The model spent the whole budget thinking. Retry once with thinking
+            # switched off in the chat template (vLLM/SGLang chat_template_kwargs
+            # — GLM and Qwen honour it) plus reasoning_effort for gateways that
+            # only take that: measured on a 16k-char agent step, 1226 tokens and
+            # 4.3k chars of reasoning -> 47 tokens, no reasoning, valid JSON.
+            # Retry even at the 8000 cap: without thinking the budget is ample.
+            retry_budget = max(max_tokens, min(max_tokens * 4, 8000))
             _body["max_tokens"] = retry_budget
             _body["reasoning_effort"] = "low"
+            _body["chat_template_kwargs"] = {"enable_thinking": False}
             return _extract_llm_text(_post_and_track(), retry_budget, where)
 
 

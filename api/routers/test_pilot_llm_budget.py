@@ -93,7 +93,7 @@ def test_budget_exhaustion_retries_once_with_bigger_budget(monkeypatch):
 
     def fake_urlopen(req, timeout=None):
         body = json.loads(req.data)
-        sent.append((body["max_tokens"], body.get("reasoning_effort")))
+        sent.append((body["max_tokens"], body.get("reasoning_effort"), body.get("chat_template_kwargs")))
         content = None if len(sent) == 1 else '{"action": "conclude"}'
         resp = {"choices": [{"message": {"content": content}, "finish_reason": "length"}]}
         r = io.BytesIO(json.dumps(resp).encode())
@@ -105,4 +105,58 @@ def test_budget_exhaustion_retries_once_with_bigger_budget(monkeypatch):
     cfg = {"provider": "openai", "model": "qwen", "base_url": "http://x/v1"}
     out = service._call_llm_with_system(cfg, "s", "u", max_tokens=2000, json_mode=True)
     assert out == '{"action": "conclude"}'
-    assert sent == [(2000, None), (8000, "low")]
+    assert sent == [(2000, None, None), (8000, "low", {"enable_thinking": False})]
+
+
+def test_retry_happens_even_at_the_budget_cap(monkeypatch):
+    """max_tokens=8000 callers used to get no retry at all."""
+    import io
+    import json
+    import urllib.request
+
+    from pilot import service
+
+    sent = []
+
+    def fake_urlopen(req, timeout=None):
+        body = json.loads(req.data)
+        sent.append((body["max_tokens"], body.get("chat_template_kwargs")))
+        content = None if len(sent) == 1 else "ok"
+        resp = {"choices": [{"message": {"content": content}, "finish_reason": "length"}]}
+        return io.BytesIO(json.dumps(resp).encode())
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(service, "_track_llm_usage", lambda *a, **k: None)
+    monkeypatch.setattr(service, "_redis", lambda: None)
+    cfg = {"provider": "openai", "model": "glm", "base_url": "http://x/v1"}
+    assert service._call_llm_with_system(cfg, "s", "u", max_tokens=8000) == "ok"
+    assert sent == [(8000, None), (8000, {"enable_thinking": False})]
+
+
+def test_gateway_rejecting_the_knobs_still_gets_an_answer(monkeypatch):
+    import io
+    import json
+    import urllib.error
+    import urllib.request
+
+    from pilot import service
+
+    sent = []
+
+    def fake_urlopen(req, timeout=None):
+        body = json.loads(req.data)
+        sent.append(sorted(k for k in body if k in service._OPTIONAL_OPENAI_KNOBS))
+        if len(sent) == 1:
+            resp = {"choices": [{"message": {"content": None}, "finish_reason": "length"}]}
+        elif "chat_template_kwargs" in body:
+            raise urllib.error.HTTPError(req.full_url, 400, "bad", {}, io.BytesIO(b""))
+        else:
+            resp = {"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}
+        return io.BytesIO(json.dumps(resp).encode())
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(service, "_track_llm_usage", lambda *a, **k: None)
+    monkeypatch.setattr(service, "_redis", lambda: None)
+    cfg = {"provider": "openai", "model": "glm", "base_url": "http://x/v1"}
+    assert service._call_llm_with_system(cfg, "s", "u", max_tokens=1200) == "ok"
+    assert sent[-1] == []
