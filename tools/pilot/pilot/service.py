@@ -2632,6 +2632,19 @@ DISCIPLINE — be precise, economical, and grounded:
     (time window, host, filter) before concluding.
   • RESPECT THE WHITELIST. IPs/domains in the KNOWN-GOOD list are own/approved
     infrastructure — don't treat them as the threat or investigate them in depth.
+  • NAME BEFORE YOU CALL IT UNKNOWN. An internal IP is identified when its
+    events carry a workstation/host name (network.workstation, 4624
+    WorkstationName). Read the search `profile` and inspected fields before
+    writing "unidentified source".
+  • BASELINE BEFORE ANOMALY. The search `profile` says on how many days the
+    activity occurs and what a typical day looks like. A daily pattern is
+    routine; say what is DIFFERENT on the alert day (extra session, new
+    account, odd hour) — that difference is the finding.
+  • ALIGN TO THE SECOND. When the alert gives a timestamp, find the events
+    within seconds of it (time_window) — the logon that carried the action is
+    usually right there, and it names the account and source machine.
+  • OLD ≠ RELEVANT. Detections months or years before the alert window are
+    background, not evidence for this alert. Check their dates before citing.
   • EMPTY STRUCTURED FIELD ≠ MYSTERY. An nginx ERROR line has empty
     http.request_path (the request is in `message`); a kernel nftables line has
     no http.* — that's normal, not a lead. Don't loop trying to "fix" it.
@@ -2814,6 +2827,144 @@ def _normalize_agg_field(field: str) -> str:
     return field
 
 
+_MESSAGE_WILDCARD_RE = _re.compile(r"\bmessage:\*([^\s*()\"]+)\*")
+
+
+def _widen_message_terms(query: str) -> str:
+    """``message:*X*`` -> ``(message:*X* OR *X*)``.
+
+    ``message`` is a rendered one-line summary ("Account logon success on
+    WS01") that omits most structured fields, so an IP, account or share name
+    held only in network.src_ip / user.name / evtx.event_data.* is invisible to
+    it: a pivot on 46 real logons returned 0. The bare wildcard searches every
+    field. shortcut: a leading wildcard over all fields is slow on very large
+    cases; switch to a curated field list if search latency becomes a problem.
+    """
+    if not query or "message:*" not in query:
+        return query
+    return _MESSAGE_WILDCARD_RE.sub(lambda m: f"(message:*{m.group(1)}* OR *{m.group(1)}*)", query)
+
+
+def _es_error_text(exc: Exception) -> str:
+    """ES's own reason for a failure, not just "HTTP Error 400" — without it
+    the model cannot tell a bad field from a bad query and retries blindly."""
+    body = ""
+    try:
+        body = exc.read().decode("utf-8", "ignore")  # type: ignore[attr-defined]
+    except Exception:
+        pass
+    reason = ""
+    if body:
+        try:
+            err = json.loads(body).get("error") or {}
+            root = (err.get("root_cause") or [{}])[0]
+            reason = root.get("reason") or err.get("reason") or ""
+        except Exception:
+            reason = body[:160]
+    return (f"{exc} — {reason}" if reason else str(exc))[:300]
+
+
+# Fields that say WHO / FROM WHERE / WHAT for the hits of a search. Keyword
+# variants: these are text fields with a .keyword twin.
+_PROFILE_FIELDS = (
+    ("host", "host.hostname.keyword"),
+    ("user", "user.name.keyword"),
+    ("src_ip", "network.src_ip"),
+    ("workstation", "network.workstation.keyword"),
+    ("event_id", "evtx.event_id"),
+    ("logon_type", "evtx.event_data.LogonType.keyword"),
+    ("artifact", "artifact_type"),
+)
+
+
+def _hit_profile(index: str, qstr: str) -> list[str]:
+    """Who / where / when for a search's hits, as a few lines for the model.
+
+    Samples show three messages; an analyst looks at the distribution: which
+    hosts, accounts, source machines and event types, first/last seen, and on
+    how many days it happens. That last line separates a daily backup logon
+    from a one-off — the difference between "routine" and "anomaly"."""
+    from services.elasticsearch import _request as _es_req
+
+    aggs = {name: {"terms": {"field": f, "size": 4}} for name, f in _PROFILE_FIELDS}
+    aggs["first"] = {"min": {"field": "timestamp"}}
+    aggs["last"] = {"max": {"field": "timestamp"}}
+    aggs["days"] = {"date_histogram": {"field": "timestamp", "calendar_interval": "day", "min_doc_count": 1}}
+    try:
+        res = _es_req(
+            "POST",
+            f"/{index}/_search",
+            {
+                "size": 0,
+                "query": {
+                    "query_string": {
+                        "query": qstr,
+                        "default_operator": "AND",
+                        "allow_leading_wildcard": True,
+                        "analyze_wildcard": True,
+                        "lenient": True,
+                    }
+                },
+                "aggs": aggs,
+            },
+        )
+    except Exception:
+        return []  # the profile is a bonus — never fail the search over it
+    a = res.get("aggregations") or {}
+    lines = []
+    for name, _f in _PROFILE_FIELDS:
+        bs = (a.get(name) or {}).get("buckets") or []
+        if bs and not (name == "artifact" and len(bs) == 1):
+            lines.append(f"{name}: " + ", ".join(f"{b.get('key_as_string', b['key'])} ({b['doc_count']})" for b in bs))
+    first = (a.get("first") or {}).get("value_as_string")
+    last = (a.get("last") or {}).get("value_as_string")
+    days = (a.get("days") or {}).get("buckets") or []
+    if first:
+        line = f"seen: {first[:19]}Z → {(last or first)[:19]}Z on {len(days)} distinct day(s)"
+        if len(days) > 1:
+            counts = sorted(b["doc_count"] for b in days)
+            median = counts[len(counts) // 2]
+            peak = max(days, key=lambda b: b["doc_count"])
+            line += f"; typical day {median}, busiest {peak['key_as_string'][:10]} ({peak['doc_count']})"
+        lines.append(line)
+    return lines
+
+
+# Inspect: identity-bearing fields first, then whatever event_data carries.
+_INSPECT_FIELDS = (
+    "timestamp", "artifact_type", "message", "host.hostname", "user.name", "user.domain",
+    "process.name", "process.command_line", "process.parent.name",
+    "network.src_ip", "network.src_port", "network.dst_ip", "network.workstation",
+    "evtx.event_id", "evtx.channel", "file.path", "registry.key_path",
+)
+_EVENT_DATA_SKIP = {"SubjectUserSid", "TargetUserSid", "SubjectLogonId", "TargetLogonId", "LogonGuid", "KeyLength"}
+
+
+def _inspect_fields(ev: dict) -> list[tuple[str, str]]:
+    def get(path):
+        cur = ev
+        for part in path.split("."):
+            if not isinstance(cur, dict):
+                return None
+            cur = cur.get(part)
+        return cur
+
+    out = []
+    for k in _INSPECT_FIELDS:
+        v = get(k)
+        if v not in (None, "", "-", 0) and not isinstance(v, (dict, list)):
+            out.append((k, str(v)))
+    data = get("evtx.event_data")
+    if isinstance(data, dict):
+        for k, v in data.items():
+            if k in _EVENT_DATA_SKIP or v in (None, "", "-", "0x0") or isinstance(v, (dict, list)):
+                continue
+            out.append((f"event_data.{k}", str(v)))
+            if len(out) >= 30:
+                break
+    return out
+
+
 def _tool_search(case_id: str, step: dict) -> dict:
     import urllib.error
 
@@ -2845,6 +2996,9 @@ def _tool_search(case_id: str, step: dict) -> dict:
         }
 
     index = f"fo-case-{case_id}-*"
+    _search_qstr = escape_lucene_query(
+        _widen_message_terms(_normalize_agent_query(_normalize_hash_terms(step.get("query", ""))))
+    )
     try:
         res = _es_req(
             "POST",
@@ -2856,7 +3010,7 @@ def _tool_search(case_id: str, step: dict) -> dict:
                 "track_total_hits": True,
                 "query": {
                     "query_string": {
-                        "query": escape_lucene_query(_normalize_agent_query(_normalize_hash_terms(step.get("query", "")))),
+                        "query": _search_qstr,
                         "default_operator": "AND",
                         "allow_leading_wildcard": True,
                         "analyze_wildcard": True,
@@ -2906,6 +3060,10 @@ def _tool_search(case_id: str, step: dict) -> dict:
             "sample_ids": sample_ids,
             "query_status": "ok",
         }
+        if total > 0:
+            prof = _hit_profile(index, _search_qstr)
+            if prof:
+                out["profile"] = prof
         if capped:
             out["note"] = (
                 f"{total:,}+ matches (CAPPED — there are MORE than {total:,}). This query "
@@ -2988,7 +3146,9 @@ def _tool_aggregate(case_id: str, step: dict) -> dict:
     if not field:
         return {"query_status": "invalid", "query_error": "agg_field is required"}
     size = min(25, max(1, int(step.get("agg_size") or 10)))
-    qstr = escape_lucene_query(_normalize_agent_query((step.get("agg_query") or "").strip() or "*"))
+    qstr = escape_lucene_query(
+        _widen_message_terms(_normalize_agent_query((step.get("agg_query") or "").strip() or "*"))
+    )
     index = f"fo-case-{case_id}-*"
 
     def _run(agg_field: str):
@@ -3009,13 +3169,23 @@ def _tool_aggregate(case_id: str, step: dict) -> dict:
                         "lenient": True,
                     }
                 },
-                "aggs": {"terms": {"terms": {"field": agg_field, "size": size, "missing": "(none)"}}},
+                # No "missing" on the terms agg: its placeholder is a string,
+                # which ES rejects on numeric fields (evtx.event_id, ports) with
+                # a 400. A separate missing agg works for every field type.
+                "aggs": {
+                    "terms": {"terms": {"field": agg_field, "size": size}},
+                    "absent": {"missing": {"field": agg_field}},
+                },
             },
         )
+        aggs = res.get("aggregations", {})
         buckets = [
             {"value": b.get("key"), "count": int(b.get("doc_count", 0))}
-            for b in (res.get("aggregations", {}).get("terms", {}).get("buckets", []))
+            for b in (aggs.get("terms", {}).get("buckets", []))
         ]
+        absent = int((aggs.get("absent") or {}).get("doc_count", 0))
+        if absent:
+            buckets.append({"value": "(none)", "count": absent})
         total = (res.get("hits", {}).get("total") or {}).get("value", 0)
         # "field doesn't exist on the matched docs" — every bucket collapses
         # into the synthetic (none) entry.
@@ -3072,7 +3242,7 @@ def _tool_aggregate(case_id: str, step: dict) -> dict:
             out["note"] = note
         return out
     except (urllib.error.HTTPError, Exception) as exc:
-        return {"result_count": None, "query_status": "invalid", "query_error": str(exc)[:200]}
+        return {"result_count": None, "query_status": "invalid", "query_error": _es_error_text(exc)}
 
 
 def _tool_inspect(case_id: str, step: dict) -> dict:
@@ -3688,7 +3858,12 @@ def _skill_aggregate_adapter(case_id: str):
         )
         if res.get("query_status") != "ok":
             return []
-        return res.get("buckets") or res.get("sample") or []
+        # "value (count)" — the profile is read by the model, counts matter.
+        return [
+            f"{b['value']} ({b['count']})"
+            for b in res.get("agg_buckets") or []
+            if b.get("value") != "(none)"
+        ]
 
     return _agg
 
@@ -4546,6 +4721,8 @@ def _agent_step_history(transcript: list[dict]) -> str:
         hits_str = (f"{_rc:,}+" if s.get("count_capped") else f"{_rc:,}") if isinstance(_rc, int) else str(_rc if _rc is not None else "?")
         if action == "search":
             line += f"\n  query={s.get('query', '')}\n  hits={hits_str}"
+            for p in (s.get("profile") or [])[:8]:
+                line += f"\n    {_sanitize_evidence(p, 240)}"
         elif action == "aggregate":
             line += f"\n  agg={s.get('agg_field', '')} (q={s.get('agg_query', '*')})"
             if s.get("field_absent"):
@@ -4555,23 +4732,11 @@ def _agent_step_history(transcript: list[dict]) -> str:
         elif action == "inspect":
             ev = s.get("event") or {}
             line += f"\n  inspected fo_id={s.get('fo_id', '')}"
-            for k in (
-                "timestamp",
-                "artifact_type",
-                "message",
-                "host.hostname",
-                "user.name",
-                "process.name",
-            ):
-                v = (
-                    ev.get(k)
-                    if isinstance(ev.get(k), str)
-                    else (
-                        (ev.get(k.split(".")[0]) or {}).get(k.split(".")[1]) if "." in k else None
-                    )
-                )
-                if v:
-                    line += f"\n    {k}={_sanitize_evidence(v, 140)}"
+            # Only showing message/host/user hid what identifies a logon's
+            # origin: the run that called 10.20.30.40 "unidentified" had
+            # inspected an event whose network.workstation named it.
+            for k, v in _inspect_fields(ev):
+                line += f"\n    {k}={_sanitize_evidence(v, 140)}"
         elif action == "time_window":
             w = s.get("window", {})
             line += (
