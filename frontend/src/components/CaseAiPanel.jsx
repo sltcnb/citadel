@@ -191,6 +191,15 @@ function AgentStepRow({ step: s, onPivot }) {
             <code className="block text-[10px] font-mono text-gray-600 bg-gray-50 border border-gray-100 rounded px-2 py-1 break-all">
               {s.query}
             </code>
+            {s.broadened && (
+              <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-0.5">
+                0 hits for this query. Broader variant (filters removed, not a match):{' '}
+                <code className="font-mono">{s.broadened.query}</code> → {s.broadened.result_count} hits
+              </p>
+            )}
+            {s.coverage_note && (
+              <p className="text-[10px] text-gray-500">{s.coverage_note}</p>
+            )}
           </>
         )}
         {action === 'search' && (s.sample || []).length > 0 && (

@@ -87,3 +87,62 @@ def test_search_profile_is_rendered_for_the_model():
     }
     out = s._agent_step_history([step])
     assert "BKP-SRV01" in out and "18 distinct day(s)" in out
+
+
+def test_event_data_fields_are_aliased_to_their_real_path():
+    q = s._normalize_agent_query("event_id:4624 AND event_data.TargetUserName:app_x")
+    assert q == "evtx.event_id:4624 AND evtx.event_data.TargetUserName:app_x"
+    assert s._normalize_agent_query("evtx.event_id:4624") == "evtx.event_id:4624"
+
+
+def test_broadening_may_not_drop_time_or_event_id_filters():
+    q = 'evtx.event_id:4624 AND user.name:bob AND timestamp:[2026-10-21T07:30:00Z TO 2026-10-21T09:00:00Z]'
+    keep = s._hard_constraints(q)
+    assert "timestamp:[2026-10-21T07:30:00Z TO 2026-10-21T09:00:00Z]" in keep
+    assert any(k.startswith("evtx.event_id:4624") for k in keep)
+    assert s._hard_constraints("message:*bob*") == []
+
+
+def test_hour_baseline_flags_the_one_off_hour():
+    buckets = [{"key_as_string": f"2026-10-{d:02d}T19:00:00.000Z"} for d in range(4, 21)]
+    buckets.append({"key_as_string": "2026-10-21T08:00:00.000Z"})
+    line = s._hour_baseline(buckets, 18)
+    assert "19h on 17 days" in line
+    assert "08h on 1 day only (2026-10-21) ← off-schedule" in line
+    assert s._hour_baseline(buckets, 3) == ""  # too little history to call anything
+
+
+def test_profile_flags_a_spike_instead_of_calling_it_routine(monkeypatch):
+    import services.elasticsearch as es
+
+    days = [{"key_as_string": f"2026-10-{d:02d}T00:00:00.000Z", "doc_count": 4} for d in range(4, 21)]
+    days.append({"key_as_string": "2026-10-21T00:00:00.000Z", "doc_count": 24})
+    monkeypatch.setattr(es, "_request", lambda *a, **k: {"aggregations": {
+        "first": {"value_as_string": "2026-10-04T19:00:23Z"},
+        "last": {"value_as_string": "2026-10-21T08:23:27Z"},
+        "days": {"buckets": days},
+    }})
+    seen = next(line for line in s._hit_profile("i", "q") if line.startswith("seen:"))
+    assert "6× the typical day" in seen and "NOT routine" in seen
+
+
+def test_zero_hits_says_whether_the_event_type_exists_at_all(monkeypatch):
+    import services.elasticsearch as es
+
+    monkeypatch.setattr(es, "_request", lambda *a, **k: {"aggregations": {
+        "id5145": {"doc_count": 0},
+        "id4624": {"doc_count": 5286},
+        "clear": {"doc_count": 0},
+        "span_first": {"value_as_string": "2026-10-04T00:00:00Z"},
+        "span_last": {"value_as_string": "2026-10-21T15:10:00Z"},
+    }})
+    note = s._event_id_coverage("i", "evtx.event_id:5145 OR evtx.event_id:4624")
+    assert "event 5145 occurs 0 times in the WHOLE case" in note and "VERIFIED collection gap" in note
+    assert "no Security log clear (1102)" in note
+    assert "event 4624 exists elsewhere in the case (5286×)" in note and "REAL negative" in note
+
+
+def test_review_blockers_only_when_the_reviewer_says_it_does_not_hold():
+    assert s._review_blockers({"holds": True, "issues": ["minor"]}) == []
+    assert s._review_blockers(None) == []
+    assert s._review_blockers({"holds": False, "issues": ["port not correlated", " "]}) == ["port not correlated"]

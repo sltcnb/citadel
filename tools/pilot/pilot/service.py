@@ -2632,6 +2632,24 @@ DISCIPLINE — be precise, economical, and grounded:
     (time window, host, filter) before concluding.
   • RESPECT THE WHITELIST. IPs/domains in the KNOWN-GOOD list are own/approved
     infrastructure — don't treat them as the threat or investigate them in depth.
+  • ATTRIBUTE BY SESSION, NOT BY CLOCK. A network action (SMB write, remote
+    exec) belongs to the logon whose source IP + PORT match the alert:
+    network.src_port:<port> finds that 4624 — its TargetUserName and
+    TargetLogonId are the actor. "Logons around the same minute" is not
+    attribution.
+  • STATUS WORDS MEAN SOMETHING. "refuted" = you cite evidence that contradicts
+    it. Not seen in collected data = "unsupported". A legitimate machine with
+    valid credentials does NOT refute compromise (valid accounts, PtH).
+  • CONTRADICTIONS MUST LAND. If the alert names account A and the logs show
+    B, your verdict resolves it or says it is unresolved — never drop it.
+  • ONE SAMPLE IS NOT THE SET. Before saying "all N events were X", aggregate
+    the N on that field (the search `profile` shows caller/process/hour).
+  • THE ANALYST'S CLAIMS ARE INPUTS. "No recurrence", "no execution" from the
+    scenario are unverified until a step tests them; label them "per analyst".
+  • 0 ON A GOOD QUERY IS A FINDING. When fields are right, zero hits is a
+    negative worth reporting. A `coverage_note` tells you whether the event
+    type exists at all (verified gap) or the zero is real.
+  • RECOMPUTE CONFIDENCE from what you proved; never echo the analyst's figure.
   • NAME BEFORE YOU CALL IT UNKNOWN. An internal IP is identified when its
     events carry a workstation/host name (network.workstation, 4624
     WorkstationName). Read the search `profile` and inspected fields before
@@ -2747,6 +2765,10 @@ _FIELD_ALIASES = (
     (_re.compile(r"(?<![.\w])src_ip\b"), "network.src_ip"),
     (_re.compile(r"(?<![.\w])dest_ip\b"), "network.dst_ip"),
     (_re.compile(r"(?<![.\w])dst_ip\b"), "network.dst_ip"),
+    # The agent writes event_data.TargetUserName; the field is evtx.event_data.*.
+    # Unaliased, that query returned 0 and was read as "never logged on".
+    (_re.compile(r"(?<![.\w])event_data\."), "evtx.event_data."),
+    (_re.compile(r"(?<![.\w])event_id\b"), "evtx.event_id"),
 )
 
 # Splunk SPL leaking into a Lucene query (`… | stats count by x | sort -count`).
@@ -2845,6 +2867,16 @@ def _widen_message_terms(query: str) -> str:
     return _MESSAGE_WILDCARD_RE.sub(lambda m: f"(message:*{m.group(1)}* OR *{m.group(1)}*)", query)
 
 
+_HARD_CONSTRAINT_RE = _re.compile(
+    r"timestamp\s*:\s*[\[{][^\]}]*[\]}]|evtx\.event_id\s*:\s*\(?[\d\s OR]+\)?|event_id\s*:\s*\d+"
+)
+
+
+def _hard_constraints(query: str) -> list[str]:
+    """Clauses auto-broadening may never drop: time ranges and event-ID filters."""
+    return [m.group(0).strip() for m in _HARD_CONSTRAINT_RE.finditer(query or "")]
+
+
 def _es_error_text(exc: Exception) -> str:
     """ES's own reason for a failure, not just "HTTP Error 400" — without it
     the model cannot tell a bad field from a bad query and retries blindly."""
@@ -2873,6 +2905,10 @@ _PROFILE_FIELDS = (
     ("workstation", "network.workstation.keyword"),
     ("event_id", "evtx.event_id"),
     ("logon_type", "evtx.event_data.LogonType.keyword"),
+    ("process", "process.name.keyword"),
+    # Who triggered an audit event (4798/4799 enumerations, 4688…) — the run
+    # that attributed six 4798s to TMIRT.exe had inspected one.
+    ("caller", "evtx.event_data.CallerProcessName.keyword"),
     ("artifact", "artifact_type"),
 )
 
@@ -2890,6 +2926,7 @@ def _hit_profile(index: str, qstr: str) -> list[str]:
     aggs["first"] = {"min": {"field": "timestamp"}}
     aggs["last"] = {"max": {"field": "timestamp"}}
     aggs["days"] = {"date_histogram": {"field": "timestamp", "calendar_interval": "day", "min_doc_count": 1}}
+    aggs["hours"] = {"date_histogram": {"field": "timestamp", "fixed_interval": "1h", "min_doc_count": 1}}
     try:
         res = _es_req(
             "POST",
@@ -2913,7 +2950,8 @@ def _hit_profile(index: str, qstr: str) -> list[str]:
     a = res.get("aggregations") or {}
     lines = []
     for name, _f in _PROFILE_FIELDS:
-        bs = (a.get(name) or {}).get("buckets") or []
+        # "-" is how Windows logs an empty field — not a value worth showing.
+        bs = [x for x in (a.get(name) or {}).get("buckets") or [] if str(x.get("key")).strip() not in ("-", "")]
         if bs and not (name == "artifact" and len(bs) == 1):
             lines.append(f"{name}: " + ", ".join(f"{b.get('key_as_string', b['key'])} ({b['doc_count']})" for b in bs))
     first = (a.get("first") or {}).get("value_as_string")
@@ -2926,8 +2964,90 @@ def _hit_profile(index: str, qstr: str) -> list[str]:
             median = counts[len(counts) // 2]
             peak = max(days, key=lambda b: b["doc_count"])
             line += f"; typical day {median}, busiest {peak['key_as_string'][:10]} ({peak['doc_count']})"
+            if len(days) >= 5 and median and peak["doc_count"] >= 3 * median:
+                line += (
+                    f" — ⚠ {peak['doc_count'] / median:.0f}× the typical day: NOT routine volume, "
+                    "explain what differs that day"
+                )
         lines.append(line)
+        hour_line = _hour_baseline((a.get("hours") or {}).get("buckets") or [], len(days))
+        if hour_line:
+            lines.append(hour_line)
     return lines
+
+
+def _hour_baseline(hour_buckets: list[dict], n_days: int) -> str:
+    """When in the day the activity happens, and which hours are one-offs.
+
+    "46 logons over 18 days" read as routine; the same data by hour says the
+    account always connects at 19h and connected at 08h exactly once — on the
+    alert day. Only meaningful with a few days of history."""
+    if n_days < 5 or not hour_buckets:
+        return ""
+    by_hour: dict[int, set[str]] = {}
+    for b in hour_buckets:
+        ts = b.get("key_as_string") or ""
+        if len(ts) >= 13:
+            by_hour.setdefault(int(ts[11:13]), set()).add(ts[:10])
+    if len(by_hour) > 12:
+        return ""  # spread across the day — no schedule to compare against
+    parts = []
+    for hour, ds in sorted(by_hour.items(), key=lambda kv: -len(kv[1])):
+        if len(ds) == 1 and n_days >= 5:
+            parts.append(f"{hour:02d}h on 1 day only ({next(iter(ds))}) ← off-schedule")
+        else:
+            parts.append(f"{hour:02d}h on {len(ds)} days")
+    return "hours (UTC): " + " · ".join(parts)
+
+
+def _event_id_coverage(index: str, query: str) -> str:
+    """For a 0-hit query on event IDs: does that ID exist ANYWHERE in the case?
+
+    "No 5145 in the window" was reported as a collection gap without checking.
+    If the ID never occurs across the whole collected log, and the log was not
+    cleared (1102), the audit category is off: a verified gap, not an assumed
+    one. If it does occur elsewhere, the 0 is a real negative for the window."""
+    from services.elasticsearch import _request as _es_req
+
+    ids = sorted({int(x) for x in _re.findall(r"evtx\.event_id\s*:\s*\(?\s*(\d{3,5})", query or "")})
+    ids += sorted({int(x) for x in _re.findall(r"\bOR\s+(\d{3,5})\b", query or "")} - set(ids))
+    if not ids:
+        return ""
+    aggs = {f"id{i}": {"filter": {"term": {"evtx.event_id": i}}} for i in ids[:6]}
+    aggs["clear"] = {"filter": {"term": {"evtx.event_id": 1102}}, "aggs": {"last": {"max": {"field": "timestamp"}}}}
+    aggs["span_first"] = {"min": {"field": "timestamp"}}
+    aggs["span_last"] = {"max": {"field": "timestamp"}}
+    try:
+        res = _es_req(
+            "POST",
+            f"/{index}/_search",
+            {"size": 0, "query": {"term": {"artifact_type": "evtx"}}, "aggs": aggs},
+        )
+    except Exception:
+        return ""
+    a = res.get("aggregations") or {}
+    span = f"{((a.get('span_first') or {}).get('value_as_string') or '?')[:10]} → {((a.get('span_last') or {}).get('value_as_string') or '?')[:10]}"
+    clear = a.get("clear") or {}
+    clear_txt = (
+        f"Security log cleared (1102) {clear['doc_count']}× — last {((clear.get('last') or {}).get('value_as_string') or '?')[:10]}"
+        if clear.get("doc_count")
+        else "no Security log clear (1102) in the collected log"
+    )
+    notes = []
+    for i in ids[:6]:
+        n = int((a.get(f"id{i}") or {}).get("doc_count", 0))
+        if n == 0:
+            notes.append(
+                f"event {i} occurs 0 times in the WHOLE case (evtx {span}; {clear_txt}) — the audit "
+                "category that writes it is not enabled/collected: a VERIFIED collection gap, so "
+                "absence here proves nothing either way"
+            )
+        else:
+            notes.append(
+                f"event {i} exists elsewhere in the case ({n}×) — so 0 hits here is a REAL negative "
+                "for your filter, not a collection gap"
+            )
+    return " | ".join(notes)
 
 
 # Inspect: identity-bearing fields first, then whatever event_data carries.
@@ -2972,6 +3092,12 @@ def _tool_search(case_id: str, step: dict) -> dict:
     from services.elasticsearch import escape_lucene_query, validate_lucene_query
 
     raw_q = step.get("query", "") or ""
+    if not raw_q.strip():
+        return {
+            "result_count": None,
+            "query_status": "invalid",
+            "query_error": "search needs a non-empty query.",
+        }
     if _SPL_RE.search(raw_q):
         return {
             "result_count": None,
@@ -3064,6 +3190,10 @@ def _tool_search(case_id: str, step: dict) -> dict:
             prof = _hit_profile(index, _search_qstr)
             if prof:
                 out["profile"] = prof
+        else:
+            cov = _event_id_coverage(index, _normalize_agent_query(raw_q))
+            if cov:
+                out["coverage_note"] = cov
         if capped:
             out["note"] = (
                 f"{total:,}+ matches (CAPPED — there are MORE than {total:,}). This query "
@@ -4721,8 +4851,19 @@ def _agent_step_history(transcript: list[dict]) -> str:
         hits_str = (f"{_rc:,}+" if s.get("count_capped") else f"{_rc:,}") if isinstance(_rc, int) else str(_rc if _rc is not None else "?")
         if action == "search":
             line += f"\n  query={s.get('query', '')}\n  hits={hits_str}"
-            for p in (s.get("profile") or [])[:8]:
+            for p in (s.get("profile") or [])[:10]:
                 line += f"\n    {_sanitize_evidence(p, 240)}"
+            if s.get("coverage_note"):
+                line += f"\n  ⓘ {str(s['coverage_note'])[:500]}"
+            b = s.get("broadened")
+            if isinstance(b, dict):
+                line += (
+                    f"\n  ⓘ 0 hits is the answer to YOUR query. Separately, the broader "
+                    f"'{str(b.get('query', ''))[:100]}' (constraints removed) has {b.get('result_count')} hits — "
+                    "they do NOT satisfy your filters; don't read them as if they did."
+                )
+                for x in (b.get("sample") or [])[:2]:
+                    line += f"\n      {_sanitize_evidence(x, 160)}"
         elif action == "aggregate":
             line += f"\n  agg={s.get('agg_field', '')} (q={s.get('agg_query', '*')})"
             if s.get("field_absent"):
@@ -4770,7 +4911,7 @@ def _agent_step_history(transcript: list[dict]) -> str:
         # Auto-broadening and field-coverage results were being computed and then
         # never shown here, so the agent could not learn from either: it re-issued
         # over-narrow queries and read structurally-blind results as answers.
-        if s.get("auto_broadened"):
+        if s.get("auto_broadened"):  # runs recorded before broadening kept the zero
             line += (
                 f"\n  ↑ AUTO-BROADENED: your query '{str(s.get('broadened_from', ''))[:100]}' "
                 f"returned 0. The result above is the broader '{str(s.get('query', ''))[:100]}'. "
@@ -5471,25 +5612,66 @@ def _conclusion_has_evidence(step: dict) -> bool:
     return bool(step.get("evidence") or step.get("indicators") or step.get("mitre_techniques"))
 
 
-def _verify_conclusion(cfg, base_intro, step):
+_MAX_REVIEW_BOUNCES = 2
+
+# What a senior reviewer checks — each item is a failure seen in a real run.
+_REVIEW_RUBRIC = """Check the verdict against the transcript, item by item:
+ 1. ATTRIBUTION — a network action (SMB write, logon) is attributed to an account
+    only via its session: the 4624 matching the alert's source IP + PORT, its
+    TargetUserName / TargetLogonId. Events merely close in time are coincidence.
+ 2. CONTRADICTIONS — if sources disagree (alert names account A, logs show B),
+    the verdict must resolve it or state it. A thread raised in a step's thought
+    and missing from the verdict is an issue.
+ 3. HYPOTHESIS STATUS — "refuted" needs cited evidence that contradicts it.
+    "Not seen in collected data" is UNSUPPORTED, not refuted. A legitimate source
+    with valid credentials does not refute compromise (T1078, pass-the-hash
+    looks like NTLM type 3 on the target).
+ 4. BASELINE — "routine" must agree with the numbers: a day at 3×+ the typical
+    volume, or an hour seen on one day only, is not routine.
+ 5. SAMPLE ≠ POPULATION — a property generalised to N events must come from an
+    aggregate over them, not from one inspected event.
+ 6. GAPS — "collection gap" must be checked (does the event ID exist anywhere?
+    was the log cleared?), not assumed.
+ 7. ANALYST CLAIMS — statements copied from the scenario ("no recurrence",
+    "no execution") are unverified unless a step tested them.
+ 8. CONFIDENCE — must follow from the evidence now held, not echo the
+    analyst's starting figure.
+ 9. PRE-EXISTING DETECTIONS — case detections in the alert window must be
+    correlated or explicitly ruled out by date.
+List one issue per failed item, phrased as the concrete query/check to run."""
+
+
+def _review_blockers(v) -> list[str]:
+    """Issues that block a conclusion: the reviewer said it does not hold."""
+    if not isinstance(v, dict) or v.get("holds") is not False:
+        return []
+    return [str(i)[:300] for i in (v.get("issues") or []) if str(i).strip()][:6]
+
+
+def _verify_conclusion(cfg, base_intro, step, transcript=None):
     """Adversarial check: one skeptical LLM pass over the proposed verdict.
     Returns {holds, issues[], adjusted_confidence} or None. Never raises."""
     try:
         import json as _j
 
         view = {k: step.get(k) for k in ("verdict", "incident_confirmed", "evidence", "indicators", "hypotheses", "confidence")}
+        # The reviewer needs the trail, not just the ledger: half the rubric is
+        # about what was (not) actually run.
+        trail = _agent_step_history(transcript or [])[-14000:]
         msg = (
             base_intro
-            + "\nPROPOSED VERDICT (JSON):\n"
+            + "\nINVESTIGATION TRANSCRIPT:\n"
+            + trail
+            + "\n\nPROPOSED VERDICT (JSON):\n"
             + _j.dumps(view, default=str)[:6000]
-            + "\n\nYou are a SKEPTICAL DFIR reviewer. Check this verdict against the evidence "
-            "actually gathered above. Is every claim backed by a cited fo_id/IOC? Any "
-            "unsupported leap, ignored benign explanation, or overstated confidence? "
-            'Return ONLY JSON: {"holds": true|false, "issues": ["…"], "adjusted_confidence": 0-100}.'
+            + "\n\nYou are a SKEPTICAL senior DFIR reviewer.\n"
+            + _REVIEW_RUBRIC
+            + '\nReturn ONLY JSON: {"holds": true|false, "issues": ["…"], "adjusted_confidence": 0-100}. '
+            "holds=false if ANY item fails."
         )
         raw = _call_llm_with_system(
             cfg, "You are a skeptical DFIR reviewer. Output only a JSON object.", msg,
-            max_tokens=600, json_mode=True,
+            max_tokens=1200, json_mode=True,
         )
         v = _loose_json(raw)
         return v if isinstance(v, dict) else None
@@ -5827,6 +6009,17 @@ def _agent_run(
     llm_error: str | None = None
     # Consecutive steps whose reply had no usable action (see below).
     bad_reply_streak = 0
+    # Observables the alert names (IP, port, account, host, share, file): shown
+    # every turn with their tested/untested status; a conclusion is sent back
+    # while any is untested. See pilot.anchors.
+    from pilot.anchors import anchor_status as _anchor_status
+    from pilot.anchors import extract_anchors as _extract_anchors
+    from pilot.anchors import render_anchors as _render_anchors
+
+    anchors = _extract_anchors(circumstance)
+    # Times a conclusion was sent back (reviewer issues / untested anchors).
+    review_bounces = 0
+    review_note = ""
 
     supervisor_note = ""  # injected into the next turn when control speaks
 
@@ -6236,9 +6429,14 @@ def _agent_run(
             + stale_nudge
             # Last, so it is the closest instruction to the model's turn: the
             # supervisor overrides the agent's own sense of what to do next.
-            + supervisor_note
-            + f"\nThis is step {step_no} of {max_steps}. Output the next JSON object."
+            + _render_anchors(_anchor_status(anchors, transcript))
+            # A rejected conclusion outranks the supervisor's "conclude now" for
+            # this turn — both at once contradict each other.
+            + (review_note or supervisor_note)
+            + f"\nThis is step {step_no} of {max_steps}. Output the next JSON object "
+            "(write `thought` in English)."
         )
+        review_note = ""
         try:
             # Conclude blocks can be long (hypotheses array + evidence + IOCs +
             # MITRE + next_steps); 900 tokens was hitting cap and producing
@@ -6317,7 +6515,7 @@ def _agent_run(
 
             # Adversarial verify pass — one skeptical review of the verdict.
             try:
-                v = _verify_conclusion(cfg, base_intro + _render_ledger(ledger), step)
+                v = _verify_conclusion(cfg, base_intro + _render_ledger(ledger), step, transcript)
                 if isinstance(v, dict):
                     step["verification"] = v
                     if v.get("adjusted_confidence") is not None:
@@ -6327,6 +6525,36 @@ def _agent_run(
                             pass
             except Exception:
                 pass
+
+            # Review gate: the reviewer used to only nudge the confidence, so a
+            # conclusion it found unsupported ("H2 refuted" from absence of
+            # evidence, a port never correlated) shipped anyway. Now its issues,
+            # and any alert anchor never tested, send the conclusion back —
+            # bounded, and only while there are steps left to act on it.
+            _issues = _review_blockers(step.get("verification"))
+            _untested = [a for a, st in _anchor_status(anchors, transcript) if st is None]
+            if (_issues or _untested) and review_bounces < _MAX_REVIEW_BOUNCES and step_no < max_steps - 2:
+                review_bounces += 1
+                bounce = {
+                    "step": step_no,
+                    "action": "review",
+                    "thought": "Conclusion sent back: "
+                    + "; ".join(_issues[:4] + [f"untested anchor {a.kind} {a.value}" for a in _untested[:4]])[:600],
+                    "verification": step.get("verification"),
+                    "rejected_verdict": str(step.get("verdict") or "")[:400],
+                }
+                transcript.append(bounce)
+                if run_id:
+                    _append_step_log(case_id, run_id, bounce)
+                    _update_active_run(case_id, run_id, step_count=len(transcript))
+                yield {"type": "step", "step": bounce}
+                review_note = (
+                    "\nREVIEW — your conclusion was NOT accepted. Fix these with tool calls, "
+                    "then conclude again:\n"
+                    + "".join(f"  • {i}\n" for i in _issues[:6])
+                    + "".join(f"  • alert anchor {a.kind} {a.value} untested — {a.recipe()}\n" for a in _untested[:6])
+                )
+                continue
 
             # Hypothesis reconciliation — if the agent declared a hypothesis
             # set via set_hypotheses earlier but the conclude block doesn't
@@ -6422,7 +6650,7 @@ def _agent_run(
             "search", "aggregate", "inspect", "time_window", "correlate",
             "mitre_hits", "module_runs", "detection_rules", "watchlist",
             "list_modules", "cti_seen_before", "entity_graph", "stack_rare",
-            "ioc_sweep", "host_profile", "request_collection",
+            "ioc_sweep", "host_profile", "request_collection", "findings",
         }
         sig = (
             action,
@@ -6528,20 +6756,30 @@ def _agent_run(
             # whole agent turn; now each rung is tried until one lands in the
             # readable window, and the path taken is reported so the agent
             # learns WHICH constraint was the wrong one.
+            # The 0 stays the step's result: on a correctly-fielded query it is
+            # a finding ("this account never logged on over the network"). The
+            # broader rung is attached beside it, and rungs that drop a time
+            # range or an event-ID filter are not offered at all — reading
+            # unfiltered results as filtered ones is how a run "re-confirmed"
+            # the same 1,241 events three times.
             attempted: list[str] = []
+            _keep = _hard_constraints(step.get("query", ""))
             for rung in _broaden_ladder(step.get("query", "")):
+                if not all(c in rung for c in _keep):
+                    attempted.append(f"{rung} → skipped (drops {', '.join(c for c in _keep if c not in rung)[:80]})")
+                    continue
                 r = _tool_search(case_id, {**step, "query": rung})
                 cnt = r.get("result_count", 0) or 0
                 if r.get("query_status") != "ok":
                     continue
                 if 0 < cnt <= _USABLE_HIT_CEILING:
-                    step["broadened_from"] = step.get("query")
-                    step["broaden_path"] = attempted + [rung]
-                    step["query"] = rung
-                    step["result_count"] = cnt
-                    step["sample"] = r.get("sample")
-                    step["sample_ids"] = r.get("sample_ids")
-                    step["auto_broadened"] = True
+                    step["broadened"] = {
+                        "query": rung,
+                        "result_count": cnt,
+                        "sample": r.get("sample"),
+                        "sample_ids": r.get("sample_ids"),
+                        "path": attempted + [rung],
+                    }
                     break
                 attempted.append(f"{rung} → {cnt} hits")
             else:
