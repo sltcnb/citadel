@@ -708,3 +708,20 @@ def test_the_key_is_script_sanitised_before_interpolation():
     """It lands in a double-quoted shell/PowerShell assignment."""
     src = Path(co.__file__).read_text()
     assert '.replace("TPLBITLOCKER_KEY", _script_safe(' in src
+
+
+def test_powershell_templates_work_on_windows_powershell_5_1():
+    """5.1 defaults to TLS 1.0/1.1 ("Could not create SSL/TLS secure channel" on
+    the S3 download) and does not load System.Net.Http (HttpClient "type not
+    found" on upload / S3 cleanup). Every template that makes HTTP calls must fix
+    both before its first request."""
+    import routers.collector as c
+
+    for name in ("_BOOTSTRAP_PS1", "_BUNDLE_PS1", "_RUN_PS1"):
+        tpl = getattr(c, name)
+        tls = tpl.index("[Net.SecurityProtocolType]::Tls12")
+        http = tpl.index("Add-Type -AssemblyName System.Net.Http")
+        for call in ("DownloadFile(", "System.Net.Http.HttpClient"):
+            if call in tpl:
+                first = tpl.index(call)
+                assert tls < first and http < first, (name, call)

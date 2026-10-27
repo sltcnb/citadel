@@ -409,6 +409,12 @@ _RUN_PS1 = (
     """#Requires -Version 5.1
 param([switch]$Offline)
 $ErrorActionPreference = "Stop"
+
+# Windows PowerShell 5.1 (.NET Framework) still negotiates TLS 1.0/1.1 by
+# default and S3 endpoints refuse it: "Could not create SSL/TLS secure channel".
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+# HttpClient lives in an assembly 5.1 does not load by default.
+Add-Type -AssemblyName System.Net.Http
 $DIR = $PSScriptRoot
 Write-Host "ForensicsOperator Harvester - starting collection..."
 """
@@ -1081,6 +1087,12 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Windows PowerShell 5.1 (.NET Framework) still negotiates TLS 1.0/1.1 by
+# default and S3 endpoints refuse it: "Could not create SSL/TLS secure channel".
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+# HttpClient lives in an assembly 5.1 does not load by default.
+Add-Type -AssemblyName System.Net.Http
+
 $COLLECTOR_URL = "TPLCOLLECTOR_URL"
 $DELETE_URL    = "TPLDELETE_URL"
 $EXPIRES_AT    = "TPLEXPIRES_AT"
@@ -1595,6 +1607,12 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+# Windows PowerShell 5.1 (.NET Framework) still negotiates TLS 1.0/1.1 by
+# default and S3 endpoints refuse it: "Could not create SSL/TLS secure channel".
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+# HttpClient lives in an assembly 5.1 does not load by default.
+Add-Type -AssemblyName System.Net.Http
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 $PRESIGNED_URL = "TPLPRESIGNED_URL"
