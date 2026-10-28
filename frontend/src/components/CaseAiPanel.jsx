@@ -22,6 +22,7 @@ import {
   ThumbsDown,
 } from 'lucide-react'
 import { api } from '../api/client'
+import { proofGroups, surfacedIds } from '../utils/proofCitations'
 import { RISK_CONFIG } from '../utils/severity'
 import PanelHelp from './shared/PanelHelp'
 import Toast from './Toast'
@@ -499,10 +500,81 @@ function AgentStepRow({ step: s, onPivot }) {
   )
 }
 
+// The log lines each conclusion claim cites, fetched from the case so the
+// analyst reads the proof itself instead of trusting the model's paraphrase.
+const PROOF_TONE = {
+  claim: 'border-gray-200', entity: 'border-blue-200', discrepancy: 'border-amber-300',
+  for: 'border-red-200', against: 'border-emerald-200',
+}
+
+function ProofEvent({ id, event, onPivot }) {
+  const [raw, setRaw] = useState(false)
+  if (event === undefined) return <div className="text-[10px] text-gray-400 font-mono">{id} — loading…</div>
+  if (event === null) return <div className="text-[10px] text-red-600 font-mono">{id} — not found in this case</div>
+  const e = event
+  const line = e.message || e.summary || JSON.stringify(e.evtx?.event_data || {}).slice(0, 300)
+  return (
+    <div className="text-[10px] font-mono bg-gray-50 rounded px-1.5 py-1">
+      <div className="flex items-center gap-1.5 flex-wrap text-gray-600">
+        <span>{e.timestamp}</span>
+        {e.host?.hostname && <span className="text-gray-800">{e.host.hostname}</span>}
+        {e.evtx?.event_id != null && <span className="font-semibold">EID {e.evtx.event_id}</span>}
+        {e.artifact_type && <span className="text-gray-400">{e.artifact_type}</span>}
+        <button type="button" onClick={() => setRaw(v => !v)} className="ml-auto text-brand-accent hover:underline">{raw ? 'hide raw' : 'raw'}</button>
+        {onPivot && (
+          <button type="button" onClick={() => onPivot(`fo_id:"${id}"`)} className="text-brand-accent hover:underline" title="Open in timeline">timeline</button>
+        )}
+      </div>
+      <div className="text-gray-800 whitespace-pre-wrap break-all mt-0.5">{line}</div>
+      {raw && <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-all text-gray-700">{JSON.stringify(e, null, 2)}</pre>}
+    </div>
+  )
+}
+
+function ProofSection({ conclusion, steps, caseId, onPivot }) {
+  const groups = proofGroups(conclusion, surfacedIds(steps))
+  const ids = [...new Set(groups.flatMap(g => g.ids))]
+  const [open, setOpen] = useState(false)
+  const [events, setEvents] = useState({})
+  useEffect(() => {
+    if (!open || !caseId) return
+    let alive = true
+    for (const id of ids) {
+      if (id in events) continue
+      api.search.getEvent(caseId, id)
+        .then(e => alive && setEvents(m => ({ ...m, [id]: e })))
+        .catch(() => alive && setEvents(m => ({ ...m, [id]: null })))
+    }
+    return () => { alive = false }
+  }, [open, caseId, ids.join('|')]) // eslint-disable-line react-hooks/exhaustive-deps
+  if (!ids.length) return null
+  return (
+    <div className="mt-1">
+      <button type="button" onClick={() => setOpen(v => !v)}
+        className="flex items-center gap-1 text-[10px] uppercase tracking-wider font-semibold text-gray-600 hover:text-gray-800">
+        <ChevronRight size={11} className={`transition-transform ${open ? 'rotate-90' : ''}`} />
+        Proof — {ids.length} cited log{ids.length === 1 ? '' : 's'}
+      </button>
+      {open && (
+        <div className="mt-1 space-y-2">
+          {groups.map((g, i) => (
+            <div key={i} className={`border-l-2 pl-2 ${PROOF_TONE[g.tone] || PROOF_TONE.claim}`}>
+              <p className="text-[11px] text-gray-700 mb-1">{g.label}</p>
+              <div className="space-y-1">
+                {g.ids.map(id => <ProofEvent key={id} id={id} event={events[id]} onPivot={onPivot} />)}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // Collapses the step-by-step investigation path by default. Conclude
 // (and any error steps) is always shown — that's the answer. Investigation
 // trace is one click away for analysts who want the receipts.
-function AgentRunBody({ run, onPivot }) {
+function AgentRunBody({ run, onPivot, caseId }) {
   const allSteps     = run.steps || []
   const concludeStep = allSteps.find(s => s.action === 'conclude')
   const traceSteps   = allSteps.filter(s => s.action !== 'conclude')
@@ -511,6 +583,7 @@ function AgentRunBody({ run, onPivot }) {
   return (
     <>
       {concludeStep && <AgentStepRow step={concludeStep} onPivot={onPivot} />}
+      {concludeStep && <ProofSection conclusion={concludeStep} steps={allSteps} caseId={caseId} onPivot={onPivot} />}
       {traceSteps.length > 0 && (
         <>
           <button
@@ -542,14 +615,7 @@ function AgentRunBlock({ run, idx, onDelete, onSearchQuery, caseId, onFollowup, 
   // Summing sample_ids.length across steps counted the same event once per step
   // that returned it, so the button promised to flag ~4x what actually existed
   // ("Flag 338" → "Flagged 26 · skipped 67").
-  const eventCount = (() => {
-    const ids = new Set()
-    for (const s of run.steps || []) {
-      for (const id of s.sample_ids || []) if (id) ids.add(id)
-      if (s.action === 'inspect' && s.fo_id) ids.add(s.fo_id)
-    }
-    return ids.size
-  })()
+  const eventCount = surfacedIds(run.steps).size
 
   const [flagging,   setFlagging]   = useState(false)
   const [flagResult, setFlagResult] = useState(null)
@@ -637,7 +703,7 @@ function AgentRunBlock({ run, idx, onDelete, onSearchQuery, caseId, onFollowup, 
       </div>
 
       <div className="p-4 space-y-2">
-        <AgentRunBody run={run} onPivot={onSearchQuery} />
+        <AgentRunBody run={run} onPivot={onSearchQuery} caseId={caseId} />
 
         {/* Hero CTA — when concluded, jump straight to the full Report
             (auto-written by the agent into case:{id}:ai:report). */}
